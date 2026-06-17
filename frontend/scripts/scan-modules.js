@@ -20,6 +20,9 @@ const entries = []
 
 if (fs.existsSync(MODULES_DIR)) {
   for (const moduleName of fs.readdirSync(MODULES_DIR)) {
+    // Skip template and hidden directories
+    if (moduleName.startsWith('_') || moduleName.startsWith('.')) continue
+
     const manifestPath = path.join(MODULES_DIR, moduleName, 'manifest.json')
     if (!fs.existsSync(manifestPath)) continue
 

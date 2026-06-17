@@ -1,55 +1,55 @@
 import type { appId, CrossAppActionResponse, ActionHandlerDeclaration } from './types-app-handle-v2'
 
-const 处理器注册表 = new Map<appId, Map<string, ActionHandlerDeclaration['handler']>>()
+const handlerRegistry = new Map<appId, Map<string, ActionHandlerDeclaration['handler']>>()
 
-export function registerActionHandler(声明: ActionHandlerDeclaration): void {
-  if (!处理器注册表.has(声明.appKey)) {
-    处理器注册表.set(声明.appKey, new Map())
+export function registerActionHandler(decl: ActionHandlerDeclaration): void {
+  if (!handlerRegistry.has(decl.appKey)) {
+    handlerRegistry.set(decl.appKey, new Map())
   }
-  处理器注册表.get(声明.appKey)!.set(声明.action, 声明.handler)
+  handlerRegistry.get(decl.appKey)!.set(decl.action, decl.handler)
 }
 
-export function unregisterAppHandlers(应用标识: appId): void {
-  处理器注册表.delete(应用标识)
+export function unregisterAppHandlers(appId: appId): void {
+  handlerRegistry.delete(appId)
 }
 
-export function unregisterActionHandler(应用标识: appId, 动作: string): void {
-  const 应用处理器 = 处理器注册表.get(应用标识)
-  if (应用处理器) {
-    应用处理器.delete(动作)
-    if (应用处理器.size === 0) {
-      处理器注册表.delete(应用标识)
+export function unregisterActionHandler(appId: appId, action: string): void {
+  const appHandlers = handlerRegistry.get(appId)
+  if (appHandlers) {
+    appHandlers.delete(action)
+    if (appHandlers.size === 0) {
+      handlerRegistry.delete(appId)
     }
   }
 }
 
 export function getRegisteredAppIds(): appId[] {
-  return Array.from(处理器注册表.keys())
+  return Array.from(handlerRegistry.keys())
 }
 
-export function getRegisteredActions(应用标识: appId): string[] {
-  const 应用处理器 = 处理器注册表.get(应用标识)
-  return 应用处理器 ? Array.from(应用处理器.keys()) : []
+export function getRegisteredActions(appId: appId): string[] {
+  const appHandlers = handlerRegistry.get(appId)
+  return appHandlers ? Array.from(appHandlers.keys()) : []
 }
 
 export async function routeRequest(
-  目标appId: appId,
-  动作: string,
-  参数: Record<string, unknown>,
+  targetAppId: appId,
+  action: string,
+  params: Record<string, unknown>,
   metadata: { sourceAppId: appId; sourceWindowId: string; requestId: string }
 ): Promise<CrossAppActionResponse> {
-  const 应用处理器 = 处理器注册表.get(目标appId)
-  if (!应用处理器) {
-    return { success: false, error: { code: 'ERR_HANDLER_NOT_REGISTERED', message: `应用 ${目标appId} 未注册任何处理器` } }
+  const appHandlers = handlerRegistry.get(targetAppId)
+  if (!appHandlers) {
+    return { success: false, error: { code: 'ERR_HANDLER_NOT_REGISTERED', message: `App ${targetAppId} has no registered handlers` } }
   }
-  const 处理器 = 应用处理器.get(动作)
-  if (!处理器) {
-    return { success: false, error: { code: 'ERR_ACTION_NOT_PUBLIC', message: `应用 ${目标appId} 未公开动作 ${动作}` } }
+  const handler = appHandlers.get(action)
+  if (!handler) {
+    return { success: false, error: { code: 'ERR_ACTION_NOT_PUBLIC', message: `App ${targetAppId} does not expose action ${action}` } }
   }
-  return await 处理器(参数, metadata)
+  return await handler(params, metadata)
 }
 
-export function isHandlerRegistered(目标appId: appId, 动作: string): boolean {
-  const 应用处理器 = 处理器注册表.get(目标appId)
-  return 应用处理器 ? 应用处理器.has(动作) : false
+export function isHandlerRegistered(targetAppId: appId, action: string): boolean {
+  const appHandlers = handlerRegistry.get(targetAppId)
+  return appHandlers ? appHandlers.has(action) : false
 }

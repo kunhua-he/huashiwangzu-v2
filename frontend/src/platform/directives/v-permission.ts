@@ -7,8 +7,8 @@ export const vPermission: Directive = {
       console.warn('[v-权限] 指令值必须为 action 字符串')
       return
     }
-    const 有权限 = await checkPermissionAction(binding.value)
-    if (!有权限) {
+    const hasPermission = await checkPermissionAction(binding.value)
+    if (!hasPermission) {
       el.parentNode?.removeChild(el)
     }
   },

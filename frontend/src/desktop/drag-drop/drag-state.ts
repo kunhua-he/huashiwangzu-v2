@@ -7,75 +7,72 @@
  */
 import { reactive } from 'vue'
 
-interface 拖拽状态 {
+interface DragState {
   isDragging: boolean
   draggedIds: string[]
-  dragOverId: string | null    // 当前悬停的文件夹 id
+  dragOverId: string | null
   originX: number
   originY: number
-  偏移列表: { id: string; dx: number; dy: number }[]
+  offsetList: { id: string; dx: number; dy: number }[]
 }
 
-const 状态 = reactive<拖拽状态>({
+const dragState = reactive<DragState>({
   isDragging: false,
   draggedIds: [],
   dragOverId: null,
   originX: 0, originY: 0,
-  偏移列表: [],
+  offsetList: [],
 })
 
 let _hoverTimer: ReturnType<typeof setTimeout> | null = null
 
-export function 开始拖拽(ids: string[], x: number, y: number): void {
-  状态.isDragging = true
-  状态.draggedIds = ids
-  状态.originX = x
-  状态.originY = y
-  // 记录每个图标相对起始位置的偏移
-  const 主体元素 = document.querySelector(`[data-选中标记="${ids[0]}"]`)
-  const 主体矩形 = 主体元素?.getBoundingClientRect()
-  if (!主体矩形) { 结束拖拽(); return }
-  状态.偏移列表 = ids.map(id => {
-    const el = document.querySelector(`[data-选中标记="${id}"]`)
+export function startDrag(ids: string[], x: number, y: number): void {
+  dragState.isDragging = true
+  dragState.draggedIds = ids
+  dragState.originX = x
+  dragState.originY = y
+  const primaryEl = document.querySelector(`[data-selection-key="${ids[0]}"]`)
+  const primaryRect = primaryEl?.getBoundingClientRect()
+  if (!primaryRect) { endDrag(); return }
+  dragState.offsetList = ids.map(id => {
+    const el = document.querySelector(`[data-selection-key="${id}"]`)
     const r = el?.getBoundingClientRect()
-    return { id, dx: (r?.left ?? 0) - 主体矩形.left, dy: (r?.top ?? 0) - 主体矩形.top }
+    return { id, dx: (r?.left ?? 0) - primaryRect.left, dy: (r?.top ?? 0) - primaryRect.top }
   })
-  document.body.classList.add('桌面-拖拽中')
+  document.body.classList.add('desktop-dragging')
 }
 
-export function 更新拖拽偏移(dx: number, dy: number): void {
-  if (!状态.isDragging) return
-  状态.偏移列表.forEach(item => {
-    const el = document.querySelector(`[data-选中标记="${item.id}"]`) as HTMLElement | null
+export function updateDragOffset(dx: number, dy: number): void {
+  if (!dragState.isDragging) return
+  dragState.offsetList.forEach(item => {
+    const el = document.querySelector(`[data-selection-key="${item.id}"]`) as HTMLElement | null
     if (!el) return
-    // 拖拽期间设为 fixed 跟随鼠标
     el.style.position = 'fixed'
-    el.style.left = (状态.originX + item.dx + dx) + 'px'
-    el.style.top = (状态.originY + item.dy + dy) + 'px'
+    el.style.left = (dragState.originX + item.dx + dx) + 'px'
+    el.style.top = (dragState.originY + item.dy + dy) + 'px'
     el.style.zIndex = '999'
     el.style.pointerEvents = 'none'
   })
 }
 
-export function 进入文件夹(id: string): void {
+export function enterFolder(id: string): void {
   if (_hoverTimer) clearTimeout(_hoverTimer)
-  _hoverTimer = setTimeout(() => { 状态.dragOverId = id }, 150)
+  _hoverTimer = setTimeout(() => { dragState.dragOverId = id }, 150)
 }
 
-export function 离开文件夹(): void {
+export function leaveFolder(): void {
   if (_hoverTimer) clearTimeout(_hoverTimer)
-  状态.dragOverId = null
+  dragState.dragOverId = null
 }
 
-export function 结束拖拽(): void {
-  状态.isDragging = false
-  状态.draggedIds = []
-  状态.dragOverId = null
-  状态.偏移列表 = []
+export function endDrag(): void {
+  dragState.isDragging = false
+  dragState.draggedIds = []
+  dragState.dragOverId = null
+  dragState.offsetList = []
   if (_hoverTimer) clearTimeout(_hoverTimer)
-  document.body.classList.remove('桌面-拖拽中')
-  // 恢复所有图标定位
-  document.querySelectorAll('[data-选中标记]').forEach(el => {
+  document.body.classList.remove('desktop-dragging')
+  document.querySelectorAll('[data-selection-key]').forEach(el => {
     (el as HTMLElement).style.position = ''
     ;(el as HTMLElement).style.left = ''
     ;(el as HTMLElement).style.top = ''
@@ -84,4 +81,4 @@ export function 结束拖拽(): void {
   })
 }
 
-export const 拖拽状态 = 状态
+export { dragState }

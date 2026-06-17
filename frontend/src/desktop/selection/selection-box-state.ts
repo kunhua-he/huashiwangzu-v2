@@ -3,7 +3,7 @@
  */
 import { reactive, computed } from 'vue'
 
-interface 框选状态 {
+interface SelectionBoxState {
   active: boolean
   startX: number
   startY: number
@@ -11,41 +11,40 @@ interface 框选状态 {
   currentY: number
 }
 
-const 状态 = reactive<框选状态>({
+const state = reactive<SelectionBoxState>({
   active: false,
   startX: 0, startY: 0,
   currentX: 0, currentY: 0,
 })
 
-export function 开始框选(x: number, y: number): void {
-  状态.active = true
-  状态.startX = x
-  状态.startY = y
-  状态.currentX = x
-  状态.currentY = y
+export function startBoxSelection(x: number, y: number): void {
+  state.active = true
+  state.startX = x
+  state.startY = y
+  state.currentX = x
+  state.currentY = y
 }
 
-export function 更新框选(x: number, y: number): void {
-  if (!状态.active) return
-  状态.currentX = x
-  状态.currentY = y
+export function updateBoxSelection(x: number, y: number): void {
+  if (!state.active) return
+  state.currentX = x
+  state.currentY = y
 }
 
-export function 结束框选(): void {
-  状态.active = false
+export function endBoxSelection(): void {
+  state.active = false
 }
 
-export const 框选矩形 = computed(() => {
-  const x = Math.min(状态.startX, 状态.currentX)
-  const y = Math.min(状态.startY, 状态.currentY)
-  const w = Math.abs(状态.currentX - 状态.startX)
-  const h = Math.abs(状态.currentY - 状态.startY)
+export const selectionRect = computed(() => {
+  const x = Math.min(state.startX, state.currentX)
+  const y = Math.min(state.startY, state.currentY)
+  const w = Math.abs(state.currentX - state.startX)
+  const h = Math.abs(state.currentY - state.startY)
   return { x, y, w, h }
 })
 
-export const 框选是否激活 = computed(() => 状态.active)
+export const isBoxSelectionActive = computed(() => state.active)
 
-/** 最小拖动阈值 4px，过滤单击抖动 */
-export const 框选有效 = computed(() =>
-  状态.active && (框选矩形.value.w > 4 || 框选矩形.value.h > 4)
+export const isBoxSelectionValid = computed(() =>
+  state.active && (selectionRect.value.w > 4 || selectionRect.value.h > 4)
 )

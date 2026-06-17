@@ -7,7 +7,7 @@ export interface AppWindowSpecOptions {
   layout?: 'management' | 'editor' | 'chat' | 'search' | 'file-manager' | 'dashboard'
 }
 
-export function use应用窗口规范(options: AppWindowSpecOptions = {}) {
+export function useAppWindowSpec(options: AppWindowSpecOptions = {}) {
   const sidebarCollapsed = ref(options.sidebarCollapsed ?? false)
   const sidebarWidth = ref(options.sidebarWidth ?? 260)
   const drawerVisible = ref(options.drawerVisible ?? false)

@@ -6,6 +6,7 @@ Usage:
 
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from app.models.app import App
 from app.models.role_matrix import RoleMatrix
 from app.services.auth import hash_password
 
+logger = logging.getLogger(__name__)
 APPS_DATA = json.loads((Path(__file__).parent / "seed_data" / "apps.json").read_text(encoding="utf-8"))
 DEFAULT_PASSWORD = os.getenv("V2_SEED_DEFAULT_PASSWORD", "")
 
@@ -65,7 +67,7 @@ async def seed():
             db.add(editor)
 
         await db.commit()
-        print("✅ Users seeded")
+        logger.info("Users seeded")
 
         # ── Desktop Apps (32 modules) ──
         apps_data = APPS_DATA
@@ -76,20 +78,20 @@ async def seed():
                 db.add(App(**app_data))
 
         await db.commit()
-        print(f"✅ {len(apps_data)} apps seeded")
+        logger.info("%s apps seeded", len(apps_data))
 
         # ── Role matrix ──
         result = await db.execute(select(RoleMatrix))
         if not result.scalar_one_or_none():
             defaults = [
-                RoleMatrix(role_key="admin", display_name="管理员", permissions={"user_management": True, "system_config": True, "role_matrix": True}),
-                RoleMatrix(role_key="editor", display_name="编辑者", permissions={"user_management": False, "system_config": False, "role_matrix": False}),
-                RoleMatrix(role_key="viewer", display_name="查看者", permissions={"user_management": False, "system_config": False, "role_matrix": False}),
+                RoleMatrix(role_key="admin", display_name="Administrator", permissions={"user_management": True, "system_config": True, "role_matrix": True}),
+                RoleMatrix(role_key="editor", display_name="Editor", permissions={"user_management": False, "system_config": False, "role_matrix": False}),
+                RoleMatrix(role_key="viewer", display_name="Viewer", permissions={"user_management": False, "system_config": False, "role_matrix": False}),
             ]
             for row in defaults:
                 db.add(row)
             await db.commit()
-            print("✅ Role matrix seeded")
+            logger.info("Role matrix seeded")
 
     await db.close()
 

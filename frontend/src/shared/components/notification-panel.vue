@@ -1,24 +1,24 @@
 <template>
-  <div v-if="显示" class="通知面板">
-    <div class="通知面板头部">
-      <span class="通知面板标题">公告通知</span>
+  <div v-if="show" class="notification-panel">
+    <div class="notification-panel-header">
+      <span class="notification-panel-title">公告通知</span>
     </div>
-    <div v-if="列表.length === 0" class="通知空状态">暂无公告</div>
-    <div v-for="项 in 列表" :key="项.id" class="通知项" :class="{ '通知项_未读': !项.是否已读 }">
-      <div class="通知项内容">
-        <div class="通知项标题行">
-          <span class="通知项标题" :class="{ '通知项标题_未读': !项.是否已读 }">{{ 项.标题 }}</span>
-          <el-tag :type="标签类型(项.类型 as string)" size="small" class="通知项标签">{{ 项.类型 }}</el-tag>
+    <div v-if="items.length === 0" class="notification-empty">暂无公告</div>
+    <div v-for="item in items" :key="item.id" class="notification-item" :class="{ 'notification-item-unread': !item.is_read }">
+      <div class="notification-item-content">
+        <div class="notification-title-row">
+          <span class="notification-title" :class="{ 'notification-title-unread': !item.is_read }">{{ item.title }}</span>
+          <el-tag :type="tagType(item.type)" size="small" class="notification-tag">{{ item.type }}</el-tag>
         </div>
-        <div class="通知项时间">{{ 项.发布时间 }}</div>
+        <div class="notification-time">{{ item.published_at }}</div>
       </div>
-      <div class="通知项操作">
-        <span v-if="!项.是否已读" class="通知标记已读" @click.stop="处理标记已读(项.id)">标为已读</span>
-        <span v-else class="通知已读标记">✓ 已读</span>
+      <div class="notification-actions">
+        <span v-if="!item.is_read" class="notification-mark-read" @click.stop="handleMarkRead(item.id)">标为已读</span>
+        <span v-else class="notification-read-label">✓ 已读</span>
       </div>
     </div>
-    <div v-if="列表.length > 0" class="通知面板底部">
-      <el-button text size="small" @click="处理全部已读">全部已读</el-button>
+    <div v-if="items.length > 0" class="notification-panel-footer">
+      <el-button text size="small" @click="handleMarkAllRead">全部已读</el-button>
     </div>
   </div>
 </template>
@@ -27,36 +27,36 @@
 import type { NotificationItem } from '@/shared/api/types'
 
 defineProps<{
- 显示: boolean
- 列表: NotificationItem[]
+ show: boolean
+ items: NotificationItem[]
 }>()
 
 const emit = defineEmits<{
-  标记已读: [id: number]
-  全部已读: []
+  'mark-read': [id: number]
+  'mark-all-read': []
 }>()
 
-function 标签类型(类型: string) {
-  const 映射: Record<string, string> = {
+function tagType(type: string) {
+  const typeMap: Record<string, string> = {
     '系统公告': 'danger',
     '维护通知': 'warning',
     '更新日志': 'primary',
     '普通通知': 'info',
   }
-  return 映射[类型] || 'info'
+  return typeMap[type] || 'info'
 }
 
-function 处理标记已读(id: number) {
-  emit('标记已读', id)
+function handleMarkRead(id: number) {
+  emit('mark-read', id)
 }
 
-function 处理全部已读() {
-  emit('全部已读')
+function handleMarkAllRead() {
+  emit('mark-all-read')
 }
 </script>
 
 <style scoped>
-.通知面板头部 {
+.notification-panel-header {
   padding: 14px 16px;
   display: flex;
   align-items: center;
@@ -64,13 +64,13 @@ function 处理全部已读() {
   border-bottom: 1px solid #f0f0f0;
 }
 
-.通知面板标题 {
+.notification-panel-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--文字主色);
 }
 
-.通知项 {
+.notification-item {
   display: flex;
   align-items: flex-start;
   padding: 12px 16px;
@@ -78,31 +78,31 @@ function 处理全部已读() {
   transition: background 0.15s;
 }
 
-.通知项:hover {
+.notification-item:hover {
   background: #f6f8fa;
 }
 
-.通知项:last-child {
+.notification-item:last-child {
   border-bottom: none;
 }
 
-.通知项_未读 {
+.notification-item-unread {
   background: var(--主色浅);
 }
 
-.通知项内容 {
+.notification-item-content {
   flex: 1;
   min-width: 0;
 }
 
-.通知项标题行 {
+.notification-title-row {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
 }
 
-.通知项标题 {
+.notification-title {
   font-size: 14px;
   color: var(--文字主色);
   line-height: 1.5;
@@ -112,43 +112,43 @@ function 处理全部已读() {
   overflow: hidden;
 }
 
-.通知项标题_未读 {
+.notification-title-unread {
   font-weight: 600;
 }
 
-.通知项标签 {
+.notification-tag {
   flex-shrink: 0;
 }
 
-.通知项时间 {
+.notification-time {
   font-size: 12px;
   color: var(--文字占位);
 }
 
-.通知项操作 {
+.notification-actions {
   flex-shrink: 0;
   margin-left: 12px;
   padding-top: 2px;
 }
 
-.通知标记已读 {
+.notification-mark-read {
   font-size: 12px;
   color: var(--主色);
   cursor: pointer;
   white-space: nowrap;
 }
 
-.通知标记已读:hover {
+.notification-mark-read:hover {
   color: var(--主色深);
 }
 
-.通知已读标记 {
+.notification-read-label {
   font-size: 12px;
   color: var(--文字占位);
   white-space: nowrap;
 }
 
-.通知面板底部 {
+.notification-panel-footer {
   padding: 10px 16px;
   border-top: 1px solid #f0f0f0;
   text-align: center;

@@ -36,7 +36,7 @@
 
 <script setup lang="ts">
 import { ArrowLeft, Delete, Document, Folder } from '@element-plus/icons-vue'
-import { use权限 } from '@/shared/composables/use-permission'
+import { usePermission } from '@/shared/composables/use-permission'
 import type { RecycleBinEntry } from '@/shared/api/types'
 
 defineProps<{
@@ -56,7 +56,7 @@ function 行右键(row: RecycleBinEntry, column: unknown, event: MouseEvent) {
   emit('行右键', row, column, event)
 }
 
-const { 是编辑者及以上: 可业务写 } = use权限()
+const { isEditorOrAbove: 可业务写 } = usePermission()
 
 function 关闭回收站() { emit('关闭') }
 function 格式化大小(字节: number): string {

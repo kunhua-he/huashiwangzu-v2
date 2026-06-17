@@ -1,24 +1,24 @@
 <template>
   <div
-    v-if="有效"
-    class="框选矩形"
+    v-if="valid"
+    class="selection-box-rect"
     :style="{
-      left: 矩形.x + 'px',
-      top: 矩形.y + 'px',
-      width: 矩形.w + 'px',
-      height: 矩形.h + 'px',
+      left: rect.x + 'px',
+      top: rect.y + 'px',
+      width: rect.w + 'px',
+      height: rect.h + 'px',
     }"
   />
 </template>
 
 <script setup lang="ts">
-import { 框选有效, 框选矩形 } from './selection-box-state'
-const 有效 = 框选有效
-const 矩形 = 框选矩形
+import { isBoxSelectionValid, selectionRect } from './selection-box-state'
+const valid = isBoxSelectionValid
+const rect = selectionRect
 </script>
 
 <style scoped>
-.框选矩形 {
+.selection-box-rect {
   position: fixed;
   background: rgba(0, 120, 215, 0.12);
   border: 1px solid rgba(0, 120, 215, 0.5);

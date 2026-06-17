@@ -83,55 +83,55 @@ export const errorCodes = {
   ERR_FORMAT_NOT_SUPPORTED: 'ERR_FORMAT_NOT_SUPPORTED',
 } as const
 
-export const AuditLevel = {
+export const auditLevels = {
   none: 'none',
   low: 'low',
   medium: 'medium',
   high: 'high',
 } as const
 
-export type AuditLevel = (typeof AuditLevel)[keyof typeof AuditLevel]
+export type AuditLevel = (typeof auditLevels)[keyof typeof auditLevels]
 
 export const standardActionDef = {
   'file:open': {
-    名称: 'openFile',
-    参数Schema: { 文件id: 'number', 格式: 'string?' },
-    默认超时: 15000,
-    AuditLevel: 'low' as AuditLevel,
+    name: 'openFile',
+    paramSchema: { fileId: 'number', format: 'string?' },
+    defaultTimeout: 15000,
+    auditLevel: 'low' as AuditLevel,
   },
   'knowledge:node:open': {
-    名称: '跳转知识节点',
-    参数Schema: { 编目id: 'number', 定位锚点: 'string?' },
-    默认超时: 10000,
-    AuditLevel: 'none' as AuditLevel,
+    name: 'openKnowledgeNode',
+    paramSchema: { catalogId: 'number', anchor: 'string?' },
+    defaultTimeout: 10000,
+    auditLevel: 'none' as AuditLevel,
   },
   'agent:send': {
-    名称: '发送给Agent',
-    参数Schema: { 内容: 'string', 上下文: 'object?' },
-    默认超时: 30000,
-    AuditLevel: 'medium' as AuditLevel,
+    name: 'sendToAgent',
+    paramSchema: { content: 'string', context: 'object?' },
+    defaultTimeout: 30000,
+    auditLevel: 'medium' as AuditLevel,
   },
   'settings:open': {
-    名称: '打开设置页',
-    参数Schema: { 页面: 'string?', 高亮字段: 'string?' },
-    默认超时: 10000,
-    AuditLevel: 'none' as AuditLevel,
+    name: 'openSettings',
+    paramSchema: { page: 'string?', highlightedField: 'string?' },
+    defaultTimeout: 10000,
+    auditLevel: 'none' as AuditLevel,
   },
   'feedback:open': {
-    名称: '打开反馈',
-    参数Schema: { 预填类型: 'string?', 预填描述: 'string?' },
-    默认超时: 10000,
-    AuditLevel: 'none' as AuditLevel,
+    name: 'openFeedback',
+    paramSchema: { presetType: 'string?', presetDescription: 'string?' },
+    defaultTimeout: 10000,
+    auditLevel: 'none' as AuditLevel,
   },
 } as const
 
 export type StandardAction = keyof typeof standardActionDef
 
 export interface AuditLogEntry {
-  动作: string
-  参数: Record<string, unknown>
-  来源应用: appId
-  目标应用?: appId
-  来源窗口ID?: windowId
+  action: string
+  params: Record<string, unknown>
+  sourceApp: appId
+  targetApp?: appId
+  sourceWindowId?: windowId
   userId?: number
 }

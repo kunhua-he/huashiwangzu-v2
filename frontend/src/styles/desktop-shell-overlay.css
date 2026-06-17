@@ -1,4 +1,4 @@
-.桌面壳-错误 {
+.desktop-shell-error {
   position: absolute;
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
@@ -10,13 +10,13 @@
   border-radius: 12px;
   backdrop-filter: blur(8px);
 }
-.桌面壳-错误 p { margin: 0 0 16px; font-size: 14px; line-height: 1.5; }
-.桌面壳-错误 button {
+.desktop-shell-error p { margin: 0 0 16px; font-size: 14px; line-height: 1.5; }
+.desktop-shell-error button {
   background: #409eff; color: #fff; border: none;
   padding: 8px 24px; border-radius: 6px; cursor: pointer; font-size: 14px;
 }
-.桌面壳-错误 button:hover { background: #66b1ff; }
-.桌面壳-加载中 {
+.desktop-shell-error button:hover { background: #66b1ff; }
+.desktop-shell-loading {
   position: absolute;
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
@@ -24,7 +24,7 @@
   color: rgba(255,255,255,0.6);
   font-size: 14px;
 }
-.桌面壳-拖放提示 {
+.desktop-shell-drop-hint {
   position: absolute;
   inset: 18px;
   z-index: 80;

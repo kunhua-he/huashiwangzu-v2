@@ -40,7 +40,7 @@ async def save_text(
 ):
     try:
         await text_svc.save(db, file_id, body.get("content", ""), body.get("mtime"))
-        return ApiResponse(data={"message": "保存成功"})
+        return ApiResponse(data={"message": "Saved successfully"})
     except AppException:
         raise
     except ValueError as e:
@@ -75,7 +75,7 @@ async def save_csv(
 ):
     try:
         await csv_svc.save(db, file_id, body.get("content", ""), body.get("delimiter", ","), body.get("mtime"))
-        return ApiResponse(data={"message": "保存成功"})
+        return ApiResponse(data={"message": "Saved successfully"})
     except AppException:
         raise
     except ValueError as e:

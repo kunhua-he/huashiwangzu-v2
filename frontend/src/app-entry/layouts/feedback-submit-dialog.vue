@@ -1,6 +1,6 @@
 <template>
   <el-dialog
-    :model-value="显示"
+    :model-value="show"
     title="哪里不好用，直接告诉我们"
     width="520px"
     :close-on-click-modal="false"
@@ -68,12 +68,12 @@ const 反馈类型映射: Record<string, string> = {
 }
 
 const props = defineProps<{
-  显示: boolean
+  show: boolean
 }>()
 
 const emit = defineEmits<{
-  提交success: []
-  关闭: []
+  'submit-success': []
+  close: []
 }>()
 
 const 表单ref = ref<FormInstance>()
@@ -95,7 +95,7 @@ const 表单规则 = {
 
 function 关闭弹窗() {
   if (!提交中.value) {
-    emit('关闭')
+    emit('close')
   }
 }
 
@@ -115,8 +115,8 @@ async function 提交反馈() {
     反馈表单.反馈类型 = ''
     反馈表单.反馈内容 = ''
     表单ref.value?.resetFields()
-    emit('提交success')
-    emit('关闭')
+    emit('submit-success')
+    emit('close')
   } catch {
     ElMessage.error('提交失败，请稍后重试')
   } finally {

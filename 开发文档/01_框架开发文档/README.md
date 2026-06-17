@@ -34,7 +34,7 @@ modules/    被框架加载的业务模块
 - 当前 `frontend/main.ts` 和 `v-permission.ts` 指令名改为英文。
 - 当前所有前端 `@应用模块` 导入已被替换为 platform 原生调用或暂缺处理。
 - 当前模块扫描链路已建立：`scripts/scan-modules.js` 扫描 `modules/*/manifest.json`，生成 `component-key-map.generated.ts`。
-- 当前 `apps.json` 中 agent 的 `component_key` 已改为英文 `ai-assistant/index.vue`。`component-key-map.ts` 兼容层仍保留旧中文 DB 值映射，避免未重新播种前中断。
+- 当前 `apps.json` 中所有非空 `component_key` 已改为英文路径：已有模块使用 `ai-assistant/index.vue`，其余待迁移应用使用 `apps/{app}/index.vue` 占位 key。`component-key-map.ts` 兼容层仍保留旧中文 DB 值到英文 key 的映射，避免未重新播种前中断。
 - 当前应用组件 key 缺失时不再静默渲染空组件，窗口会显示 `ComponentRegistrationError` 并输出缺失的 app/key 信息。
 - 当前前端构建脚本全部使用英文名称，构建命令链：`scan-modules.js` → `copy-pdf-worker.sh` → `vue-tsc -b` → `vite build`。
 - 当前 `frontend/package.json` 中再无中文脚本名和旧 `脚本/` 路径引用。
@@ -51,8 +51,13 @@ modules/    被框架加载的业务模块
 - 当前桌面状态前端内部结构已改为英文 `version/windows/appState`；读取历史中文 `版本/窗口/应用状态` 只允许发生在 API 边界迁移函数中。
 - 当前窗口管理器导出已改为英文 `useWindowManager` / `windowManager`，核心方法为 `openWindow`、`closeWindow`、`toggleMinimized`、`toggleMaximized`、`activateWindow`、`restoreWindows`。
 - 当前桌面任务栏组件 props / emits / class 已改为英文契约。
+- 当前桌面壳前端框架基础设施已完成第二轮英文契约清理：composables、桌面加载、窗口框架、窗口交互、右键菜单、拖拽、框选、剪贴板、图标资产、启动器、托盘、右侧栏、通知面板等框架文件均使用英文导出名、props、emits、CSS class 和 DOM data 属性。
 - 当前 `shared/api/desktop.ts` 文件 API 方法已改为英文命名，并明确转换后端响应包装。
+- 当前通知 API 消费侧已按后端真实字段读取 `unread_count`、`list`、`is_read`，不再读取中文字段名。
 - 当前 Element Plus 已改为 Vite 按需组件/样式导入，并拆分为 `element-core`、`element-overlay`、`element-components` 等 chunk；不再全量 `app.use(ElementPlus)` 和全量 `element-plus/dist/index.css`。
+- 当前框架契约层核心文件已完成英文标识符清理：`action-registry.ts`、`desktop-app-handle-v2.ts`、`desktop-session-restore.ts`、`desktop-session-storage.ts`、`file-association-registry.ts`、`types-app-handle-v2.ts`、`v-permission.ts`。
+- 当前窗口类型使用英文值：`normal`、`panel`、`tool`、`fullscreen`、`background-service`。
+- 当前后端框架 API 返回 message 已避免中文硬编码，`seed.py` 使用 logging 记录初始化结果，不再使用 `print()`。
 
 ## 已修复的 TypeScript 文件
 
@@ -68,11 +73,10 @@ modules/    被框架加载的业务模块
 
 ## 待办
 
-- `apps.json` 中剩余 30+ 应用的 `component_key` 仍是中文路径（`应用/xxx/入口.vue`），这些应用暂无新模块载体，保留旧值不影响框架功能。后续模块迁移时同步更新。
-- 数据库同步：当前 DB 仍存有旧中文 `component_key`，需在下次 `sync_apps_from_manifest` 运行后更新。
-- 后端模块动态挂载已有基础骨架，但还未进入完整 runtime 阶段。后续模块需要在 manifest 中声明后端 router，并继续补齐权限、前缀冲突检测、模块启停和模块级测试。
-- `frontend/src` 仍存在历史中文变量名、CSS 类名和组件 emits，主要集中在窗口框架、拖拽/框选、右键菜单、共享 UI 组件和旧布局页面。当前已清理核心框架契约层；后续触达这些文件时继续英文化。
-- 测试覆盖率仍需提升，但模块尚未填充，窗口加载失败、组件注册失败、鉴权与 API 契约等更完整用例后置到模块接入阶段补齐。
+- 数据库同步：当前 DB 可能仍存有旧中文 `component_key`，需在下次 `sync_apps_from_manifest` 运行后更新。同步前由 `component-key-map.ts` 兼容层翻译旧 key；同步后应以英文 key 为准。
+- 后端模块动态挂载已有 manifest 驱动骨架，但还未进入完整 runtime 阶段。后续模块需要在 manifest 中声明后端 router，并继续补齐 `backend.prefix`、启停开关、权限声明、路由冲突检测和模块级测试。
+- `frontend/src` 的框架契约层已完成英文清理；仍允许中文 UI 展示文案、toast、菜单 `label`、确认弹窗和业务显示值。若未来发现中文标识符出现在导出 API、props、emits、CSS class、DOM data 属性或类型字段中，应继续英文化。
+- 测试覆盖率仍需提升，但模块尚未填充，窗口加载失败、组件注册失败、鉴权与 API 契约等更完整用例后置到模块接入阶段补齐；框架层改动仍必须保留 `pytest` 与 `npm run build` 通过。
 
 ## 当前框架能力
 
@@ -162,6 +166,12 @@ modules/{module}/runtime.config.json
 
 **C10. Element Plus 构建优化**：Element Plus 不再全量注册，改用 `unplugin-vue-components` 和 `unplugin-auto-import` 按需导入；Vite manualChunks 将 Element Plus 拆为 core、overlay、components 等 chunk，避免单个超大 chunk。
 
+**C11. Window type 值**：窗口类型必须使用英文枚举值。`normal` 表示普通窗口，`panel` 表示面板窗口，`tool` 表示工具窗口，`fullscreen` 表示全屏应用，`background-service` 表示后台服务。前端不得再用中文窗口类型字符串做判断。
+
+**C12. 框架中文残留分类**：菜单 `label`、按钮文案、toast、确认框、表格列名、业务分类展示值属于正常 UI 中文展示；导出 API、props、emits、CSS class、DOM data 属性、TypeScript 类型字段、后端响应字段读取不允许使用中文绕过。兼容旧数据的中文 key 只能存在于明确命名的兼容映射或 API 边界转换中。
+
+**C13. 测试覆盖策略**：框架当前以后端 35 个测试和前端生产构建作为基础可用性门槛。模块尚未填充前，不强行补齐模块业务测试；鉴权、窗口加载失败、组件注册失败、API 契约等更完整覆盖在模块接入阶段补齐，但框架新增能力必须补对应框架测试。
+
 ### 验证
 
 ```bash
@@ -170,7 +180,7 @@ cd backend && .venv/bin/python -m pytest
 
 cd frontend && npm run build
 # 0 TS errors
-# Element Plus 最大 JS chunk 约 475 kB，不再触发 500 kB chunk 警告
+# Element Plus 最大 JS chunk 约 475 kB，已拆分为 element-core、element-overlay、element-components 等 chunk，不再触发 500 kB chunk 警告
 ```
 
 当前关键扫描：
@@ -180,6 +190,7 @@ rg -n "\bas any\b|@ts-ignore|@ts-expect-error|:\s*any\b" frontend/src backend/ap
 rg -n "raise HTTPException|return ApiResponse\(success=False|ApiResponse\(success=False" backend/app
 rg -n "default:\s*null|Promise\.resolve\(\{ default: null \}\)" frontend/src
 rg -n "use窗口管理器|窗口管理器|use桌面事件总线|文件夹id|目标文件夹id|获取文件列表请求|上传文件请求" frontend/src/desktop frontend/src/shared
+rg -n "component_key\": \"应用/|window_type\": \"background\"|保存成功|导出成功|print\(" backend/app frontend/src
 ```
 
-上述扫描不应出现框架绕过项；Python 内置函数 `any(...)` 不属于类型绕过。
+上述扫描不应出现框架绕过项；Python 内置函数 `any(...)` 不属于类型绕过。若中文扫描命中 `label`、toast、确认框、表格列名等用户可见文案，按 C12 归类为正常 UI 展示，不视为类型绕过或偷懒兜底。

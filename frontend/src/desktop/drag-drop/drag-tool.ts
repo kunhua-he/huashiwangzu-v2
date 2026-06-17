@@ -27,41 +27,37 @@ export function clampIconPosition(x: number, y: number): { x: number; y: number 
 
 /**
  * 拖拽落点坐标覆盖表
- * key: data-选中标记的值（如 "file:123"）
+ * key: data-selection-key value, for example "file:123"
  * value: 落点 transform 偏移 { x, y }
  *
  * 图标渲染时读取此表，有覆盖则用 transform 偏移，
  * 无覆盖则回到 flex 默认位置。
  */
-export const 落点覆盖 = reactive<Record<string, { x: number; y: number }>>({})
+export const dropOverlay = reactive<Record<string, { x: number; y: number }>>({})
 
-/** 记录落点 */
-export function 设置落点(标记: string, x: number, y: number): void {
-  落点覆盖[标记] = { x, y }
+export function setDropOverlay(key: string, x: number, y: number): void {
+  dropOverlay[key] = { x, y }
 }
 
-/** 批量记录落点（主图标基准 + 跟随图标偏移） */
-export function 批量设置落点(
-  主标记: string, 主x: number, 主y: number,
-  全部标记: string[], 偏移列表: { id: string; dx: number; dy: number }[]
+export function setDropOverlayBatch(
+  primaryKey: string, primaryX: number, primaryY: number,
+  allKeys: string[], offsetList: { id: string; dx: number; dy: number }[]
 ): void {
-  全部标记.forEach(标记 => {
-    const 偏移 = 偏移列表.find(o => o.id === 标记)
+  allKeys.forEach(key => {
+    const offset = offsetList.find(o => o.id === key)
     const { x, y } = clampIconPosition(
-      标记 === 主标记 ? 主x : 主x + (偏移?.dx ?? 0),
-      标记 === 主标记 ? 主y : 主y + (偏移?.dy ?? 0)
+      key === primaryKey ? primaryX : primaryX + (offset?.dx ?? 0),
+      key === primaryKey ? primaryY : primaryY + (offset?.dy ?? 0)
     )
-    落点覆盖[标记] = { x, y }
+    dropOverlay[key] = { x, y }
   })
 }
 
-/** 清除落点 */
-export function 清除落点(标记: string): void {
-  delete 落点覆盖[标记]
+export function clearDropOverlay(key: string): void {
+  delete dropOverlay[key]
 }
 
-/** 读取落点 transform 样式 */
-export function 取落点样式(标记: string): string {
-  const p = 落点覆盖[标记]
+export function getDropOverlayStyle(key: string): string {
+  const p = dropOverlay[key]
   return p ? `translate(${p.x}px, ${p.y}px)` : ''
 }

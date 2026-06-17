@@ -1,16 +1,16 @@
 <template>
-  <div class="任务栏通知-包装" ref="通知容器">
-    <el-badge :value="未读数" :hidden="未读数 === 0" class="任务栏通知-徽章">
-      <button class="任务栏通知-按钮" type="button" title="通知" @click.stop="切换通知面板">
+  <div class="taskbar-notifications-wrapper" ref="notificationContainer">
+    <el-badge :value="unreadCount" :hidden="unreadCount === 0" class="taskbar-notifications-badge">
+      <button class="taskbar-notifications-button" type="button" title="通知" @click.stop="toggleNotificationPanel">
         <el-icon :size="18"><Bell /></el-icon>
       </button>
     </el-badge>
-    <div v-if="显示通知面板" class="任务栏通知-面板" @click.stop>
+    <div v-if="showNotificationPanel" class="taskbar-notifications-panel" @click.stop>
       <NotifyPanel
-        :显示="显示通知面板"
-        :列表="通知列表"
-        @标记已读="标记已读"
-        @全部已读="全部已读"
+        :show="showNotificationPanel"
+        :items="notificationList"
+        @mark-read="markRead"
+        @mark-all-read="markAllRead"
       />
     </div>
   </div>
@@ -18,33 +18,33 @@
 
 <script setup lang="ts">
 import { Bell } from '@element-plus/icons-vue'
-import { use通知 } from '@/shared/composables/use-notifications'
+import { useNotifications } from '@/shared/composables/use-notifications'
 import NotifyPanel from '@/shared/components/notification-panel.vue'
 
-const { 未读数, 通知列表, 显示通知面板, 切换通知面板, 标记已读, 全部已读 } = use通知()
+const { unreadCount, notificationList, showNotificationPanel, toggleNotificationPanel, markRead, markAllRead } = useNotifications()
 </script>
 
 <style scoped>
-.任务栏通知-包装 {
+.taskbar-notifications-wrapper {
   position: relative;
   display: flex;
   align-items: center;
 }
-.任务栏通知-徽章 :deep(.el-badge__content) {
+.taskbar-notifications-badge :deep(.el-badge__content) {
   font-size: 10px;
   height: 16px;
   line-height: 16px;
   padding: 0 5px;
   border: none;
 }
-.任务栏通知-按钮 {
+.taskbar-notifications-button {
   width: 28px; height: 28px; border: none; background: transparent;
   color: #dbeafe; cursor: pointer; border-radius: 4px;
   display: flex; align-items: center; justify-content: center;
   opacity: .82; transition: background .12s, opacity .12s;
 }
-.任务栏通知-按钮:hover { background: rgba(255,255,255,.08); opacity: 1; }
-.任务栏通知-面板 {
+.taskbar-notifications-button:hover { background: rgba(255,255,255,.08); opacity: 1; }
+.taskbar-notifications-panel {
   position: absolute;
   bottom: 44px;
   right: 0;

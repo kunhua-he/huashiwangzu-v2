@@ -35,7 +35,7 @@ async def export_docx(
 
     svc = DocxService()
     await svc.export(full_path, result["json_content"])
-    return ApiResponse(data={"message": "文档导出成功，已覆盖原文件"})
+    return ApiResponse(data={"message": "Document exported and overwritten successfully"})
 
 
 @router.post("/export/excel/{package_id}")
@@ -60,7 +60,7 @@ async def export_excel(
 
     svc = ExcelService()
     await svc.export(full_path, result["json_content"])
-    return ApiResponse(data={"message": "Excel 导出成功，已覆盖原文件"})
+    return ApiResponse(data={"message": "Excel exported and overwritten successfully"})
 
 
 @router.post("/export/pptx/{package_id}")
@@ -85,4 +85,4 @@ async def export_pptx(
 
     svc = PptxService()
     await svc.export(full_path, result["json_content"])
-    return ApiResponse(data={"message": "PPT 导出成功，已覆盖原文件"})
+    return ApiResponse(data={"message": "PPT exported and overwritten successfully"})

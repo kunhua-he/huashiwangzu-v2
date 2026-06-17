@@ -128,8 +128,8 @@ async def list_roles(
 ):
     return ApiResponse(data={
         "roles": [
-            {"key": "admin", "name": "管理员"},
-            {"key": "editor", "name": "编辑者"},
-            {"key": "viewer", "name": "查看者"},
+            {"key": "admin", "name": "Administrator"},
+            {"key": "editor", "name": "Editor"},
+            {"key": "viewer", "name": "Viewer"},
         ]
     })

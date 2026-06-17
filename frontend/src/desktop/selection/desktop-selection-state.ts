@@ -3,33 +3,33 @@
  */
 import { reactive, computed } from 'vue'
 
-interface 桌面选中状态 {
-  ids: string[]  // 格式: "app:应用标识" | "file:文件id"
+interface DesktopSelectionState {
+  ids: string[]
 }
 
-const 状态 = reactive<桌面选中状态>({ ids: [] })
+const state = reactive<DesktopSelectionState>({ ids: [] })
 
-export function 选中(id: string): void { 状态.ids = [id] }
+export function select(id: string): void { state.ids = [id] }
 
-export function 追加选中(id: string): void {
-  if (!状态.ids.includes(id)) 状态.ids.push(id)
+export function appendSelection(id: string): void {
+  if (!state.ids.includes(id)) state.ids.push(id)
 }
 
-export function 批量选中(ids: string[], append = false): void {
-  状态.ids = append ? [...new Set([...状态.ids, ...ids])] : ids
+export function setSelection(ids: string[], append = false): void {
+  state.ids = append ? [...new Set([...state.ids, ...ids])] : ids
 }
 
-export function 取消选中(): void { 状态.ids = [] }
+export function clearSelection(): void { state.ids = [] }
 
-export function 切换选中(id: string): void {
-  const idx = 状态.ids.indexOf(id)
-  idx >= 0 ? 状态.ids.splice(idx, 1) : 状态.ids.push(id)
+export function toggleSelection(id: string): void {
+  const idx = state.ids.indexOf(id)
+  idx >= 0 ? state.ids.splice(idx, 1) : state.ids.push(id)
 }
 
-export function 是否选中(id: string): boolean {
-  return 状态.ids.includes(id)
+export function isSelected(id: string): boolean {
+  return state.ids.includes(id)
 }
 
-export const 选中数量 = computed(() => 状态.ids.length)
-export const 选中列表 = computed(() => [...状态.ids])
-export const 是否多选 = computed(() => 状态.ids.length > 1)
+export const selectionCount = computed(() => state.ids.length)
+export const selectedIds = computed(() => [...state.ids])
+export const hasMultipleSelection = computed(() => state.ids.length > 1)

@@ -23,7 +23,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     # 统一捕获 HTTPException / StarletteHTTPException，确保所有路由里
-    # `raise HTTPException(...)` 都返回统一契约 {success, data, error}，
+    # 路由抛出的 HTTP 异常都返回统一契约 {success, data, error}，
     # 而不是 FastAPI 默认的 {"detail": "..."}。无条件注册，不依赖前端 dist 是否存在。
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):

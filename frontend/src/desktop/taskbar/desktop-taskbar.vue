@@ -1,7 +1,7 @@
 <template>
   <div class="desktop-taskbar">
     <div class="taskbar-start" @click="$emit('openLauncher')">
-      <AppIcon 图标="Start" :size="18" />
+      <AppIcon icon="Start" :size="18" />
       <span class="taskbar-start-label">开始</span>
       <span v-if="launcherOpen" class="taskbar-launcher-indicator" />
     </div>
@@ -14,13 +14,13 @@
         @click="$emit('switchWindow', item.id)"
         @mousedown.prevent
       >
-        <AppIcon :图标="item.icon" :size="16" />
+        <AppIcon :icon="item.icon" :size="16" />
         <span class="taskbar-window-title">{{ item.title }}</span>
       </div>
       <div v-if="!items.length" class="taskbar-empty">没有打开的窗口</div>
     </div>
     <div class="taskbar-right">
-      <TrayLauncher v-if="trayApps?.length" :应用列表="trayApps" @openApp="(id: string) => $emit('openTrayApp', id)" />
+      <TrayLauncher v-if="trayApps?.length" :app-list="trayApps" @openApp="(id: string) => $emit('openTrayApp', id)" />
       <div class="taskbar-clock">{{ clockText }}</div>
     </div>
   </div>

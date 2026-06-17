@@ -1,31 +1,31 @@
 import type { MenuItemConfig } from './use-context-menu'
 
-export function 构建知识库文件夹菜单(可写: boolean, 分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
+export function buildKnowledgeFolderMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
-    { 键: '刷新', 标签: '刷新', 图标: '↻' },
-    { 键: '上传到这里', 标签: '上传到这里', 图标: '⬆', 禁用: !可写 },
-    { 键: '新建文件夹', 标签: '新建文件夹', 图标: '+', 禁用: !可写 },
-    ...分隔项(),
-    { 键: '分析此目录', 标签: '分析此目录资料', 图标: '⚙' },
-    { 键: '查看进度', 标签: '查看分析进度', 图标: '◷' },
-    ...分隔项(),
-    { 键: '重命名', 标签: '重命名', 图标: '✎', 禁用: !可写 },
-    { 键: '删除', 标签: '删除', 图标: '🗑', 禁用: !可写, 危险: true },
+    { key: 'refresh', label: '刷新', icon: '↻' },
+    { key: 'upload-here', label: '上传到这里', icon: '⬆', disabled: !writable },
+    { key: 'create-folder', label: '新建文件夹', icon: '+', disabled: !writable },
+    ...separatorItems(),
+    { key: 'analyze-folder', label: '分析此目录资料', icon: '⚙' },
+    { key: 'view-progress', label: '查看分析进度', icon: '◷' },
+    ...separatorItems(),
+    { key: 'rename', label: '重命名', icon: '✎', disabled: !writable },
+    { key: 'delete', label: '删除', icon: '🗑', disabled: !writable, danger: true },
   ]
 }
 
-export function 构建知识库文件菜单(可写: boolean, 分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
+export function buildKnowledgeFileMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
-    { 键: '打开阅读', 标签: '打开阅读', 图标: '📖' },
-    { 键: '打开源文件', 标签: '打开源文件', 图标: '↗' },
-    { 键: '定位文件夹', 标签: '在文件夹中定位', 图标: '⌖' },
-    ...分隔项(),
-    { 键: '开始分析', 标签: '开始分析', 图标: '⚙' },
-    { 键: '重新分析', 标签: '重新分析', 图标: '⟳' },
-    { 键: '查看进度', 标签: '查看分析进度', 图标: '◷' },
-    { 键: '查看证据', 标签: '查看证据', 图标: '✓' },
-    ...分隔项(),
-    { 键: '重命名', 标签: '重命名', 图标: '✎', 禁用: !可写 },
-    { 键: '删除', 标签: '删除', 图标: '🗑', 禁用: !可写, 危险: true },
+    { key: 'open-reader', label: '打开阅读', icon: '📖' },
+    { key: 'open-source-file', label: '打开源文件', icon: '↗' },
+    { key: 'locate-folder', label: '在文件夹中定位', icon: '⌖' },
+    ...separatorItems(),
+    { key: 'start-analysis', label: '开始分析', icon: '⚙' },
+    { key: 'rerun-analysis', label: '重新分析', icon: '⟳' },
+    { key: 'view-progress', label: '查看分析进度', icon: '◷' },
+    { key: 'view-evidence', label: '查看证据', icon: '✓' },
+    ...separatorItems(),
+    { key: 'rename', label: '重命名', icon: '✎', disabled: !writable },
+    { key: 'delete', label: '删除', icon: '🗑', disabled: !writable, danger: true },
   ]
 }

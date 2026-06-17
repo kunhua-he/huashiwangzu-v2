@@ -7,64 +7,71 @@ import { useUserStore } from '@/platform/stores/user'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import type { Ref } from 'vue'
 
-export function useDesktopAppLoading(当前角色: Ref<string>) {
-  const 管理器 = useWindowManager()
-  const 用户Store = useUserStore()
-  const 桌面应用列表 = ref<AppRegistryEntry[]>([])
-  const 开始菜单应用列表 = ref<AppRegistryEntry[]>([])
-  const 右侧功能应用列表 = ref<AppRegistryEntry[]>([])
-  const 托盘应用列表 = ref<AppRegistryEntry[]>([])
-  const 注册表错误 = ref<string | null>(null)
-  const 加载中 = ref(true)
-  const 桌面容器引用 = ref<HTMLElement | null>(null)
-  let 尺寸观察器: ResizeObserver | null = null
+export function useDesktopAppLoading(currentRole: Ref<string>) {
+  const windowMgr = useWindowManager()
+  const userStore = useUserStore()
+  const desktopAppList = ref<AppRegistryEntry[]>([])
+  const launcherAppList = ref<AppRegistryEntry[]>([])
+  const sidebarAppList = ref<AppRegistryEntry[]>([])
+  const trayAppList = ref<AppRegistryEntry[]>([])
+  const registryError = ref<string | null>(null)
+  const loading = ref(true)
+  const desktopContainerRef = ref<HTMLElement | null>(null)
+  let resizeObserver: ResizeObserver | null = null
 
-  const 窗口同步 = createWindowStateSync(管理器.windows)
+  const windowSync = createWindowStateSync(windowMgr.windows)
 
-  function 更新容器尺寸() {
-    if (桌面容器引用.value) 管理器.setContainerSize(桌面容器引用.value.clientWidth, 桌面容器引用.value.clientHeight)
+  function updateContainerSize() {
+    if (desktopContainerRef.value) windowMgr.setContainerSize(desktopContainerRef.value.clientWidth, desktopContainerRef.value.clientHeight)
   }
 
-  async function 加载应用注册表() {
-    注册表错误.value = null
-    加载中.value = true
+  async function loadAppRegistryData() {
+    registryError.value = null
+    loading.value = true
     try {
-      const 全部应用 = await loadAppRegistry(当前角色.value)
-      桌面应用列表.value = 全部应用.filter(a => a.showOnDesktop)
-      开始菜单应用列表.value = 全部应用.filter(a => a.showInLauncher)
-      右侧功能应用列表.value = 全部应用.filter(a => a.showInSidebar)
-      托盘应用列表.value = 全部应用.filter(a => a.showInTray)
+      const allApps = await loadAppRegistry(currentRole.value)
+      desktopAppList.value = allApps.filter(a => a.showOnDesktop)
+      launcherAppList.value = allApps.filter(a => a.showInLauncher)
+      sidebarAppList.value = allApps.filter(a => a.showInSidebar)
+      trayAppList.value = allApps.filter(a => a.showInTray)
 
-      if (用户Store.userInfo?.userId) {
-        const 桌面状态 = await loadDesktopState()
-        管理器.restoreWindows(桌面状态.windows, 当前角色.value)
+      if (userStore.userInfo?.userId) {
+        const desktopState = await loadDesktopState()
+        windowMgr.restoreWindows(desktopState.windows, currentRole.value)
       }
 
-      更新容器尺寸()
-      尺寸观察器 = new ResizeObserver(更新容器尺寸)
-      if (桌面容器引用.value) 尺寸观察器.observe(桌面容器引用.value)
+      updateContainerSize()
+      resizeObserver = new ResizeObserver(updateContainerSize)
+      if (desktopContainerRef.value) resizeObserver.observe(desktopContainerRef.value)
     } catch (e: unknown) {
-      注册表错误.value = (e as {message?: string})?.message || '桌面应用清单加载失败，请联系管理员'
+      registryError.value = (e as {message?: string})?.message || '桌面应用清单加载失败，请联系管理员'
     } finally {
-      加载中.value = false
+      loading.value = false
       if (import.meta.env.DEV) {
         const { useDesktopAppHandleV2 } = await import('@/desktop/app-registry/desktop-app-handle-v2')
-        const 句柄V2 = useDesktopAppHandleV2()
-        ;(window as { __test__?: unknown }).__test__ = { 句柄V2 }
+        const handleV2 = useDesktopAppHandleV2()
+        ;(window as { __test__?: unknown }).__test__ = { handleV2 }
       }
     }
   }
 
-  function 重试加载注册表() { 加载应用注册表() }
+  function retryLoadRegistry() { loadAppRegistryData() }
 
-  onMounted(加载应用注册表)
+  onMounted(loadAppRegistryData)
   onUnmounted(() => {
-    窗口同步.stopSync()
-    尺寸观察器?.disconnect()
+    windowSync.stopSync()
+    resizeObserver?.disconnect()
   })
 
   return {
-    桌面应用列表, 开始菜单应用列表, 右侧功能应用列表, 托盘应用列表,
-    注册表错误, 加载中, 桌面容器引用, 重试加载注册表, 更新容器尺寸,
+    desktopAppList,
+    launcherAppList,
+    sidebarAppList,
+    trayAppList,
+    registryError,
+    loading,
+    desktopContainerRef,
+    retryLoadRegistry,
+    updateContainerSize,
   }
 }

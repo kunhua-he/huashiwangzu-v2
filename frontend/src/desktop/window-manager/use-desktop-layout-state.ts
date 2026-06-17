@@ -1,13 +1,13 @@
 import { computed, ref } from 'vue'
 
-const 侧栏折叠 = ref(false)
+const sidebarCollapsed = ref(false)
 
-export function use桌面布局状态() {
-  function 切换侧栏折叠() { 侧栏折叠.value = !侧栏折叠.value }
-  function 设置侧栏折叠(值: boolean) { 侧栏折叠.value = 值 }
+export function useDesktopLayoutState() {
+  function toggleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value }
+  function setSidebarCollapsed(v: boolean) { sidebarCollapsed.value = v }
   return {
-    侧栏已折叠: computed(() => 侧栏折叠.value),
-    切换侧栏折叠,
-    设置侧栏折叠,
+    sidebarCollapsed: computed(() => sidebarCollapsed.value),
+    toggleSidebar,
+    setSidebarCollapsed,
   }
 }

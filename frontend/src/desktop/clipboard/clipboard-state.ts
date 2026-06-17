@@ -11,55 +11,46 @@ import { reactive, computed } from 'vue'
 
 export interface ClipboardItem {
   id: number
-  type: '文件' | '文件夹'
-  名称: string
-  /** 复制时的原始路径（如 /桌面/文件夹/文件.txt），用于计算粘贴后的新路径 */
-  原始路径?: string
+  type: 'file' | 'folder'
+  name: string
+  originalPath?: string
 }
 
-interface 剪贴板状态 {
+interface ClipboardState {
   type: 'copy' | 'cut' | null
   items: ClipboardItem[]
 }
 
-const 状态 = reactive<剪贴板状态>({
+const state = reactive<ClipboardState>({
   type: null,
   items: [],
 })
 
-/** 设置剪贴板内容为复制 */
-export function 复制(项: ClipboardItem[]): void {
-  状态.type = 'copy'
-  状态.items = 项
+export function copyItems(items: ClipboardItem[]): void {
+  state.type = 'copy'
+  state.items = items
 }
 
-/** 设置剪贴板内容为剪切 */
-export function 剪切(项: ClipboardItem[]): void {
-  状态.type = 'cut'
-  状态.items = 项
+export function cutItems(items: ClipboardItem[]): void {
+  state.type = 'cut'
+  state.items = items
 }
 
-/** 清空剪贴板 */
-export function 清空(): void {
-  状态.type = null
-  状态.items = []
+export function clearClipboard(): void {
+  state.type = null
+  state.items = []
 }
 
-/** 剪贴板hasContent */
-export const hasContent = computed(() => 状态.type !== null && 状态.items.length > 0)
+export const hasContent = computed(() => state.type !== null && state.items.length > 0)
 
-/** 当前剪贴板类型 */
-export const 当前类型 = computed(() => 状态.type)
+export const currentClipboardType = computed(() => state.type)
 
-/** 当前剪贴板条目 */
-export const 当前条目 = computed(() => 状态.items)
+export const currentClipboardItems = computed(() => state.items)
 
-/** 判断指定 id 的条目是否在剪贴板中（用于剪切半透明视觉反馈） */
-export function 是否为剪切项(id: number): boolean {
-  return 状态.type === 'cut' && 状态.items.some(i => i.id === id)
+export function isCutItem(id: number): boolean {
+  return state.type === 'cut' && state.items.some(i => i.id === id)
 }
 
-/** 获取剪贴板条目 id 列表 */
-export function 获取剪贴板ID列表(): number[] {
-  return 状态.items.map(i => i.id)
+export function getClipboardIdList(): number[] {
+  return state.items.map(i => i.id)
 }

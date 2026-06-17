@@ -1,23 +1,23 @@
 <template>
   <Teleport to="body">
-    <div v-if="显示" class="v40-ctx-menu" :style="{ left: X + 'px', top: Y + 'px' }" @contextmenu.prevent @mouseenter="保持子菜单展开()" @mouseleave="关闭子菜单()">
-      <template v-for="项 in 可视菜单项" :key="项.键">
-        <div v-if="项.分隔符" class="v40-ctx-sep" />
-        <div v-else class="v40-ctx-item" :class="{ 'is-disabled': 项.禁用, 'is-danger': 项.危险, 'has-children': 项.子项, 'is-open': 活跃子菜单?.父键 === 项.键 }"
-          @click.stop="项.子项 ? 展开子菜单($event, 项.键, 项.子项) : 处理选中(项)"
-          @mouseenter="项.子项 ? 展开子菜单($event, 项.键, 项.子项) : 关闭子菜单()">
-          <span v-if="项.图标" class="v40-ctx-icon">{{ 项.图标 }}</span>
-          <span class="v40-ctx-label">{{ 项.标签 }}</span>
-          <span v-if="项.子项" class="v40-ctx-arrow">›</span>
+    <div v-if="visible" class="v40-ctx-menu" :style="{ left: x + 'px', top: y + 'px' }" @contextmenu.prevent @mouseenter="keepSubmenuOpen()" @mouseleave="closeSubmenu()">
+      <template v-for="item in visibleMenuItems" :key="item.key">
+        <div v-if="item.separator" class="v40-ctx-sep" />
+        <div v-else class="v40-ctx-item" :class="{ 'is-disabled': item.disabled, 'is-danger': item.danger, 'has-children': item.children, 'is-open': activeSubmenu?.parentKey === item.key }"
+          @click.stop="item.children ? openSubmenu($event, item.key, item.children) : handleSelect(item)"
+          @mouseenter="item.children ? openSubmenu($event, item.key, item.children) : closeSubmenu()">
+          <span v-if="item.icon" class="v40-ctx-icon">{{ item.icon }}</span>
+          <span class="v40-ctx-label">{{ item.label }}</span>
+          <span v-if="item.children" class="v40-ctx-arrow">›</span>
         </div>
       </template>
     </div>
-    <div v-if="活跃子菜单" class="v40-ctx-sub" :style="{ left: 活跃子菜单.X + 'px', top: 活跃子菜单.Y + 'px' }" @click.stop @mouseenter="保持子菜单展开()" @mouseleave="关闭子菜单()">
-      <template v-for="子 in 活跃子菜单.项" :key="子.键">
-        <div v-if="子.分隔符" class="v40-ctx-sep" />
-        <div v-else class="v40-ctx-item" :class="{ 'is-disabled': 子.禁用, 'is-danger': 子.危险 }" @click.stop="处理选中(子)">
-          <span v-if="子.图标" class="v40-ctx-icon">{{ 子.图标 }}</span>
-          <span class="v40-ctx-label">{{ 子.标签 }}</span>
+    <div v-if="activeSubmenu" class="v40-ctx-sub" :style="{ left: activeSubmenu.x + 'px', top: activeSubmenu.y + 'px' }" @click.stop @mouseenter="keepSubmenuOpen()" @mouseleave="closeSubmenu()">
+      <template v-for="child in activeSubmenu.items" :key="child.key">
+        <div v-if="child.separator" class="v40-ctx-sep" />
+        <div v-else class="v40-ctx-item" :class="{ 'is-disabled': child.disabled, 'is-danger': child.danger }" @click.stop="handleSelect(child)">
+          <span v-if="child.icon" class="v40-ctx-icon">{{ child.icon }}</span>
+          <span class="v40-ctx-label">{{ child.label }}</span>
         </div>
       </template>
     </div>
@@ -29,27 +29,27 @@ import { computed } from 'vue'
 import type { MenuItemConfig } from './use-context-menu'
 
 const props = defineProps<{
-  显示: boolean
-  X: number
-  Y: number
-  上下文类型?: string | null
-  当前项: MenuItemConfig[]
-  活跃子菜单: { 父键: string; 项: MenuItemConfig[]; X: number; Y: number } | null
-  展开子菜单: (e: MouseEvent, 父键: string, 项: MenuItemConfig[]) => void
-  关闭子菜单: () => void
-  保持子菜单展开: () => void
+  visible: boolean
+  x: number
+  y: number
+  contextType?: string | null
+  currentItems: MenuItemConfig[]
+  activeSubmenu: { parentKey: string; items: MenuItemConfig[]; x: number; y: number } | null
+  openSubmenu: (e: MouseEvent, parentKey: string, items: MenuItemConfig[]) => void
+  closeSubmenu: () => void
+  keepSubmenuOpen: () => void
 }>()
 
-const emit = defineEmits<{ select: [键: string] }>()
+const emit = defineEmits<{ select: [key: string] }>()
 
-const 可视菜单项 = computed(() => {
-  const 列表 = props.当前项
-  return 列表.filter((项, i) => !项.分隔符 || (i > 0 && i < 列表.length - 1 && !列表[i - 1].分隔符 && !列表[i + 1].分隔符))
+const visibleMenuItems = computed(() => {
+  const list = props.currentItems
+  return list.filter((item, i) => !item.separator || (i > 0 && i < list.length - 1 && !list[i - 1].separator && !list[i + 1].separator))
 })
 
-function 处理选中(项: MenuItemConfig) {
-  if (项.禁用 || 项.子项) return
-  emit('select', 项.键)
+function handleSelect(item: MenuItemConfig) {
+  if (item.disabled || item.children) return
+  emit('select', item.key)
 }
 </script>
 

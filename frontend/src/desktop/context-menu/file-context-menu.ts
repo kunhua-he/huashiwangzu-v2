@@ -1,67 +1,64 @@
 import type { MenuItemConfig } from './use-context-menu'
 import { hasContent } from '@/desktop/clipboard/clipboard-state'
 
-function 查看子项(分隔项: () => MenuItemConfig[]) {
-  return [{ 键: '查看_列表', 标签: '列表', 图标: '≣' }, { 键: '查看_图标', 标签: '图标', 图标: '▦' }]
+function viewSubItems(separatorItems: () => MenuItemConfig[]) {
+  return [{ key: 'view-list', label: '列表', icon: '≣' }, { key: 'view-icons', label: '图标', icon: '▦' }]
 }
 
-export function 构建文件菜单(可写: boolean, 分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
+export function buildFileMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
-    { 键: '打开', 标签: '打开', 图标: '↗' },
-    { 键: '打开方式', 标签: '打开方式', 图标: '⋯', 子项: [{ 键: '预览', 标签: '窗口预览', 图标: '🗔' }, { 键: '下载', 标签: '下载到本地', 图标: '⬇' }] },
-    ...分隔项(),
-    ...(可写 ? [{ 键: '剪切', 标签: '剪切', 图标: '✂' }, { 键: '复制', 标签: '复制', 图标: '📋' }] : []),
-    { 键: '复制路径', 标签: '复制路径', 图标: '⎘' },
-    { 键: '详情', 标签: '属性', 图标: 'ⓘ' },
-    ...(可写 ? [...分隔项(), { 键: '重命名', 标签: '重命名', 图标: '✎' }, { 键: '删除', 标签: '删除', 图标: '🗑', 危险: true }] : []),
+    { key: 'open', label: '打开', icon: '↗' },
+    { key: 'open-with', label: '打开方式', icon: '⋯', children: [{ key: 'preview', label: '窗口预览', icon: '🗔' }, { key: 'download', label: '下载到本地', icon: '⬇' }] },
+    ...separatorItems(),
+    ...(writable ? [{ key: 'cut', label: '剪切', icon: '✂' }, { key: 'copy', label: '复制', icon: '📋' }] : []),
+    { key: 'copy-path', label: '复制路径', icon: '⎘' },
+    { key: 'details', label: '属性', icon: 'ⓘ' },
+    ...(writable ? [...separatorItems(), { key: 'rename', label: '重命名', icon: '✎' }, { key: 'delete', label: '删除', icon: '🗑', danger: true }] : []),
   ]
 }
 
-export function 构建文件夹菜单(可写: boolean, 分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
+export function buildFolderMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
-    { 键: '打开', 标签: '打开', 图标: '📂' },
-    { 键: '上传文件到此处', 标签: '上传文件', 图标: '⬆', 禁用: !可写 },
-    { 键: '在此新建文件夹', 标签: '新建文件夹', 图标: '+', 禁用: !可写 },
-    ...分隔项(),
-    ...(可写 ? [{ 键: '剪切', 标签: '剪切', 图标: '✂' }, { 键: '复制', 标签: '复制', 图标: '📋' }] : []),
-    { 键: '复制路径', 标签: '复制路径', 图标: '⎘' },
-    ...(可写 && hasContent.value ? [{
-      ...分隔项(),
-      键: '粘贴到此处', 标签: '粘贴', 图标: '📌',
-    }].flat() : []),
-    ...(可写 ? [...分隔项(), { 键: '重命名', 标签: '重命名', 图标: '✎' }, { 键: '删除', 标签: '删除', 图标: '🗑', 危险: true }] : []),
+    { key: 'open', label: '打开', icon: '📂' },
+    { key: 'upload-here', label: '上传文件', icon: '⬆', disabled: !writable },
+    { key: 'create-folder-here', label: '新建文件夹', icon: '+', disabled: !writable },
+    ...separatorItems(),
+    ...(writable ? [{ key: 'cut', label: '剪切', icon: '✂' }, { key: 'copy', label: '复制', icon: '📋' }] : []),
+    { key: 'copy-path', label: '复制路径', icon: '⎘' },
+    ...(writable && hasContent.value ? [...separatorItems(), { key: 'paste-here', label: '粘贴', icon: '📌' }] : []),
+    ...(writable ? [...separatorItems(), { key: 'rename', label: '重命名', icon: '✎' }, { key: 'delete', label: '删除', icon: '🗑', danger: true }] : []),
   ]
 }
 
-export function 构建桌面空白菜单(可写: boolean, 分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
-  const 排序子项 = [{ 键: '排序_名称', 标签: '名称' }, { 键: '排序_类型', 标签: '项目类型' }, { 键: '排序_日期', 标签: '修改日期' }]
+export function buildDesktopBlankMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
+  const sortSubItems = [{ key: 'sort-name', label: '名称' }, { key: 'sort-type', label: '项目类型' }, { key: 'sort-date', label: '修改日期' }]
   return [
-    { 键: '查看', 标签: '查看', 图标: '⊞', 子项: 查看子项(分隔项) },
-    { 键: '排序方式', 标签: '排序方式', 图标: '⇅', 子项: 排序子项 },
-    ...(可写 && hasContent.value ? [{ 键: '粘贴', 标签: '粘贴', 图标: '📌' }, ...分隔项()] : []),
-    { 键: '上传文件', 标签: '上传文件', 图标: '⬆', 禁用: !可写 },
-    { 键: '新建文件夹', 标签: '新建文件夹', 图标: '+', 禁用: !可写 },
-    { 键: '刷新', 标签: '刷新', 图标: '↻' },
+    { key: 'view', label: '查看', icon: '⊞', children: viewSubItems(separatorItems) },
+    { key: 'sort-by', label: '排序方式', icon: '⇅', children: sortSubItems },
+    ...(writable && hasContent.value ? [{ key: 'paste', label: '粘贴', icon: '📌' }, ...separatorItems()] : []),
+    { key: 'upload-file', label: '上传文件', icon: '⬆', disabled: !writable },
+    { key: 'create-folder', label: '新建文件夹', icon: '+', disabled: !writable },
+    { key: 'refresh', label: '刷新', icon: '↻' },
   ]
 }
 
-export function 构建文件夹树节点菜单(可写: boolean, 分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
+export function buildFolderTreeNodeMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
-    { 键: '打开', 标签: '打开', 图标: '📂' },
-    { 键: '上传文件到此处', 标签: '上传文件', 图标: '⬆', 禁用: !可写 },
-    { 键: '在此新建文件夹', 标签: '新建文件夹', 图标: '+', 禁用: !可写 },
-    ...分隔项(),
-    ...(可写 ? [{ 键: '剪切', 标签: '剪切', 图标: '✂' }, { 键: '复制', 标签: '复制', 图标: '📋' }] : []),
-    { 键: '复制路径', 标签: '复制路径', 图标: '⎘' },
-    ...(可写 && hasContent.value ? [{ 键: '粘贴到此处', 标签: '粘贴', 图标: '📌' }] : []),
-    ...(可写 ? [...分隔项(), { 键: '重命名', 标签: '重命名', 图标: '✎' }, { 键: '删除', 标签: '删除', 图标: '🗑', 危险: true }] : []),
+    { key: 'open', label: '打开', icon: '📂' },
+    { key: 'upload-here', label: '上传文件', icon: '⬆', disabled: !writable },
+    { key: 'create-folder-here', label: '新建文件夹', icon: '+', disabled: !writable },
+    ...separatorItems(),
+    ...(writable ? [{ key: 'cut', label: '剪切', icon: '✂' }, { key: 'copy', label: '复制', icon: '📋' }] : []),
+    { key: 'copy-path', label: '复制路径', icon: '⎘' },
+    ...(writable && hasContent.value ? [{ key: 'paste-here', label: '粘贴', icon: '📌' }] : []),
+    ...(writable ? [...separatorItems(), { key: 'rename', label: '重命名', icon: '✎' }, { key: 'delete', label: '删除', icon: '🗑', danger: true }] : []),
   ]
 }
 
-export function 构建回收站菜单(可写 = false, 分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
-  return [{ 键: '打开回收站', 标签: '打开回收站', 图标: '🗑' }, ...(可写 ? [...分隔项(), { 键: '清空回收站', 标签: '清空回收站', 图标: '🧹', 危险: true }] : [])]
+export function buildRecycleBinMenu(writable = false, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
+  return [{ key: 'open-recycle-bin', label: '打开回收站', icon: '🗑' }, ...(writable ? [...separatorItems(), { key: 'empty-recycle-bin', label: '清空回收站', icon: '🧹', danger: true }] : [])]
 }
 
-export function 构建回收站项菜单(可写: boolean): MenuItemConfig[] {
-  return 可写 ? [{ 键: '还原', 标签: '还原', 图标: '↩' }, { 键: '彻底删除', 标签: '彻底删除', 图标: '🗑', 危险: true }] : []
+export function buildRecycleBinItemMenu(writable: boolean): MenuItemConfig[] {
+  return writable ? [{ key: 'restore', label: '还原', icon: '↩' }, { key: 'delete-permanently', label: '彻底删除', icon: '🗑', danger: true }] : []
 }

@@ -1,41 +1,36 @@
 import type { MenuItemConfig } from './use-context-menu'
 
-/**
- * 桌面壳右键菜单模板
- * 新增应用时在这里加一项即可，不用改 if/else 链
- */
-const 打开项 = (标签: string, 图标: string): MenuItemConfig => ({ 键: '__openApp__', 标签, 图标 })
-const 属性项: MenuItemConfig = { 键: '属性', 标签: '查看信息', 图标: 'ⓘ' }
+const openItem = (label: string, icon: string): MenuItemConfig => ({ key: 'open-app', label, icon })
+const propertyItem: MenuItemConfig = { key: 'properties', label: '查看信息', icon: 'ⓘ' }
 
-const 图标菜单配置: Record<string, (可写?: boolean, 分隔项?: () => MenuItemConfig[], 构建回收站菜单?: (可写?: boolean) => MenuItemConfig[]) => MenuItemConfig[]> = {
-  recycle: (可写, _分隔项, 构建回收站菜单) => 构建回收站菜单!(可写),
-  desktop: (可写, 分隔项) => [
-    打开项('打开', '📂'),
-    ...分隔项!(),
-    { 键: '上传文件', 标签: '添加文件', 图标: '⬆', 禁用: !可写 },
-    { 键: '新建文件夹', 标签: '添加文件夹', 图标: '📁', 禁用: !可写 },
+const iconMenuConfig: Record<string, (writable?: boolean, separatorItems?: () => MenuItemConfig[], buildRecycleMenu?: (writable?: boolean) => MenuItemConfig[]) => MenuItemConfig[]> = {
+  recycle: (writable, _separatorItems, buildRecycleMenu) => buildRecycleMenu!(writable),
+  desktop: (writable, separatorItems) => [
+    openItem('打开', '📂'),
+    ...separatorItems!(),
+    { key: 'upload-file', label: '添加文件', icon: '⬆', disabled: !writable },
+    { key: 'create-folder', label: '添加文件夹', icon: '📁', disabled: !writable },
   ],
-  knowledge: (_可写, 分隔项) => [打开项('打开', '📚'), ...分隔项!(), 属性项],
-  agent: (_可写, 分隔项) => [打开项('打开', '🤖'), ...分隔项!(), 属性项],
-  settings: (_可写, 分隔项) => [打开项('打开', '⚙️'), ...分隔项!(), 属性项],
-  tasks: (_可写, 分隔项) => [打开项('打开', '✅'), ...分隔项!(), 属性项],
+  knowledge: (_writable, separatorItems) => [openItem('打开', '📚'), ...separatorItems!(), propertyItem],
+  agent: (_writable, separatorItems) => [openItem('打开', '🤖'), ...separatorItems!(), propertyItem],
+  settings: (_writable, separatorItems) => [openItem('打开', '⚙️'), ...separatorItems!(), propertyItem],
+  tasks: (_writable, separatorItems) => [openItem('打开', '✅'), ...separatorItems!(), propertyItem],
 }
 
-export function 构建桌面壳空白菜单(分隔项: () => MenuItemConfig[]): MenuItemConfig[] {
+export function buildDesktopShellBlankMenu(separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
-    { 键: '查看', 标签: '查看', 图标: '⊞', 子项: [{ 键: '查看_中图标', 标签: '中等图标', 图标: '▦' }, { 键: '查看_自动排列', 标签: '自动排列图标', 图标: '⋮' }, { 键: '查看_对齐网格', 标签: '对齐网格', 图标: '⌗' }] },
-    { 键: '排序方式', 标签: '排序方式', 图标: '⇅', 子项: [{ 键: '排序_名称', 标签: '名称' }, { 键: '排序_类型', 标签: '项目类型' }, { 键: '排序_日期', 标签: '修改日期' }] },
-    { 键: '新建', 标签: '添加到桌面', 图标: '+', 子项: [{ 键: '上传文件', 标签: '添加文件', 图标: '⬆' }, { 键: '新建文件夹', 标签: '添加文件夹', 图标: '📁' }] },
-    { 键: '刷新桌面', 标签: '刷新桌面', 图标: '↻' },
-    ...分隔项(),
-    { 键: 'openFile管理', 标签: 'openFile管理', 图标: '📂' },
-    { 键: '打开回收站', 标签: '打开回收站', 图标: '🗑' },
-    ...分隔项(),
-    { 键: '打开开始菜单', 标签: '打开开始菜单', 图标: '⊞' },
+    { key: 'view', label: '查看', icon: '⊞', children: [{ key: 'view-medium-icons', label: '中等图标', icon: '▦' }, { key: 'view-auto-arrange', label: '自动排列图标', icon: '⋮' }, { key: 'view-align-grid', label: '对齐网格', icon: '⌗' }] },
+    { key: 'sort-by', label: '排序方式', icon: '⇅', children: [{ key: 'sort-name', label: '名称' }, { key: 'sort-type', label: '项目类型' }, { key: 'sort-date', label: '修改日期' }] },
+    { key: 'new', label: '添加到桌面', icon: '+', children: [{ key: 'upload-file', label: '添加文件', icon: '⬆' }, { key: 'create-folder', label: '添加文件夹', icon: '📁' }] },
+    { key: 'refresh-desktop', label: '刷新桌面', icon: '↻' },
+    ...separatorItems(),
+    { key: 'open-file-manager', label: 'openFile管理', icon: '📂' },
+    { key: 'open-recycle-bin', label: '打开回收站', icon: '🗑' },
+    ...separatorItems(),
+    { key: 'open-start-menu', label: '打开开始菜单', icon: '⊞' },
   ]
 }
 
-/** 查表构建应用图标右键菜单，新增应用只需在 图标菜单配置 加一项 */
-export function 构建桌面壳图标菜单(应用标识: string, 可写?: boolean, 分隔项?: () => MenuItemConfig[], 构建回收站菜单?: (可写?: boolean) => MenuItemConfig[]): MenuItemConfig[] {
-  return 图标菜单配置[应用标识]?.(可写, 分隔项, 构建回收站菜单) ?? []
+export function buildDesktopShellIconMenu(appKey: string, writable?: boolean, separatorItems?: () => MenuItemConfig[], buildRecycleMenu?: (writable?: boolean) => MenuItemConfig[]): MenuItemConfig[] {
+  return iconMenuConfig[appKey]?.(writable, separatorItems, buildRecycleMenu) ?? []
 }

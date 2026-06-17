@@ -2,100 +2,123 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import api from '@/shared/api'
 import type { NotificationItem } from '@/shared/api/types'
 
-async function 获取通知列表() {
+interface NotificationListResponse {
+  success: boolean
+  data: {
+    list: NotificationItem[]
+  }
+}
+
+interface UnreadCountResponse {
+  success: boolean
+  data: {
+    unread_count: number
+  }
+}
+
+interface MutationResponse {
+  success: boolean
+}
+
+async function fetchNotificationList() {
   const res = await api.get('/notifications')
-  return res.data
+  return res.data as NotificationListResponse
 }
-async function 获取未读数() {
+async function fetchUnreadCount() {
   const res = await api.get('/notifications/unread-count')
-  return res.data
+  return res.data as UnreadCountResponse
 }
-async function 标记已读请求(id: number) {
+async function markReadRequest(id: number) {
   const res = await api.post(`/notifications/${id}/read`)
-  return res.data
+  return res.data as MutationResponse
 }
-async function 全部已读请求() {
+async function markAllReadRequest() {
   const res = await api.post('/notifications/read-all')
-  return res.data
+  return res.data as MutationResponse
 }
 
-export function use通知(容器选择器 = '.任务栏通知-包装') {
-  const 未读数 = ref(0)
-  const 通知列表 = ref<NotificationItem[]>([])
-  const 显示通知面板 = ref(false)
+export function useNotifications(containerSelector = '.taskbar-notifications-wrapper') {
+  const unreadCount = ref(0)
+  const notificationList = ref<NotificationItem[]>([])
+  const showNotificationPanel = ref(false)
 
-  async function 加载未读数() {
+  async function loadUnreadCount() {
     try {
-      const res = await 获取未读数()
+      const res = await fetchUnreadCount()
       if (res.success) {
-        未读数.value = res.data.未读数
+        unreadCount.value = res.data.unread_count
       }
     } catch {
-      未读数.value = 0
+      unreadCount.value = 0
     }
   }
 
-  async function 加载通知列表() {
+  async function loadNotificationList() {
     try {
-      const res = await 获取通知列表()
+      const res = await fetchNotificationList()
       if (res.success) {
-        通知列表.value = res.data.列表
+        notificationList.value = res.data.list
       }
     } catch {
-      通知列表.value = []
+      notificationList.value = []
     }
   }
 
-  async function 标记已读(id: number) {
+  async function markRead(id: number) {
     try {
-      const res = await 标记已读请求(id)
+      const res = await markReadRequest(id)
       if (res.success) {
-        const 项 = 通知列表.value.find((n) => n.id === id)
-        if (项) 项.是否已读 = true
-        未读数.value = Math.max(0, 未读数.value - 1)
+        const item = notificationList.value.find((n) => n.id === id)
+        if (item) item.is_read = true
+        unreadCount.value = Math.max(0, unreadCount.value - 1)
       }
     } catch {
-      // 静默失败
+      console.warn('[Notifications] Failed to mark notification as read.')
     }
   }
 
-  async function 全部已读() {
+  async function markAllRead() {
     try {
-      const res = await 全部已读请求()
+      const res = await markAllReadRequest()
       if (res.success) {
-        通知列表.value.forEach((n) => { n.是否已读 = true })
-        未读数.value = 0
+        notificationList.value.forEach((n) => { n.is_read = true })
+        unreadCount.value = 0
       }
     } catch {
-      // 静默失败
+      console.warn('[Notifications] Failed to mark all notifications as read.')
     }
   }
 
-  function 切换通知面板() {
-    显示通知面板.value = !显示通知面板.value
-    if (显示通知面板.value) {
-      加载通知列表()
+  function toggleNotificationPanel() {
+    showNotificationPanel.value = !showNotificationPanel.value
+    if (showNotificationPanel.value) {
+      loadNotificationList()
     }
   }
 
-  function 点击外部关闭(e: MouseEvent) {
-    const 目标 = e.target as HTMLElement
-    if (!目标.closest(容器选择器)) {
-      显示通知面板.value = false
+  function handleClickOutside(e: MouseEvent) {
+    const target = e.target as HTMLElement
+    if (!target.closest(containerSelector)) {
+      showNotificationPanel.value = false
     }
   }
 
   onMounted(() => {
-    加载未读数()
-    document.addEventListener('click', 点击外部关闭)
+    loadUnreadCount()
+    document.addEventListener('click', handleClickOutside)
   })
 
   onUnmounted(() => {
-    document.removeEventListener('click', 点击外部关闭)
+    document.removeEventListener('click', handleClickOutside)
   })
 
   return {
-    未读数, 通知列表, 显示通知面板,
-    切换通知面板, 加载未读数, 标记已读, 全部已读,
+    unreadCount,
+    notificationList,
+    showNotificationPanel,
+    toggleNotificationPanel,
+    loadUnreadCount,
+    markRead,
+    markAllRead,
   }
 }

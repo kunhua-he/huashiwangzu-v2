@@ -1,38 +1,38 @@
 <template>
-  <div class="桌面图标网格">
+  <div class="desktop-icon-grid">
     <div
-      v-for="应用 in 应用列表"
-      :key="应用.appKey"
-      class="桌面图标项 桌面应用图标项"
-      :class="{ '桌面图标项-选中': 是否选中(`app:${应用.appKey}`) }"
-      :data-选中标记="`app:${应用.appKey}`"
-      @click="处理应用点击(应用.appKey, $event)"
-      @dblclick="$emit('openApp', 应用.appKey)"
-      @contextmenu.prevent.stop="$emit('右键应用', 应用.appKey, $event)"
+      v-for="app in appList"
+      :key="app.appKey"
+      class="desktop-icon-item desktop-app-icon-item"
+      :class="{ 'desktop-icon-item-selected': isSelected(`app:${app.appKey}`) }"
+      :data-selection-key="`app:${app.appKey}`"
+      @click="handleAppClick(app.appKey, $event)"
+      @dblclick="$emit('openApp', app.appKey)"
+      @contextmenu.prevent.stop="$emit('app-context-menu', app.appKey, $event)"
     >
-      <div class="桌面图标图像">
-        <AppIcon :图标="应用.icon" :size="54" />
+      <div class="desktop-icon-image">
+        <AppIcon :icon="app.icon" :size="54" />
       </div>
-      <span class="桌面图标标签">{{ 应用.appName }}</span>
+      <span class="desktop-icon-label">{{ app.appName }}</span>
     </div>
     <div
-      v-for="文件 in 文件列表"
-      :key="`file-${文件.id}`"
-      class="桌面图标项 桌面文件图标项"
+      v-for="file in fileList"
+      :key="`file-${file.id}`"
+      class="desktop-icon-item desktop-file-icon-item"
       :class="{
-        '桌面图标项-选中': 是否选中(`file:${文件.id}`),
-        '桌面图标项-拖拽悬停': 文件.is_folder && 当前拖拽悬停id === `${文件.id}`,
+        'desktop-icon-item-selected': isSelected(`file:${file.id}`),
+        'desktop-icon-item-drag-over': file.is_folder && currentDragOverId === `${file.id}`,
       }"
-      :data-选中标记="`file:${文件.id}`"
-      :data-是文件夹="文件.is_folder ? '' : undefined"
-      @mousedown="处理文件拖拽开始(文件, $event)"
-      @click="处理文件点击(文件, $event)"
-      @dblclick="$emit('openFile', 文件)"
+      :data-selection-key="`file:${file.id}`"
+      :data-folder="file.is_folder ? '' : undefined"
+      @mousedown="handleFileDragStart(file, $event)"
+      @click="handleFileClick(file, $event)"
+      @dblclick="$emit('openFile', file)"
     >
-      <div class="桌面图标图像">
-        <FileVisualIcon :类型="文件.is_folder || !文件.format ? '文件夹' : '文件'" :扩展名="文件.format || ''" :size="48" />
+      <div class="desktop-icon-image">
+        <FileVisualIcon :kind="file.is_folder || !file.format ? 'folder' : 'file'" :extension="file.format || ''" :size="48" />
       </div>
-      <span class="桌面图标标签">{{ 显示文件名(文件) }}</span>
+      <span class="desktop-icon-label">{{ getFileName(file) }}</span>
     </div>
   </div>
 </template>
@@ -42,66 +42,65 @@ import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import type { FileEntry } from '@/shared/api/types'
 import AppIcon from '@/desktop/components/app-icon.vue'
 import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
-import { 是否选中, 选中, 追加选中, 取消选中, 选中列表 } from '@/desktop/selection/desktop-selection-state'
-import { 开始拖拽, 拖拽状态, 进入文件夹, 离开文件夹, 结束拖拽 } from '@/desktop/drag-drop/drag-state'
-import { 取落点样式, 落点覆盖 } from '@/desktop/drag-drop/drag-tool'
+import { isSelected, select, appendSelection, clearSelection, selectedIds } from '@/desktop/selection/desktop-selection-state'
+import { startDrag, dragState } from '@/desktop/drag-drop/drag-state'
+import { getDropOverlayStyle, dropOverlay } from '@/desktop/drag-drop/drag-tool'
 import { computed, onMounted } from 'vue'
-import { 格式化文件displayName } from '@/shared/files/display-name'
+import { formatFileDisplayName } from '@/shared/files/display-name'
 import './desktop-icon-grid.css'
 
-const 当前拖拽悬停id = computed(() => 拖拽状态.dragOverId ? `file:${拖拽状态.dragOverId}` : null)
+const currentDragOverId = computed(() => dragState.dragOverId ? `file:${dragState.dragOverId}` : null)
 
-/* 落点变换：图标渲染完后应用 transform 偏移 */
 onMounted(() => {
   requestAnimationFrame(() => {
-    document.querySelectorAll('[data-选中标记]').forEach(el => {
-      const 标记 = el.getAttribute('data-选中标记')
-      if (标记 && 落点覆盖[标记]) {
-        (el as HTMLElement).style.transform = 取落点样式(标记)
+    document.querySelectorAll('[data-selection-key]').forEach(el => {
+      const key = el.getAttribute('data-selection-key')
+      if (key && dropOverlay[key]) {
+        (el as HTMLElement).style.transform = getDropOverlayStyle(key)
       }
     })
   })
 })
 
 defineProps<{
-  应用列表: AppRegistryEntry[]
-  文件列表?: FileEntry[]
+  appList: AppRegistryEntry[]
+  fileList?: FileEntry[]
 }>()
 
 defineEmits<{
-  (e: 'openApp', 应用标识: string): void
-  (e: 'openFile', 文件: FileEntry): void
-  (e: '右键应用', 应用标识: string, event: MouseEvent): void
+  (e: 'openApp', appKey: string): void
+  (e: 'openFile', file: FileEntry): void
+  (e: 'app-context-menu', appKey: string, event: MouseEvent): void
 }>()
 
-function 处理应用点击(应用标识: string, e: MouseEvent) {
-  const 标记 = `app:${应用标识}`
-  if (e.ctrlKey) { 追加选中(标记); return }
-  if (是否选中(标记)) return
-  选中(标记)
+function handleAppClick(appKey: string, e: MouseEvent) {
+  const key = `app:${appKey}`
+  if (e.ctrlKey) { appendSelection(key); return }
+  if (isSelected(key)) return
+  select(key)
 }
 
-function 处理文件点击(文件: FileEntry, e: MouseEvent) {
-  const 标记 = `file:${文件.id}`
-  if (e.ctrlKey) { 追加选中(标记); return }
-  if (是否选中(标记)) return
-  选中(标记)
+function handleFileClick(file: FileEntry, e: MouseEvent) {
+  const key = `file:${file.id}`
+  if (e.ctrlKey) { appendSelection(key); return }
+  if (isSelected(key)) return
+  select(key)
 }
 
-function 处理文件拖拽开始(文件: FileEntry, e: MouseEvent) {
-  if (e.button !== 0) return  // 只响应左键
-  const 标记 = `file:${文件.id}`
-  const 已选 = 选中列表.value
-  const 拖拽ids = 已选.includes(标记) ? 已选 : [标记]
-  if (!已选.includes(标记)) {
-    取消选中()
-    选中(标记)
+function handleFileDragStart(file: FileEntry, e: MouseEvent) {
+  if (e.button !== 0) return
+  const key = `file:${file.id}`
+  const selected = selectedIds.value
+  const dragIds = selected.includes(key) ? selected : [key]
+  if (!selected.includes(key)) {
+    clearSelection()
+    select(key)
   }
-  开始拖拽(拖拽ids, e.clientX, e.clientY)
+  startDrag(dragIds, e.clientX, e.clientY)
   e.stopPropagation()
 }
 
-function 显示文件名(文件: FileEntry) {
-  return 文件.is_folder ? String(文件.file_name || '') : 格式化文件displayName(文件.file_name, 文件.format)
+function getFileName(file: FileEntry) {
+  return file.is_folder ? String(file.file_name || '') : formatFileDisplayName(file.file_name, file.format)
 }
 </script>

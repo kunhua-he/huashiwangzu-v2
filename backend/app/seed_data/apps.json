@@ -4,7 +4,7 @@
     "name": "系统核心",
     "icon": "Setting",
     "category": "系统工具",
-    "component_key": "应用/core-system/入口.vue",
+    "component_key": "apps/core-system/index.vue",
     "route_prefix": "/api/system",
     "permissions": [
       "viewer",
@@ -25,7 +25,7 @@
     "name": "应用管理器",
     "icon": "Tools",
     "category": "系统管理",
-    "component_key": "应用/app-manager/入口.vue",
+    "component_key": "apps/app-manager/index.vue",
     "route_prefix": "/api/app-manager",
     "permissions": [
       "admin"
@@ -44,7 +44,7 @@
     "name": "仪表盘",
     "icon": "DataAnalysis",
     "category": "系统概览",
-    "component_key": "应用/dashboard/入口.vue",
+    "component_key": "apps/dashboard/index.vue",
     "route_prefix": "/api/dashboard",
     "permissions": [
       "admin"
@@ -63,7 +63,7 @@
     "name": "文件管理",
     "icon": "Folder",
     "category": "文件管理",
-    "component_key": "应用/desktop/入口.vue",
+    "component_key": "apps/desktop/index.vue",
     "route_prefix": "/api/files",
     "permissions": [
       "viewer",
@@ -89,7 +89,7 @@
     "name": "回收站",
     "icon": "Delete",
     "category": "文件管理",
-    "component_key": "应用/recycle/入口.vue",
+    "component_key": "apps/recycle/index.vue",
     "route_prefix": "/api/recycle",
     "permissions": [
       "viewer",
@@ -111,7 +111,7 @@
     "name": "文本编辑器",
     "icon": "Edit",
     "category": "文件管理",
-    "component_key": "应用/textEditor/入口.vue",
+    "component_key": "apps/textEditor/index.vue",
     "route_prefix": "/api/text-editor",
     "permissions": [
       "viewer",
@@ -146,7 +146,7 @@
     "name": "文件预览",
     "icon": "View",
     "category": "文件管理",
-    "component_key": "应用/filePreview/入口.vue",
+    "component_key": "apps/filePreview/index.vue",
     "route_prefix": "/api/file-preview",
     "permissions": [
       "viewer",
@@ -178,7 +178,7 @@
     "name": "文件工具箱",
     "icon": "FolderOpened",
     "category": "文件管理",
-    "component_key": "应用/file-toolbox/入口.vue",
+    "component_key": "apps/file-toolbox/index.vue",
     "route_prefix": "/api/file-toolbox",
     "permissions": [
       "editor",
@@ -198,7 +198,7 @@
     "name": "Word编辑器",
     "icon": "DocumentCopy",
     "category": "文件管理",
-    "component_key": "应用/docxEditor/入口.vue",
+    "component_key": "apps/docxEditor/index.vue",
     "route_prefix": "/api/word-editor",
     "permissions": [
       "viewer",
@@ -228,7 +228,7 @@
     "name": "Office工作台",
     "icon": "Notebook",
     "category": "文件管理",
-    "component_key": "应用/office-workbench/入口.vue",
+    "component_key": "apps/office-workbench/index.vue",
     "route_prefix": "/api/office-workbench",
     "permissions": [
       "viewer",
@@ -254,7 +254,7 @@
     "name": "PPT编辑器",
     "icon": "DataBoard",
     "category": "文件管理",
-    "component_key": "应用/pptxEditor/入口.vue",
+    "component_key": "apps/pptxEditor/index.vue",
     "route_prefix": "/api/ppt-editor",
     "permissions": [
       "viewer",
@@ -284,7 +284,7 @@
     "name": "Excel编辑器",
     "icon": "Grid",
     "category": "文件管理",
-    "component_key": "应用/excelEditor/入口.vue",
+    "component_key": "apps/excelEditor/index.vue",
     "route_prefix": "/api/excel-editor",
     "permissions": [
       "viewer",
@@ -315,7 +315,7 @@
     "name": "CSV编辑器",
     "icon": "Document",
     "category": "文件管理",
-    "component_key": "应用/csvEditor/入口.vue",
+    "component_key": "apps/csvEditor/index.vue",
     "route_prefix": "/api/csv-editor",
     "permissions": [
       "viewer",
@@ -345,7 +345,7 @@
     "name": "用户管理",
     "icon": "User",
     "category": "系统管理",
-    "component_key": "应用/user-admin/入口.vue",
+    "component_key": "apps/user-admin/index.vue",
     "route_prefix": "/api/user-management",
     "permissions": [
       "admin"
@@ -364,7 +364,7 @@
     "name": "角色权限",
     "icon": "Key",
     "category": "系统管理",
-    "component_key": "应用/role-matrix/入口.vue",
+    "component_key": "apps/role-matrix/index.vue",
     "route_prefix": "/api/role-permissions",
     "permissions": [
       "admin"
@@ -383,7 +383,7 @@
     "name": "系统配置",
     "icon": "Operation",
     "category": "系统管理",
-    "component_key": "应用/system-config/入口.vue",
+    "component_key": "apps/system-config/index.vue",
     "route_prefix": "/api/system-config",
     "permissions": [
       "admin"
@@ -402,7 +402,7 @@
     "name": "系统日志",
     "icon": "Document",
     "category": "系统管理",
-    "component_key": "应用/system-logs/入口.vue",
+    "component_key": "apps/system-logs/index.vue",
     "route_prefix": "/api/system-logs",
     "permissions": [
       "admin"
@@ -421,7 +421,7 @@
     "name": "备份恢复",
     "icon": "FolderChecked",
     "category": "系统管理",
-    "component_key": "应用/backup-restore/入口.vue",
+    "component_key": "apps/backup-restore/index.vue",
     "route_prefix": "/api/backup",
     "permissions": [
       "admin"
@@ -440,7 +440,7 @@
     "name": "系统状态",
     "icon": "Monitor",
     "category": "系统管理",
-    "component_key": "应用/system-status/入口.vue",
+    "component_key": "apps/system-status/index.vue",
     "route_prefix": "/api/system-status",
     "permissions": [
       "viewer",
@@ -461,7 +461,7 @@
     "name": "内测反馈",
     "icon": "ChatLineRound",
     "category": "系统管理",
-    "component_key": "应用/feedback-center/入口.vue",
+    "component_key": "apps/feedback-center/index.vue",
     "route_prefix": "/api/feedback",
     "permissions": [
       "admin"
@@ -480,7 +480,7 @@
     "name": "运维诊断中心",
     "icon": "Tools",
     "category": "系统管理",
-    "component_key": "应用/maintenance-center/入口.vue",
+    "component_key": "apps/maintenance-center/index.vue",
     "route_prefix": "/api/ops-diagnostics",
     "permissions": [
       "admin"
@@ -499,7 +499,7 @@
     "name": "设置",
     "icon": "Setting",
     "category": "系统工具",
-    "component_key": "应用/settings/入口.vue",
+    "component_key": "apps/settings/index.vue",
     "route_prefix": "/api/settings",
     "permissions": [
       "editor",
@@ -522,7 +522,7 @@
     "name": "通知中心",
     "icon": "Bell",
     "category": "系统工具",
-    "component_key": "应用/notification-center/入口.vue",
+    "component_key": "apps/notification-center/index.vue",
     "route_prefix": "/api/notifications",
     "permissions": [
       "viewer",
@@ -543,7 +543,7 @@
     "name": "我的任务",
     "icon": "List",
     "category": "系统工具",
-    "component_key": "应用/tasks/入口.vue",
+    "component_key": "apps/tasks/index.vue",
     "route_prefix": "/api/my-tasks",
     "permissions": [
       "viewer",
@@ -588,7 +588,7 @@
     "name": "AI工具箱",
     "icon": "MagicStick",
     "category": "AI",
-    "component_key": "应用/ai-toolbox/入口.vue",
+    "component_key": "apps/ai-toolbox/index.vue",
     "route_prefix": "/api/agent-toolbox",
     "permissions": [
       "editor",
@@ -613,7 +613,7 @@
     "name": "提示词管理",
     "icon": "ChatLineSquare",
     "category": "AI",
-    "component_key": "应用/prompt-manager/入口.vue",
+    "component_key": "apps/prompt-manager/index.vue",
     "route_prefix": "/api/prompt-management",
     "permissions": [
       "editor",
@@ -633,7 +633,7 @@
     "name": "知识库",
     "icon": "Collection",
     "category": "知识库",
-    "component_key": "应用/knowledge/入口.vue",
+    "component_key": "apps/knowledge/index.vue",
     "route_prefix": "/api/knowledge",
     "permissions": [
       "viewer",
@@ -666,7 +666,7 @@
     "name": "知识库工具箱",
     "icon": "Tools",
     "category": "知识库",
-    "component_key": "应用/knowledge-toolbox/入口.vue",
+    "component_key": "apps/knowledge-toolbox/index.vue",
     "route_prefix": "/api/knowledge-toolbox",
     "permissions": [
       "editor",
@@ -686,7 +686,7 @@
     "name": "图片视觉抽取控制台",
     "icon": "Picture",
     "category": "知识库",
-    "component_key": "应用/visual-extraction-console/入口.vue",
+    "component_key": "apps/visual-extraction-console/index.vue",
     "route_prefix": "/api/image-vision",
     "permissions": [
       "editor",
@@ -722,7 +722,7 @@
     "singleton": true,
     "show_in_launcher": false,
     "enabled": true,
-    "window_type": "background",
+    "window_type": "background-service",
     "module_version": "1.0.0",
     "contract_version": "2.0"
   },
@@ -742,7 +742,7 @@
     "singleton": true,
     "show_in_launcher": false,
     "enabled": true,
-    "window_type": "background",
+    "window_type": "background-service",
     "module_version": "1.0.0",
     "contract_version": "2.0"
   }

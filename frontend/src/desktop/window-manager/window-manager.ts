@@ -5,6 +5,9 @@ import { useUserStore } from '@/platform/stores/user'
 import type { DesktopWindowSnapshot } from './desktop-session-storage'
 import { buildRestoreWindowList } from './desktop-session-restore'
 
+const WINDOW_TYPE_BACKGROUND_SERVICE = 'background-service'
+const WINDOW_TYPE_NORMAL = 'normal'
+
 const windows = reactive<WindowState[]>([])
 let nextZIndex = 100
 let nextId = 1
@@ -26,14 +29,14 @@ function openWindow(appKey: string, payload?: unknown): string | null {
   const store = useUserStore()
   const currentRole = store.userInfo?.role?.toLowerCase()
   if (app.allowedRoles && currentRole && !app.allowedRoles.includes(currentRole)) {
-    console.warn(`打开窗口被拒绝：角色 ${currentRole} 无权访问应用 ${appKey}`)
+    console.warn(`Opening window was denied: role ${currentRole} cannot access app ${appKey}`)
     return null
   }
 
-  if (app.windowType === '后台服务') {
+  if (app.windowType === WINDOW_TYPE_BACKGROUND_SERVICE) {
     const existingService = windows.find(w => w.appKey === appKey)
     if (existingService) { activateWindow(existingService.id); return existingService.id }
-    console.warn(`后台服务 ${appKey} 不支持窗口模式`)
+    console.warn(`Background service ${appKey} does not support window mode`)
     return null
   }
 
@@ -53,7 +56,7 @@ function openWindow(appKey: string, payload?: unknown): string | null {
     width: app.defaultWidth, height: app.defaultHeight,
     zIndex: nextZIndex++,
     minimized: false, maximized: false, isActive: true,
-     windowType: app.windowType || '普通窗口',
+     windowType: app.windowType || WINDOW_TYPE_NORMAL,
      payload: (payload ?? {}) as Record<string, unknown>,
   })
 
@@ -124,10 +127,12 @@ function updateWindowGeometry(id: string, x: number, y: number, width: number, h
 
 function restoreWindows(snapshot: DesktopWindowSnapshot[], currentRole?: string) {
   const restoredWindows = buildRestoreWindowList({
-    快照: snapshot, 当前角色: currentRole,
-    容器宽: desktopContainerSize.width,
-    容器高: desktopContainerSize.height,
-    生成id: generateId, 生成层级: generateZIndex,
+    snapshots: snapshot,
+    currentRole,
+    containerWidth: desktopContainerSize.width,
+    containerHeight: desktopContainerSize.height,
+    generateId,
+    generateZIndex,
   })
   for (const w of restoredWindows) {
     const existingWindow = windows.find(x => x.appKey === w.appKey && x.minimized === w.minimized)

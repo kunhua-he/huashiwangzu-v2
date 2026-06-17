@@ -1,41 +1,41 @@
 import { ref, onMounted, onUnmounted } from 'vue'
-import { 构建桌面壳图标菜单 as 构建桌面壳图标菜单基础, 构建桌面壳空白菜单 as 构建桌面壳空白菜单基础 } from './desktop-shell-context-menu'
-import { 构建文件菜单 as 构建文件菜单基础, 构建文件夹菜单 as 构建文件夹菜单基础, 构建桌面空白菜单 as 构建桌面空白菜单基础, 构建文件夹树节点菜单 as 构建文件夹树节点菜单基础, 构建回收站菜单 as 构建回收站菜单基础, 构建回收站项菜单 as 构建回收站项菜单基础 } from './file-context-menu'
+import { buildDesktopShellIconMenu, buildDesktopShellBlankMenu } from './desktop-shell-context-menu'
+import { buildFileMenu, buildFolderMenu, buildDesktopBlankMenu, buildFolderTreeNodeMenu, buildRecycleBinMenu, buildRecycleBinItemMenu } from './file-context-menu'
 
 export interface MenuItemConfig {
-  键: string
-  标签: string
-  图标?: string
-  禁用?: boolean
-  危险?: boolean
-  分隔符?: boolean
-  子项?: MenuItemConfig[]
+  key: string
+  label: string
+  icon?: string
+  disabled?: boolean
+  danger?: boolean
+  separator?: boolean
+  children?: MenuItemConfig[]
 }
 
 export type MenuContext = {
-  类型: '桌面空白' | '文件' | '文件夹' | '回收站' | '多选' | '桌面壳空白' | '桌面壳图标'
-  目标?: Record<string, unknown>
+  type: 'desktop-blank' | 'file' | 'folder' | 'recycle-bin' | 'multi-select' | 'desktop-shell-blank' | 'desktop-shell-icon'
+  target?: Record<string, unknown>
 }
 
-let 右键实例序号 = 0
+let contextMenuInstanceSeq = 0
 
-export function use右键菜单() {
-  const 实例标识 = `context-menu-${++右键实例序号}`
-  const 显示 = ref(false)
-  const X = ref(0)
-  const Y = ref(0)
-  const 当前项 = ref<MenuItemConfig[]>([])
-  const 活跃子菜单 = ref<{ 父键: string; 项: MenuItemConfig[]; X: number; Y: number } | null>(null)
-  const 上下文 = ref<MenuContext | null>(null)
-  let 子菜单关闭计时: number | null = null
+export function useContextMenu() {
+  const instanceId = `context-menu-${++contextMenuInstanceSeq}`
+  const visible = ref(false)
+  const x = ref(0)
+  const y = ref(0)
+  const currentItems = ref<MenuItemConfig[]>([])
+  const activeSubmenu = ref<{ parentKey: string; items: MenuItemConfig[]; x: number; y: number } | null>(null)
+  const context = ref<MenuContext | null>(null)
+  let submenuCloseTimer: number | null = null
 
-  function 获取菜单尺寸(项: MenuItemConfig[]) {
-    const 分隔数量 = 项.filter(i => i.分隔符).length
-    const 行数量 = 项.filter(i => !i.分隔符).length
-    return { 宽: 196, 高: 行数量 * 31 + 分隔数量 * 9 + 12 }
+  function getMenuSize(items: MenuItemConfig[]) {
+    const separatorCount = items.filter(i => i.separator).length
+    const rowCount = items.filter(i => !i.separator).length
+    return { width: 196, height: rowCount * 31 + separatorCount * 9 + 12 }
   }
 
-  function 校正边界(ex: number, ey: number, w: number, h: number) {
+  function clampToViewport(ex: number, ey: number, w: number, h: number) {
     const vw = window.innerWidth
     const vh = window.innerHeight
     return {
@@ -44,96 +44,96 @@ export function use右键菜单() {
     }
   }
 
-  function 打开(e: MouseEvent, 项: MenuItemConfig[], ctx: MenuContext) {
+  function open(e: MouseEvent, items: MenuItemConfig[], ctx: MenuContext) {
     e.preventDefault()
     e.stopPropagation()
-    document.dispatchEvent(new CustomEvent('desktop:context-menu-open', { detail: 实例标识 }))
-    当前项.value = 项
-    上下文.value = ctx
-    活跃子菜单.value = null
-    const 尺寸 = 获取菜单尺寸(项)
-    const pos = 校正边界(e.clientX, e.clientY, 尺寸.宽, 尺寸.高)
-    X.value = pos.x
-    Y.value = pos.y
-    显示.value = true
+    document.dispatchEvent(new CustomEvent('desktop:context-menu-open', { detail: instanceId }))
+    currentItems.value = items
+    context.value = ctx
+    activeSubmenu.value = null
+    const size = getMenuSize(items)
+    const pos = clampToViewport(e.clientX, e.clientY, size.width, size.height)
+    x.value = pos.x
+    y.value = pos.y
+    visible.value = true
   }
 
-  function 关闭() {
-    显示.value = false
-    当前项.value = []
-    活跃子菜单.value = null
-    上下文.value = null
-    清理子菜单关闭计时()
+  function close() {
+    visible.value = false
+    currentItems.value = []
+    activeSubmenu.value = null
+    context.value = null
+    clearSubmenuCloseTimer()
   }
 
-  function 展开子菜单(e: MouseEvent, 父键: string, 项: MenuItemConfig[]) {
+  function openSubmenu(e: MouseEvent, parentKey: string, items: MenuItemConfig[]) {
     e.stopPropagation()
-    清理子菜单关闭计时()
+    clearSubmenuCloseTimer()
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const 尺寸 = 获取菜单尺寸(项)
-    const pos = 校正边界(rect.right + 6, rect.top - 4, 尺寸.宽, 尺寸.高)
-    活跃子菜单.value = { 父键, 项, X: pos.x, Y: pos.y }
+    const size = getMenuSize(items)
+    const pos = clampToViewport(rect.right + 6, rect.top - 4, size.width, size.height)
+    activeSubmenu.value = { parentKey, items, x: pos.x, y: pos.y }
   }
 
-  function 清理子菜单关闭计时() {
-    if (子菜单关闭计时 !== null) window.clearTimeout(子菜单关闭计时)
-    子菜单关闭计时 = null
+  function clearSubmenuCloseTimer() {
+    if (submenuCloseTimer !== null) window.clearTimeout(submenuCloseTimer)
+    submenuCloseTimer = null
   }
 
-  function 计划关闭子菜单() {
-    清理子菜单关闭计时()
-    子菜单关闭计时 = window.setTimeout(() => {
-      活跃子菜单.value = null
-      子菜单关闭计时 = null
+  function scheduleCloseSubmenu() {
+    clearSubmenuCloseTimer()
+    submenuCloseTimer = window.setTimeout(() => {
+      activeSubmenu.value = null
+      submenuCloseTimer = null
     }, 260)
   }
 
-  function 关闭子菜单() { 计划关闭子菜单() }
-  function 保持子菜单展开() { 清理子菜单关闭计时() }
+  function closeSubmenu() { scheduleCloseSubmenu() }
+  function keepSubmenuOpen() { clearSubmenuCloseTimer() }
 
-  function 分隔项(): MenuItemConfig[] {
-    return [{ 键: '_sep', 标签: '', 分隔符: true }]
+  function separatorItems(): MenuItemConfig[] {
+    return [{ key: '_sep', label: '', separator: true }]
   }
 
-  function 构建文件菜单(可写: boolean): MenuItemConfig[] { return 构建文件菜单基础(可写, 分隔项) }
-  function 构建文件夹菜单(可写: boolean): MenuItemConfig[] { return 构建文件夹菜单基础(可写, 分隔项) }
-  function 构建桌面空白菜单(可写: boolean): MenuItemConfig[] { return 构建桌面空白菜单基础(可写, 分隔项) }
-  function 构建文件夹树节点菜单(可写: boolean): MenuItemConfig[] { return 构建文件夹树节点菜单基础(可写, 分隔项) }
-  function 构建回收站菜单(可写?: boolean): MenuItemConfig[] { return 构建回收站菜单基础(可写, 分隔项) }
-  function 构建回收站项菜单(可写: boolean): MenuItemConfig[] { return 构建回收站项菜单基础(可写) }
+  function createFileMenu(writable: boolean): MenuItemConfig[] { return buildFileMenu(writable, separatorItems) }
+  function createFolderMenu(writable: boolean): MenuItemConfig[] { return buildFolderMenu(writable, separatorItems) }
+  function createDesktopBlankMenu(writable: boolean): MenuItemConfig[] { return buildDesktopBlankMenu(writable, separatorItems) }
+  function createFolderTreeNodeMenu(writable: boolean): MenuItemConfig[] { return buildFolderTreeNodeMenu(writable, separatorItems) }
+  function createRecycleBinMenu(writable?: boolean): MenuItemConfig[] { return buildRecycleBinMenu(writable, separatorItems) }
+  function createRecycleBinItemMenu(writable: boolean): MenuItemConfig[] { return buildRecycleBinItemMenu(writable) }
 
-  function 构建桌面壳空白菜单(): MenuItemConfig[] {
-    return 构建桌面壳空白菜单基础(分隔项)
+  function createDesktopShellBlankMenu(): MenuItemConfig[] {
+    return buildDesktopShellBlankMenu(separatorItems)
   }
 
-  function 构建桌面壳图标菜单(应用标识: string, 可写?: boolean): MenuItemConfig[] {
-    return 构建桌面壳图标菜单基础(应用标识, 可写, 分隔项, 构建回收站菜单)
+  function createDesktopShellIconMenu(appKey: string, writable?: boolean): MenuItemConfig[] {
+    return buildDesktopShellIconMenu(appKey, writable, separatorItems, createRecycleBinMenu)
   }
 
-  const 处理其他菜单打开 = (事件: Event) => {
-    if ((事件 as CustomEvent<string>).detail !== 实例标识) 关闭()
+  const handleOtherMenuOpen = (event: Event) => {
+    if ((event as CustomEvent<string>).detail !== instanceId) close()
   }
-  const 处理按键 = (事件: KeyboardEvent) => {
-    if (事件.key === 'Escape' && 显示.value) 关闭()
+  const handleKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && visible.value) close()
   }
 
   onMounted(() => {
-    document.addEventListener('click', 关闭)
-    document.addEventListener('keydown', 处理按键)
-    document.addEventListener('desktop:context-menu-open', 处理其他菜单打开)
+    document.addEventListener('click', close)
+    document.addEventListener('keydown', handleKeydown)
+    document.addEventListener('desktop:context-menu-open', handleOtherMenuOpen)
   })
 
   onUnmounted(() => {
-    document.removeEventListener('click', 关闭)
-    document.removeEventListener('keydown', 处理按键)
-    document.removeEventListener('desktop:context-menu-open', 处理其他菜单打开)
+    document.removeEventListener('click', close)
+    document.removeEventListener('keydown', handleKeydown)
+    document.removeEventListener('desktop:context-menu-open', handleOtherMenuOpen)
   })
 
   return {
-    显示, X, Y, 当前项, 活跃子菜单, 上下文,
-    打开, 关闭, 展开子菜单, 关闭子菜单, 保持子菜单展开,
-    构建文件菜单, 构建文件夹菜单, 构建桌面空白菜单,
-    构建文件夹树节点菜单, 构建回收站菜单, 构建回收站项菜单,
-    构建桌面壳空白菜单, 构建桌面壳图标菜单,
+    visible, x, y, currentItems, activeSubmenu, context,
+    open, close, openSubmenu, closeSubmenu, keepSubmenuOpen,
+    createFileMenu, createFolderMenu, createDesktopBlankMenu,
+    createFolderTreeNodeMenu, createRecycleBinMenu, createRecycleBinItemMenu,
+    createDesktopShellBlankMenu, createDesktopShellIconMenu,
   }
 }

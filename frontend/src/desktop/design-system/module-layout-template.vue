@@ -111,7 +111,7 @@ const 侧栏折叠 = ref(false)
 .布局参考 { padding: 20px; color: var(--文字主色); font-family: var(--字体栈); }
 .布局参考-标题 { margin-bottom: 16px; font-size: 18px; font-weight: 600; }
 .布局切换 { margin-bottom: 16px; }
-.布局示例 { padding: 16px; border: 1px solid var(--边框色); border-radius: var(--圆角中); background: var(--卡片背景); }
+.布局示例 { padding: 16px; border: 1px solid var(--border-color); border-radius: var(--圆角中); background: var(--卡片背景); }
 .布局示例 h3 { margin: 0 0 4px; font-size: 14px; color: var(--文字次要); }
 .布局说明 { margin: 0 0 12px; font-size: 12px; color: var(--文字信息); line-height: 1.5; }
 .布局示例 [class*="区"],.布局示例 [class*="栏"],.布局示例 [class*="卡片"],.布局示例 [class*="面板"] {

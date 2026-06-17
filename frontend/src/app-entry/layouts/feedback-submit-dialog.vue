@@ -6,7 +6,7 @@
     :close-on-click-modal="false"
     @close="关闭弹窗"
   >
-    <p class="反馈提示">你遇到了什么问题？我们会认真看每一条反馈。</p>
+    <p class="feedback-hint">你遇到了什么问题？我们会认真看每一条反馈。</p>
     <el-form
       ref="表单ref"
       :model="反馈表单"
@@ -126,7 +126,7 @@ async function 提交反馈() {
 </script>
 
 <style scoped>
-.反馈提示 {
+.feedback-hint {
   color: #909399;
   font-size: 14px;
   margin: 0 0 16px 0;

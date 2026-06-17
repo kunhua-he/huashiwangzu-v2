@@ -56,6 +56,7 @@ modules/    被框架加载的业务模块
 - 当前通知 API 消费侧已按后端真实字段读取 `unread_count`、`list`、`is_read`，不再读取中文字段名。
 - 当前 Element Plus 已改为 Vite 按需组件/样式导入，并拆分为 `element-core`、`element-overlay`、`element-components` 等 chunk；不再全量 `app.use(ElementPlus)` 和全量 `element-plus/dist/index.css`。
 - 当前框架契约层核心文件已完成英文标识符清理：`action-registry.ts`、`desktop-app-handle-v2.ts`、`desktop-session-restore.ts`、`desktop-session-storage.ts`、`file-association-registry.ts`、`types-app-handle-v2.ts`、`v-permission.ts`。
+- 当前框架样式契约已完成第三轮收尾：全局布局 class、共享状态组件 class、回收站 class、任务栏用户菜单 class、反馈提示 class、文件格式矩阵 class 已改为英文；CSS 自定义属性 `--边框色` 已改为 `--border-color`。
 - 当前窗口类型使用英文值：`normal`、`panel`、`tool`、`fullscreen`、`background-service`。
 - 当前后端框架 API 返回 message 已避免中文硬编码，`seed.py` 使用 logging 记录初始化结果，不再使用 `print()`。
 
@@ -76,6 +77,7 @@ modules/    被框架加载的业务模块
 - 数据库同步：当前 DB 可能仍存有旧中文 `component_key`，需在下次 `sync_apps_from_manifest` 运行后更新。同步前由 `component-key-map.ts` 兼容层翻译旧 key；同步后应以英文 key 为准。
 - 后端模块动态挂载已有 manifest 驱动骨架，但还未进入完整 runtime 阶段。后续模块需要在 manifest 中声明后端 router，并继续补齐 `backend.prefix`、启停开关、权限声明、路由冲突检测和模块级测试。
 - `frontend/src` 的框架契约层已完成英文清理；仍允许中文 UI 展示文案、toast、菜单 `label`、确认弹窗和业务显示值。若未来发现中文标识符出现在导出 API、props、emits、CSS class、DOM data 属性或类型字段中，应继续英文化。
+- 开发辅助页 `desktop/design-system/module-layout-template.vue` 仍保留中文示例 class、布局名称和说明文字；它不属于运行时模块接入契约，后续可在设计系统整理时单独英文化。
 - 测试覆盖率仍需提升，但模块尚未填充，窗口加载失败、组件注册失败、鉴权与 API 契约等更完整用例后置到模块接入阶段补齐；框架层改动仍必须保留 `pytest` 与 `npm run build` 通过。
 
 ## 当前框架能力
@@ -172,6 +174,8 @@ modules/{module}/runtime.config.json
 
 **C13. 测试覆盖策略**：框架当前以后端 35 个测试和前端生产构建作为基础可用性门槛。模块尚未填充前，不强行补齐模块业务测试；鉴权、窗口加载失败、组件注册失败、API 契约等更完整覆盖在模块接入阶段补齐，但框架新增能力必须补对应框架测试。
 
+**C14. 样式变量命名**：运行时框架 CSS class 和 CSS 自定义属性必须使用英文命名。主题色、文本色、圆角、阴影等旧中文变量后续触达时继续迁移为英文；新增样式不得引入中文 class 或中文 CSS 变量。
+
 ### 验证
 
 ```bash
@@ -191,6 +195,7 @@ rg -n "raise HTTPException|return ApiResponse\(success=False|ApiResponse\(succes
 rg -n "default:\s*null|Promise\.resolve\(\{ default: null \}\)" frontend/src
 rg -n "use窗口管理器|窗口管理器|use桌面事件总线|文件夹id|目标文件夹id|获取文件列表请求|上传文件请求" frontend/src/desktop frontend/src/shared
 rg -n "component_key\": \"应用/|window_type\": \"background\"|保存成功|导出成功|print\(" backend/app frontend/src
+rg -n -- "--边框色|var\(--边框色" frontend/src
 ```
 
-上述扫描不应出现框架绕过项；Python 内置函数 `any(...)` 不属于类型绕过。若中文扫描命中 `label`、toast、确认框、表格列名等用户可见文案，按 C12 归类为正常 UI 展示，不视为类型绕过或偷懒兜底。
+上述扫描不应出现框架绕过项；Python 内置函数 `any(...)` 不属于类型绕过。若中文扫描命中 `label`、toast、确认框、表格列名、业务数据字段或开发辅助页示例，按 C12 / C14 归类，不视为类型绕过或偷懒兜底。

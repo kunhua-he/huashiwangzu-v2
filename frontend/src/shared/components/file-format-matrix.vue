@@ -1,11 +1,11 @@
 <template>
-  <el-table :data="过滤后数据" stripe border size="small" style="width: 100%" class="格式支持矩阵表格" :row-class-name="行样式">
+  <el-table :data="过滤后数据" stripe border size="small" style="width: 100%" class="format-matrix-table" :row-class-name="行样式">
     <el-table-column prop="格式" label="格式" width="85" />
     <el-table-column prop="中文名称" label="中文名称" width="115" />
     <el-table-column prop="分类" label="分类" width="90" />
     <el-table-column label="可预览" width="78">
       <template #default="{ row }">
-        <el-tag :type="row.可预览 ? 'success' : 'danger'" size="small" effect="plain" :class="row.可预览 ? '' : '格式不兼容'">
+        <el-tag :type="row.可预览 ? 'success' : 'danger'" size="small" effect="plain" :class="row.可预览 ? '' : 'format-incompatible'">
           {{ row.可预览 ? '是' : '否' }}
         </el-tag>
       </template>
@@ -20,7 +20,7 @@
     <el-table-column v-if="显示编辑器列" prop="编辑器" label="编辑器" width="105" />
     <el-table-column label="说明" min-width="160">
       <template #default="{ row }">
-        <span :class="['格式提示', 说明样式(row.description)]">{{ row.description }}</span>
+        <span :class="['format-hint', 说明样式(row.description)]">{{ row.description }}</span>
       </template>
     </el-table-column>
   </el-table>
@@ -50,7 +50,7 @@ const props = withDefaults(defineProps<{
 const 不兼容格式 = ['doc', 'xls', 'ppt', 'vsd', 'vsdx', 'mpp', 'zip', 'rar']
 
 function 行样式({ row }: { row: 格式条目 }) {
-  return 不兼容格式.includes(row.格式) ? '格式支持行 格式不兼容行' : '格式支持行'
+  return 不兼容格式.includes(row.格式) ? 'format-support-row format-incompatible-row' : 'format-support-row'
 }
 
 const 中文名: Record<string, string> = {
@@ -113,14 +113,14 @@ const 过滤后数据 = computed(() => {
 })
 
 function 说明样式(说明: string): string {
-  if (说明.includes('不支持')) return '文本-不支持'
-  if (说明.includes('需创建') || 说明.includes('只读')) return '文本-受限'
-  return '文本-支持'
+  if (说明.includes('不支持')) return 'text-unsupported'
+  if (说明.includes('需创建') || 说明.includes('只读')) return 'text-limited'
+  return 'text-supported'
 }
 </script>
 
 <style scoped>
-.文本-支持 { color: var(--el-color-success); font-weight: 500; }
-.文本-受限 { color: var(--el-color-warning); font-weight: 500; }
-.文本-不支持 { color: var(--el-color-danger); font-weight: 500; }
+.text-supported { color: var(--el-color-success); font-weight: 500; }
+.text-limited { color: var(--el-color-warning); font-weight: 500; }
+.text-unsupported { color: var(--el-color-danger); font-weight: 500; }
 </style>

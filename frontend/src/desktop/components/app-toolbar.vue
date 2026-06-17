@@ -29,12 +29,12 @@ const variantClass = computed(() => `app-toolbar--${props.variant}`)
   flex-shrink: 0;
 }
 .app-toolbar--table {
-  border-bottom: 1px solid var(--边框色, #e4e7ed);
+  border-bottom: 1px solid var(--border-color, #e4e7ed);
 }
 .app-toolbar--chat {
   border-bottom: none;
 }
 .app-toolbar--editor {
-  border-bottom: 1px solid var(--边框色, #e4e7ed);
+  border-bottom: 1px solid var(--border-color, #e4e7ed);
 }
 </style>

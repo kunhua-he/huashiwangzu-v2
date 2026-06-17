@@ -1,8 +1,8 @@
 <template>
-  <div class="空状态提示" :class="[类型]">
+  <div class="empty-state" :class="[类型]">
     <el-icon :size="图标大小" color="#c0c4cc"><component :is="图标组件" /></el-icon>
-    <p class="消息">{{ 消息 || '暂时没有内容' }}</p>
-    <p v-if="说明" class="说明">{{ 说明 }}</p>
+    <p class="empty-message">{{ 消息 || '暂时没有内容' }}</p>
+    <p v-if="说明" class="empty-description">{{ 说明 }}</p>
     <slot name="操作" />
   </div>
 </template>
@@ -35,10 +35,10 @@ const 图标组件 = computed(() => 图标映射[props.图标] || FolderOpened)
 </script>
 
 <style scoped>
-.空状态提示 { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #909399; gap: 8px; }
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #909399; gap: 8px; }
 .full { min-height: 300px; padding: 60px 20px; }
 .card { min-height: 200px; padding: 40px 20px; background: #fafafa; border-radius: 8px; }
 .inline { padding: 20px; }
-.消息 { margin: 0; font-size: 14px; color: #909399; }
-.description { margin: 0; font-size: 12px; color: #c0c4cc; }
+.empty-message { margin: 0; font-size: 14px; color: #909399; }
+.empty-description { margin: 0; font-size: 12px; color: #c0c4cc; }
 </style>

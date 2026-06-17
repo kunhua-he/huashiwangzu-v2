@@ -67,7 +67,7 @@ const sidebarStyle = computed(() => ({
   flex-shrink: 0;
   overflow: hidden;
   transition: width 0.22s ease;
-  border-right: 1px solid var(--边框色, #e4e7ed);
+  border-right: 1px solid var(--border-color, #e4e7ed);
 }
 .app-window-frame_sidebar.collapsed {
   border-right: none;
@@ -84,7 +84,7 @@ const sidebarStyle = computed(() => ({
   width: 0;
   overflow: hidden;
   transition: width 0.22s ease;
-  border-left: 1px solid var(--边框色, #e4e7ed);
+  border-left: 1px solid var(--border-color, #e4e7ed);
 }
 .app-window-frame_drawer.visible {
   width: 30%;

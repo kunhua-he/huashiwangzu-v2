@@ -1,70 +1,68 @@
 <template>
-  <div class="桌面任务栏">
-    <div class="任务栏开始" @click="$emit('打开启动器')">
+  <div class="desktop-taskbar">
+    <div class="taskbar-start" @click="$emit('openLauncher')">
       <AppIcon 图标="Start" :size="18" />
-      <span class="任务栏开始文字">开始</span>
-      <span v-if="启动器打开" class="任务栏启动器指示" />
+      <span class="taskbar-start-label">开始</span>
+      <span v-if="launcherOpen" class="taskbar-launcher-indicator" />
     </div>
-    <div class="任务栏窗口区">
+    <div class="taskbar-window-list">
       <div
-        v-for="项 in 列表"
-        :key="项.id"
-        class="TaskbarItem"
-        :class="{ 'TaskbarItem-激活': 项.isActive, 'TaskbarItem-最小化': 项.minimized }"
-        @click="$emit('切换窗口', 项.id)"
+        v-for="item in items"
+        :key="item.id"
+        class="taskbar-item"
+        :class="{ 'taskbar-item-active': item.isActive, 'taskbar-item-minimized': item.minimized }"
+        @click="$emit('switchWindow', item.id)"
         @mousedown.prevent
       >
-        <AppIcon :图标="项.icon" :size="16" />
-        <span class="任务栏窗口标题">{{ 项.title }}</span>
+        <AppIcon :图标="item.icon" :size="16" />
+        <span class="taskbar-window-title">{{ item.title }}</span>
       </div>
-      <div v-if="!列表.length" class="任务栏空状态">没有打开的窗口</div>
+      <div v-if="!items.length" class="taskbar-empty">没有打开的窗口</div>
     </div>
-    <div class="任务栏右侧">
-      <TrayLauncher v-if="托盘应用列表?.length" :应用列表="托盘应用列表" @openApp="(id: string) => $emit('打开托盘应用', id)" />
-      <div class="任务栏时钟">{{ 时钟 }}</div>
+    <div class="taskbar-right">
+      <TrayLauncher v-if="trayApps?.length" :应用列表="trayApps" @openApp="(id: string) => $emit('openTrayApp', id)" />
+      <div class="taskbar-clock">{{ clockText }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, onMounted, onUnmounted } from 'vue'
+import { ref, defineAsyncComponent, onMounted, onUnmounted } from 'vue'
 import type { TaskbarItem } from '@/desktop/window-manager/window-types'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import AppIcon from '@/desktop/components/app-icon.vue'
 
 const TrayLauncher = defineAsyncComponent(() => import('./tray-launcher.vue'))
 const props = defineProps<{
-  任务栏项: TaskbarItem[]
-  启动器打开?: boolean
-  托盘应用列表?: AppRegistryEntry[]
+  items: TaskbarItem[]
+  launcherOpen?: boolean
+  trayApps?: AppRegistryEntry[]
 }>()
 defineEmits<{
-  (e: '切换窗口', id: string): void
-  (e: '打开启动器'): void
-  (e: '打开托盘应用', id: string): void
+  (e: 'switchWindow', id: string): void
+  (e: 'openLauncher'): void
+  (e: 'openTrayApp', id: string): void
 }>()
 
-const 列表 = computed(() => props.任务栏项)
+const clockText = ref('')
+let clockTimer: ReturnType<typeof setInterval> | null = null
 
-const 时钟 = ref('')
-let 时钟定时器: ReturnType<typeof setInterval> | null = null
-
-function 更新时钟() {
+function updateClock() {
   const now = new Date()
-  时钟.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  clockText.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 }
 
 onMounted(() => {
-  更新时钟()
-  时钟定时器 = setInterval(更新时钟, 30000)
+  updateClock()
+  clockTimer = setInterval(updateClock, 30000)
 })
 
 onUnmounted(() => {
-  if (时钟定时器) clearInterval(时钟定时器)
+  if (clockTimer) clearInterval(clockTimer)
 })
 </script>
 <style scoped>
-.桌面任务栏 {
+.desktop-taskbar {
   position: absolute;
   bottom: 0;
   left: 0;
@@ -80,7 +78,7 @@ onUnmounted(() => {
   z-index: 10000;
   user-select: none;
 }
-.任务栏开始 {
+.taskbar-start {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -88,16 +86,16 @@ onUnmounted(() => {
   cursor: pointer;
   color: #eff6ff;
 }
-.任务栏开始:hover { background: rgba(255, 255, 255, 0.14); }
-.任务栏开始文字 { font-size: 12px; font-weight: 600; color: #eff6ff; letter-spacing: .2px; }
-.任务栏启动器指示 { width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; margin-left: 4px; }
-.任务栏窗口区 { flex: 1; display: flex; align-items: center; gap: 2px; margin: 0 4px; overflow-x: auto; }
-.TaskbarItem { display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 28px; border-radius: 4px; cursor: pointer; color: #94a3b8; white-space: nowrap; flex-shrink: 0; border: 1px solid transparent; }
-.TaskbarItem:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.08); }
-.TaskbarItem-激活 { background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.2); color: #e2e8f0; }
-.TaskbarItem-最小化 { opacity: 0.72; }
-.任务栏窗口标题 { font-size: 11px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.任务栏空状态 { font-size: 12px; color: #cbd5e1; padding: 0 8px; }
-.任务栏右侧 { display: flex; align-items: center; gap: 6px; padding-left: 8px; border-left: 1px solid rgba(255, 255, 255, 0.1); }
-.任务栏时钟 { font-size: 12px; color: #cbd5e1; font-weight: 600; padding: 0 4px; }
+.taskbar-start:hover { background: rgba(255, 255, 255, 0.14); }
+.taskbar-start-label { font-size: 12px; font-weight: 600; color: #eff6ff; letter-spacing: .2px; }
+.taskbar-launcher-indicator { width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; margin-left: 4px; }
+.taskbar-window-list { flex: 1; display: flex; align-items: center; gap: 2px; margin: 0 4px; overflow-x: auto; }
+.taskbar-item { display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 28px; border-radius: 4px; cursor: pointer; color: #94a3b8; white-space: nowrap; flex-shrink: 0; border: 1px solid transparent; }
+.taskbar-item:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.08); }
+.taskbar-item-active { background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.2); color: #e2e8f0; }
+.taskbar-item-minimized { opacity: 0.72; }
+.taskbar-window-title { font-size: 11px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.taskbar-empty { font-size: 12px; color: #cbd5e1; padding: 0 8px; }
+.taskbar-right { display: flex; align-items: center; gap: 6px; padding-left: 8px; border-left: 1px solid rgba(255, 255, 255, 0.1); }
+.taskbar-clock { font-size: 12px; color: #cbd5e1; font-weight: 600; padding: 0 4px; }
 </style>

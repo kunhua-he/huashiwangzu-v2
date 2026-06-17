@@ -23,6 +23,7 @@ modules/    被框架加载的业务模块
 - 当前样式在 `frontend/src/styles/`。
 - 当前桌面应用种子清单在 `backend/app/seed_data/apps.json`。
 - 当前前端应用组件映射在 `frontend/src/desktop/app-registry/component-key-map.generated.ts`。
+- 当前 `apps.json` / 数据库 `apps.component_key` 是应用入口组件 key 的来源；`.env` 只负责 `VITE_API_BASE`、`VITE_API_TARGET` 等运行环境配置，不负责应用入口 key。
 - 当前 `modules/` 目录已存在，含 `ai-assistant/manifest.json` 和 `ai-assistant/sandbox/`。
 - 当前 `modules/ai-assistant/manifest.json` 定义了 AI 助手模块占位入口。
 - 当前构建管道包含 `scripts/scan-modules.js`，自动扫描 manifest 生成组件映射。
@@ -34,12 +35,24 @@ modules/    被框架加载的业务模块
 - 当前所有前端 `@应用模块` 导入已被替换为 platform 原生调用或暂缺处理。
 - 当前模块扫描链路已建立：`scripts/scan-modules.js` 扫描 `modules/*/manifest.json`，生成 `component-key-map.generated.ts`。
 - 当前 `apps.json` 中 agent 的 `component_key` 已改为英文 `ai-assistant/index.vue`。`component-key-map.ts` 兼容层仍保留旧中文 DB 值映射，避免未重新播种前中断。
+- 当前应用组件 key 缺失时不再静默渲染空组件，窗口会显示 `ComponentRegistrationError` 并输出缺失的 app/key 信息。
 - 当前前端构建脚本全部使用英文名称，构建命令链：`scan-modules.js` → `copy-pdf-worker.sh` → `vue-tsc -b` → `vite build`。
 - 当前 `frontend/package.json` 中再无中文脚本名和旧 `脚本/` 路径引用。
 - 当前 `window-types.ts` 接口已全部改为英文命名。
 - 当前 `@应用模块` 导入全部移除。
 - 当前 API 类型已修复（~30处中文属性名、语法损坏均已修正）。
 - 当前外围 TypeScript 类型已修复：全量 `vue-tsc -b` 通过，0 错误。修复 20 处类型错误，涉及 7 个文件。
+- 当前后端 router 注册已从 `main.py` 抽出到 `backend/app/routers/registry.py`，入口文件只调用 `register_routers(app)`。
+- 当前后端 router registry 已支持模块 manifest 驱动挂载：模块 manifest 若声明 `backend.router`，框架会导入该文件并挂载其中名为 `router` 的 `APIRouter`；当前已有模块尚未声明后端 router，因此不会生成假路由。
+- 当前 `shared/api/settings.ts` 已使用明确后端响应接口，不再用宽泛 `Record<string, unknown>` 解析主响应。
+- 当前桌面根文件列表通过 API 层转换为英文 `items` 字段，消费侧不再读取中文 `列表` 字段。
+- 当前后端 500 响应按 `APP_DEBUG` 控制错误详情：debug 模式返回异常详情，非 debug 模式返回固定错误文案。
+- 当前桌面事件总线 payload 已改为英文字段，例如 `folderId`、`targetFolderId`、`targetAppKey`、`requestId`。
+- 当前桌面状态前端内部结构已改为英文 `version/windows/appState`；读取历史中文 `版本/窗口/应用状态` 只允许发生在 API 边界迁移函数中。
+- 当前窗口管理器导出已改为英文 `useWindowManager` / `windowManager`，核心方法为 `openWindow`、`closeWindow`、`toggleMinimized`、`toggleMaximized`、`activateWindow`、`restoreWindows`。
+- 当前桌面任务栏组件 props / emits / class 已改为英文契约。
+- 当前 `shared/api/desktop.ts` 文件 API 方法已改为英文命名，并明确转换后端响应包装。
+- 当前 Element Plus 已改为 Vite 按需组件/样式导入，并拆分为 `element-core`、`element-overlay`、`element-components` 等 chunk；不再全量 `app.use(ElementPlus)` 和全量 `element-plus/dist/index.css`。
 
 ## 已修复的 TypeScript 文件
 
@@ -57,12 +70,16 @@ modules/    被框架加载的业务模块
 
 - `apps.json` 中剩余 30+ 应用的 `component_key` 仍是中文路径（`应用/xxx/入口.vue`），这些应用暂无新模块载体，保留旧值不影响框架功能。后续模块迁移时同步更新。
 - 数据库同步：当前 DB 仍存有旧中文 `component_key`，需在下次 `sync_apps_from_manifest` 运行后更新。
+- 后端模块动态挂载已有基础骨架，但还未进入完整 runtime 阶段。后续模块需要在 manifest 中声明后端 router，并继续补齐权限、前缀冲突检测、模块启停和模块级测试。
+- `frontend/src` 仍存在历史中文变量名、CSS 类名和组件 emits，主要集中在窗口框架、拖拽/框选、右键菜单、共享 UI 组件和旧布局页面。当前已清理核心框架契约层；后续触达这些文件时继续英文化。
+- 测试覆盖率仍需提升，但模块尚未填充，窗口加载失败、组件注册失败、鉴权与 API 契约等更完整用例后置到模块接入阶段补齐。
 
 ## 当前框架能力
 
 - 登录入口、桌面入口、全局布局。
 - 窗口系统、任务栏、启动器、托盘、右侧栏。
 - 应用注册、应用打开、窗口承载。
+- 应用组件注册错误的显式展示。
 - 共享请求器、响应转换、权限、主题、基础 UI 规范。
 - 平台 API、数据库、队列、模型网关、文件存储。
 
@@ -133,11 +150,36 @@ modules/{module}/runtime.config.json
 
 **C4. Auth 令牌**：JWT HS256，24h 过期，嵌入 `session_version`，无 refresh_token。
 
+**C5. 兜底分类**：Vue 组件渲染错误边界和 SPA 404 返回 `index.html` 是正常业务兜底；组件 key 缺失不允许静默返回空组件，必须显示注册错误或在构建/注册阶段失败。
+
+**C6. Router 注册**：当前平台 router 通过 `backend/app/routers/registry.py` 集中注册，避免 `main.py` 堆叠 import/include；模块 router 由 manifest 的 `backend.router` 声明驱动，声明后必须真实导入并导出 `APIRouter`，失败即报错。
+
+**C7. 模块后端动态挂载**：后端动态挂载必须由 manifest/runtime 驱动，不允许只靠手写 import 列表伪装动态化。当前已支持 `backend.router` 文件入口；后续可继续扩展 `backend.prefix`、`backend.enabled`、权限声明和路由冲突检测。
+
+**C8. 应用入口 key**：`component_key` 是应用清单和数据库字段，决定前端加载哪个 Vue 入口组件；`.env` 是环境配置，不参与组件 key 解析。旧中文 `component_key` 只作为迁移兼容项存在，不能作为新模块写法。
+
+**C9. 前端源码命名**：框架契约层必须使用英文命名；UI 展示文案、中文 toast、业务分类显示值可以保留中文。历史状态字段兼容只能出现在明确的边界转换函数中，不允许在业务消费侧继续读取中文字段。
+
+**C10. Element Plus 构建优化**：Element Plus 不再全量注册，改用 `unplugin-vue-components` 和 `unplugin-auto-import` 按需导入；Vite manualChunks 将 Element Plus 拆为 core、overlay、components 等 chunk，避免单个超大 chunk。
+
 ### 验证
 
 ```bash
-cd backend && python -c "from app.services.model_watchdog.registry import list_models; print(len(list_models()))"
-# 输出 6
+cd backend && .venv/bin/python -m pytest
+# 35 passed
+
 cd frontend && npm run build
 # 0 TS errors
+# Element Plus 最大 JS chunk 约 475 kB，不再触发 500 kB chunk 警告
 ```
+
+当前关键扫描：
+
+```bash
+rg -n "\bas any\b|@ts-ignore|@ts-expect-error|:\s*any\b" frontend/src backend/app
+rg -n "raise HTTPException|return ApiResponse\(success=False|ApiResponse\(success=False" backend/app
+rg -n "default:\s*null|Promise\.resolve\(\{ default: null \}\)" frontend/src
+rg -n "use窗口管理器|窗口管理器|use桌面事件总线|文件夹id|目标文件夹id|获取文件列表请求|上传文件请求" frontend/src/desktop frontend/src/shared
+```
+
+上述扫描不应出现框架绕过项；Python 内置函数 `any(...)` 不属于类型绕过。

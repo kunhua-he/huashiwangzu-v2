@@ -1,6 +1,39 @@
 import api from './index'
 import type { ApiResponse, SystemConfig, RoleMatrixItem } from './types'
 
+type ApiResponseWithData<T> = Omit<ApiResponse<T>, 'data'> & { data: T }
+
+interface BackendUser {
+  id: number
+  username: string
+  display_name: string
+  email: string | null
+  role: string
+  enabled: boolean
+  last_login: string | null
+  created_at: string
+}
+
+interface BackendUserSearchResponse {
+  users: BackendUser[]
+  total: number
+  keyword: string
+}
+
+interface BackendRoleMatrixItem {
+  role_key: string
+  display_name: string
+  permissions: {
+    user_management?: boolean
+    system_config?: boolean
+    role_matrix?: boolean
+  }
+}
+
+interface BackendRoleMatrixResponse {
+  matrix: BackendRoleMatrixItem[]
+}
+
 export interface UserEntry {
   id: number
   username: string
@@ -17,56 +50,38 @@ export interface UserListResponse {
   total: number
 }
 
-function toUserEntry(user: Record<string, unknown>): UserEntry {
+function toUserEntry(user: BackendUser): UserEntry {
   return {
-    id: user.id as number,
-    username: (user.username ?? user.username) as string,
-    displayName: (user.displayName ?? user.display_name) as string,
-    email: (user.email ?? user.email ?? '') as string,
-    role: (user.role ?? user.role) as string,
-    status: (user.status ?? (user.enabled === false ? 0 : 1)) as number,
-    createdAt: (user.createdAt ?? user.created_at ?? '') as string,
-    lastLogin: (user.lastLogin ?? user.last_login ?? '') as string,
+    id: user.id,
+    username: user.username,
+    displayName: user.display_name,
+    email: user.email ?? '',
+    role: user.role,
+    status: user.enabled ? 1 : 0,
+    createdAt: user.created_at,
+    lastLogin: user.last_login ?? '',
   }
 }
 
-function toUserListResponse(response: Record<string, unknown>): { success: boolean; data: { userList: UserEntry[]; total: number }; error: string } {
-  const data = (response as Record<string, unknown>).data ?? (response as Record<string, unknown>).data ?? response
-  const rawList = (data as Record<string, unknown>)?.users ?? (data as Record<string, unknown>)?.['userList'] ?? []
-  const list = Array.isArray(data) ? (data as Record<string, unknown>[]) : (rawList as Record<string, unknown>[])
-  return { success: true, data: { userList: list.map(toUserEntry), total: ((data as Record<string, unknown>).total ?? list.length) as number }, error: '' }
-}
-
-function toSystemConfigInput(config: Record<string, unknown>): SystemConfig {
+function toUserListResponse(users: BackendUser[], total = users.length): ApiResponseWithData<UserListResponse> {
   return {
-    project_name: (config.project_name ?? config.project_name ?? '') as string,
-    system_version: (config.system_version ?? config.system_version ?? '') as string,
-    login_page_title: (config.login_page_title ?? config.login_page_title ?? '') as string,
-    default_role: (config.default_role ?? config.default_role ?? 'viewer') as string,
+    success: true,
+    data: { userList: users.map(toUserEntry), total },
+    error: null,
   }
 }
 
-function toSystemConfigOutput(config: SystemConfig): Record<string, string> {
+function toRoleMatrixItem(item: BackendRoleMatrixItem): RoleMatrixItem {
   return {
-    project_name: config.project_name,
-    system_version: config.system_version,
-    login_page_title: config.login_page_title,
-    default_role: config.default_role,
+    role: item.role_key,
+    name: item.display_name,
+    user_management: Boolean(item.permissions.user_management),
+    system_config: Boolean(item.permissions.system_config),
+    role_matrix: Boolean(item.permissions.role_matrix),
   }
 }
 
-function toRoleMatrixItem(item: Record<string, unknown>): RoleMatrixItem {
-  const perms = (item.permissions ?? (item as Record<string, unknown>).permissions ?? {}) as Record<string, unknown>
-  return {
-    role: (item.role ?? (item as Record<string, unknown>).role_key) as string,
-    name: (item.name ?? (item as Record<string, unknown>).display_name) as string,
-    user_management: !!(perms as Record<string, unknown>).user_management,
-    system_config: !!(perms as Record<string, unknown>).system_config,
-    role_matrix: !!(perms as Record<string, unknown>).role_matrix,
-  }
-}
-
-function toRoleMatrixOutput(matrix: RoleMatrixItem[]) {
+function toRoleMatrixOutput(matrix: RoleMatrixItem[]): BackendRoleMatrixResponse {
   return {
     matrix: matrix.map(item => ({
       role_key: item.role,
@@ -81,11 +96,18 @@ function toRoleMatrixOutput(matrix: RoleMatrixItem[]) {
 }
 
 export function fetchUserList() {
-  return api.get('/users/').then(res => toUserListResponse(res as unknown as Record<string, unknown>))
+  return api.get<unknown, ApiResponse<BackendUser[]>>('/users/').then(response =>
+    toUserListResponse(response.data ?? []),
+  )
 }
 
 export function searchUsers(keyword: string) {
-  return api.get('/users/search', { params: { keyword } }).then(res => toUserListResponse(res as unknown as Record<string, unknown>))
+  return api.get<unknown, ApiResponse<BackendUserSearchResponse>>('/users/search', {
+    params: { keyword },
+  }).then(response => {
+    const data = response.data
+    return toUserListResponse(data?.users ?? [], data?.total ?? 0)
+  })
 }
 
 export function createUser(params: {
@@ -95,13 +117,17 @@ export function createUser(params: {
   email?: string
   role?: string
 }) {
-  return api.post('/users/', {
+  return api.post<unknown, ApiResponse<BackendUser>>('/users/', {
     username: params.username,
     password: params.password,
     display_name: params.displayName || params.username,
     email: params.email || '',
     role: params.role || 'viewer',
-  }).then((res: unknown) => { const r = res as Record<string, unknown>; return { success: true, data: { message: 'User created successfully', newId: (r.data as Record<string, unknown>)?.id as number ?? undefined }, error: '' }; })
+  }).then((response): ApiResponseWithData<{ message: string; newId?: number }> => ({
+    success: response.success,
+    data: { message: 'User created successfully', newId: response.data?.id },
+    error: response.error,
+  }))
 }
 
 export function editUser(params: {
@@ -111,42 +137,66 @@ export function editUser(params: {
   role?: string
   password?: string
 }) {
-  return api.put(`/users/${params.userId}`, {
+  return api.put<unknown, ApiResponse<BackendUser>>(`/users/${params.userId}`, {
     display_name: params.displayName,
     email: params.email,
     role: params.role,
     password: params.password,
-  }).then(() => ({ success: true, data: { message: 'User edited successfully' }, error: '' }))
+  }).then((response): ApiResponseWithData<{ message: string }> => ({
+    success: response.success,
+    data: { message: 'User edited successfully' },
+    error: response.error,
+  }))
 }
 
 export function toggleUserEnabled(userId: number) {
-  return api.post(`/users/${userId}/toggle-enabled`).then(() => ({ success: true, data: { message: 'Status updated' }, error: '' }))
+  return api.post<unknown, ApiResponse<{ message: string; enabled: boolean }>>(`/users/${userId}/toggle-enabled`)
+    .then((response): ApiResponseWithData<{ message: string }> => ({
+      success: response.success,
+      data: { message: response.data?.message || 'Status updated' },
+      error: response.error,
+    }))
 }
 
 export function fetchSystemConfig() {
-  return api.get('/settings/system-config').then((res: unknown) => {
-    const r = res as Record<string, unknown>;
-    return { success: true, data: toSystemConfigInput((r.data ?? {}) as Record<string, string>), error: '' };
-  })
+  return api.get<unknown, ApiResponse<SystemConfig>>('/settings/system-config')
+    .then((response): ApiResponseWithData<SystemConfig> => ({
+      ...response,
+      data: response.data ?? {
+        project_name: '',
+        system_version: '',
+        login_page_title: '',
+        default_role: 'viewer',
+      },
+    }))
 }
 
 export function saveSystemConfig(params: SystemConfig) {
-  return api.put('/settings/system-config', toSystemConfigOutput(params)).then((res: unknown) => {
-    const r = res as Record<string, unknown>;
-    return { success: true, data: { message: 'System config saved', config: toSystemConfigInput((r.data ?? {}) as Record<string, string>) }, error: '' };
-  })
+  return api.put<unknown, ApiResponse<SystemConfig>>('/settings/system-config', params)
+    .then((response): ApiResponseWithData<{ message: string; config: SystemConfig }> => ({
+      success: response.success,
+      data: { message: 'System config saved', config: response.data ?? params },
+      error: response.error,
+    }))
 }
 
 export function fetchRoleMatrix() {
-  return api.get('/roles/matrix').then((res: unknown) => {
-    const r = res as Record<string, unknown>;
-    return { success: true, data: { matrix: (((r.data as Record<string, unknown>)?.matrix || []) as Record<string, unknown>[]).map(toRoleMatrixItem) }, error: '' };
-  })
+  return api.get<unknown, ApiResponse<BackendRoleMatrixResponse>>('/roles/matrix')
+    .then((response): ApiResponseWithData<{ matrix: RoleMatrixItem[] }> => ({
+      success: response.success,
+      data: { matrix: (response.data?.matrix ?? []).map(toRoleMatrixItem) },
+      error: response.error,
+    }))
 }
 
 export function saveRoleMatrix(matrix: RoleMatrixItem[]) {
-  return api.put('/roles/matrix', toRoleMatrixOutput(matrix)).then((res: unknown) => {
-    const r = res as Record<string, unknown>;
-    return { success: true, data: { message: 'Role matrix saved', matrix: (((r.data as Record<string, unknown>)?.matrix || []) as Record<string, unknown>[]).map(toRoleMatrixItem) }, error: '' };
-  })
+  return api.put<unknown, ApiResponse<BackendRoleMatrixResponse>>('/roles/matrix', toRoleMatrixOutput(matrix))
+    .then((response): ApiResponseWithData<{ message: string; matrix: RoleMatrixItem[] }> => ({
+      success: response.success,
+      data: {
+        message: 'Role matrix saved',
+        matrix: (response.data?.matrix ?? []).map(toRoleMatrixItem),
+      },
+      error: response.error,
+    }))
 }

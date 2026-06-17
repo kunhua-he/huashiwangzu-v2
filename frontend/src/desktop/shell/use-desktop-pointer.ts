@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted } from 'vue'
-import { use桌面事件总线 } from '@/desktop/events/use-desktop-event-bus'
+import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
 import { 开始框选, 更新框选, 结束框选, 框选矩形 } from '@/desktop/selection/selection-box-state'
 import { 取消选中, 批量选中 } from '@/desktop/selection/desktop-selection-state'
 import { 开始拖拽, 更新拖拽偏移, 进入文件夹, 离开文件夹, 结束拖拽, 拖拽状态 } from '@/desktop/drag-drop/drag-state'
@@ -42,7 +42,7 @@ function 吸附拖拽图标(e: MouseEvent) {
 }
 
 export function useDesktopPointer() {
-  const { emit } = use桌面事件总线()
+  const { emit } = useDesktopEventBus()
 
   function 桌面鼠标按下(e: MouseEvent) {
     if (e.target !== e.currentTarget) return
@@ -65,7 +65,7 @@ export function useDesktopPointer() {
   function 桌面鼠标放开(e: MouseEvent) {
     if (拖拽状态.isDragging) {
       const 目标文件夹 = 拖拽状态.dragOverId
-      if (目标文件夹) emit('desktop:move-to-folder', { ids: 拖拽状态.draggedIds, 目标文件夹id: 目标文件夹 })
+      if (目标文件夹) emit('desktop:move-to-folder', { ids: 拖拽状态.draggedIds, targetFolderId: 目标文件夹 })
       else 吸附拖拽图标(e)
       结束拖拽()
       return

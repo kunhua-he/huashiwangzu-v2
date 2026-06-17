@@ -1,14 +1,14 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { loadAppRegistry } from '@/desktop/app-registry/app-loader'
-import { use窗口管理器 } from '@/desktop/window-manager/window-manager'
+import { useWindowManager } from '@/desktop/window-manager/window-manager'
 import { loadDesktopState } from '@/desktop/window-manager/desktop-state-store'
-import { 创建WindowState同步 } from '@/desktop/window-manager/window-state-sync'
+import { createWindowStateSync } from '@/desktop/window-manager/window-state-sync'
 import { useUserStore } from '@/platform/stores/user'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import type { Ref } from 'vue'
 
 export function useDesktopAppLoading(当前角色: Ref<string>) {
-  const 管理器 = use窗口管理器()
+  const 管理器 = useWindowManager()
   const 用户Store = useUserStore()
   const 桌面应用列表 = ref<AppRegistryEntry[]>([])
   const 开始菜单应用列表 = ref<AppRegistryEntry[]>([])
@@ -19,10 +19,10 @@ export function useDesktopAppLoading(当前角色: Ref<string>) {
   const 桌面容器引用 = ref<HTMLElement | null>(null)
   let 尺寸观察器: ResizeObserver | null = null
 
-  const 窗口同步 = 创建WindowState同步(管理器.windows)
+  const 窗口同步 = createWindowStateSync(管理器.windows)
 
   function 更新容器尺寸() {
-    if (桌面容器引用.value) 管理器.设置容器尺寸(桌面容器引用.value.clientWidth, 桌面容器引用.value.clientHeight)
+    if (桌面容器引用.value) 管理器.setContainerSize(桌面容器引用.value.clientWidth, 桌面容器引用.value.clientHeight)
   }
 
   async function 加载应用注册表() {
@@ -37,7 +37,7 @@ export function useDesktopAppLoading(当前角色: Ref<string>) {
 
       if (用户Store.userInfo?.userId) {
         const 桌面状态 = await loadDesktopState()
-        管理器.恢复窗口(桌面状态.窗口, 当前角色.value)
+        管理器.restoreWindows(桌面状态.windows, 当前角色.value)
       }
 
       更新容器尺寸()
@@ -59,7 +59,7 @@ export function useDesktopAppLoading(当前角色: Ref<string>) {
 
   onMounted(加载应用注册表)
   onUnmounted(() => {
-    窗口同步.停止同步()
+    窗口同步.stopSync()
     尺寸观察器?.disconnect()
   })
 

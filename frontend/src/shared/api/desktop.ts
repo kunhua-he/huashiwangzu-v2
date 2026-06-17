@@ -3,61 +3,148 @@ import type { ApiResponse, FolderEntry, FileEntry, RecycleBinEntry, FileDetail }
 export type { FileOpenPayload as FilePreviewPayload } from '@/desktop/window-manager/window-types'
 import type { DesktopPersistentState } from '@/desktop/window-manager/desktop-state-store'
 
-export function 读取桌面状态请求() {
-  return api.get<unknown, ApiResponse<DesktopPersistentState>>('/desktop/state')
+type FileItemType = 'file' | 'folder'
+
+interface BackendFileListItem {
+  id: number
+  name: string
+  extension?: string | null
+  size: number
+  parent_id?: number | null
+  created_at?: string | null
+  is_folder: boolean
+  mime_type?: string | null
+  storage_path?: string | null
 }
 
-export function 保存桌面状态请求(状态: DesktopPersistentState) {
-  return api.post<unknown, ApiResponse<DesktopPersistentState>>('/desktop/state', 状态)
+interface BackendFileListResponse {
+  items: BackendFileListItem[]
+  total: number
+  page: number
+  page_size: number
 }
 
-export function 获取文件夹树请求() {
+interface BackendDesktopStateResponse {
+  user_id: number
+  state_json: Partial<DesktopPersistentState> & {
+    版本?: number
+    窗口?: DesktopPersistentState['windows']
+    应用状态?: DesktopPersistentState['appState']
+  }
+  version: number
+}
+
+interface UploadFileResponse {
+  exists: boolean
+  id: number
+  name: string
+  extension: string
+  size?: number | null
+  mime_type?: string | null
+}
+
+export interface FileListPageResponse {
+  items: FileEntry[]
+  total: number
+  page: number
+  page_size: number
+}
+
+function toFileEntry(item: BackendFileListItem): FileEntry {
+  return {
+    id: item.id,
+    file_name: item.name,
+    format: item.extension ?? null,
+    file_size: item.size,
+    created_at: item.created_at ?? '',
+    storage_path: item.storage_path ?? null,
+    is_folder: item.is_folder,
+    parent_folder_id: item.parent_id ?? null,
+  }
+}
+
+function toFileListPage(data: BackendFileListResponse): FileListPageResponse {
+  return {
+    items: data.items.map(toFileEntry),
+    total: data.total,
+    page: data.page,
+    page_size: data.page_size,
+  }
+}
+
+function toDesktopPersistentState(response: BackendDesktopStateResponse): DesktopPersistentState {
+  const payload = response.state_json || {}
+  return {
+    version: payload.version ?? payload.版本 ?? response.version ?? 1,
+    windows: Array.isArray(payload.windows) ? payload.windows : Array.isArray(payload.窗口) ? payload.窗口 : [],
+    appState: payload.appState ?? payload.应用状态 ?? {},
+  }
+}
+
+function toFileItemType(itemType: FileItemType): 'file' | 'folder' {
+  return itemType
+}
+
+export function readDesktopStateRequest() {
+  return api.get<unknown, ApiResponse<BackendDesktopStateResponse>>('/desktop/state')
+    .then((response): ApiResponse<DesktopPersistentState> => ({
+      ...response,
+      data: response.data ? toDesktopPersistentState(response.data) : null,
+    }))
+}
+
+export function saveDesktopStateRequest(state: DesktopPersistentState) {
+  return api.post<unknown, ApiResponse<BackendDesktopStateResponse>>('/desktop/state', { state_json: state })
+    .then((response): ApiResponse<DesktopPersistentState> => ({
+      ...response,
+      data: response.data ? toDesktopPersistentState(response.data) : null,
+    }))
+}
+
+export function fetchFolderTree() {
   return api.get<unknown, ApiResponse<FolderEntry[]>>('/files/tree')
 }
 
-export function 获取文件列表请求(文件夹id: number, 页码 = 1, 每页数量 = 50) {
-  return api.get<unknown, ApiResponse<Record<string, unknown>>>('/files/list', { params: { folder_id: 文件夹id, page: 页码, page_size: 每页数量 } })
+export function fetchFileList(folderId: number, page = 1, pageSize = 50) {
+  return api.get<unknown, ApiResponse<BackendFileListResponse>>('/files/list', {
+    params: { folder_id: folderId, page, page_size: pageSize },
+  }).then((response): ApiResponse<FileListPageResponse> => ({
+    ...response,
+    data: response.data ? toFileListPage(response.data) : null,
+  }))
 }
 
-export function 新建文件夹请求(名称: string, 父文件夹id?: number | null) {
-  return api.post<unknown, ApiResponse<FolderEntry>>('/files/folder', { name: 名称, parent_id: 父文件夹id })
+export function createFolderRequest(name: string, parentFolderId?: number | null) {
+  return api.post<unknown, ApiResponse<FolderEntry>>('/files/folder', { name, parent_id: parentFolderId })
 }
 
-export function 重命名请求(类型: '文件' | '文件夹', id: number, 新名称: string) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/rename', { type: 转条目类型(类型), id, new_name: 新名称 })
+export function renameEntryRequest(itemType: FileItemType, id: number, newName: string) {
+  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/rename', { type: toFileItemType(itemType), id, new_name: newName })
 }
 
-export function 移动条目请求(类型: '文件' | '文件夹', id: number, 目标文件夹id?: number | null) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/move', { type: 转条目类型(类型), id, target_folder_id: 目标文件夹id })
+export function moveEntryRequest(itemType: FileItemType, id: number, targetFolderId?: number | null) {
+  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/move', { type: toFileItemType(itemType), id, target_folder_id: targetFolderId })
 }
 
-export function 复制条目请求(类型: '文件' | '文件夹', id: number, 目标文件夹id?: number | null) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/copy', { type: 转条目类型(类型), id, target_folder_id: 目标文件夹id })
+export function copyEntryRequest(itemType: FileItemType, id: number, targetFolderId?: number | null) {
+  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/copy', { type: toFileItemType(itemType), id, target_folder_id: targetFolderId })
 }
 
-export function 移动到回收站请求(类型: '文件' | '文件夹', id: number) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/delete', { type: 转条目类型(类型), id })
+export function moveToRecycleBinRequest(itemType: FileItemType, id: number) {
+  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/delete', { type: toFileItemType(itemType), id })
 }
 
-export function 下载文件请求(文件id: number) {
-  window.open(`${API_BASE_URL}/files/download/${文件id}`, '_blank')
+export function downloadFileRequest(fileId: number) {
+  window.open(`${API_BASE_URL}/files/download/${fileId}`, '_blank')
 }
 
-export function 上传文件请求(文件: File, 文件夹id?: number, onProgress?: (pct: number) => void) {
+export function uploadFileRequest(file: File, folderId?: number, onProgress?: (pct: number) => void) {
   const formData = new FormData()
-  formData.append('file', 文件)
-  if (文件夹id !== undefined) {
-    formData.append('folder_id', String(文件夹id))
+  formData.append('file', file)
+  if (folderId !== undefined) {
+    formData.append('folder_id', String(folderId))
   }
-  return api.post<unknown, ApiResponse<{
-    已存在: boolean
-    文件id: number
-    文件名: string
-    格式: string
-    文件大小: number
-    分析支持?: boolean
-    分析提示?: string
-  }>>('/files/upload', formData, {
+  return api.post<unknown, ApiResponse<UploadFileResponse>>('/files/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress
       ? (e) => {
@@ -69,47 +156,46 @@ export function 上传文件请求(文件: File, 文件夹id?: number, onProgres
   })
 }
 
-export function 回收站列表请求() {
+export function fetchRecycleBinList() {
   return api.get<unknown, ApiResponse<RecycleBinEntry[]>>('/recycle/list')
 }
 
-export function 回收站还原请求(类型: '文件' | '文件夹', id: number) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/recycle/restore', { item_type: 类型, id })
+export function restoreRecycleBinEntry(itemType: FileItemType, id: number) {
+  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/recycle/restore', { item_type: itemType, id })
 }
 
-export function 彻底删除请求(类型: '文件' | '文件夹', id: number) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/recycle/delete-permanently', { item_type: 类型, id })
+export function permanentlyDeleteEntry(itemType: FileItemType, id: number) {
+  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/recycle/delete-permanently', { item_type: itemType, id })
 }
 
-export function 清空回收站请求() {
+export function emptyRecycleBinRequest() {
   return api.post<unknown, ApiResponse<{ message: string }>>('/recycle/empty')
 }
 
 export interface FileSearchPageResponse {
-  列表: FileEntry[]
-  总数: number
-  页码: number
-  每页数量: number
+  items: FileEntry[]
+  total: number
+  page: number
+  page_size: number
 }
 
-export function 文件搜索请求(关键词: string, 格式?: string, 页码 = 1, 每页数量 = 50) {
-  return api.get<unknown, ApiResponse<FileSearchPageResponse>>('/files/search', {
-    params: { keyword: 关键词, extension: 格式, page: 页码, page_size: 每页数量 }
-  })
+export function searchFilesRequest(keyword: string, extension?: string, page = 1, pageSize = 50) {
+  return api.get<unknown, ApiResponse<BackendFileListResponse>>('/files/search', {
+    params: { keyword, extension, page, page_size: pageSize }
+  }).then((response): ApiResponse<FileSearchPageResponse> => ({
+    ...response,
+    data: response.data ? toFileListPage(response.data) : null,
+  }))
 }
 
-export function 文件详情请求(文件id: number) {
-  return api.get<unknown, ApiResponse<FileDetail>>(`/files/detail/${文件id}`)
+export function fetchFileDetail(fileId: number) {
+  return api.get<unknown, ApiResponse<FileDetail>>(`/files/detail/${fileId}`)
 }
 
-export function 获取文件预览请求(文件id: number) {
-  return api.get<unknown, ApiResponse<Record<string, unknown>>>(`/files/preview/${文件id}`)
+export function fetchFilePreview(fileId: number) {
+  return api.get<unknown, ApiResponse<Record<string, unknown>>>(`/files/preview/${fileId}`)
 }
 
-export function 获取文件预览Url(文件id: number): string {
-  return `${API_BASE_URL}/files/preview/${文件id}`
-}
-
-function 转条目类型(类型: '文件' | '文件夹'): 'file' | 'folder' {
-  return 类型 === '文件' ? 'file' : 'folder'
+export function getFilePreviewUrl(fileId: number): string {
+  return `${API_BASE_URL}/files/preview/${fileId}`
 }

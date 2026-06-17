@@ -8,56 +8,56 @@ const pendingRequests = new Map<string, {
   timer: ReturnType<typeof setTimeout>
 }>()
 
-let 请求ID计数器 = 0
+let requestIdCounter = 0
 
 export function generateRequestId(): string {
-  请求ID计数器 += 1
-  return `req_${Date.now()}_${请求ID计数器}`
+  requestIdCounter += 1
+  return `req_${Date.now()}_${requestIdCounter}`
 }
 
-emitter.on('app:response', (数据: unknown) => {
-  const 响应 = 数据 as CrossAppActionResponse & { requestId?: string }
-  if (!响应.requestId && !响应.requestId) return
-  const id = 响应.requestId || 响应.requestId
+emitter.on('app:response', (data: unknown) => {
+  const response = data as CrossAppActionResponse & { requestId?: string }
+  if (!response.requestId) return
+  const id = response.requestId
   const pending = pendingRequests.get(id)
   if (pending) {
     clearTimeout(pending.timer)
     pendingRequests.delete(id)
-    pending.resolve(响应)
+    pending.resolve(response)
   }
 })
 
-emitter.on('app:request', async (数据: unknown) => {
-  const 请求 = 数据 as { targetAppId: string; action: string; params: Record<string, unknown>; requestId: string; sourceAppId?: string; sourceWindowId?: string }
-  if (!请求.requestId) return
-  const 结果 = await routeRequest(
-    请求.targetAppId,
-    请求.action,
-    请求.params,
-    { sourceAppId: 请求.sourceAppId || '', sourceWindowId: 请求.sourceWindowId || '', requestId: 请求.requestId }
+emitter.on('app:request', async (data: unknown) => {
+  const request = data as { targetAppId: string; action: string; params: Record<string, unknown>; requestId: string; sourceAppId?: string; sourceWindowId?: string }
+  if (!request.requestId) return
+  const result = await routeRequest(
+    request.targetAppId,
+    request.action,
+    request.params,
+    { sourceAppId: request.sourceAppId || '', sourceWindowId: request.sourceWindowId || '', requestId: request.requestId }
   )
-  emitter.emit('app:response', { ...结果, requestId: 请求.requestId } as never)
+  emitter.emit('app:response', { ...result, requestId: request.requestId } as never)
 })
 
 export function registerPendingRequest(
-  请求ID: string,
-  超时: number,
-  超时回调: () => CrossAppActionResponse
+  requestId: string,
+  timeout: number,
+  timeoutCallback: () => CrossAppActionResponse
 ): Promise<CrossAppActionResponse> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      pendingRequests.delete(请求ID)
-      resolve(超时回调())
-    }, 超时)
-    pendingRequests.set(请求ID, { resolve, reject, timer })
+      pendingRequests.delete(requestId)
+      resolve(timeoutCallback())
+    }, timeout)
+    pendingRequests.set(requestId, { resolve, reject, timer })
   })
 }
 
-export function cancelPendingRequest(请求ID: string): void {
-  const pending = pendingRequests.get(请求ID)
+export function cancelPendingRequest(requestId: string): void {
+  const pending = pendingRequests.get(requestId)
   if (pending) {
     clearTimeout(pending.timer)
-    pendingRequests.delete(请求ID)
+    pendingRequests.delete(requestId)
     pending.resolve({ success: false, error: { code: 'ERR_TIMEOUT', message: '请求已取消' } })
   }
 }

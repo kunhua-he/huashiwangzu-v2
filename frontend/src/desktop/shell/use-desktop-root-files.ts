@@ -1,9 +1,9 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { 获取文件列表请求 } from '@/shared/api/desktop'
+import { fetchFileList } from '@/shared/api/desktop'
 import type { FileEntry } from '@/shared/api/types'
-import { use桌面事件总线 } from '@/desktop/events/use-desktop-event-bus'
+import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
 import { openFileByRecord } from '@/desktop/app-registry/app-opener'
-import { 窗口管理器 } from '@/desktop/window-manager/window-manager'
+import { windowManager } from '@/desktop/window-manager/window-manager'
 import { 格式化文件displayName } from '@/shared/files/display-name'
 
 function displayName(文件: FileEntry) {
@@ -12,22 +12,22 @@ function displayName(文件: FileEntry) {
 
 export function useDesktopRootFiles() {
   const 桌面文件列表 = ref<FileEntry[]>([])
-  const { on, off } = use桌面事件总线()
+  const { on, off } = useDesktopEventBus()
 
   async function loadDesktopFiles() {
-    const 响应 = await 获取文件列表请求(0)
-    if (响应.success) 桌面文件列表.value = (响应.data as Record<string, unknown>)?.['列表'] as FileEntry[] || []
+    const 响应 = await fetchFileList(0)
+    if (响应.success) 桌面文件列表.value = 响应.data?.items || []
   }
 
   function onFileRefresh(d?: unknown) {
     const payload = d as Record<string, unknown> | undefined
-    const id = (payload?.folderId ?? payload?.['文件夹id']) as number | undefined
+    const id = payload?.folderId as number | undefined
     if (id === undefined || id === 0) void loadDesktopFiles()
   }
 
   function openDesktopEntry(文件: FileEntry) {
     if (文件.is_folder || !文件.format) {
-      窗口管理器.打开窗口('desktop')
+      windowManager.openWindow('desktop')
       return
     }
     openFileByRecord({ fileId: 文件.id, fileName: displayName(文件), format: 文件.format })

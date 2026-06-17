@@ -5,6 +5,7 @@ from fastapi.responses import ORJSONResponse
 from pydantic import ValidationError as PydanticValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import FileResponse
+from app.config import get_settings
 from app.core.exceptions import AppException
 
 
@@ -73,12 +74,14 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
+        settings = get_settings()
+        error_message = f"Internal server error: {str(exc)}" if settings.APP_DEBUG else "Internal server error"
         return ORJSONResponse(
             status_code=500,
             content={
                 "success": False,
                 "data": None,
-                "error": f"Internal server error: {str(exc)}",
+                "error": error_message,
                 "errors": None,
             },
         )

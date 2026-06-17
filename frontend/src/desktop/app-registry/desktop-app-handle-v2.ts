@@ -1,6 +1,6 @@
 import { ElMessage } from 'element-plus'
 import { API_BASE_URL } from '@/shared/api'
-import { 窗口管理器 } from '@/desktop/window-manager/window-manager'
+import { windowManager } from '@/desktop/window-manager/window-manager'
 import { getApp } from '@/desktop/app-registry/app-registry'
 import { getAppByFileFormat } from '@/desktop/app-registry/file-association-registry'
 import emitter from '@/desktop/events'
@@ -43,7 +43,7 @@ export function useDesktopAppHandleV2() {
   function openApp(应用标识: appId, 参数?: Record<string, unknown>): windowId | null {
     const 检查 = checkPermission(应用标识)
     if (!检查) return null
-    return 窗口管理器.打开窗口(应用标识, 参数)
+    return windowManager.openWindow(应用标识, 参数)
   }
 
   async function openFile(文件id: number, 格式?: string, 选项?: CommandOptions): Promise<WindowHandle | null> {
@@ -52,7 +52,7 @@ export function useDesktopAppHandleV2() {
       ElMessage.warning(`无应用支持打开 ${格式} 格式`)
       return null
     }
-    const 窗口ID = 窗口管理器.打开窗口(关联.appKey, { 文件id, 格式 })
+    const 窗口ID = windowManager.openWindow(关联.appKey, { 文件id, 格式 })
     return 窗口ID ? { windowId: 窗口ID, appId: 关联.appKey } : null
   }
 

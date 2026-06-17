@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.database import init_db, dispose_db
 from app.core.handlers import register_exception_handlers
 from app.middleware.logging_middleware import RequestLoggingMiddleware
-from app.routers import auth, desktop, files, file_transfer, recycle, users, roles, system, logs, system_status, dashboard, settings, backup, tasks, office, office_export, editors, notifications, feedback, app_manager, agent_session, agent_tools, agent_prompts, agent_prompt_actions, image_vision, knowledge, knowledge_aggregation, knowledge_analysis_results, knowledge_entity_merge, knowledge_dictionary, knowledge_evaluation, knowledge_evidence_write, knowledge_governance, knowledge_governance_write, knowledge_graph, knowledge_labels, knowledge_tasks, knowledge_visual_resources, menu
+from app.routers.registry import register_routers
 
 config = get_settings()
 FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
@@ -54,45 +54,7 @@ app.add_middleware(RequestLoggingMiddleware)
 register_exception_handlers(app)
 
 # Routers
-app.include_router(auth.router)
-app.include_router(desktop.router)
-app.include_router(files.router)
-app.include_router(file_transfer.router)
-app.include_router(recycle.router)
-app.include_router(users.router)
-app.include_router(roles.router)
-app.include_router(system.router)
-app.include_router(logs.router)
-app.include_router(system_status.router)
-app.include_router(dashboard.router)
-app.include_router(settings.router)
-app.include_router(backup.router)
-app.include_router(tasks.router)
-app.include_router(notifications.router)
-app.include_router(feedback.router)
-app.include_router(office.router)
-app.include_router(office_export.router)
-app.include_router(editors.router)
-app.include_router(app_manager.router)
-app.include_router(menu.router)
-app.include_router(agent_session.router)
-app.include_router(agent_tools.router)
-app.include_router(agent_prompts.router)
-app.include_router(agent_prompt_actions.router)
-app.include_router(image_vision.router)
-app.include_router(knowledge.router)
-app.include_router(knowledge_aggregation.router)
-app.include_router(knowledge_analysis_results.router)
-app.include_router(knowledge_entity_merge.router)
-app.include_router(knowledge_dictionary.router)
-app.include_router(knowledge_evaluation.router)
-app.include_router(knowledge_evidence_write.router)
-app.include_router(knowledge_governance.router)
-app.include_router(knowledge_governance_write.router)
-app.include_router(knowledge_graph.router)
-app.include_router(knowledge_labels.router)
-app.include_router(knowledge_tasks.router)
-app.include_router(knowledge_visual_resources.router)
+register_routers(app)
 
 
 @app.get("/api/health")

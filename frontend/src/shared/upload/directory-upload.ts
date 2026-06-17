@@ -1,4 +1,4 @@
-import { 获取文件夹树请求, 新建文件夹请求, 上传文件请求 } from '@/shared/api/desktop'
+import { createFolderRequest, fetchFolderTree, uploadFileRequest } from '@/shared/api/desktop'
 
 interface FileToUpload { file: File; path: string[] }
 
@@ -36,7 +36,7 @@ export async function collectDraggedFiles(items: DataTransferItemList | null): P
 }
 
 export async function uploadDraggedFiles(fileList: FileToUpload[], rootFolderId?: number | null) {
-  const treeResponse = await 获取文件夹树请求()
+  const treeResponse = await fetchFolderTree()
   const index = new Map<string, number>()
   if (treeResponse.success && treeResponse.data) {
     for (const item of treeResponse.data) index.set(`${item.parent_folder_id ?? 0}/${item.name}`, item.id)
@@ -47,7 +47,7 @@ export async function uploadDraggedFiles(fileList: FileToUpload[], rootFolderId?
     for (const name of path) {
       const key = `${parentId}/${name}`
       if (!index.has(key)) {
-        const res = await 新建文件夹请求(name, parentId || null)
+        const res = await createFolderRequest(name, parentId || null)
         index.set(key, ((res.data as unknown as Record<string, unknown>)?.id as number) ?? 0)
       }
       parentId = index.get(key)!
@@ -60,7 +60,7 @@ export async function uploadDraggedFiles(fileList: FileToUpload[], rootFolderId?
   for (const item of fileList) {
     try {
       const folderId = await ensureDirectory(item.path)
-      const res = await 上传文件请求(item.file, folderId)
+      const res = await uploadFileRequest(item.file, folderId)
       if (res.success) successCount++
       else failCount++
     } catch {

@@ -29,7 +29,7 @@ def test_knowledge_governance_routes_are_registered() -> None:
     assert "/api/image-vision/status/{catalog_id}" in paths
     assert "/api/image-vision/stats" in paths
     assert "/api/menu" in paths
-    assert "/api/health/deep" in paths
+    assert "/api/health" in paths
     assert "/api/knowledge/labels/search" in paths
     assert "/api/knowledge/labels/files/{catalog_id}" in paths
     assert "/api/knowledge/analysis-results/{catalog_id}" in paths

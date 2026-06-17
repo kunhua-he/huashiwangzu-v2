@@ -1,107 +1,107 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { 获取用户列表, 搜索用户, 创建用户, 编辑用户, 禁用用户, 获取系统配置, 保存系统配置, 获取角色矩阵, 保存角色矩阵 } from '@/shared/api/settings'
+import { fetchUserList, searchUsers, createUser, editUser, toggleUserEnabled, fetchSystemConfig, saveSystemConfig, fetchRoleMatrix, saveRoleMatrix } from '@/shared/api/settings'
 import type { UserEntry } from '@/shared/api/settings'
-import type { 系统配置数据, 角色矩阵项 } from '@/shared/api/types'
-import { use应用状态快照 } from '@/desktop/window-manager/use-app-state-snapshot'
+import type { SystemConfig, RoleMatrixItem } from '@/shared/api/types'
+import { useAppStateSnapshot } from '@/desktop/window-manager/use-app-state-snapshot'
 
-export function use设置() {
-  const 当前标签 = use应用状态快照('settings', '当前标签', '用户管理')
-  const 用户列表 = ref<UserEntry[]>([])
-  const 加载中 = ref(false)
-  const 搜索词 = ref('')
-  const 弹窗可见 = ref(false)
-  const 弹窗模式 = ref<'新建' | '编辑'>('新建')
-  const 提交中 = ref(false)
-  const 编辑目标 = ref<UserEntry | null>(null)
-  const 表单 = ref({ 用户名: '', 密码: '', displayName: '', email: '', 角色: 'viewer' })
-  const 系统配置保存中 = ref(false)
-  const 角色矩阵保存中 = ref(false)
-  const 系统配置表单 = ref<系统配置数据>({ 项目名称: '', 系统版本: '', 登录页标题: '', 默认角色: 'viewer' })
-  const 角色矩阵 = ref<角色矩阵项[]>([])
+export function useSettings() {
+  const activeTab = useAppStateSnapshot('settings', 'activeTab', 'userManagement')
+  const userList = ref<UserEntry[]>([])
+  const isLoading = ref(false)
+  const searchQuery = ref('')
+  const dialogVisible = ref(false)
+  const dialogMode = ref<'new' | 'edit'>('new')
+  const isSubmitting = ref(false)
+  const editingTarget = ref<UserEntry | null>(null)
+  const form = ref({ username: '', password: '', displayName: '', email: '', role: 'viewer' as string })
+  const configSaving = ref(false)
+  const matrixSaving = ref(false)
+  const configForm = ref<SystemConfig>({ project_name: '', system_version: '', login_page_title: '', default_role: 'viewer' })
+  const roleMatrix = ref<RoleMatrixItem[]>([])
 
-  function 角色名称(角色: string) { return { admin: '管理员', editor: '编辑者', viewer: '查看者' }[角色] || 角色 }
-  function 角色类型(角色: string) { return { admin: 'danger', editor: 'primary', viewer: 'info' }[角色] || 'info' }
+  function roleLabel(role: string) { return { admin: 'Administrator', editor: 'Editor', viewer: 'Viewer' }[role] || role }
+  function roleTagType(role: string) { return { admin: 'danger', editor: 'primary', viewer: 'info' }[role] || 'info' }
 
-  async function 加载用户() {
-    加载中.value = true
-    try { const res = await 获取用户列表(); if (res.success) 用户列表.value = res.数据.用户列表 }
-    catch (e: any) { ElMessage.error(e?.error || '获取用户列表失败') }
-    finally { 加载中.value = false }
+  async function loadUsers() {
+    isLoading.value = true
+    try { const res = await fetchUserList(); if (res.success) userList.value = res.data.userList }
+    catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load user list') }
+    finally { isLoading.value = false }
   }
 
-  async function 执行搜索() {
-    if (!搜索词.value.trim()) { 加载用户(); return }
-    加载中.value = true
-    try { const res = await 搜索用户(搜索词.value.trim()); if (res.success) 用户列表.value = res.数据.用户列表 }
-    catch (e: any) { ElMessage.error(e?.error || '搜索失败') }
-    finally { 加载中.value = false }
+  async function executeSearch() {
+    if (!searchQuery.value.trim()) { loadUsers(); return }
+    isLoading.value = true
+    try { const res = await searchUsers(searchQuery.value.trim()); if (res.success) userList.value = res.data.userList }
+    catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Search failed') }
+    finally { isLoading.value = false }
   }
 
-  function 打开弹窗(模式: '新建' | '编辑', 用户?: UserEntry) {
-    弹窗模式.value = 模式
-    if (模式 === '编辑' && 用户) {
-      编辑目标.value = 用户
-      表单.value = { 用户名: '', 密码: '', displayName: 用户.displayName || '', email: 用户.email || '', 角色: 用户.角色 || 'viewer' }
-    } else { 表单.value = { 用户名: '', 密码: '', displayName: '', email: '', 角色: 'viewer' } }
-    弹窗可见.value = true
+  function openDialog(mode: 'new' | 'edit', user?: UserEntry) {
+    dialogMode.value = mode
+    if (mode === 'edit' && user) {
+      editingTarget.value = user
+      form.value = { username: '', password: '', displayName: user.displayName || '', email: user.email || '', role: user.role || 'viewer' }
+    } else { form.value = { username: '', password: '', displayName: '', email: '', role: 'viewer' } }
+    dialogVisible.value = true
   }
 
-  async function 提交表单() {
-    if (弹窗模式.value === '新建') {
-      if (!表单.value.用户名 || !表单.value.密码) { ElMessage.warning('用户名和密码为必填'); return }
-      提交中.value = true
-      try { const res = await 创建用户(表单.value); if (res.success) { ElMessage.success('创建成功'); 弹窗可见.value = false; 加载用户() } else ElMessage.error(res.error || '创建失败') }
-      catch (e: any) { ElMessage.error(e?.error || '创建失败') }
-      finally { 提交中.value = false }
+  async function submitForm() {
+    if (dialogMode.value === 'new') {
+      if (!form.value.username || !form.value.password) { ElMessage.warning('Username and password are required'); return }
+      isSubmitting.value = true
+      try { const res = await createUser(form.value); if (res.success) { ElMessage.success('Created successfully'); dialogVisible.value = false; loadUsers() } else ElMessage.error(res.error || 'Creation failed') }
+      catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Creation failed') }
+      finally { isSubmitting.value = false }
     } else {
-       提交中.value = true
-       try { const res = await 编辑用户({ 用户id: 编辑目标.value!.id, displayName: 表单.value.displayName, email: 表单.value.email, 角色: 表单.value.角色, 密码: 表单.value.密码 || undefined }); if (res.success) { ElMessage.success(表单.value.密码 ? '密码已重置成功，请将新密码告知用户' : '修改成功'); 弹窗可见.value = false; 加载用户() } else ElMessage.error(res.error || '修改失败') }
-      catch (e: any) { ElMessage.error(e?.error || '修改失败') }
-      finally { 提交中.value = false }
+      isSubmitting.value = true
+      try { const res = await editUser({ userId: editingTarget.value!.id, displayName: form.value.displayName, email: form.value.email, role: form.value.role, password: form.value.password || undefined }); if (res.success) { ElMessage.success(form.value.password ? 'Password has been reset. Please inform the user.' : 'Updated successfully'); dialogVisible.value = false; loadUsers() } else ElMessage.error(res.error || 'Update failed') }
+      catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Update failed') }
+      finally { isSubmitting.value = false }
     }
   }
 
-  async function 切换状态(用户: UserEntry) {
-    const 动作 = 用户.状态 === 1 ? '禁用' : '启用'
-    try { await ElMessageBox.confirm(`确认${动作}用户「${用户.用户名}」？`, '提示') } catch { return }
+  async function toggleStatus(user: UserEntry) {
+    const action = user.status === 1 ? 'disable' : 'enable'
+    try { await ElMessageBox.confirm(`Confirm ${action} user "${user.username}"?`, 'Confirm') } catch { return }
     try {
-      const res = await 禁用用户(用户.id)
-      if (res.success) { ElMessage.success(`${动作}成功`); 加载用户() }
-      else ElMessage.error(res.error || `${动作}失败`)
-    } catch (e: any) { ElMessage.error(e?.error || `${动作}失败`) }
+      const res = await toggleUserEnabled(user.id)
+      if (res.success) { ElMessage.success(`${action} successful`); loadUsers() }
+      else ElMessage.error(res.error || `${action} failed`)
+    } catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || `${action} failed`) }
   }
 
-  async function 加载系统配置() {
+  async function loadSystemConfig() {
     try {
-      const res = await 获取系统配置()
-      if (res.success) 系统配置表单.value = res.数据
-    } catch (e: any) { ElMessage.error(e?.error || '加载系统配置失败') }
+      const res = await fetchSystemConfig()
+      if (res.success) configForm.value = res.data
+    } catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load system config') }
   }
 
-  async function 保存系统配置表单() {
-    系统配置保存中.value = true
-    try { const res = await 保存系统配置(系统配置表单.value); if (res.success) ElMessage.success('系统配置已保存'); else ElMessage.error(res.error || '保存失败') }
-    finally { 系统配置保存中.value = false }
+  async function systemConfigSave() {
+    configSaving.value = true
+    try { const res = await saveSystemConfig(configForm.value); if (res.success) ElMessage.success('System config saved'); else ElMessage.error(res.error || 'Save failed') }
+    finally { configSaving.value = false }
   }
 
-  async function 加载角色矩阵() {
+  async function loadRoleMatrix() {
     try {
-      const res = await 获取角色矩阵()
-      if (res.success) 角色矩阵.value = res.数据.矩阵
-    } catch (e: any) { ElMessage.error(e?.error || '加载角色矩阵失败') }
+      const res = await fetchRoleMatrix()
+      if (res.success) roleMatrix.value = res.data.matrix
+    } catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load role matrix') }
   }
 
-  async function 保存角色矩阵表单() {
-    角色矩阵保存中.value = true
-    try { const res = await 保存角色矩阵(角色矩阵.value); if (res.success) ElMessage.success('角色矩阵已保存'); else ElMessage.error(res.error || '保存失败') }
-    finally { 角色矩阵保存中.value = false }
+  async function roleMatrixSave() {
+    matrixSaving.value = true
+    try { const res = await saveRoleMatrix(roleMatrix.value); if (res.success) ElMessage.success('Role matrix saved'); else ElMessage.error(res.error || 'Save failed') }
+    finally { matrixSaving.value = false }
   }
 
-  onMounted(() => { 加载用户(); 加载系统配置(); 加载角色矩阵() })
+  onMounted(() => { loadUsers(); loadSystemConfig(); loadRoleMatrix() })
 
   return {
-    当前标签, 用户列表, 加载中, 搜索词, 弹窗可见, 弹窗模式, 提交中, 表单, 系统配置保存中, 角色矩阵保存中, 系统配置表单, 角色矩阵,
-    角色名称, 角色类型, 加载用户, 执行搜索, 打开弹窗, 提交表单, 切换状态, 加载系统配置, 保存系统配置表单, 加载角色矩阵, 保存角色矩阵表单,
+    activeTab, userList, isLoading, searchQuery, dialogVisible, dialogMode, isSubmitting, form, configSaving, matrixSaving, configForm, roleMatrix,
+    roleLabel, roleTagType, loadUsers, executeSearch, openDialog, submitForm, toggleStatus, loadSystemConfig, systemConfigSave, loadRoleMatrix, roleMatrixSave,
   }
 }

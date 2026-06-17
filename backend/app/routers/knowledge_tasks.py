@@ -1,11 +1,11 @@
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFound
+from app.core.exceptions import NotFound, ValidationError
 from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
 from app.models.knowledge import Catalog, KnowledgeTask
@@ -26,10 +26,10 @@ async def trigger_analysis(body: TriggerRequest, db: AsyncSession = Depends(get_
     if not file_path and body.file_id:
         file = await db.get(File, body.file_id)
         if not file:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise NotFound("File not found")
         file_path = file.storage_path
     if not file_path:
-        raise HTTPException(status_code=422, detail="Provide file_path or file_id")
+        raise ValidationError("Provide file_path or file_id")
     catalog, is_new = await CatalogService.create_or_get(db, file_path, owner_id=body.owner_id or user.id)
     if not is_new:
         return ApiResponse(data={"catalog_id": catalog.id, "status": catalog.status, "message": "File already exists"})
@@ -68,7 +68,7 @@ async def get_task_progress(catalog_id: int, db: AsyncSession = Depends(get_db),
 @router.post("/rerun/{catalog_id}")
 async def rerun_layer(catalog_id: int, body: RerunRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
     if body.layer not in PIPELINE_ORDER:
-        return ApiResponse(success=False, error=f"Invalid layer '{body.layer}'", data=None)
+        raise ValidationError(f"Invalid layer '{body.layer}'")
     catalog = await db.get(Catalog, catalog_id)
     if not catalog:
         raise NotFound(f"Catalog {catalog_id} not found")

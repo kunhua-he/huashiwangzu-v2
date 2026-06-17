@@ -7,7 +7,7 @@ import { 窗口管理器 } from '@/desktop/window-manager/window-manager'
 import { 格式化文件displayName } from '@/shared/files/display-name'
 
 function displayName(文件: FileEntry) {
-  return 文件.是否为文件夹 ? String(文件.文件名 || '') : 格式化文件displayName(文件.文件名, 文件.格式)
+  return 文件.is_folder ? String(文件.file_name || '') : 格式化文件displayName(文件.file_name, 文件.format)
 }
 
 export function useDesktopRootFiles() {
@@ -16,19 +16,21 @@ export function useDesktopRootFiles() {
 
   async function loadDesktopFiles() {
     const 响应 = await 获取文件列表请求(0)
-    if (响应.success) 桌面文件列表.value = 响应.data?.列表 || []
+    if (响应.success) 桌面文件列表.value = (响应.data as Record<string, unknown>)?.['列表'] as FileEntry[] || []
   }
 
-  function onFileRefresh(d?: { 文件夹id?: number }) {
-    if (d?.文件夹id === undefined || d.文件夹id === 0) void loadDesktopFiles()
+  function onFileRefresh(d?: unknown) {
+    const payload = d as Record<string, unknown> | undefined
+    const id = (payload?.folderId ?? payload?.['文件夹id']) as number | undefined
+    if (id === undefined || id === 0) void loadDesktopFiles()
   }
 
   function openDesktopEntry(文件: FileEntry) {
-    if (文件.是否为文件夹 || !文件.格式) {
+    if (文件.is_folder || !文件.format) {
       窗口管理器.打开窗口('desktop')
       return
     }
-    openFileByRecord({ fileId: 文件.id, fileName: displayName(文件), format: 文件.格式 })
+    openFileByRecord({ fileId: 文件.id, fileName: displayName(文件), format: 文件.format })
   }
 
   onMounted(() => {

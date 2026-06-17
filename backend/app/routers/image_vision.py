@@ -1,7 +1,8 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import NotFound, ValidationError
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.knowledge import Catalog
@@ -28,7 +29,7 @@ async def trigger_extraction(
 ):
     catalog = await _resolve_catalog(db, body, user.id)
     if catalog.channel_type not in status_service.VISION_CHANNELS:
-        raise HTTPException(status_code=422, detail="Catalog is not a visual-capable file")
+        raise ValidationError("Catalog is not a visual-capable file")
     await create_next_task(db, catalog.id, "extract")
     catalog.status = "pending"
     await db.commit()
@@ -57,7 +58,7 @@ async def get_status(
 ):
     data = await status_service.catalog_status(db, catalog_id)
     if not data:
-        raise HTTPException(status_code=404, detail="Knowledge file not found")
+        raise NotFound("Knowledge file not found")
     return ApiResponse(data=data)
 
 
@@ -73,11 +74,11 @@ async def _resolve_catalog(db: AsyncSession, body: TriggerVisionRequest, user_id
     if body.catalog_id:
         catalog = await db.get(Catalog, body.catalog_id)
         if not catalog:
-            raise HTTPException(status_code=404, detail="Knowledge file not found")
+            raise NotFound("Knowledge file not found")
         return catalog
     if body.file_path:
         catalog, is_new = await CatalogService.create_or_get(db, body.file_path, owner_id=body.owner_id or user_id)
         if is_new:
             await create_pipeline_tasks(db, catalog.id)
         return catalog
-    raise HTTPException(status_code=422, detail="Provide catalog_id or file_path")
+    raise ValidationError("Provide catalog_id or file_path")

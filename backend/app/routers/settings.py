@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.schemas.system import SettingResponse, SettingCreate, SettingUpdate
@@ -20,7 +21,7 @@ async def list_settings(
 
 
 @router.get("/system-config")
-async def get_system_config(db: AsyncSession = Depends(get_db)):
+async def get_system_config(db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("admin"))):
     config = await svc.get_system_config_map(db)
     return ApiResponse(data=config)
 
@@ -50,7 +51,7 @@ async def get_setting(
 ):
     s = await svc.get_setting(db, key)
     if not s:
-        return ApiResponse(success=False, error="Setting not found", data=None)
+        raise NotFound("Setting not found")
     return ApiResponse(data=SettingResponse.model_validate(s))
 
 

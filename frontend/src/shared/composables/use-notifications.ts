@@ -1,6 +1,6 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import api from '@/shared/api'
-import type { 公告条目 } from '@/shared/api/types'
+import type { NotificationItem } from '@/shared/api/types'
 
 async function 获取通知列表() {
   const res = await api.get('/notifications')
@@ -21,7 +21,7 @@ async function 全部已读请求() {
 
 export function use通知(容器选择器 = '.任务栏通知-包装') {
   const 未读数 = ref(0)
-  const 通知列表 = ref<公告条目[]>([])
+  const 通知列表 = ref<NotificationItem[]>([])
   const 显示通知面板 = ref(false)
 
   async function 加载未读数() {

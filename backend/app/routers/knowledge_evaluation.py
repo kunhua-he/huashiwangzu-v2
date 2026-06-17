@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
@@ -35,7 +36,7 @@ async def get_record(
 ):
     data = await service.detail(db, record_id)
     if not data:
-        raise HTTPException(status_code=404, detail="Evaluation record not found")
+        raise NotFound("Evaluation record not found")
     return ApiResponse(data=data)
 
 

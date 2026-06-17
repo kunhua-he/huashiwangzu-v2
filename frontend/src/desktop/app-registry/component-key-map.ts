@@ -1,8 +1,9 @@
-import { componentKeyMap as 生成映射 } from './component-key-map.generated'
+import type { Component } from 'vue'
+import { componentKeyMap as generatedMap } from './component-key-map.generated'
 
-// 旧数据库中文 entry_component_key → 组件加载器映射（V1→V2 兼容层）
-// 新应用请直接在 component-key-map.generated.ts 中添加
-const 旧键兼容映射: Record<string, string> = {
+// Legacy Chinese entry_component_key → component loader mapping (V1→V2 compat layer)
+// New apps should be added directly in component-key-map.generated.ts
+const legacyKeyCompatMap: Record<string, string> = {
   '应用/agent/入口.vue': 'ai-assistant/index.vue',
   '应用/dashboard/入口.vue': '',
   '应用/desktop/入口.vue': '',
@@ -12,13 +13,13 @@ const 旧键兼容映射: Record<string, string> = {
   '应用/tasks/入口.vue': '',
 }
 
-export const componentKeyMap: Record<string, () => Promise<{ default: any }>> = {
-  ...生成映射,
+export const componentKeyMap: Record<string, () => Promise<{ default: Component }>> = {
+  ...generatedMap,
 }
 
-// 将旧中文 key 也挂到 componentKeyMap 上，映射到对应的 English key 的加载器
-for (const [旧键, 新键] of Object.entries(旧键兼容映射)) {
-  if (新键 && 生成映射[新键]) {
-    componentKeyMap[旧键] = 生成映射[新键]
+// Mount legacy Chinese keys onto componentKeyMap, mapping to the corresponding English key's loader
+for (const [oldKey, newKey] of Object.entries(legacyKeyCompatMap)) {
+  if (newKey && generatedMap[newKey]) {
+    componentKeyMap[oldKey] = generatedMap[newKey]
   }
 }

@@ -35,7 +35,7 @@ export function useDesktopAppLoading(当前角色: Ref<string>) {
       右侧功能应用列表.value = 全部应用.filter(a => a.showInSidebar)
       托盘应用列表.value = 全部应用.filter(a => a.showInTray)
 
-      if (用户Store.用户信息?.userId) {
+      if (用户Store.userInfo?.userId) {
         const 桌面状态 = await loadDesktopState()
         管理器.恢复窗口(桌面状态.窗口, 当前角色.value)
       }
@@ -43,14 +43,14 @@ export function useDesktopAppLoading(当前角色: Ref<string>) {
       更新容器尺寸()
       尺寸观察器 = new ResizeObserver(更新容器尺寸)
       if (桌面容器引用.value) 尺寸观察器.observe(桌面容器引用.value)
-    } catch (e: any) {
-      注册表错误.value = e?.message || '桌面应用清单加载失败，请联系管理员'
+    } catch (e: unknown) {
+      注册表错误.value = (e as {message?: string})?.message || '桌面应用清单加载失败，请联系管理员'
     } finally {
       加载中.value = false
       if (import.meta.env.DEV) {
         const { useDesktopAppHandleV2 } = await import('@/desktop/app-registry/desktop-app-handle-v2')
         const 句柄V2 = useDesktopAppHandleV2()
-        ;(window as any).__test__ = { 句柄V2 }
+        ;(window as { __test__?: unknown }).__test__ = { 句柄V2 }
       }
     }
   }

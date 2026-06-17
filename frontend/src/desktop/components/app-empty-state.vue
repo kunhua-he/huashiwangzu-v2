@@ -13,9 +13,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { Component } from 'vue'
 import { FolderOpened, Search, ChatDotRound, Document, DataBoard } from '@element-plus/icons-vue'
 
-const iconMap: Record<string, any> = {
+const iconMap: Record<string, Component> = {
   folder: FolderOpened,
   search: Search,
   chat: ChatDotRound,

@@ -21,16 +21,16 @@
       class="桌面图标项 桌面文件图标项"
       :class="{
         '桌面图标项-选中': 是否选中(`file:${文件.id}`),
-        '桌面图标项-拖拽悬停': 文件.是否为文件夹 && 当前拖拽悬停id === `${文件.id}`,
+        '桌面图标项-拖拽悬停': 文件.is_folder && 当前拖拽悬停id === `${文件.id}`,
       }"
       :data-选中标记="`file:${文件.id}`"
-      :data-是文件夹="文件.是否为文件夹 ? '' : undefined"
+      :data-是文件夹="文件.is_folder ? '' : undefined"
       @mousedown="处理文件拖拽开始(文件, $event)"
       @click="处理文件点击(文件, $event)"
       @dblclick="$emit('openFile', 文件)"
     >
       <div class="桌面图标图像">
-        <FileVisualIcon :类型="文件.是否为文件夹 || !文件.格式 ? '文件夹' : '文件'" :扩展名="文件.格式 || ''" :size="48" />
+        <FileVisualIcon :类型="文件.is_folder || !文件.format ? '文件夹' : '文件'" :扩展名="文件.format || ''" :size="48" />
       </div>
       <span class="桌面图标标签">{{ 显示文件名(文件) }}</span>
     </div>
@@ -102,6 +102,6 @@ function 处理文件拖拽开始(文件: FileEntry, e: MouseEvent) {
 }
 
 function 显示文件名(文件: FileEntry) {
-  return 文件.是否为文件夹 ? String(文件.文件名 || '') : 格式化文件displayName(文件.文件名, 文件.格式)
+  return 文件.is_folder ? String(文件.file_name || '') : 格式化文件displayName(文件.file_name, 文件.format)
 }
 </script>

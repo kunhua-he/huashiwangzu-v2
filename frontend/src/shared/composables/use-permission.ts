@@ -19,7 +19,7 @@ export function use权限() {
   const store = useUserStore()
 
   /** 当前用户角色，默认为 viewer */
-  const 当前角色 = computed(() => store.用户信息?.role || 'viewer')
+  const 当前角色 = computed(() => store.userInfo?.role || 'viewer')
 
   /** 是否为管理员 */
   const 是管理员 = computed(() => 当前角色.value === 'admin')

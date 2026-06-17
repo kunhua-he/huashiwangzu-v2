@@ -1,29 +1,26 @@
 <template>
-  <div class="登录页">
-    <div class="登录卡片">
-      <div class="登录图标">
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-          <rect width="48" height="48" rx="12" fill="#00b4d8"/>
-          <text x="24" y="30" text-anchor="middle" fill="#fff" font-size="20" font-weight="700">H</text>
-        </svg>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="login-icon">
+        <el-icon :size="56" color="var(--primary-color)"><Monitor /></el-icon>
       </div>
-      <h1 class="登录标题">华世王镞</h1>
-      <p class="登录副标题">企业管理系统</p>
-      <el-form ref="表单" :model="表单数据" :rules="校验规则" @submit.prevent="提交登录" style="margin-top: 32px;">
-        <el-form-item prop="用户名">
-          <el-input v-model="表单数据.用户名" placeholder="用户名" size="large" :prefix-icon="User" />
+      <h1 class="login-title">Huashiwangzu</h1>
+      <p class="login-subtitle">Enterprise Management System</p>
+      <el-form ref="formRef" :model="formData" :rules="formRules" @submit.prevent="submitLogin" style="margin-top: 32px;">
+        <el-form-item prop="username">
+          <el-input v-model="formData.username" placeholder="Username" size="large" :prefix-icon="User" />
         </el-form-item>
-        <el-form-item prop="密码">
-          <el-input v-model="表单数据.密码" type="password" placeholder="密码" size="large" :prefix-icon="Lock" show-password />
+        <el-form-item prop="password">
+          <el-input v-model="formData.password" type="password" placeholder="Password" size="large" :prefix-icon="Lock" show-password />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" size="large" native-type="submit" :loading="加载中" @click="提交登录" style="width: 100%; font-size: 15px; letter-spacing: 2px;">
-            {{ 加载中 ? '登录中...' : '登 录' }}
+          <el-button type="primary" size="large" native-type="submit" :loading="isLoading" @click="submitLogin" style="width: 100%; font-size: 15px; letter-spacing: 2px;">
+            {{ isLoading ? 'Logging in...' : 'Login' }}
           </el-button>
         </el-form-item>
       </el-form>
-      <div v-if="错误提示" style="margin-top: 16px;">
-        <el-alert :title="错误提示" type="error" show-icon :closable="false" />
+      <div v-if="errorMessage" style="margin-top: 16px;">
+        <el-alert :title="errorMessage" type="error" show-icon :closable="false" />
       </div>
     </div>
   </div>
@@ -32,45 +29,52 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { User, Lock } from '@element-plus/icons-vue'
-import { useUserStore } from '@/platform/stores/user'
+import { User, Lock, Monitor } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
+import { useUserStore } from '@/platform/stores/user'
 
 const router = useRouter()
 const store = useUserStore()
-const 表单 = ref<FormInstance>()
-const 加载中 = ref(false)
-const 错误提示 = ref('')
 
-const 表单数据 = reactive({
-  用户名: '',
-  密码: '',
+const formRef = ref<FormInstance>()
+const isLoading = ref(false)
+const errorMessage = ref('')
+const formData = reactive({
+  username: '',
+  password: '',
 })
-
-const 校验规则: FormRules = {
-  用户名: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  密码: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+const formRules: FormRules = {
+  username: [{ required: true, message: 'Please enter your username', trigger: 'blur' }],
+  password: [{ required: true, message: 'Please enter your password', trigger: 'blur' }],
 }
 
-async function 提交登录() {
-  if (!表单.value) return
-  const valid = await 表单.value.validate().catch(() => false)
+async function submitLogin() {
+  if (!formRef.value) return
+  const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
-
-  加载中.value = true
-  错误提示.value = ''
-
+  isLoading.value = true
+  errorMessage.value = ''
   try {
-    const res = await store.登录(表单数据.用户名, 表单数据.密码)
+    const res = await store.login(formData.username, formData.password)
     if (res.success) {
-      router.push('/desktop')
+      ElMessage.success('Login successful')
+      await router.push('/desktop')
     } else {
-      错误提示.value = res.error || '登录失败'
+      errorMessage.value = res.error || 'Login failed'
     }
-  } catch (e: any) {
-    错误提示.value = e?.error || '登录失败，请稍后重试'
+  } catch (e: unknown) {
+    errorMessage.value = (e as {error?: string})?.error || 'Login failed, please try again later'
   } finally {
-    加载中.value = false
+    isLoading.value = false
   }
 }
 </script>
+
+<style scoped>
+.login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.login-card { background: #fff; border-radius: 16px; padding: 48px 40px; width: 420px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,.15); text-align: center; }
+.login-icon { margin-bottom: 8px; }
+.login-title { margin: 0; font-size: 26px; font-weight: 700; color: #0f172a; }
+.login-subtitle { margin: 4px 0 0; font-size: 14px; color: #94a3b8; }
+</style>

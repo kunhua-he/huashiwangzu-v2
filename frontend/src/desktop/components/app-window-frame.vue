@@ -8,7 +8,9 @@
         <slot name="sidebar" />
       </aside>
       <main class="app-window-frame_content">
-        <slot />
+        <component-error-boundary>
+          <slot />
+        </component-error-boundary>
       </main>
       <aside v-if="$slots.drawer" class="app-window-frame_drawer" :class="{ visible: drawerVisible }">
         <slot name="drawer" />
@@ -24,6 +26,8 @@
 import { computed } from 'vue'
 import AppToolbar from './app-toolbar.vue'
 import AppStatusBar from './app-status-bar.vue'
+
+import ComponentErrorBoundary from './component-error-boundary.vue'
 
 const props = withDefaults(defineProps<{
   sidebarCollapsed?: boolean

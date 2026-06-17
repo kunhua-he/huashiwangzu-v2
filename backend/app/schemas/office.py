@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Any
 from datetime import datetime
 
 
@@ -23,9 +22,9 @@ class CreatePackageResponse(BaseModel):
 
 
 class PackageDetailResponse(BaseModel):
-    package: Any
-    version: Any
-    json_content: dict
+    package: dict | None = None
+    version: dict | None = None
+    json_content: dict = {}
     unified_view: dict | None = None
 
 

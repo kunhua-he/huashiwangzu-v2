@@ -2,28 +2,24 @@
 
 ## 底层目标
 
-底层指 `backend/` 平台服务层，以及脚本、部署、数据库、模型、队列等基础能力。它提供平台能力，不承载模块业务流程。
+底层指 `backend/` 平台服务层，以及数据库、模型网关、队列、文件存储、权限、日志、配置、健康检查等基础能力。底层提供平台能力，不承载模块业务流程。
 
-## backend 定义
-
-`backend/` 是平台服务层，不是业务后端大杂烩。
+`backend/` 是平台服务层，不是业务后端大杂烩。业务模块可以调用底层能力，但业务本身应迁入 `modules/`。
 
 ## 当前真实状态
 
-- 当前 `backend/` 已存在，是 Python FastAPI 后端。
-- 当前后端入口是 `backend/app/main.py`。
-- 当前已注册多个 router 文件，覆盖认证、桌面、文件、回收站、用户、角色、系统、日志、仪表盘、设置、备份、任务、Office、通知、反馈、应用管理、AI 助手、健康检查、图片视觉、知识库等。
+- 当前 `backend/` 是 Python FastAPI 后端，入口为 `backend/app/main.py`。
 - 当前数据库初始化和释放在 `backend/app/database.py`，应用生命周期在 `backend/app/main.py`。
-- 当前 ORM model 在 `backend/app/models/`。
-- 当前 schema 在 `backend/app/schemas/`。
-- 当前 router 在 `backend/app/routers/`。
-- 当前 service 在 `backend/app/services/`。
+- 当前统一异常处理在 `backend/app/core/handlers.py`，自定义异常在 `backend/app/core/exceptions.py`。
+- 当前 ORM model 在 `backend/app/models/`，schema 在 `backend/app/schemas/`，router 在 `backend/app/routers/`，service 在 `backend/app/services/`。
+- 当前已注册认证、桌面、文件、回收站、用户、角色、系统、日志、仪表盘、设置、备份、任务、Office、通知、反馈、应用管理、AI 助手、图片视觉、知识库、菜单、健康检查等 router。
 - 当前 AI 助手服务仍在 `backend/app/services/agent/`。
 - 当前知识库服务仍在 `backend/app/services/knowledge/`。
 - 当前模型看门狗在 `backend/app/services/model_watchdog/`。
 - 当前默认 AI 助手模型为 `deepseek-v4-flash`，通过 `backend/app/services/agent/gateway/router.py` 路由。
-- 当前模型网关在 `backend/app/services/agent/gateway/`，包含 `opencode`、`llama`、`local` provider。
-- 当前旧 `/api/chat/.../stream` 兼容入口仍在 `backend/app/routers/system.py`。
+- 当前模型配置由 `backend/app/config/models.json` 驱动。
+- 当前旧 `/api/chat/*` 兼容入口已删除，AI 助手统一使用 `/api/agent/sessions/*`。
+- 当前 `/api/health` 是唯一健康检查入口，`/api/health/deep` 已删除。
 
 ## 当前底层职责
 
@@ -31,11 +27,57 @@
 - 数据库连接、事务、迁移、ORM 模型。
 - 权限、角色、鉴权中间件。
 - 队列、定时任务、worker。
-- 模型看门狗、llm 网关、embedding / rerank。
+- 模型看门狗、LLM 网关、embedding、rerank。
 - 文件存储、上传下载、预览资源。
 - 系统日志、健康检查、备份恢复。
+- 统一 API 响应契约、异常处理、请求日志。
 
-业务模块可以调用这些能力，但业务本身归 `modules/`。
+## API 契约
+
+普通 JSON API 必须使用统一响应结构：
+
+```json
+{ "success": true, "data": {}, "error": null }
+```
+
+错误响应也必须使用统一结构，并通过 HTTP 状态码表达错误类型：
+
+```json
+{ "success": false, "data": null, "error": "Resource not found" }
+```
+
+实现规则：
+
+1. 业务错误优先抛 `AppException` 子类，例如 `NotFound`、`ValidationError`、`ConflictError`、`PermissionDenied`。
+2. 不要用 `return ApiResponse(success=False, ...)` 返回 HTTP 200 的业务失败。
+3. `HTTPException` / `StarletteHTTPException` 由统一处理器兜底为 `{ success, data, error }`，但新增业务代码仍优先使用项目异常类。
+4. 前后端字段名按后端实际返回的英文 `snake_case` 对齐，不通过 `转中文()` 改字段名。
+5. `转中文()` 只允许作为 UI 展示层字符串映射工具，不参与 API 数据结构转换。
+
+## 非 JSON 端点豁免
+
+以下端点合法返回二进制、SSE 或 CSV，不套统一 JSON 外壳：
+
+| 端点 | 类型 | 用途 |
+|------|------|------|
+| `GET /api/files/download/{file_id}` | `StreamingResponse` | 单文件下载 |
+| `POST /api/files/download-multiple` | `StreamingResponse` | ZIP 下载 |
+| `GET /api/knowledge/visual/page-image/{catalog_id}/{page_num}` | `FileResponse` | 知识库页图 |
+| `GET /api/knowledge/visual/thumbnail/{catalog_id}/{page_num}` | `FileResponse` | 知识库缩略图 |
+| `GET /api/knowledge/tasks/stream` | `text/event-stream` | 知识库任务进度 SSE |
+| `POST /api/agent/sessions/{session_id}/stream` | `text/event-stream` | AI 助手流式回复 |
+| `GET /api/roles/matrix/export` | `text/csv` | 角色矩阵导出 |
+
+新增非 JSON 端点必须在这里登记，并在代码中明确返回类型。
+
+## 类型和命名规则
+
+- Python 代码使用英文命名、类型标注和 Router -> Schema -> Service -> Model 分层。
+- 后端 JSON blob 字段优先使用 `TypedDict` 或具体类型，不用 `Any` 扩散类型边界。
+- 当前 `backend/app/` 中仅保留 `backend/app/services/model_watchdog/router.py` 的 `**kwargs: Any`，用于兼容模型 provider 标准调用参数。
+- 前端 API 类型必须与后端真实返回字段一致，后端返回 `entry_component_key`，前端也读取 `entry_component_key`。
+- `frontend/src/` 仍存在一批历史中文变量名、函数名、类型名和 CSS 类名；新增或触达代码必须改为英文，历史代码随模块迁移继续分批清理。
+- 除 `开发文档/` 外，目录名和文件名必须是英文。
 
 ## 脚本和部署
 
@@ -56,6 +98,7 @@ ops/
 脚本/
 部署/
 backend/脚本/
+backend/_废弃/
 ```
 
 ## 测试和数据清理
@@ -64,109 +107,28 @@ backend/脚本/
 - 上传样例、临时文件、测试日志、缓存结果不得长期保留。
 - 数据库测试记录必须回滚或删除。
 - 测试结果目录不作为事实源。
+- 后端变更默认运行 `cd backend && .venv/bin/python -m pytest`。
+- 前端变更默认运行 `cd frontend && npm run build`。
+- 类型或契约清理后必须扫描 `as any`、`@ts-ignore`、`return ApiResponse(success=False, ...)` 和中文字段名残留。
 
-## 当前任务完成状态
+## 当前验证基线
 
-- ✅ 01_明确backend平台边界.md — 概念文档，无代码变更
-- ✅ 02_统一AI模型网关和旧兼容入口.md — AI 助手前端已构建并正常工作（登录、建会话、收发消息），默认模型 deepseek-v4-flash，旧 /api/chat/* 兼容入口存在并通过 nginx 正常响应（32 个会话），复用同一 gateway_router
-- ✅ 03_清理旧目录和缓存残留.md — 旧中文目录（后端/ 脚本/ 等）已移除，backend/scripts/ 下四个子目录用途明确（maintenance/models/worker/），无残留测试数据
-- ✅ 04_后端硬编码与模型配置化.md — P0 全部完成：models.json 已落盘（3 providers + 4 model types + 4 LLM profiles），看门狗 3 个 provider 全部在线，模型配置 JSON 驱动，知识库 catalog API 正常返回，embedding 服务路由已接入
+| 检查项 | 当前结果 |
+|--------|----------|
+| 后端测试 | `cd backend && .venv/bin/python -m pytest`：33 passed |
+| 前端构建 | `cd frontend && npm run build`：通过 |
+| 后端 `Any` | 仅剩模型看门狗标准 `**kwargs: Any` 和文档字符串提及 |
+| `return ApiResponse(success=False, ...)` | 0 处 |
+| `HTTPException` 业务路由直接抛出 | 0 处 |
+| `.DS_Store` 残留 | 已清理 |
+| `转中文()` 响应层调用 | 已移除 |
+| `as any` / `@ts-ignore` 绕过 | 当前源码扫描为 0 处 |
 
-## 实测结论
+## 当前架构债务
 
-| 测试项 | 结果 |
-|--------|------|
-| 登录流程 | ✅ 浏览器实测通过，成功跳转 /desktop |
-| AI 助手打开 / 建会话 / 发消息 | ✅ 浏览器实测通过，SSE 流式回复正常 |
-| 旧 /api/chat/ 兼容入口 | ✅ 通过 nginx 正常响应，32 个历史会话可查 |
-| 文件系统 API | ✅ /api/files/tree 返回正常 |
-| 知识库 catalog | ✅ /api/knowledge/catalogs 返回正常 |
-| 模型配置（models.json） | ✅ 4 种模型类型 + 3 个 provider + 4 个 LLM profile |
-| AI 网关 | ✅ 3 个 provider 全部在线 |
-| 严格模式 TypeScript | ✅ `转中文()` 已移除，vue-tsc 零错误 |
-| 旧中文目录 | ✅ 已移除 |
-| `as any` / `@ts-ignore` 绕过 | 0 处 |
-
-## 二次实测验证（2026-06-16）
-
-| 测试项 | 结果 | 说明 |
-|--------|------|------|
-| 登录 /api/login | ✅ 通过 | admin/admin123，返回 JWT token + user 对象 |
-| AI 助手创建会话 | ✅ 通过 | POST /api/agent/sessions 返回 id=45, model=deepseek-v4-flash |
-| AI 助手会话列表 | ✅ 通过 | 45 个会话，全为 deepseek-v4-flash 模型 |
-| 旧 /api/chat/sessions | ✅ 通过 | 33 个会话，model=deepseek-v4-flash，复用 gateway_router |
-| 模型网关状态 | ✅ 通过 | 3 providers (opencode/llama/local) 全部 online |
-| 仪表盘 /api/dashboard/stats | ✅ 通过 | 返回文件数 331、用户数 4 等统计数据 |
-| 通知 /api/notifications/unread-count | ✅ 通过 | 返回未读数 0 |
-| 文件系统 /api/files/tree | ✅ 通过 | 返回文件目录树 |
-| 知识库 /api/knowledge/catalogs | ✅ 通过 | 返回编目列表 |
-| 当前用户 /api/current-user | ✅ 通过 | 返回 id=1, username=admin, role=admin |
-| 健康检查 /api/health | ✅ 通过 | status=ok, version=2.0.0 |
-
-### TypeScript 严格模式验证
-
-| 检查项 | 结果 |
-|--------|------|
-| vue-tsc --noEmit | ✅ 零错误通过 |
-| vite build | ✅ 成功构建 (292ms) |
-| `转中文()` 被拦截器调用 | ✅ 已移除 — 拦截器直接透传原始 JSON |
-| `转中文()` 死代码隔离 | ✅ 仅在 response-transform.ts 中定义，无外部 import |
-| as any 绕过 | 0 处 |
-| @ts-ignore / @ts-expect-error | 0 处 |
-
-### 框架问题修复
-
-| 问题 | 类型 | 操作 | 状态 |
-|------|------|------|------|
-| `部署/` 中文目录残留 | 框架 | 已删除（含 nginx/logs 空子目录） | ✅ 已修复 |
-| `转中文()` 在响应层自动调用 | 框架 | 已从拦截器移除 | ✅ 已修复 |
-| 后端路由中文路径 | 框架 | 已全部使用英文 prefix 和 path | ✅ 已验证 |
-| models.json 配置化 | 框架 | 已落盘，JSON 驱动模型配置 | ✅ 已验证 |
-
-### 旧 /api/chat/ 兼容路由删除
-
-2026-06-16 完成 —— 从 `backend/app/routers/system.py` 删除了 4 条旧 `/api/chat/` 路由：
-
-- `GET /api/chat/sessions` → 已移除 （改用 `/api/agent/sessions`）
-- `POST /api/chat/sessions` → 已移除 （改用 `/api/agent/sessions`）
-- `GET /api/chat/sessions/{sid}/messages` → 已移除 （改用 `/api/agent/sessions/{id}/messages`）
-- `POST /api/chat/sessions/{sid}/stream` → 已移除 （改用 `/api/agent/sessions/{id}/stream`）
-
-**验证结果：**
-- OLD `/api/chat/sessions` → HTTP 404 `{"success":false,"error":"Not Found"}` ✅
-- NEW `/api/agent/sessions` → HTTP 200 `{"success":true,"total":33}` ✅
-
-**清理的死亡 import：** `import json`, `StreamingResponse`, `DEFAULT_AGENT_MODEL`, `gateway_router`, `get_current_user`, `LOCAL_CHAT_PROFILE`, `LOCAL_CHAT_ALIASES`
-
-**理由：** 前端没有引用 `/api/chat/` 的任何代码，所有功能已被 `/api/agent/sessions/*` 完全覆盖。旧路由是 V1 遗留的兼容层，属于死代码。
-
-### 剩余的非框架问题
-
-无。`05_移除转中文使类型系统对齐.md` 中记录的问题用户确认晚点自己处理。
-
-## 05_移除转中文使类型系统对齐 — 完成状态
-
-### 背景
-
-`frontend/src/shared/api/response-transform.ts` 中的 `转中文()` 函数在 Axios 响应拦截器里把 API 返回的英文字段名翻译成中文，导致 TypeScript 严格模式下 23 个类型错误全部是字段名不匹配。
-
-### 改动
-
-1. **移除响应拦截器中的 `转中文()` 调用** — `index.ts` 拦截器直接透传原始 JSON，不再做中文化转换
-2. **保留 `转中文()` 函数本体但不调用** — `response-transform.ts` 中函数保留，仅在 UI 展示层可手动调用
-3. **更新 consumer 文件** — `app-loader.ts` 读 `entry_component_key`，`user.ts` 读 `res.data.user` 等英文字段
-
-### 验证
-
-| 检查项 | 结果 |
-|--------|------|
-| `vue-tsc --noEmit` | ✅ 零错误通过 |
-| `vite build` | ✅ 成功构建 (323ms) |
-| `转中文()` 被拦截器调用 | ✅ 已移除 — 拦截器直接透传原始 JSON |
-| `转中文()` 外部引用 | ✅ 无 — 仅在自身文件中定义，无任何其他文件引用 |
-| `as any` 绕过 | 0 处 |
-| `@ts-ignore` / `@ts-expect-error` | 0 处 |
-
-### 结论
-
-`转中文()` 移除完成，类型系统对齐。未来新增模块无需面对遗留类型噪音。
+- 知识库、AI 助手、Office / 文件管理仍有大量业务 router、service、model、schema 位于 `backend/app/`，应按模块规范迁入 `modules/`。
+- `modules/ai-assistant/` 已有前端模块和 sandbox 雏形，但后端、runtime、tests、test-data、assets、module-docs 和 sandbox pass/fail 门禁仍需补齐。
+- `backend/app/main.py` 仍直接导入并注册大量业务 router，后续应改为模块清单扫描和动态挂载。
+- 测试覆盖仍偏低，当前 33 个测试主要覆盖路由注册、网关 adapter 和少量桌面路由；后续应补统一响应契约、鉴权、关键业务 happy path 和非 JSON 豁免端点测试。
+- 前端 `frontend/src/` 仍有历史中文标识符，后续按共享 API、desktop shell、window manager、context menu、module shell 分批英文化。
+- `element-plus` 构建 chunk 仍较大，后续可结合按需导入或 vendor 分包处理。

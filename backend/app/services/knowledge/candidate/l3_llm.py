@@ -5,7 +5,6 @@ New entities only enter candidates, never the dictionary directly.
 """
 
 import logging
-from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.knowledge.candidate import ExtractCandidate
@@ -22,7 +21,7 @@ async def run_l3_llm(
     db: AsyncSession,
     batch_size: int = 50,
     model_id: str = "gemma-4",
-) -> dict[str, Any]:
+) -> dict:
     result = await db.execute(
         select(ExtractCandidate).where(
             ExtractCandidate.verdict_status == 0

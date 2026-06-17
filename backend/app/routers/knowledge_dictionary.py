@@ -41,8 +41,8 @@ async def list_entities(
     data = await paginate(db, query, page, pageSize)
     alias_map = await load_alias_map(db, [entity.id for entity in data["items"]])
     return ApiResponse(data={
-        "列表": [entity_item(entity, alias_map.get(entity.id, [])) for entity in data["items"]],
-        "分页": page_info(data),
+        "items": [entity_item(entity, alias_map.get(entity.id, [])) for entity in data["items"]],
+        "pagination": page_info(data),
     })
 
 
@@ -58,8 +58,8 @@ async def get_entity(
     result = await db.execute(select(EntityAlias).where(EntityAlias.entity_id == entity_id))
     aliases = result.scalars().all()
     data = entity_item(entity, aliases)
-    data["别名列表"] = [alias_item(alias) for alias in aliases]
-    data["关联"] = {"有歧义记录": False, "有合并记录": False}
+    data["aliases"] = [alias_item(alias) for alias in aliases]
+    data["relations"] = {"has_disambiguation_record": False, "has_merge_record": False}
     return ApiResponse(data=data)
 
 
@@ -80,8 +80,8 @@ async def list_disambiguation(
     entities = await load_entities(db, entity_ids)
     rows = [disambig_item(i, entities) for i in data["items"]]
     if keyword:
-        rows = [row for row in rows if keyword in row["歧义关键词"]]
-    return ApiResponse(data={"列表": rows, "分页": page_info(data)})
+        rows = [row for row in rows if keyword in row["ambiguous_keyword"]]
+    return ApiResponse(data={"items": rows, "pagination": page_info(data)})
 
 
 @router.post("/disambiguation/{candidate_id}/approve")
@@ -108,4 +108,4 @@ async def set_disambiguation_status(db: AsyncSession, candidate_id: int, status:
         raise NotFound("Disambiguation candidate not found")
     candidate.review_status = status
     await db.commit()
-    return ApiResponse(data={"歧义ID": candidate_id, "处理状态": status})
+    return ApiResponse(data={"disambiguation_id": candidate_id, "processing_status": status})

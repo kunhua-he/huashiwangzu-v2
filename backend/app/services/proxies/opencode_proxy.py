@@ -12,7 +12,6 @@ import logging
 import os
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Any
 
 import httpx
 
@@ -125,7 +124,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {{\"error\": \"{e}\"}}\n\n".encode())
             self.wfile.flush()
 
-    def _send_json(self, status: int, data: Any):
+    def _send_json(self, status: int, data: dict | list | str | None):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()

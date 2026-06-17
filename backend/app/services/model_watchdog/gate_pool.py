@@ -1,7 +1,6 @@
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
 
 import httpx
 
@@ -9,7 +8,7 @@ from app.config import get_settings
 
 logger = logging.getLogger("model_watchdog.gate_pool")
 
-MIMO_GATES: list[dict[str, Any]] = []
+MIMO_GATES: list[dict] = []
 _GATE_HEALTH: dict[str, dict] = {}
 CONSECUTIVE_FAIL_LIMIT = 2
 DISABLE_SECONDS = 120
@@ -66,7 +65,7 @@ def call_single(gate: dict, messages: list, images: list[str] | None = None, tim
     if h:
         h["active"] += 1
     try:
-        body: dict[str, Any] = {"model": gate["model"], "messages": messages, "max_tokens": 4096}
+        body: dict = {"model": gate["model"], "messages": messages, "max_tokens": 4096}
         if images:
             content = [{"type": "text", "text": "描述这张图片"}]
             for img in images:

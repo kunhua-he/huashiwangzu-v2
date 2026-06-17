@@ -2,7 +2,6 @@
 L2 page-level fusion — conflict tracking
 """
 from dataclasses import dataclass, field, asdict
-from typing import Any
 
 
 @dataclass
@@ -11,7 +10,7 @@ class ConflictEntry:
     detail: str
     sources: list[str] = field(default_factory=list)
     severity: str = "info"
-    extra: dict[str, Any] = field(default_factory=dict)
+    extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)

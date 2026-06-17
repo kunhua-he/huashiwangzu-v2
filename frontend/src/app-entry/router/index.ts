@@ -7,7 +7,7 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: '登录',
+      name: 'login',
       component: () => import('@/app-entry/pages/login/index.vue'),
     },
     {
@@ -17,7 +17,7 @@ const router = createRouter({
       children: [
         {
           path: 'desktop',
-          name: '桌面',
+          name: 'desktop',
           component: () => import('@/desktop/shell/index.vue'),
         },
       ],
@@ -31,17 +31,17 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   const store = useUserStore()
-  const 是登录页 = to.path === '/'
+  const isLoginPage = to.path === '/'
 
-  if (!是登录页 && !store.已检查过 && !store.已登录) {
+  if (!isLoginPage && !store.hasChecked && !store.isLoggedIn) {
     await store.fetchCurrentUser()
   }
 
-  if (to.matched.some((记录) => 记录.meta.requiresAuth) && !store.已登录) {
+  if (to.matched.some((record) => record.meta.requiresAuth) && !store.isLoggedIn) {
     return '/'
   }
 
-  if (是登录页 && store.已登录) {
+  if (isLoginPage && store.isLoggedIn) {
     return '/desktop'
   }
 

@@ -2,7 +2,7 @@
   <el-dropdown trigger="click" placement="top-end" class="任务栏用户菜单-包装">
     <button class="任务栏用户菜单-按钮" type="button">
       <el-avatar :size="22">
-        {{ 用户Store.用户信息?.displayName?.[0] || 用户Store.用户信息?.username?.[0] || '?' }}
+        {{ 用户Store.userInfo?.displayName?.[0] || 用户Store.userInfo?.username?.[0] || '?' }}
       </el-avatar>
       <span class="任务栏用户菜单-名称">{{ 用户名 }}</span>
     </button>
@@ -20,7 +20,7 @@ import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/platform/stores/user'
 
 const 用户Store = useUserStore()
-const 用户名 = computed(() => 用户Store.用户信息?.displayName || 用户Store.用户信息?.username || '用户')
+const 用户名 = computed(() => 用户Store.userInfo?.displayName || 用户Store.userInfo?.username || '用户')
 
 async function 处理退出() {
   try {
@@ -29,7 +29,7 @@ async function 处理退出() {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    await 用户Store.登出()
+    await 用户Store.logout()
     window.location.href = '/'
   } catch {
     // 用户取消，不做任何操作

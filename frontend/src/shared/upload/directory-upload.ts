@@ -1,71 +1,71 @@
 import { 获取文件夹树请求, 新建文件夹请求, 上传文件请求 } from '@/shared/api/desktop'
 
-interface 待上传文件 { 文件: File; 路径: string[] }
+interface FileToUpload { file: File; path: string[] }
 
-function 读目录(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+function readDirectory(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
   return new Promise(resolve => reader.readEntries(resolve))
 }
 
-async function 展开条目(entry: FileSystemEntry, 路径: string[] = []): Promise<待上传文件[]> {
+async function expandEntry(entry: FileSystemEntry, path: string[] = []): Promise<FileToUpload[]> {
   if (entry.isFile) {
-    return new Promise(resolve => (entry as FileSystemFileEntry).file(文件 => resolve([{ 文件, 路径 }])))
+    return new Promise(resolve => (entry as FileSystemFileEntry).file(f => resolve([{ file: f, path }])))
   }
   const reader = (entry as FileSystemDirectoryEntry).createReader()
-  const 当前路径 = [...路径, entry.name]
-  const 结果: 待上传文件[] = []
+  const currentPath = [...path, entry.name]
+  const results: FileToUpload[] = []
   while (true) {
-    const 批次 = await 读目录(reader)
-    if (!批次.length) break
-    for (const 子项 of 批次) 结果.push(...await 展开条目(子项, 当前路径))
+    const batch = await readDirectory(reader)
+    if (!batch.length) break
+    for (const child of batch) results.push(...await expandEntry(child, currentPath))
   }
-  return 结果
+  return results
 }
 
-export async function 收集拖放文件(items: DataTransferItemList | null): Promise<待上传文件[]> {
+export async function collectDraggedFiles(items: DataTransferItemList | null): Promise<FileToUpload[]> {
   if (!items) return []
-  const 结果: 待上传文件[] = []
+  const results: FileToUpload[] = []
   for (let i = 0; i < items.length; i++) {
     const entry = items[i].webkitGetAsEntry?.()
-    if (entry) 结果.push(...await 展开条目(entry))
+    if (entry) results.push(...await expandEntry(entry))
     else {
-      const 文件 = items[i].getAsFile?.()
-      if (文件) 结果.push({ 文件, 路径: [] })
+      const f = items[i].getAsFile?.()
+      if (f) results.push({ file: f, path: [] })
     }
   }
-  return 结果
+  return results
 }
 
-export async function 上传拖放文件(文件列表: 待上传文件[], 根文件夹id?: number | null) {
-  const 树响应 = await 获取文件夹树请求()
-  const 索引 = new Map<string, number>()
-  if (树响应.success && 树响应.data) {
-    for (const 项 of 树响应.data) 索引.set(`${项.父文件夹id ?? 0}/${项.名称}`, 项.id)
+export async function uploadDraggedFiles(fileList: FileToUpload[], rootFolderId?: number | null) {
+  const treeResponse = await 获取文件夹树请求()
+  const index = new Map<string, number>()
+  if (treeResponse.success && treeResponse.data) {
+    for (const item of treeResponse.data) index.set(`${item.parent_folder_id ?? 0}/${item.name}`, item.id)
   }
 
-  async function 确保目录(路径: string[]) {
-    let 父id = 根文件夹id ?? 0
-    for (const 名称 of 路径) {
-      const 键 = `${父id}/${名称}`
-      if (!索引.has(键)) {
-        const res = await 新建文件夹请求(名称, 父id || null)
-        索引.set(键, (res.data as any)?.id ?? 0)
+  async function ensureDirectory(path: string[]) {
+    let parentId = rootFolderId ?? 0
+    for (const name of path) {
+      const key = `${parentId}/${name}`
+      if (!index.has(key)) {
+        const res = await 新建文件夹请求(name, parentId || null)
+        index.set(key, ((res.data as unknown as Record<string, unknown>)?.id as number) ?? 0)
       }
-      父id = 索引.get(键)!
+      parentId = index.get(key)!
     }
-    return 父id || undefined
+    return parentId || undefined
   }
 
-  let 成功数 = 0
-  let 失败数 = 0
-  for (const 项 of 文件列表) {
+  let successCount = 0
+  let failCount = 0
+  for (const item of fileList) {
     try {
-      const 文件夹id = await 确保目录(项.路径)
-      const res = await 上传文件请求(项.文件, 文件夹id)
-      if (res.success) 成功数++
-      else 失败数++
+      const folderId = await ensureDirectory(item.path)
+      const res = await 上传文件请求(item.file, folderId)
+      if (res.success) successCount++
+      else failCount++
     } catch {
-      失败数++
+      failCount++
     }
   }
-  return { 成功数, 失败数 }
+  return { successCount, failCount }
 }

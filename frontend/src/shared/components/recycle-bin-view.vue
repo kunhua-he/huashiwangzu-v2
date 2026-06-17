@@ -37,10 +37,10 @@
 <script setup lang="ts">
 import { ArrowLeft, Delete, Document, Folder } from '@element-plus/icons-vue'
 import { use权限 } from '@/shared/composables/use-permission'
-import type { 回收站条目 } from '@/shared/api/types'
+import type { RecycleBinEntry } from '@/shared/api/types'
 
 defineProps<{
-  回收站列表: 回收站条目[]
+  回收站列表: RecycleBinEntry[]
   回收站加载中: boolean
 }>()
 
@@ -49,10 +49,10 @@ const emit = defineEmits<{
   (e: '还原', 类型: '文件' | '文件夹', id: number): void
   (e: '彻底删除', 类型: '文件' | '文件夹', id: number): void
   (e: '清空'): void
-  (e: '行右键', row: 回收站条目, column: any, event: MouseEvent): void
+  (e: '行右键', row: RecycleBinEntry, column: unknown, event: MouseEvent): void
 }>()
 
-function 行右键(row: 回收站条目, column: any, event: MouseEvent) {
+function 行右键(row: RecycleBinEntry, column: unknown, event: MouseEvent) {
   emit('行右键', row, column, event)
 }
 

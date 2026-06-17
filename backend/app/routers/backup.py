@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.schemas.system import BackupItem, BackupDetailResponse
@@ -26,5 +27,5 @@ async def backup_detail(
 ):
     detail = svc.get_backup_detail(backup_name)
     if detail is None:
-        return ApiResponse(success=False, error="Backup not found", data=None)
+        raise NotFound("Backup not found")
     return ApiResponse(data=BackupDetailResponse(**detail))

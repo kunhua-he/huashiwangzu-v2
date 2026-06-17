@@ -23,17 +23,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import api from '@/shared/api'
-import type { 系统状态数据 } from '@/shared/api/types'
+import type { SystemStatus, SystemStatusEntry } from '@/shared/api/types'
 
 const props = withDefaults(defineProps<{ 显示详情?: boolean }>(), { 显示详情: false })
 
-const 系统状态 = ref<系统状态数据 | null>(null)
+const 系统状态 = ref<SystemStatus | null>(null)
 const 加载中 = ref(false)
 const 错误 = ref('')
 
 const 全部正常 = computed(() => {
   if (!系统状态.value) return true
-  return Object.values(系统状态.value).every((v: any) => v.status)
+  return Object.values(系统状态.value).every((v: SystemStatusEntry) => v.status)
 })
 
 async function 加载状态() {
@@ -47,8 +47,8 @@ async function 加载状态() {
     } else {
       错误.value = r.error || '加载失败'
     }
-  } catch (e: any) {
-    错误.value = e?.error || '系统状态加载失败'
+  } catch (e: unknown) {
+    错误.value = (e as {error?: string})?.error || '系统状态加载失败'
   } finally {
     加载中.value = false
   }

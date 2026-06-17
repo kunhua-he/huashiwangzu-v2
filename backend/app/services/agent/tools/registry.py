@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.agent.tools")
@@ -10,7 +10,7 @@ logger = logging.getLogger("v2.agent.tools")
 @dataclass
 class ToolResult:
     success: bool = True
-    data: Any = None
+    data: dict | None = None
     error: str | None = None
 
 

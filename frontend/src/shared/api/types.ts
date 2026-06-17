@@ -1,18 +1,16 @@
-export interface 统一响应<T = unknown> {
+export interface ApiResponse<T = unknown> {
   success: boolean
   data?: T | null
   error?: string | null
-  errors?: any[] | null
+  errors?: { field: string; message: string }[] | null
 }
 
-export type 接口响应<T = unknown> = 统一响应<T>
-
-export interface 登录参数 {
+export interface LoginParams {
   username: string
   password: string
 }
 
-export interface 用户信息 {
+export interface UserInfo {
   userId?: number
   username?: string
   displayName?: string
@@ -20,13 +18,13 @@ export interface 用户信息 {
   role?: string
 }
 
-export interface 菜单项数据 {
+export interface MenuItem {
   name: string
   path: string
   icon: string
 }
 
-export interface 分页结果<T> {
+export interface PaginatedResult<T> {
   current_page: number
   data: T[]
   last_page: number
@@ -34,48 +32,63 @@ export interface 分页结果<T> {
   total: number
 }
 
-export interface 系统状态条目 {
+export interface SystemStatusEntry {
   status: boolean
   message: string
 }
 
-export interface 系统状态数据 {
-  backend: 系统状态条目
-  database: 系统状态条目
-  worker: 系统状态条目
-  modelService: 系统状态条目
-  productionEntry: 系统状态条目
+export interface SystemStatus {
+  backend: SystemStatusEntry
+  database: SystemStatusEntry
+  worker: SystemStatusEntry
+  modelService: SystemStatusEntry
+  productionEntry: SystemStatusEntry
 }
 
 export type {
-  文件夹条目, FileEntry, 回收站条目, 文件详情数据,
-  仪表盘概览数据, 日志条目, 任务条目,
-  系统配置数据, 角色矩阵项,
-  Agent会话条目, 对话消息条目,
-  知识条目, 编目条目, 知识库任务条目, 知识进度, 文件解析结果,
-  公告条目, 系统日志条目,
+  FolderEntry, FileEntry, RecycleBinEntry, FileDetail,
+  DashboardOverview, LogEntry, TaskItem,
+  SystemConfig, RoleMatrixItem,
+  AgentSessionEntry, ChatMessageEntry,
+  KnowledgeEntry, CatalogEntry, KnowledgeTaskEntry, KnowledgeProgress, FileParseResult,
+  NotificationItem, SystemLogEntry,
 } from './common-data-types'
 
-export interface 薄弱类型项 {
-  类型: string
-  题数: number
-  平均召回: number
+export interface WeakTypeItem {
+  type: string
+  count: number
+  avg_recall: number
 }
 
-export interface 评估记录 {
-  记录ID: number
-  总题数: number
-  有答案题数: number
-  无答案题数: number
-  召回率: number
+export interface EvalRecord {
+  record_id: number
+  total_questions: number
+  answered_count: number
+  unanswered_count: number
+  recall_rate: number
   MRR: number
   NDCG: number
-  证据命中率: number
-  拒答正确率: number
-  薄弱类型: 薄弱类型项[]
-  逐题详情?: any[]
-  耗时ms: number
-  创建时间: string
+  evidence_hit_rate: number
+  refusal_accuracy: number
+  weak_types: WeakTypeItem[]
+  detail_items?: EvalQuestionDetail[]
+  duration_ms: number
+  created_at: string
 }
 
-export type 评估记录缩略 = Omit<评估记录, '逐题详情'>
+export interface EvalQuestionDetail {
+  /** 查询或提问内容：用于构建提示词 */
+  question: string
+  /** 标准答案文本：LLM 回答质量的参照 */
+  expected_answer: string
+  /** 实际回答文本：LLM 的原始输出 */
+  llm_answer?: string
+  /** 回答是否相关 / 得分 */
+  is_relevant?: boolean
+  /** 关联到知识库的文档 ID */
+  document_id?: number
+  /** 创建时间 */
+  created_at?: string
+}
+
+export type EvalRecordBrief = Omit<EvalRecord, 'detail_items'>

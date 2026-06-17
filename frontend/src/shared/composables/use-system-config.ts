@@ -1,26 +1,26 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { 获取系统配置, 保存系统配置 } from '@/shared/api/settings'
-import type { 系统配置数据 } from '@/shared/api/types'
+import { fetchSystemConfig, saveSystemConfig } from '@/shared/api/settings'
+import type { SystemConfig } from '@/shared/api/types'
 
-export function use系统配置() {
-  const 系统配置保存中 = ref(false)
-  const 系统配置表单 = ref<系统配置数据>({ 项目名称: '', 系统版本: '', 登录页标题: '', 默认角色: 'viewer' })
+export function useSystemConfig() {
+  const configSaving = ref(false)
+  const configForm = ref<SystemConfig>({ project_name: '', system_version: '', login_page_title: '', default_role: 'viewer' })
 
-  async function 加载系统配置() {
-    try { const res = await 获取系统配置(); if (res.success) 系统配置表单.value = res.数据 }
-    catch (e: any) { ElMessage.error(e?.error || '加载系统配置失败') }
+  async function loadSystemConfig() {
+    try { const res = await fetchSystemConfig(); if (res.success) configForm.value = res.data }
+    catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load system config') }
   }
 
-  async function 保存系统配置表单() {
-    系统配置保存中.value = true
-    try { const res = await 保存系统配置(系统配置表单.value); if (res.success) ElMessage.success('系统配置已保存'); else ElMessage.error(res.error || '保存失败') }
-    finally { 系统配置保存中.value = false }
+  async function systemConfigSave() {
+    configSaving.value = true
+    try { const res = await saveSystemConfig(configForm.value); if (res.success) ElMessage.success('System config saved'); else ElMessage.error(res.error || 'Save failed') }
+    finally { configSaving.value = false }
   }
 
-  onMounted(() => { 加载系统配置() })
+  onMounted(() => { loadSystemConfig() })
 
   return {
-    系统配置保存中, 系统配置表单, 保存系统配置表单, 加载系统配置,
+    configSaving, configForm, systemConfigSave, loadSystemConfig,
   }
 }

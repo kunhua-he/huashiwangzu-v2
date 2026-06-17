@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.common import ApiResponse
@@ -6,7 +6,6 @@ from app.schemas.system import NotificationResponse, NotificationAdminResponse, 
 from app.middleware.auth import get_current_user, require_permission
 from app.models.user import User
 from app.services import notification_service as svc
-from app.core.exceptions import NotFound
 
 router = APIRouter(tags=["notifications"])
 
@@ -60,8 +59,5 @@ async def create_announcement(
 async def revoke_announcement(
     nid: int, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("admin")),
 ):
-    try:
-        n = await svc.revoke_announcement(db, nid)
-        return ApiResponse(data=NotificationAdminResponse.model_validate(n))
-    except NotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    n = await svc.revoke_announcement(db, nid)
+    return ApiResponse(data=NotificationAdminResponse.model_validate(n))

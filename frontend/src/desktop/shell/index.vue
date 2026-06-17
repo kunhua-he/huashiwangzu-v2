@@ -1,5 +1,5 @@
 <template>
-  <div ref="桌面容器引用" class="桌面壳-容器" @contextmenu.prevent="handleDesktopContextMenu" @mousedown="桌面鼠标按下" @dragover.prevent="桌面拖入" @dragleave.prevent="桌面拖离" @drop.prevent="桌面放下">
+  <div ref="桌面容器引用" class="桌面壳-容器" @contextmenu.prevent="handleDesktopContextMenu" @mousedown="桌面鼠标按下" @dragover.prevent="onDragEnter" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop">
     <div class="桌面壳-壁纸" :style="{ backgroundImage: `url(${壁纸})` }" />
     <div class="桌面壳-图标层">
       <component :is="桌面图标网格" :应用列表="桌面应用列表" :文件列表="桌面文件列表" @openApp="handleOpenApp" @openFile="openDesktopEntry" @右键应用="handleAppContextMenu" />
@@ -51,7 +51,7 @@
      <div v-else-if="!管理器.已打开窗口数" class="桌面壳-提示">
        双击图标openApp · 右键继续管理文件与回收站
      </div>
-     <div v-if="桌面拖放激活" class="桌面壳-拖放提示">松开后上传到桌面</div>
+     <div v-if="isDragActive" class="桌面壳-拖放提示">松开后上传到桌面</div>
      <div v-if="加载中" class="桌面壳-加载中">加载中...</div>
   </div>
 </template>
@@ -64,7 +64,7 @@ import { use窗口管理器 } from '@/desktop/window-manager/window-manager'
 import { getApp } from '@/desktop/app-registry/app-registry'
 import { use权限 } from '@/shared/composables/use-permission'
 import { useUserStore } from '@/platform/stores/user'
-import { use桌面事件总线 } from '@/desktop/events/use-desktop-event-bus'
+import { useDesktopEventBus, use桌面事件总线 } from '@/desktop/events/use-desktop-event-bus'
 import SelectionBox from '@/desktop/selection/SelectionBox.vue'
 import { useDesktopShellDropUpload } from './use-desktop-shell-drop-upload'
 import { useDesktopRootFiles } from './use-desktop-root-files'
@@ -79,8 +79,8 @@ const 管理器 = use窗口管理器()
 const { 是编辑者及以上: 可业务写, 当前角色 } = use权限()
 const 右键 = use右键菜单()
 const 用户Store = useUserStore()
-const { emit } = use桌面事件总线()
-const { 桌面拖放激活, 桌面拖入, 桌面拖离, 桌面放下 } = useDesktopShellDropUpload()
+const { emit } = useDesktopEventBus()
+const { isDragActive, onDragEnter, onDragLeave, onDrop } = useDesktopShellDropUpload()
 const { 桌面文件列表, openDesktopEntry } = useDesktopRootFiles()
 const { 桌面应用列表, 开始菜单应用列表, 右侧功能应用列表, 托盘应用列表, 注册表错误, 加载中, 桌面容器引用, 重试加载注册表, 更新容器尺寸 } = useDesktopAppLoading(当前角色)
 const { 桌面鼠标按下 } = useDesktopPointer()
@@ -98,7 +98,7 @@ function handleLauncherOpen(应用标识: string) {
 async function 处理开始菜单命令(命令: string) {
   const { windows: ws, 切换最小化: toggle } = 管理器
   if (命令 === '打开右栏') openSidebar('dashboard')
-  else if (命令 === '退出登录') { await 用户Store.登出(); window.location.href = '/' }
+  else if (命令 === '退出登录') { await 用户Store.logout(); window.location.href = '/' }
   else if (命令.startsWith('最小化') || 命令.startsWith('还原')) ws.forEach((w: { id: string }) => toggle(w.id))
   显示启动器.value = false
 }

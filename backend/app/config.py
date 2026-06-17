@@ -1,5 +1,6 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 from functools import lru_cache
 
 
@@ -9,7 +10,7 @@ class Settings(BaseSettings):
     DB_PORT: int = 5432
     DB_USER: str = "postgres"
     DB_PASSWORD: str = ""
-    DB_NAME: str = "华世王镞_v2"
+    DB_NAME: str = "huashiwangzu_v2"
 
     @property
     def DATABASE_URL(self) -> str:
@@ -26,10 +27,10 @@ class Settings(BaseSettings):
     # Server（仅监听本机，不暴露给局域网）
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 30004
-    APP_DEBUG: bool = True
+    APP_DEBUG: bool = False
 
     # CORS
-    CORS_ORIGINS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173"]
 
     UPLOAD_DIR: str = "data/uploads"
     MAX_PREVIEW_SIZE: int = 1 * 1024 * 1024
@@ -46,6 +47,15 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @model_validator(mode="after")
+    def _validate_secrets(self):
+        """确保 JWT_SECRET 通过 .env 设置，不允许空密钥启动"""
+        if not self.JWT_SECRET:
+            raise ValueError(
+                "JWT_SECRET is empty — must be set via .env or environment variable"
+            )
+        return self
 
 
 @lru_cache

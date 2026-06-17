@@ -8,7 +8,7 @@
       <div class="通知项内容">
         <div class="通知项标题行">
           <span class="通知项标题" :class="{ '通知项标题_未读': !项.是否已读 }">{{ 项.标题 }}</span>
-          <el-tag :type="标签类型(项.类型)" size="small" class="通知项标签">{{ 项.类型 }}</el-tag>
+          <el-tag :type="标签类型(项.类型 as string)" size="small" class="通知项标签">{{ 项.类型 }}</el-tag>
         </div>
         <div class="通知项时间">{{ 项.发布时间 }}</div>
       </div>
@@ -24,11 +24,11 @@
 </template>
 
 <script setup lang="ts">
-import type { 公告条目 } from '@/shared/api/types'
+import type { NotificationItem } from '@/shared/api/types'
 
 defineProps<{
  显示: boolean
- 列表: 公告条目[]
+ 列表: NotificationItem[]
 }>()
 
 const emit = defineEmits<{

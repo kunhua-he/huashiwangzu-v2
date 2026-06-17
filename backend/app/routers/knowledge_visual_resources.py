@@ -1,10 +1,11 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import FileResponse
 
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.knowledge import Catalog
@@ -21,7 +22,7 @@ async def _get_catalog(db: AsyncSession, catalog_id: int) -> Catalog:
     result = await db.execute(select(Catalog).where(Catalog.id == catalog_id))
     catalog = result.scalar_one_or_none()
     if not catalog:
-        raise HTTPException(status_code=404, detail="Knowledge file not found")
+        raise NotFound("Knowledge file not found")
     return catalog
 
 
@@ -39,7 +40,7 @@ async def get_page_image(
     catalog = await _get_catalog(db, catalog_id)
     path = await ensure_page_image(catalog, page_num)
     if not path:
-        raise HTTPException(status_code=404, detail="Page image unavailable")
+        raise NotFound("Page image unavailable")
     return _file_response(path, "image/png")
 
 
@@ -53,5 +54,5 @@ async def get_thumbnail(
     catalog = await _get_catalog(db, catalog_id)
     path = await ensure_thumbnail(catalog, page_num)
     if not path:
-        raise HTTPException(status_code=404, detail="Thumbnail unavailable")
+        raise NotFound("Thumbnail unavailable")
     return _file_response(path, "image/jpeg")

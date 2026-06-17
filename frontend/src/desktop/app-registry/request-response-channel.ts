@@ -17,8 +17,8 @@ export function generateRequestId(): string {
 
 emitter.on('app:response', (数据: unknown) => {
   const 响应 = 数据 as CrossAppActionResponse & { requestId?: string }
-  if (!响应.requestId && !(响应 as any).requestId) return
-  const id = 响应.requestId || (响应 as any).requestId
+  if (!响应.requestId && !响应.requestId) return
+  const id = 响应.requestId || 响应.requestId
   const pending = pendingRequests.get(id)
   if (pending) {
     clearTimeout(pending.timer)

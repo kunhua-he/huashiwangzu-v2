@@ -1,13 +1,13 @@
 import { onUnmounted, watch, type Ref } from 'vue'
 import { API_BASE_URL } from '@/shared/api'
-import type { 知识库任务条目 } from '@/shared/api/types'
+import type { KnowledgeTaskEntry } from '@/shared/api/types'
 
-type 实时动态项 = { 时间: string; 文件ID: number; 文件名: string; 状态: string; 当前步骤: string; 百分比: number }
-type 推送快照 = { 任务列表: 知识库任务条目[]; 实时动态: 实时动态项[] }
+type RealTimeActivityItem = { time: string; file_id: number; file_name: string; status: string; current_step: string; percent: number }
+type PushSnapshot = { task_list: KnowledgeTaskEntry[]; recent_logs: RealTimeActivityItem[] }
 
 export function use任务轮询(
   激活标签: Ref<string>,
-  更新快照: (数据: 推送快照) => void,
+  更新快照: (数据: PushSnapshot) => void,
 ) {
   let sse: EventSource | null = null
   let 重连定时器: ReturnType<typeof setTimeout> | null = null
@@ -24,7 +24,7 @@ export function use任务轮询(
     sse = new EventSource(`${API_BASE_URL}/knowledge/tasks/stream`)
     sse.onmessage = (e) => {
       try {
-        更新快照(JSON.parse(e.data) as 推送快照)
+        更新快照(JSON.parse(e.data) as PushSnapshot)
       } catch { /* ignore parse errors */ }
     }
     sse.onerror = () => {

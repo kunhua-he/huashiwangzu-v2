@@ -36,9 +36,9 @@
           <el-dropdown trigger="click" @command="处理下拉">
             <span style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
               <el-avatar :size="32" style="background: var(--主色);">
-                {{ store.用户信息?.displayName?.charAt(0) || '?' }}
+                {{ store.userInfo?.displayName?.charAt(0) || '?' }}
               </el-avatar>
-              <span>{{ store.用户信息?.displayName || '用户' }}</span>
+              <span>{{ store.userInfo?.displayName || '用户' }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
@@ -59,6 +59,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import type { Component } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowDown, Bell } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
@@ -85,13 +86,13 @@ const 全量菜单 = [
 const 菜单 = computed(() => 全量菜单.filter(项 => 可访问菜单(项)))
 
 function 获取图标组件(name: string) {
-  return (ElementPlusIconsVue as any)[name]
+  return (ElementPlusIconsVue as Record<string, unknown>)[name] as Component
 }
 
 function 处理下拉(command: string) {
   if (command === 'logout') {
     ElMessageBox.confirm('确定退出登录？', '提示').then(() => {
-      store.登出().finally(() => {
+      store.logout().finally(() => {
         window.location.replace('/')
       })
     }).catch(() => {})

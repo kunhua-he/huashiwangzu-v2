@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.schemas.desktop_state import DesktopAuditLogRequest, DesktopStateSaveRequest
@@ -30,7 +31,7 @@ async def get_app_detail(
 ):
     app = await app_service.get_app_by_key(db, app_key)
     if not app or not app.enabled or not app_service.can_user_access_app(app, current_user):
-        return ApiResponse(success=False, error="App not found")
+        raise NotFound("App not found")
     return ApiResponse(data=app_service.app_to_dict(app))
 
 

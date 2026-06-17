@@ -8,10 +8,10 @@
 
 ## 当前真实状态
 
-- 当前仓库还没有 `modules/` 目录。
-- 当前 AI 助手、文件管理、知识库仍未迁入目标模块目录。
+- 当前 `modules/` 目录已存在，内含 `ai-assistant/` 模块（含 manifest.json + sandbox/ 独立开发环境）。
+- 当前 AI 助手、文件管理、知识库仍未完全迁入目标模块目录（仅 ai-assistant 有占位）。
 - 当前桌面应用清单仍来自 `backend/app/seed_data/apps.json`。
-- 当前前端组件映射仍来自 `frontend/src/desktop/app-registry/component-key-map.generated.ts`。
+- 当前前端组件映射仍来自 `frontend/src/desktop/app-registry/component-key-map.generated.ts`（由 `scripts/scan-modules.js` 自动生成）。
 - 当前模块文档已经先按目标模块建立在 `开发文档/03_模块开发文档/` 下。
 
 ## 目标模块结构

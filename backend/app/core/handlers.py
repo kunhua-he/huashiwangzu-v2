@@ -1,7 +1,10 @@
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 from pydantic import ValidationError as PydanticValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import FileResponse
 from app.core.exceptions import AppException
 
 
@@ -15,6 +18,39 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "data": None,
                 "error": exc.message,
                 "errors": getattr(exc, "details", None),
+            },
+        )
+
+    # 统一捕获 HTTPException / StarletteHTTPException，确保所有路由里
+    # `raise HTTPException(...)` 都返回统一契约 {success, data, error}，
+    # 而不是 FastAPI 默认的 {"detail": "..."}。无条件注册，不依赖前端 dist 是否存在。
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        # API 路径统一返回 JSON 契约
+        if request.url.path.startswith("/api"):
+            return ORJSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "success": False,
+                    "data": None,
+                    "error": str(exc.detail) or "Not found",
+                    "errors": None,
+                },
+            )
+        # 非 API 路径：若前端 dist 存在，SPA 路由的 404 兜底返回 index.html
+        frontend_dist: Path | None = app.state.frontend_dist
+        if frontend_dist and exc.status_code == 404:
+            index = frontend_dist / "index.html"
+            if index.exists():
+                return FileResponse(str(index))
+        # 其余情况返回统一 JSON 契约
+        return ORJSONResponse(
+            status_code=exc.status_code,
+            content={
+                "success": False,
+                "data": None,
+                "error": str(exc.detail) or "Not found",
+                "errors": None,
             },
         )
 

@@ -1,7 +1,6 @@
 """Verdict orchestrator — runs L0→L4 pipeline on pending candidates."""
 
 import logging
-from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.knowledge.candidate.l0_ignore import run_l0_ignore
 from app.services.knowledge.candidate.l1_merge import run_l1_merge
@@ -16,9 +15,9 @@ async def run_governance_pipeline(
     db: AsyncSession,
     l3_enabled: bool = True,
     l3_batch_size: int = 50,
-) -> dict[str, Any]:
+) -> dict:
     """Run full L0→L4 pipeline. L4 (manual review) is not handled here."""
-    report: dict[str, Any] = {
+    report: dict = {
         "l0_ignored": 0,
         "l1_merged": 0,
         "l2_passed": {},

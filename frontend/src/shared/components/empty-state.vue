@@ -9,9 +9,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { Component } from 'vue'
 import { FolderOpened, Search, ChatDotRound, Document } from '@element-plus/icons-vue'
 
-const 图标映射: Record<string, any> = {
+const 图标映射: Record<string, Component> = {
   folder: FolderOpened,
   search: Search,
   chat: ChatDotRound,

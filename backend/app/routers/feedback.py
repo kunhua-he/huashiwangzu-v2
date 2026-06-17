@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.schemas.system import FeedbackCreate, FeedbackResponse, FeedbackStatusUpdate
@@ -38,7 +39,7 @@ async def get_feedback_detail(
 ):
     fb = await svc.get_feedback_detail(db, fid)
     if not fb:
-        raise HTTPException(status_code=404, detail="Feedback not found")
+        raise NotFound("Feedback not found")
     return ApiResponse(data=FeedbackResponse.model_validate(fb))
 
 
@@ -49,5 +50,5 @@ async def update_feedback_status(
 ):
     fb = await svc.update_feedback_status(db, fid, body.status, body.admin_note, user.id)
     if not fb:
-        raise HTTPException(status_code=404, detail="Feedback not found")
+        raise NotFound("Feedback not found")
     return ApiResponse(data=FeedbackResponse.model_validate(fb))

@@ -1,10 +1,9 @@
 import time
-from typing import Any
 
 from app.schemas.knowledge import SearchResult
 
 
-def result_text(item: Any) -> str:
+def result_text(item) -> str:
     parts = [
         item.summary or "",
         item.subject or "",

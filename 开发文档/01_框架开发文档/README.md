@@ -100,3 +100,44 @@ modules/{module}/runtime.config.json
 ```
 
 页面、组件、composables 不直接拼接会随运行环境变化的路径。
+## 已完成框架改进
+
+### A. 后端改进
+
+| 项 | 优先级 | 描述 | 状态 |
+|----|--------|------|------|
+| A1 | P0 | 统一模型配置源：registry.py 从 models.json 动态加载 | ✅ 已验证（6 条目） |
+| A1 fix | P0 | 修复 registry.py 路径解析：缺少 `backend` 段 | ✅ 已修复 |
+| A2 | P0 | 数据库连接池加固 | ✅ 已实施 |
+| A3 | P1 | CORS 收紧：默认 `["*"]` 改本机 | ✅ 已实施 |
+| A5 | P2 | 请求日志中间件 | ✅ 已创建 |
+| A6 | P3 | 删除 health.py 端点重复 | ✅ 已删除 |
+
+### B. 前端改进
+
+| 项 | 优先级 | 描述 | 状态 |
+|----|--------|------|------|
+| B1 | P0 | 删除转中文()和中文属性名 | ✅ 已清理 |
+| B2 | P1 | Vite 代码分割 | ✅ 已配置 |
+| B3 | P1 | Vue 错误边界组件 | ✅ 已创建 |
+| B4 | P2 | API_BASE_URL 环境变量 | ✅ 已发布 |
+| B5 fix | P3 | DesktopAppItem snake_case 类型 | ✅ 已修复，构建通过 |
+
+### 架构决策记录
+
+**C1. 模型配置数据流**：models.json 是唯一事实源，registry.py 从 `watchdog_models` 段动态加载，不得硬编码。
+
+**C2. API 字段命名**：后端 snake_case，前端在 `app-loader.ts` 统一转换为 `AppRegistryEntry` 的 camelCase。
+
+**C3. 错误处理**：后端统一异常处理返回 `{success, data, error}`；前端 interceptors 捕获 401 重试+跳转。
+
+**C4. Auth 令牌**：JWT HS256，24h 过期，嵌入 `session_version`，无 refresh_token。
+
+### 验证
+
+```bash
+cd backend && python -c "from app.services.model_watchdog.registry import list_models; print(len(list_models()))"
+# 输出 6
+cd frontend && npm run build
+# 0 TS errors
+```

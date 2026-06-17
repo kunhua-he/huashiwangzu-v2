@@ -48,7 +48,7 @@ const emit = defineEmits<{
 const 搜索词 = ref('')
 const 过滤应用列表 = computed(() => props.应用列表.filter(应用 => !搜索词.value.trim() || 应用.appName.includes(搜索词.value.trim())))
 const 用户Store = useUserStore()
-const 用户名 = computed(() => 用户Store.用户信息?.displayName || 用户Store.用户信息?.username || '用户')
+const 用户名 = computed(() => 用户Store.userInfo?.displayName || 用户Store.userInfo?.username || '用户')
 </script>
 
 <style scoped>

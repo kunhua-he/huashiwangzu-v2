@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import ConflictError, NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.schemas.app import AppResponse, AppUpdateRequest, AppCreateRequest
@@ -46,7 +47,7 @@ async def manager_get_app(
         except (ValueError, TypeError):
             pass
     if not app:
-        return ApiResponse(success=False, error="App not found")
+        raise NotFound("App not found")
     return ApiResponse(data=app_to_dict(app))
 
 
@@ -60,7 +61,7 @@ async def manager_update_app(
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     app = await update_app(db, app_id, update_data)
     if not app:
-        return ApiResponse(success=False, error="App not found")
+        raise NotFound("App not found")
     return ApiResponse(data=app_to_dict(app))
 
 
@@ -72,7 +73,7 @@ async def manager_toggle_app(
 ):
     app = await get_app_by_id(db, app_id)
     if not app:
-        return ApiResponse(success=False, error="App not found")
+        raise NotFound("App not found")
     app.enabled = not app.enabled
     await db.commit()
     await db.refresh(app)
@@ -87,7 +88,7 @@ async def manager_create_app(
 ):
     existing = await get_app_by_key(db, data.key)
     if existing:
-        return ApiResponse(success=False, error="App key already exists")
+        raise ConflictError("App key already exists")
     app = await create_app(db, data.model_dump())
     return ApiResponse(data=app_to_dict(app))
 

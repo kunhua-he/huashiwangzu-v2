@@ -17,7 +17,7 @@ export function useDesktopAppHandleV2() {
     const 应用 = getApp(应用标识)
     if (!应用) { ElMessage.warning(`应用「${应用标识}」不存在`); return null }
     if (应用.enabled === false) { ElMessage.warning(`应用「${应用.appName}」已停用`); return null }
-    const 当前角色 = 用户Store.用户信息?.role?.toLowerCase()
+    const 当前角色 = 用户Store.userInfo?.role?.toLowerCase()
     if (应用.allowedRoles && 当前角色 && !应用.allowedRoles.includes(当前角色)) {
       ElMessage.warning(`您无权访问应用「${应用.appName}」`)
       return null
@@ -47,7 +47,7 @@ export function useDesktopAppHandleV2() {
   }
 
   async function openFile(文件id: number, 格式?: string, 选项?: CommandOptions): Promise<WindowHandle | null> {
-    const 关联 = getAppByFileFormat(格式 || '', 用户Store.用户信息?.role)
+    const 关联 = getAppByFileFormat(格式 || '', 用户Store.userInfo?.role)
     if (!关联 || !关联.appKey) {
       ElMessage.warning(`无应用支持打开 ${格式} 格式`)
       return null

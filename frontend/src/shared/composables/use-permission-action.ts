@@ -38,16 +38,16 @@ async function 加载所有权限从后端(): Promise<void> {
   加载中 = true
   加载Promise = (async () => {
     try {
-      const 响应: any = await api.get('/roles/matrix')
-      const 矩阵 = 响应?.data?.matrix || []
-      const 列表: 权限矩阵项[] = 矩阵.flatMap((角色: any) =>
-        Object.entries(角色.permissions || {})
+      const 响应: Record<string, unknown> = await api.get('/roles/matrix')
+      const 矩阵 = ((响应?.data as Record<string, unknown>)?.matrix || []) as Record<string, unknown>[]
+      const 列表: 权限矩阵项[] = 矩阵.flatMap((角色: Record<string, unknown>) =>
+        Object.entries((角色 as Record<string, unknown>).permissions || {})
           .filter(([, enabled]) => enabled)
           .map(([action]) => ({
             action,
             名称: action,
             模块: 'system',
-            最低角色: 角色.role_key,
+            最低角色: 角色.role_key as string,
           }))
       )
       权限注册表.clear()
@@ -71,7 +71,7 @@ async function 加载所有权限从后端(): Promise<void> {
  */
 export async function checkPermissionAction(操作: string): Promise<boolean> {
   const 用户Store = useUserStore()
-  const 角色 = 用户Store.用户信息?.role || 'viewer'
+  const 角色 = 用户Store.userInfo?.role || 'viewer'
   if (角色 === 'admin') return true
 
   await 加载所有权限从后端()
@@ -86,7 +86,7 @@ export async function checkPermissionAction(操作: string): Promise<boolean> {
  */
 export function use权限Action() {
   const store = useUserStore()
-  const 当前角色 = computed(() => store.用户信息?.role || 'viewer')
+  const 当前角色 = computed(() => store.userInfo?.role || 'viewer')
 
   async function 可执行(操作: string): Promise<boolean> {
     if (当前角色.value === 'admin') return true

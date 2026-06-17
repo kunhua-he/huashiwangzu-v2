@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import AppException, ConflictError, NotFound, ValidationError
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.middleware.auth import require_permission
@@ -40,11 +41,8 @@ async def create_package(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("editor")),
 ):
-    try:
-        result = await package_svc.create_package(db, file_id, user.id)
-        return ApiResponse(data=result)
-    except (ValueError, RuntimeError) as e:
-        return ApiResponse(success=False, error=str(e))
+    result = await package_svc.create_package(db, file_id, user.id)
+    return ApiResponse(data=result)
 
 
 @router.get("/package/{package_id}")
@@ -55,7 +53,7 @@ async def read_package(
 ):
     result = await package_svc.read_package(db, package_id)
     if not result:
-        return ApiResponse(success=False, error="包不存在")
+        raise NotFound("Package not found")
     return ApiResponse(data=result)
 
 
@@ -108,7 +106,7 @@ async def preview_patch(
         result = patch_svc.preview_patch(body.get("patch", {}))
         return ApiResponse(data=result)
     except ValueError as e:
-        return ApiResponse(success=False, error=str(e))
+        raise ValidationError(str(e))
 
 
 @router.post("/patch/apply")
@@ -122,8 +120,12 @@ async def apply_patch(
             db, body.get("patch", {}), body.get("package_id"), user.id
         )
         return ApiResponse(data=result)
-    except (ValueError, RuntimeError) as e:
-        return ApiResponse(success=False, error=str(e))
+    except AppException:
+        raise
+    except ValueError as e:
+        raise ValidationError(str(e))
+    except RuntimeError as e:
+        raise ConflictError(str(e))
 
 
 @router.post("/rollback")
@@ -137,5 +139,9 @@ async def rollback_version(
             db, body["package_id"], body["target_version_id"], user.id
         )
         return ApiResponse(data=result)
-    except (ValueError, RuntimeError) as e:
-        return ApiResponse(success=False, error=str(e))
+    except AppException:
+        raise
+    except ValueError as e:
+        raise ValidationError(str(e))
+    except RuntimeError as e:
+        raise ConflictError(str(e))

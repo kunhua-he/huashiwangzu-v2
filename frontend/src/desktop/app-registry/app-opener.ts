@@ -35,7 +35,7 @@ export function openFileByRecord(fileRecord: FileOpenPayload): string | null {
     return null
   }
   const userStore = useUserStore()
-  const currentRole = userStore.用户信息?.role || 'viewer'
+  const currentRole = userStore.userInfo?.role || 'viewer'
   const association = getAppByFileFormat(format, currentRole)
   const app = getApp(association.appKey)
   if (!app) {

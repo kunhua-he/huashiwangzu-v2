@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse, PaginatedResponse
 from app.schemas.system import SystemLogResponse, SystemLogDetailResponse, FrontendErrorRequest
@@ -52,5 +53,5 @@ async def get_log_detail(
 ):
     log = await db.get(SystemLog, log_id)
     if not log:
-        return ApiResponse(success=False, error="Log not found", data=None)
+        raise NotFound("Log not found")
     return ApiResponse(data=SystemLogDetailResponse.model_validate(log))

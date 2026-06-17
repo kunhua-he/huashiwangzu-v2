@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
+from app.core.exceptions import NotFound
 from app.schemas.common import ApiResponse
 from app.middleware.auth import require_permission
 from app.models.user import User
@@ -24,10 +25,10 @@ async def export_docx(
 
     pkg = await db.get(FileJsonPackage, package_id)
     if not pkg:
-        return ApiResponse(success=False, error="包不存在")
+        raise NotFound("Package not found")
     file = await db.get(File, pkg.file_id)
     if not file:
-        return ApiResponse(success=False, error="文件不存在")
+        raise NotFound("File not found")
 
     result = await package_svc.read_package(db, package_id)
     full_path = str(Path(get_settings().UPLOAD_DIR) / file.storage_path)
@@ -49,10 +50,10 @@ async def export_excel(
 
     pkg = await db.get(FileJsonPackage, package_id)
     if not pkg:
-        return ApiResponse(success=False, error="包不存在")
+        raise NotFound("Package not found")
     file = await db.get(File, pkg.file_id)
     if not file:
-        return ApiResponse(success=False, error="文件不存在")
+        raise NotFound("File not found")
 
     result = await package_svc.read_package(db, package_id)
     full_path = str(Path(get_settings().UPLOAD_DIR) / file.storage_path)
@@ -74,10 +75,10 @@ async def export_pptx(
 
     pkg = await db.get(FileJsonPackage, package_id)
     if not pkg:
-        return ApiResponse(success=False, error="包不存在")
+        raise NotFound("Package not found")
     file = await db.get(File, pkg.file_id)
     if not file:
-        return ApiResponse(success=False, error="文件不存在")
+        raise NotFound("File not found")
 
     result = await package_svc.read_package(db, package_id)
     full_path = str(Path(get_settings().UPLOAD_DIR) / file.storage_path)

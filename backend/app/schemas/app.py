@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Any
 from datetime import datetime
 
 
@@ -28,24 +27,24 @@ class AppResponse(BaseModel):
     show_in_tray: bool = False
     show_in_launcher: bool = True
     show_in_sidebar: bool = False
-    supported_formats: Any = None
-    editable_formats: Any = None
+    supported_formats: list[str] | None = None
+    editable_formats: list[str] | None = None
     enabled: bool = True
     needs_frontend_build: bool = False
     manifest_hash: str = ""
     last_scan_time: str | None = None
-    capabilities: Any = None
-    public_actions: Any = None
+    capabilities: dict | None = None
+    public_actions: list[dict] | None = None
     module_version: str = "1.0.0"
     contract_version: str = "2.0"
     installed_version: str | None = None
     framework_min_version: str = "1.0.0"
     framework_max_version: str | None = None
-    permission_declaration: Any = None
-    db_migration_declaration: Any = None
-    event_handler_declaration: Any = None
-    dependency_declaration: Any = None
-    openable_types_declaration: Any = None
+    permission_declaration: dict | None = None
+    db_migration_declaration: dict | None = None
+    event_handler_declaration: dict | None = None
+    dependency_declaration: list[dict] | None = None
+    openable_types_declaration: list[str] | None = None
 
 
 class AppUpdateRequest(BaseModel):

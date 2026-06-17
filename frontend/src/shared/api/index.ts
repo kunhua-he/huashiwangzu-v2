@@ -1,11 +1,11 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import type { 统一响应 } from './types'
+import type { ApiResponse } from './types'
 import { 获取错误信息 } from './response-transform'
 
 const TOKEN_KEY = 'v2_auth_token'
 
-export const API_BASE_URL = '/api'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE || '/api'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -110,4 +110,4 @@ api.interceptors.response.use(
 )
 
 export default api
-export type { 统一响应, 接口响应 } from './types'
+export type { ApiResponse } from './types'

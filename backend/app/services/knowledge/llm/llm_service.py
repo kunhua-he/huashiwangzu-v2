@@ -4,7 +4,7 @@ and mandatory audit logging (knowledge_llm_logs).
 """
 import logging
 import httpx
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession

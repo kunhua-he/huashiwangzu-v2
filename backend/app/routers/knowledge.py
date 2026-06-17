@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +10,7 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.models.knowledge import Catalog, PageSource, PageFusion
 from app.services import knowledge_service
-from app.core.exceptions import NotFound
+from app.core.exceptions import NotFound, ValidationError
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -26,10 +26,7 @@ async def get_page_fusion(
     user: User = Depends(require_permission("viewer")),
 ):
     if fusion_id is None and (catalog_id is None or page_num is None):
-        raise HTTPException(
-            status_code=422,
-            detail="Provide either fusion_id, or catalog_id + page_num",
-        )
+        raise ValidationError("Provide either fusion_id, or catalog_id + page_num")
 
     result: PageFusionResult | None = await get_fusion_service(
         db, fusion_id=fusion_id, catalog_id=catalog_id,

@@ -24,7 +24,7 @@ function 打开窗口(应用标识: string, 负载?: unknown): string | null {
   const 应用 = getApp(应用标识)
   if (!应用) return null
   const store = useUserStore()
-  const 当前角色 = store.用户信息?.role?.toLowerCase()
+  const 当前角色 = store.userInfo?.role?.toLowerCase()
   if (应用.allowedRoles && 当前角色 && !应用.allowedRoles.includes(当前角色)) {
     console.warn(`打开窗口被拒绝：角色 ${当前角色} 无权访问应用 ${应用标识}`)
     return null

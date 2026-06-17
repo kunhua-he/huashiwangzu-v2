@@ -9,7 +9,7 @@ export type DesktopEventTypes = {
   'desktop:move-to-folder': { ids: string[]; 目标文件夹id: string }
   'task:completed': { 任务id: number | string; 任务类型: string }
   'notification:created': { id: number; 标题: string }
-  'refresh:file-list': { 文件夹id?: number }
+  'refresh:file-list': { folderId?: number }
   'refresh:recycle-bin': void
   'app:open': { 目标应用标识: string; 参数?: Record<string, unknown> }
   'app:close': { 目标应用标识: string }

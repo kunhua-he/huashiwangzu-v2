@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Any
 
 
 class TriggerRequest(BaseModel):
@@ -58,7 +57,7 @@ class LightweightIndex(BaseModel):
     subject: str | None = None
     attribute_hints: list[dict[str, str]] | None = None
     labels: list[str] | None = None
-    graph_neighbors: list[dict[str, Any]] | None = None
+    graph_neighbors: list[dict] | None = None
     evidence_types: list[str] | None = None
     scores: ScoreDetail | None = None
     fusion_text_preview: str | None = None

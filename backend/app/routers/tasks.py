@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.schemas.system import SystemTaskQueueResponse, WorkerStatusResponse
@@ -56,7 +57,7 @@ async def task_detail(
 ):
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
-        return ApiResponse(success=False, error="Task not found", data=None)
+        raise NotFound("Task not found")
     return ApiResponse(data=SystemTaskQueueResponse.model_validate(task))
 
 
@@ -67,7 +68,7 @@ async def retry_task(
 ):
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
-        return ApiResponse(success=False, error="Task not found", data=None)
+        raise NotFound("Task not found")
     task.status = "pending"
     task.retry_count = 0
     task.error_message = None
@@ -82,7 +83,7 @@ async def cancel_task(
 ):
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
-        return ApiResponse(success=False, error="Task not found", data=None)
+        raise NotFound("Task not found")
     task.status = "failed"
     task.error_message = "Manually cancelled"
     task.completed_at = datetime.now(timezone.utc)

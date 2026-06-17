@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.agent.gateway.router import _call_with_retry
+from app.gateway.router import _call_with_retry
 
 
 class RetryableProvider:

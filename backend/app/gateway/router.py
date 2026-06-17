@@ -29,10 +29,9 @@ def _load_models_config() -> dict:
     if _CONFIG is not None:
         return _CONFIG
     if not _MODELS_CONFIG_PATH.exists():
-        raise FileNotFoundError(
-            f"models.json not found at {_MODELS_CONFIG_PATH}. "
-            f"Create it from the template in the task doc."
-        )
+        logger.warning("models.json not found at %s, gateway will use empty config", _MODELS_CONFIG_PATH)
+        _CONFIG = {"providers": {}, "model_types": {"llm": {"profiles": {}}}}
+        return _CONFIG
     with open(_MODELS_CONFIG_PATH, "r") as f:
         _CONFIG = json.load(f)
     return _CONFIG

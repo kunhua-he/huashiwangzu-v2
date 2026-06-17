@@ -1,5 +1,5 @@
 import pytest
-from app.services.agent.gateway.adapters import (
+from app.gateway.adapters import (
     DeepSeekAdapter,
     GemmaAdapter,
     QwenAdapter,

@@ -1,6 +1,6 @@
 import json
 
-from app.services.agent.gateway.stream_parse import (
+from app.gateway.stream_parse import (
     error_message,
     extract_stream_payload,
 )

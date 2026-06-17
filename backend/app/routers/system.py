@@ -6,7 +6,7 @@ from app.schemas.common import ApiResponse
 from app.schemas.system import *
 from app.middleware.auth import require_permission
 from app.models.user import User
-from app.services import system_service as svc, knowledge_service
+from app.services import system_service as svc
 from app.core.exceptions import NotFound
 
 router = APIRouter(tags=["system-old"])
@@ -30,12 +30,6 @@ async def list_catalogs(db: AsyncSession = Depends(get_db), user: User = Depends
     from app.models.knowledge import Catalog
     r = await db.execute(select(Catalog).order_by(desc(Catalog.id)))
     return ApiResponse(data=[CatalogResponse.model_validate(c) for c in r.scalars().all()])
-
-@router.post("/api/knowledge/search")
-async def search_knowledge(body: dict, db: AsyncSession = Depends(get_db),
-                           user: User = Depends(require_permission("viewer"))):
-    results = await knowledge_service.hybrid_search(db, body.get("query", ""), body.get("top_k", 10))
-    return ApiResponse(data=results)
 
 # ── File Preview ──
 import os

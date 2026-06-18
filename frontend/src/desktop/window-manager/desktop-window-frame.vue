@@ -16,7 +16,6 @@
         <AppIcon :icon="icon" :size="16" />
         <span class="window-title">{{ title }}</span>
       </div>
-      <button v-if="appKey === 'desktop'" class="window-extra-button" :class="{ 'is-collapsed': layoutState.sidebarCollapsed, 'is-open': !layoutState.sidebarCollapsed }" :title="layoutState.sidebarCollapsed ? '展开目录导航' : '收起目录导航'" :aria-label="layoutState.sidebarCollapsed ? '展开目录导航' : '收起目录导航'" :aria-checked="!layoutState.sidebarCollapsed" role="switch" @click.stop="layoutState.toggleSidebar()"><span class="window-extra-button-track"><span class="window-extra-button-thumb"><span class="window-extra-button-arrow">{{ layoutState.sidebarCollapsed ? '›' : '‹' }}</span></span></span></button>
       <div class="window-action-buttons">
         <button v-if="windowType !== 'panel'" class="window-action-btn window-action-minimize" @click.stop="$emit('minimize', id)" title="最小化" aria-label="最小化" />
         <button v-if="windowType !== 'tool' && windowType !== 'background-service'" class="window-action-btn window-action-maximize" @click.stop="$emit('maximize', id)" title="最大化" aria-label="最大化" />
@@ -56,7 +55,6 @@ import { computed, ref, defineAsyncComponent, watch } from 'vue'
 import { Loading, WarningFilled } from '@element-plus/icons-vue'
 import { getApp } from '@/desktop/app-registry/app-registry'
 import { useWindowInteraction } from './use-window-interaction'
-import { useDesktopLayoutState } from '@/desktop/window-manager/use-desktop-layout-state'
 import AppIcon from '@/desktop/components/app-icon.vue'
 
 const props = defineProps<{
@@ -114,7 +112,6 @@ const windowType = computed(() => appInfo.value?.windowType || 'normal')
 const resizable = computed(() => appInfo.value?.resizable !== false && windowType.value !== 'fullscreen')
 const minWidth = computed(() => appInfo.value?.minWidth ?? 400)
 const minHeight = computed(() => appInfo.value?.minHeight ?? 260)
-const layoutState = useDesktopLayoutState()
 
 const rootEl = ref<HTMLElement | null>(null)
 const windowInteraction = useWindowInteraction(() => ({
@@ -126,6 +123,5 @@ const windowInteraction = useWindowInteraction(() => ({
 </script>
 
 <style scoped>
-.window-extra-button{position:absolute;right:12px;top:50%;transform:translateY(-50%);padding:0;border:none;background:transparent;cursor:pointer}.window-extra-button-track{width:42px;height:24px;padding:3px;border-radius:999px;display:flex;align-items:center;background:linear-gradient(180deg,#94a3b8,#64748b);box-shadow:inset 0 0 0 1px rgba(71,85,105,.28),0 6px 12px rgba(15,23,42,.12);transition:background .22s ease,box-shadow .22s ease}.window-extra-button-thumb{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#fff;color:#475569;box-shadow:0 2px 6px rgba(15,23,42,.22);transform:translateX(0);transition:transform .22s ease,color .22s ease}.window-extra-button-arrow{font-size:16px;line-height:1;font-weight:800}.window-extra-button.is-open .window-extra-button-track{background:linear-gradient(180deg,#60a5fa,#2563eb);box-shadow:inset 0 0 0 1px rgba(37,99,235,.3),0 6px 12px rgba(37,99,235,.18)}.window-extra-button.is-open .window-extra-button-thumb{transform:translateX(18px);color:#2563eb}.window-extra-button:focus-visible{outline:2px solid #2563eb;outline-offset:3px}
 .resize-handle{position:absolute;z-index:6}.resize-handle-n,.resize-handle-s{left:10px;right:10px;height:8px;cursor:ns-resize}.resize-handle-n{top:-4px}.resize-handle-s{bottom:-4px}.resize-handle-e,.resize-handle-w{top:10px;bottom:10px;width:8px;cursor:ew-resize}.resize-handle-e{right:-4px}.resize-handle-w{left:-4px}.resize-handle-ne,.resize-handle-sw{width:14px;height:14px;cursor:nesw-resize}.resize-handle-nw,.resize-handle-se{width:14px;height:14px;cursor:nwse-resize}.resize-handle-ne{top:-4px;right:-4px}.resize-handle-nw{top:-4px;left:-4px}.resize-handle-se{right:1px;bottom:1px}.resize-handle-sw{left:-4px;bottom:-4px}.resize-handle-se::after{content:"";position:absolute;right:1px;bottom:1px;width:7px;height:7px;border-right:2px solid rgba(100,116,139,.55);border-bottom:2px solid rgba(100,116,139,.55);border-radius:0 0 3px 0}
 </style>

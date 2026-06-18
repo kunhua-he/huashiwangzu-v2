@@ -7,9 +7,10 @@ export interface DesktopPersistentState {
   version: number
   windows: DesktopWindowSnapshot[]
   appState: Record<string, Record<string, unknown>>
+  iconPositions: Record<string, { col?: number; row?: number; x: number; y: number }>
 }
 
-const state = reactive<DesktopPersistentState>({ version: 1, windows: [], appState: {} })
+const state = reactive<DesktopPersistentState>({ version: 1, windows: [], appState: {}, iconPositions: {} })
 const loaded = ref(false)
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -18,6 +19,7 @@ export async function loadDesktopState() {
   if (response.success && response.data) {
     state.windows = Array.isArray(response.data.windows) ? response.data.windows : []
     state.appState = response.data.appState || {}
+    state.iconPositions = response.data.iconPositions || {}
   }
   loaded.value = true
   return state

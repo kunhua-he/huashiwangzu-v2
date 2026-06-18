@@ -17,7 +17,7 @@ RETRYABLE_STATUSES = {429, 502, 503, 504}
 
 # ── Load model configuration from models.json ──────────────────────────
 _MODELS_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent.parent.parent.parent
+    Path(__file__).resolve().parents[2]
     / "data" / "config" / "models.json"
 )
 
@@ -110,7 +110,10 @@ class ModelGatewayRouter:
                 self._providers[name] = LocalProvider()
 
     def get_profile(self, profile_key: str) -> dict:
-        return MODEL_PROFILES.get(profile_key, MODEL_PROFILES[DEFAULT_MODEL])
+        profile = MODEL_PROFILES.get(profile_key) or MODEL_PROFILES.get(DEFAULT_MODEL)
+        if not profile:
+            raise RuntimeError("No LLM model profiles configured in models.json")
+        return profile
 
     def list_profiles(self) -> list[dict]:
         return [
@@ -121,7 +124,10 @@ class ModelGatewayRouter:
     def get_provider(self, provider_name: str) -> BaseProvider:
         provider = self._providers.get(provider_name)
         if not provider:
-            return self._providers["local"]
+            fallback = self._providers.get("local")
+            if fallback:
+                return fallback
+            raise RuntimeError(f"Model provider '{provider_name}' is not configured")
         return provider
 
     async def chat(

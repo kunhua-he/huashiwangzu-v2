@@ -27,7 +27,10 @@ export function useDesktopRootFiles() {
 
   function openDesktopEntry(file: FileEntry) {
     if (file.is_folder || !file.format) {
-      windowManager.openWindow('desktop')
+      windowManager.openWindow('desktop', {
+        folderId: file.id,
+        folderName: displayName(file),
+      })
       return
     }
     openFileByRecord({ fileId: file.id, fileName: displayName(file), format: file.format })

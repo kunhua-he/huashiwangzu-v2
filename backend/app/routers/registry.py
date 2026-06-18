@@ -33,6 +33,8 @@ PLATFORM_ROUTER_MODULES: tuple[str, ...] = (
     "app.routers.notifications",
     "app.routers.feedback",
     "app.routers.office",
+    "app.routers.gateway",
+    "app.routers.modules",
     "app.routers.office_export",
     "app.routers.editors",
     "app.routers.app_manager",
@@ -56,7 +58,11 @@ def iter_module_router_files(modules_root: Path = MODULES_ROOT) -> Iterable[tupl
     if not modules_root.exists():
         return
     for manifest_path in sorted(modules_root.glob("*/manifest.json")):
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            logger.error("Skip bad module manifest %s: %s", manifest_path, exc)
+            continue
         if manifest.get("enabled") is False:
             continue
         backend_config = manifest.get("backend")

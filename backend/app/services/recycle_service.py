@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,6 +6,8 @@ from app.models.recycle import RecycleItem
 from app.models.file import File, Folder
 from app.models.file_share import FileShare
 from app.core.exceptions import NotFound, AppException
+
+logger = logging.getLogger("v2.recycle")
 
 
 async def get_recycle_list(db: AsyncSession, owner_id: int):
@@ -157,7 +160,7 @@ async def delete_permanently(db: AsyncSession, item_type: str, item_id: int, own
                     File.md5_hash == file.md5_hash,
                     File.deleted == False,
                     File.id != file.id,
-                )
+                ).with_for_update()
             )
             other_ref_list = other_refs.scalars().all()
             if not other_ref_list:
@@ -166,8 +169,8 @@ async def delete_permanently(db: AsyncSession, item_type: str, item_id: int, own
                 if path and path.exists():
                     try:
                         path.unlink()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to unlink storage file %s: %s", path, exc)
             await db.delete(file)
     elif recycle.item_type == "folder":
         folder = await db.get(Folder, recycle.origin_id)
@@ -197,15 +200,15 @@ async def _recursive_permanent_delete_folder(db: AsyncSession, folder_id: int, o
                 File.md5_hash == f.md5_hash,
                 File.deleted == False,
                 File.id != f.id,
-            )
+            ).with_for_update()
         )
         if not other_refs.scalars().all():
             path = _resolve_storage_path(f)
             if path and path.exists():
                 try:
                     path.unlink()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to unlink storage file %s: %s", path, exc)
         await db.delete(f)
 
     subfolders = await db.execute(
@@ -236,15 +239,15 @@ async def empty_trash(db: AsyncSession, owner_id: int):
                         File.md5_hash == file.md5_hash,
                         File.deleted == False,
                         File.id != file.id,
-                    )
+                    ).with_for_update()
                 )
                 if not other_refs.scalars().all():
                     path = _resolve_storage_path(file)
                     if path and path.exists():
                         try:
                             path.unlink()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("Failed to unlink storage file %s: %s", path, exc)
                 await db.delete(file)
         elif item.item_type == "folder":
             folder = await db.get(Folder, item.origin_id)

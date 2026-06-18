@@ -30,6 +30,7 @@ interface BackendDesktopStateResponse {
     版本?: number
     窗口?: DesktopPersistentState['windows']
     应用状态?: DesktopPersistentState['appState']
+    图标位置?: DesktopPersistentState['iconPositions']
   }
   version: number
 }
@@ -79,6 +80,7 @@ function toDesktopPersistentState(response: BackendDesktopStateResponse): Deskto
     version: payload.version ?? payload.版本 ?? response.version ?? 1,
     windows: Array.isArray(payload.windows) ? payload.windows : Array.isArray(payload.窗口) ? payload.窗口 : [],
     appState: payload.appState ?? payload.应用状态 ?? {},
+    iconPositions: payload.iconPositions ?? payload.图标位置 ?? {},
   }
 }
 

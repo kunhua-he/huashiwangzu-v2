@@ -6,6 +6,7 @@
   padding: 14px 12px;
   align-content: flex-start;
   height: 100%;
+  pointer-events: none;
 }
 .desktop-icon-item {
   display: flex;
@@ -19,6 +20,7 @@
   user-select: none;
   -webkit-user-select: none;
   transition: background 0.15s, transform 0.15s;
+  pointer-events: auto;
 }
 .desktop-icon-item:hover {
   background: rgba(255, 255, 255, 0.08);

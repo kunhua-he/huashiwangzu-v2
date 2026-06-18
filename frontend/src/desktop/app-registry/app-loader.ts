@@ -6,6 +6,19 @@ import { componentKeyMap } from '@/desktop/app-registry/component-key-map'
 import { setAppRegistry } from '@/desktop/app-registry/desktop-app-state'
 import ComponentRegistrationError from '@/desktop/components/component-registration-error.vue'
 
+const WINDOW_TYPE_BACKGROUND_SERVICE = 'background-service'
+
+function backgroundServiceLoader(): AppRegistryEntry['entryComponent'] {
+  return () => Promise.resolve({
+    default: defineComponent({
+      name: 'BackgroundServicePlaceholder',
+      setup() {
+        return () => null
+      },
+    }),
+  })
+}
+
 function missingComponentLoader(app: DesktopAppItem, componentKey: string): AppRegistryEntry['entryComponent'] {
   const appKey = app.app_id || ''
   const appName = app.name || ''
@@ -22,7 +35,9 @@ function missingComponentLoader(app: DesktopAppItem, componentKey: string): AppR
 
 function transformApiToEntry(app: DesktopAppItem): AppRegistryEntry {
   const entryKey: string = app.entry_component_key || ''
-  const componentLoader = componentKeyMap[entryKey]
+  const componentLoader = app.window_type === WINDOW_TYPE_BACKGROUND_SERVICE
+    ? backgroundServiceLoader()
+    : componentKeyMap[entryKey]
   return {
     appKey: app.app_id || '',
     appName: app.name || '',

@@ -51,6 +51,8 @@ backend/    Desktop shell backend / platform service layer
 11. Do not commit empty features, temporary comments, or fake-success logic.
 12. When a temporary task document is complete, merge the useful result back into the relevant `README.md`, then delete the temporary document.
 13. After code changes, run the relevant tests. For backend changes, default to `cd backend && pytest`.
+17. **跨模块调用必须 100% 经框架统一通路。** 模块之间（如 Agent 调知识库）禁止互相 `import` 代码、禁止直接读写对方的数据库表。只能通过框架的跨模块通路（前端 `desktop-app-handle-v2` 的 `sendCommand`/`requestData`；后端能力注册表，待 G12 补齐）。模块对外开放的能力在 manifest 的 `public_actions` 声明，未声明的不可被其他模块调用。详见 `开发文档/03_模块开发文档/README.md` → 模块数据与交互契约。
+18. **框架接口不随模块膨胀。** 模块的业务表（`{key}_*` 前缀）和业务接口（`modules/{key}/backend/router.py`）全在模块自己里，加模块不改框架。只有"所有模块都需要的新公共能力"才往框架加接口，且要保持长期稳定（契约）。
 
 ## TypeScript Rules
 

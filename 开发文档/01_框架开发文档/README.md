@@ -109,10 +109,12 @@ Runtime SDK 的 `platform` 对象含 8 个 namespace：`auth`、`files`、`offic
 | C13 | 样式 class 和 CSS 变量英文命名 |
 | C14 | 部署：单机局域网 20-50 人，不需要 Redis/限流/refresh_token/水平扩展 |
 | C15 | 文件 owner 隔离：所有查询按 `owner_id` 过滤；create/move/copy 校验目标目录 owner |
-| C16 | 内容去重：`md5_hash` + `ref_count` + 内容寻址；分享：`framework_file_shares` + owner/shared 双重检查 |
+| C16 | 内容去重：`md5_hash` + 内容寻址，相同内容共享一份物理文件（复制也复用，不另存）；删除统计同 md5 未删除记录数，归零才删盘（`ref_count` 为冗余字段，不参与删除判断）；分享：`framework_file_shares` + owner/shared 双重检查 |
 | C17 | 打开调度：`editable_formats` 优先 + `sort_order` + `["*"]` 仅 desktop |
 | C18 | 表命名：`{owner}_{domain}_{sub_domain}`，框架 `framework_*`，模块用自身 key |
 | C19 | 模块公开接口：HTTP API + runtime SDK（8 namespace）+ manifest |
+| C20 | 框架 = 公共能力层（商场模型）：框架只提供横向公共能力，数量固定稳定，**不随模块数量膨胀**；模块的业务表与业务接口全在模块自己里，加模块不改框架。这是兼容性的根（类比 Windows：系统接口几十年不变，软件自带业务） |
+| C21 | 跨模块调用必须 100% 经框架统一通路，禁止互相 import / 直接读对方表。前端引擎已有（`desktop-app-handle-v2` 的 `sendCommand`/`requestData` + `registerActionHandler` + 权限/审计/超时），但**尚未暴露到 runtime SDK**；后端跨模块通路**待补（G12）** |
 
 ## 验证命令
 

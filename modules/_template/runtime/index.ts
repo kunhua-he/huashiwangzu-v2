@@ -166,8 +166,8 @@ export interface ChatResult {
 }
 
 export interface EmbeddingResult {
-  embedding: number[]
-  tokens: number
+  embeddings: number[][]
+  count: number
 }
 
 export interface RerankResult {
@@ -186,6 +186,7 @@ export interface TaskInfo {
 
 // ── Framework injection key ─────────────────────────────────────────
 let _config: RuntimeConfig | null = null
+const TOKEN_KEY = 'v2_auth_token'
 
 // ── Sandbox config loader ───────────────────────────────────────────
 async function loadSandboxConfig(): Promise<RuntimeConfig> {
@@ -210,12 +211,10 @@ export async function initRuntime(_moduleKey: string): Promise<RuntimeConfig> {
   if (isSandbox) {
     _config = await loadSandboxConfig()
   } else {
-    _config = {
-      mode: 'framework',
-      api_base_url: '/api',
-      permissions: ['viewer'],
-      module_settings: {},
-    }
+    const injected = (window as unknown as { __HUASHI_RUNTIME__?: RuntimeConfig }).__HUASHI_RUNTIME__
+    _config = injected
+      ? { ...injected, mode: 'framework' }
+      : { mode: 'framework', api_base_url: '/api', permissions: ['viewer'], module_settings: {} }
   }
   return _config
 }
@@ -248,9 +247,14 @@ export function getRuntimeConfig(): Readonly<RuntimeConfig> {
 
 // ── Internal HTTP helper ────────────────────────────────────────────
 
+function authHeaders(): HeadersInit {
+  const token = localStorage.getItem(TOKEN_KEY)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 async function apiGet<T>(path: string): Promise<T> {
   const url = getApiUrl(path)
-  const r = await fetch(url)
+  const r = await fetch(url, { headers: authHeaders() })
   if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
   const body = await r.json()
   if (!body.success) throw new Error(body.error ?? 'API error')
@@ -261,7 +265,7 @@ async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
   const url = getApiUrl(path)
   const r = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: payload ? JSON.stringify(payload) : undefined,
   })
   if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
@@ -275,7 +279,7 @@ async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
 export const auth = {
   /** Get current authenticated user info */
   async getCurrentUser(): Promise<CurrentUser> {
-    return apiGet<CurrentUser>('/auth/current-user')
+    return apiGet<CurrentUser>('/current-user')
   },
   /** Check if a specific permission is granted */
   hasPermission(permission: string): boolean {
@@ -311,7 +315,7 @@ export const files = {
     form.append('file', file)
     if (options?.folder_id) form.append('folder_id', String(options.folder_id))
     const url = getApiUrl('/files/upload')
-    const r = await fetch(url, { method: 'POST', body: form })
+    const r = await fetch(url, { method: 'POST', headers: authHeaders(), body: form })
     if (!r.ok) throw new Error(`Upload returned ${r.status}`)
     const body = await r.json()
     if (!body.success) throw new Error(body.error ?? 'Upload error')
@@ -391,7 +395,7 @@ export const gateway = {
     const url = getApiUrl('/gateway/chat-stream')
     const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(payload),
     })
     if (!r.ok) throw new Error(`Chat stream returned ${r.status}`)
@@ -464,6 +468,17 @@ export const settings = {
   },
 }
 
+export const modules = {
+  /** 调用另一个模块对外公开的能力（经框架统一通路 + 权限 + 审计） */
+  async call(targetModule: string, action: string, parameters: Record<string, unknown> = {}): Promise<unknown> {
+    return apiPost<unknown>('/modules/call', { target_module: targetModule, action, parameters })
+  },
+  /** 列出当前已注册的跨模块能力（module:action 列表） */
+  async capabilities(): Promise<string[]> {
+    return apiGet<string[]>('/modules/capabilities')
+  },
+}
+
 // ── Unified platform export ─────────────────────────────────────────
 
 export const platform = {
@@ -475,4 +490,5 @@ export const platform = {
   notifications,
   logs,
   settings,
+  modules,
 }

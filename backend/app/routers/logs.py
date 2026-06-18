@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse, PaginatedResponse
@@ -11,6 +12,14 @@ from app.models.system import SystemLog
 from app.services.log_service import write_log
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
+
+
+class ModuleLogRequest(BaseModel):
+    level: str = "info"
+    action: str
+    message: str
+    module: str = "module"
+    data: dict | None = None
 
 
 @router.get("/")
@@ -32,6 +41,19 @@ async def list_logs(
     r = await db.execute(q.offset((page - 1) * page_size).limit(page_size))
     items = [SystemLogResponse.model_validate(i) for i in r.scalars().all()]
     return ApiResponse(data=PaginatedResponse(items=items, total=total or 0, page=page, page_size=page_size))
+
+
+@router.post("/module")
+async def module_log(
+    body: ModuleLogRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await write_log(
+        db, body.level, body.module, body.action, body.message,
+        user_id=current_user.id, data=body.data,
+    )
+    return ApiResponse(data={"ok": True})
 
 
 @router.post("/frontend-error")

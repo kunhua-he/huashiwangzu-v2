@@ -3,6 +3,7 @@ import { loadAppRegistry } from '@/desktop/app-registry/app-loader'
 import { useWindowManager } from '@/desktop/window-manager/window-manager'
 import { loadDesktopState } from '@/desktop/window-manager/desktop-state-store'
 import { createWindowStateSync } from '@/desktop/window-manager/window-state-sync'
+import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import { useUserStore } from '@/platform/stores/user'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import type { Ref } from 'vue'
@@ -19,10 +20,17 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
   const desktopContainerRef = ref<HTMLElement | null>(null)
   let resizeObserver: ResizeObserver | null = null
 
+  function runtimePermissions(role?: string): string[] {
+    if (role === 'admin') return ['viewer', 'editor', 'admin']
+    if (role === 'editor') return ['viewer', 'editor']
+    return ['viewer']
+  }
+
   const windowSync = createWindowStateSync(windowMgr.windows)
 
   function updateContainerSize() {
     if (desktopContainerRef.value) windowMgr.setContainerSize(desktopContainerRef.value.clientWidth, desktopContainerRef.value.clientHeight)
+    requestAnimationFrame(() => restorePersistedIconPositions())
   }
 
   async function loadAppRegistryData() {
@@ -35,7 +43,15 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
       sidebarAppList.value = allApps.filter(a => a.showInSidebar)
       trayAppList.value = allApps.filter(a => a.showInTray)
 
-      if (userStore.userInfo?.userId) {
+      // 给模块 runtime 注入框架上下文（当前用户权限等）
+      ;(window as unknown as { __HUASHI_RUNTIME__?: unknown }).__HUASHI_RUNTIME__ = {
+        mode: 'framework',
+        api_base_url: '/api',
+        permissions: runtimePermissions(userStore.userInfo?.role),
+        module_settings: {},
+      }
+
+      if (userStore.userInfo?.id) {
         const desktopState = await loadDesktopState()
         windowMgr.restoreWindows(desktopState.windows, currentRole.value)
       }

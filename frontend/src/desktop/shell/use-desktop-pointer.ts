@@ -3,7 +3,7 @@ import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
 import { startBoxSelection, updateBoxSelection, endBoxSelection, selectionRect } from '@/desktop/selection/selection-box-state'
 import { clearSelection, setSelection } from '@/desktop/selection/desktop-selection-state'
 import { updateDragOffset, enterFolder, leaveFolder, endDrag, dragState } from '@/desktop/drag-drop/drag-state'
-import { clampIconPosition, setDropOverlayBatch } from '@/desktop/drag-drop/drag-tool'
+import { clampIconPosition, commitDropOverlayBatch } from '@/desktop/drag-drop/drag-tool'
 
 function hitTestSelection(sel: { x: number; y: number; w: number; h: number }, e: MouseEvent) {
   const ids: string[] = []
@@ -28,16 +28,15 @@ function detectHoveredFolder(e: MouseEvent) {
 function snapDraggedIcons(e: MouseEvent) {
   const primaryKey = dragState.draggedIds[0]
   if (!primaryKey) return
-  const primary = document.querySelector(`[data-selection-key="${primaryKey}"]`)
-  const originalRect = primary?.getBoundingClientRect()
-  if (!originalRect) return
-  const dropX = originalRect.left + e.clientX - dragState.originX
-  const dropY = originalRect.top + e.clientY - dragState.originY
+  const dropX = dragState.originLeft + e.clientX - dragState.originX
+  const dropY = dragState.originTop + e.clientY - dragState.originY
   const { x, y } = clampIconPosition(dropX, dropY)
-  setDropOverlayBatch(primaryKey, x, y, dragState.draggedIds, dragState.offsetList)
-  dragState.offsetList.forEach(({ id, dx, dy }) => {
+  const offsets = commitDropOverlayBatch(primaryKey, x, y, dragState.draggedIds, dragState.offsetList)
+  dragState.offsetList.forEach(({ id }) => {
     const el = document.querySelector(`[data-selection-key="${id}"]`) as HTMLElement | null
-    if (el) el.style.transform = `translate(${x + dx - originalRect.left}px, ${y + dy - originalRect.top}px)`
+    if (!el) return
+    const offset = offsets[id]
+    if (offset) el.style.transform = `translate(${offset.x}px, ${offset.y}px)`
   })
 }
 
@@ -67,7 +66,7 @@ export function useDesktopPointer() {
       const targetFolder = dragState.dragOverId
       if (targetFolder) emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: targetFolder })
       else snapDraggedIcons(e)
-      endDrag()
+      endDrag({ keepTransform: !targetFolder })
       return
     }
     endBoxSelection()

@@ -11,7 +11,6 @@
         </div>
       </div>
       <div class="desktop-launcher-subtitle desktop-launcher-subtitle-split">系统工具</div>
-      <button class="desktop-launcher-tool-item" type="button" @click="emit('execute-command', 'open-sidebar')"><span>📌</span><span>打开右侧功能栏</span></button>
       <button class="desktop-launcher-tool-item" type="button" @click="emit('execute-command', 'refresh-desktop')"><span>🔄</span><span>刷新桌面</span></button>
       <button class="desktop-launcher-tool-item" type="button" @click="emit('execute-command', 'minimize-all')"><span>🪟</span><span>最小化所有窗口</span></button>
       <button class="desktop-launcher-tool-item" type="button" @click="emit('execute-command', 'restore-all')"><span>📐</span><span>还原全部窗口</span></button>
@@ -20,7 +19,6 @@
       <div class="desktop-launcher-footer">
         <span class="desktop-launcher-user">👤 {{ username }}</span>
         <div class="desktop-launcher-footer-actions">
-          <button class="desktop-launcher-footer-button" type="button" @click="emit('openApp', 'settings')">⚙️</button>
           <button class="desktop-launcher-footer-button" type="button" @click="emit('execute-command', 'logout')">🚪</button>
         </div>
       </div>
@@ -48,7 +46,7 @@ const emit = defineEmits<{
 const searchText = ref('')
 const filteredAppList = computed(() => props.appList.filter(app => !searchText.value.trim() || app.appName.includes(searchText.value.trim())))
 const userStore = useUserStore()
-const username = computed(() => userStore.userInfo?.displayName || userStore.userInfo?.username || '用户')
+const username = computed(() => userStore.userInfo?.display_name || userStore.userInfo?.displayName || userStore.userInfo?.username || '用户')
 </script>
 
 <style scoped>

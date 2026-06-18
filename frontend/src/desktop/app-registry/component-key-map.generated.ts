@@ -4,4 +4,5 @@
 import type { Component } from 'vue'
 
 export const componentKeyMap: Record<string, () => Promise<{ default: Component }>> = {
+  'hello-world/index.vue': () => import('@modules/hello-world/frontend/index.vue'),
 }

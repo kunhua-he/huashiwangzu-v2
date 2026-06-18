@@ -24,7 +24,7 @@ export function buildRestoreWindowList(opts: RestoreOptions): WindowState[] {
     result.push({
       ...snap,
       id: opts.generateId(),
-      title: reg.appName,
+      title: resolveRestoredWindowTitle(snap.appKey, reg.appName, snap.payload || {}),
       icon: reg.icon,
       x: maximized ? 0 : Math.max(0, Math.min(snap.x, opts.containerWidth - width)),
       y: maximized ? 0 : Math.max(0, Math.min(snap.y, opts.containerHeight - 48 - height)),
@@ -38,4 +38,12 @@ export function buildRestoreWindowList(opts: RestoreOptions): WindowState[] {
     if (lastWindow) lastWindow.isActive = true
   }
   return result
+}
+
+function resolveRestoredWindowTitle(appKey: string, defaultTitle: string, payload: Record<string, unknown>): string {
+  if (appKey === 'desktop') {
+    const folderName = typeof payload.folderName === 'string' ? payload.folderName.trim() : ''
+    return folderName ? `${defaultTitle} · ${folderName}` : defaultTitle
+  }
+  return defaultTitle
 }

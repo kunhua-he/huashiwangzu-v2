@@ -22,9 +22,9 @@
 - FastAPI 应用入口和路由注册（`registry.py` 集中管理 + manifest 驱动挂载）
 - 数据库连接、事务、迁移（`framework_*` 命名规范，Alembic 干净基线）
 - 权限、角色、鉴权中间件（JWT HS256，24h，`session_version`）
-- 队列、定时任务、worker
+- 队列、定时任务、worker：框架任务 worker 已实现（`app/services/task_worker.py`，消费 `SystemTaskQueue`，`FOR UPDATE SKIP LOCKED` 抢占 + 重试 + 超时回收 + lifespan 启停；模块用 `register_task_handler(task_type, handler)` 注册处理器，内置 `_echo` 自检）
 - 模型看门狗、LLM 网关、embedding、rerank
-- 文件存储：上传下载、内容去重（`md5_hash` + `ref_count`）、分享（`framework_file_shares`）、回收站、预览、批量操作、路径面包屑
+- 文件存储：上传（200MB 上限、分块读防 OOM）、下载（`FileResponse`）、内容去重（`md5_hash` + 内容寻址，相同内容共享一份物理文件、复制复用不另存；删除统计同 md5 未删除记录数，归零才删盘；`ref_count` 为冗余字段，不参与删除判断）、分享（`framework_file_shares`）、回收站、预览、批量操作、路径面包屑
 - 系统日志（含 12 种文件操作审计日志）、健康检查、备份恢复
 - 统一 API 响应契约、异常处理、请求日志
 

@@ -11,8 +11,9 @@ export interface LoginParams {
 }
 
 export interface UserInfo {
-  userId?: number
+  id?: number
   username?: string
+  display_name?: string
   displayName?: string
   email?: string
   role?: string

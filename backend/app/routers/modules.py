@@ -1,0 +1,28 @@
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+
+from app.schemas.common import ApiResponse
+from app.middleware.auth import require_permission
+from app.models.user import User
+from app.services.module_registry import call_capability, list_capabilities
+
+router = APIRouter(prefix="/api/modules", tags=["modules"])
+
+
+class ModuleCallRequest(BaseModel):
+    target_module: str
+    action: str
+    parameters: dict = {}
+
+
+@router.post("/call")
+async def module_call(payload: ModuleCallRequest, user: User = Depends(require_permission("viewer"))):
+    result = await call_capability(
+        payload.target_module, payload.action, payload.parameters, caller=f"user:{user.id}",
+    )
+    return ApiResponse(data=result)
+
+
+@router.get("/capabilities")
+async def capabilities(user: User = Depends(require_permission("viewer"))):
+    return ApiResponse(data=list_capabilities())

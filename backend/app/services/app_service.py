@@ -123,10 +123,14 @@ def _read_module_app_manifests(modules_root: Path = MODULES_ROOT) -> list[dict]:
         module_dir = manifest_path.parent
         if module_dir.name.startswith(("_", ".")):
             continue
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("enabled") is False:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("enabled") is False:
+                continue
+            rows.append(_module_manifest_to_app_payload(module_dir, manifest))
+        except Exception as exc:
+            logger.error("Skip bad module manifest %s: %s", manifest_path, exc)
             continue
-        rows.append(_module_manifest_to_app_payload(module_dir, manifest))
     return rows
 
 
@@ -157,10 +161,20 @@ async def sync_apps_from_manifest(db: AsyncSession) -> dict:
             db.add(App(**payload))
             created += 1
 
+    # 孤儿清理：DB 里存在但 manifest 已删除的 app，一并删除
+    manifest_keys = {item["key"] for item in rows}
+    existing_result = await db.execute(select(App))
+    deleted = 0
+    for existing_app in existing_result.scalars().all():
+        if existing_app.key not in manifest_keys:
+            await db.delete(existing_app)
+            deleted += 1
+
     await db.commit()
     return {
         "created": created,
         "updated": updated,
+        "deleted": deleted,
         "total": len(rows),
         "manifest_hash": manifest_hash,
         "last_scan_time": scan_time.isoformat(),

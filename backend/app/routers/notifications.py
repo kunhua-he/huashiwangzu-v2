@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.schemas.system import NotificationResponse, NotificationAdminResponse, NotificationCreate
@@ -8,6 +9,12 @@ from app.models.user import User
 from app.services import notification_service as svc
 
 router = APIRouter(tags=["notifications"])
+
+
+class ModuleNotificationRequest(BaseModel):
+    title: str
+    content: str | None = None
+    notification_type: str = "info"
 
 
 @router.get("/api/notifications")
@@ -35,6 +42,16 @@ async def mark_read(nid: int, db: AsyncSession = Depends(get_db), user: User = D
 async def mark_all_read(db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     await svc.mark_all_as_read(db, user.id)
     return ApiResponse(data={"ok": True})
+
+
+@router.post("/api/notifications/module")
+async def module_notification(
+    body: ModuleNotificationRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    n = await svc.create_announcement(db, body.title, body.content or "", body.notification_type, user.id)
+    return ApiResponse(data={"ok": True, "id": n.id})
 
 
 @router.get("/api/notifications/admin/announcements")

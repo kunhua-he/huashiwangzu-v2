@@ -2,7 +2,7 @@
   <el-dropdown trigger="click" placement="top-end" class="taskbar-user-menu-wrapper">
     <button class="taskbar-user-menu-button" type="button">
       <el-avatar :size="22">
-        {{ userStore.userInfo?.displayName?.[0] || userStore.userInfo?.username?.[0] || '?' }}
+        {{ displayName[0] || userStore.userInfo?.username?.[0] || '?' }}
       </el-avatar>
       <span class="taskbar-user-menu-name">{{ userName }}</span>
     </button>
@@ -20,7 +20,8 @@ import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/platform/stores/user'
 
 const userStore = useUserStore()
-const userName = computed(() => userStore.userInfo?.displayName || userStore.userInfo?.username || '用户')
+const displayName = computed(() => userStore.userInfo?.display_name || userStore.userInfo?.displayName || '')
+const userName = computed(() => displayName.value || userStore.userInfo?.username || '用户')
 
 async function handleLogout() {
   try {

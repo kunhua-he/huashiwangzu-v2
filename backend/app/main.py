@@ -24,7 +24,18 @@ FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    from app.database import AsyncSessionLocal
+    from app.services.app_service import sync_apps_from_manifest
+    from app.services.task_worker import start_worker, stop_worker
+
+    async with AsyncSessionLocal() as db:
+        result = await sync_apps_from_manifest(db)
+        logging.getLogger(__name__).info("App manifest sync completed: %s", result)
+
+    start_worker()
+    logging.getLogger(__name__).info("Background task worker started")
     yield
+    await stop_worker()
     await dispose_db()
 
 
@@ -61,6 +72,7 @@ async def health_check():
     from app.database import engine
     from app.schemas.common import ApiResponse
     from app.routers.registry import get_module_load_errors
+    from app.services.task_worker import worker_health
 
     database_status = "ok"
     try:
@@ -75,6 +87,7 @@ async def health_check():
         "version": "2.0.0",
         "database": database_status,
         "module_errors": module_errors if module_errors else None,
+        "worker": worker_health(),
     })
 
 

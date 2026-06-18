@@ -62,3 +62,19 @@ async def test_copy_file():
         assert cid != fid
         await _del_file(client, headers, fid)
         await _del_file(client, headers, cid)
+
+@pytest.mark.asyncio
+async def test_copy_file_to_root_with_zero_folder_id():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        headers = {"Authorization": f"Bearer {await _login(client)}"}
+        fid = await _upload(client, headers, "copyroot.txt", b"root copy")
+        resp = await client.post("/api/files/copy", json={"type": "file", "id": fid, "target_folder_id": 0}, headers=headers)
+        assert resp.json()["success"]
+        cid = resp.json()["data"]["id"]
+        assert cid != fid
+        list_resp = await client.get("/api/files/list?folder_id=0", headers=headers)
+        copied = [item for item in list_resp.json()["data"]["items"] if item["id"] == cid]
+        assert copied and copied[0]["parent_id"] is None
+        await _del_file(client, headers, fid)
+        await _del_file(client, headers, cid)

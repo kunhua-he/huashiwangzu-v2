@@ -8,9 +8,18 @@ from app.schemas.system import SystemTaskQueueResponse, WorkerStatusResponse
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.models.system import SystemTaskQueue
+import json
 from datetime import datetime, timezone
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/tasks", tags=["system-tasks"])
+
+
+class TaskSubmitRequest(BaseModel):
+    module: str
+    task_type: str
+    parameters: dict | None = None
+    priority: int = 0
 
 
 @router.get("/")
@@ -89,3 +98,23 @@ async def cancel_task(
     task.completed_at = datetime.now(timezone.utc)
     await db.commit()
     return ApiResponse(data={"ok": True, "message": "Task cancelled"})
+
+
+@router.post("/submit")
+async def submit_task(
+    payload: TaskSubmitRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("editor")),
+):
+    task = SystemTaskQueue(
+        task_type=payload.task_type,
+        module=payload.module,
+        parameters=json.dumps(payload.parameters, ensure_ascii=False) if payload.parameters else None,
+        priority=payload.priority,
+        status="pending",
+        creator_id=user.id,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    return ApiResponse(data=SystemTaskQueueResponse.model_validate(task))

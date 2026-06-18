@@ -76,14 +76,13 @@ import { buildDesktopShellIconMenu as buildAppIconMenu, buildDesktopShellBlankMe
 import { buildRecycleBinMenu, buildRecycleBinItemMenu } from '@/desktop/context-menu/file-context-menu'
 import { copyItems, cutItems, hasContent, currentClipboardType, currentClipboardItems, clearClipboard, getClipboardIdList } from '@/desktop/clipboard/clipboard-state'
 import type { ClipboardItem } from '@/desktop/clipboard/clipboard-state'
+import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import {
-  renameEntryRequest, moveEntryRequest, copyEntryRequest, moveToRecycleBinRequest,
-  createFileRequest, uploadFileRequest, restoreRecycleBinEntry, permanentlyDeleteEntry,
-  emptyRecycleBinRequest, fetchRecycleBinList
+  moveEntryRequest, emptyRecycleBinRequest,
 } from '@/shared/api/desktop'
 import type { FileEntry } from '@/shared/api/types'
-import api from '@/shared/api'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
+import { useFileOperations } from '@/shared/files/use-file-operations'
 
 const desktopIconGrid = defineAsyncComponent(() => import('@/desktop/shell/desktop-icon-grid.vue'))
 const desktopWindowFrame = defineAsyncComponent(() => import('@/desktop/window-manager/desktop-window-frame.vue'))
@@ -94,20 +93,40 @@ const windowManager = useWindowManager()
 const { isEditorOrAbove: canBusinessWrite, currentRole } = usePermission()
 const contextMenu = useContextMenu()
 const userStore = useUserStore()
-const { emit } = useDesktopEventBus()
+const { emit, on } = useDesktopEventBus()
 const { isDragActive, onDragEnter, onDragLeave, onDrop } = useDesktopShellDropUpload()
 const { desktopFileList, openDesktopEntry } = useDesktopRootFiles()
 const { creatableFormats } = useCreatableFormats()
 const { desktopAppList, launcherAppList, sidebarAppList, trayAppList, registryError, loading, desktopContainerRef, retryLoadRegistry, updateContainerSize } = useDesktopAppLoading(currentRole)
 const { handleDesktopMouseDown } = useDesktopPointer()
 
-const showLauncher = ref(false); const showRightSidebar = ref(false); const rightSidebarAppKey = ref('dashboard')
+const showLauncher = ref(false); const showRightSidebar = ref(false); const rightSidebarAppKey = ref('desktop')
 const canWrite = computed(() => canBusinessWrite.value)
 
 const wallpaper = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0f172a"/><stop offset="50%" stop-color="#1d4ed8"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient><radialGradient id="r" cx="30%" cy="20%" r="60%"><stop offset="0%" stop-color="rgba(191,219,254,0.35)"/><stop offset="100%" stop-color="rgba(15,23,42,0)"/></radialGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><rect width="100%" height="100%" fill="url(#r)"/></svg>')
 
+on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
+  const targetId = Number(targetFolderId)
+  if (!Number.isFinite(targetId)) return
+  let movedCount = 0
+  for (const id of ids) {
+    if (!id.startsWith('file:')) continue
+    const fileId = Number(id.slice('file:'.length))
+    const file = desktopFileList.value.find(item => item.id === fileId)
+    if (!file || file.id === targetId) continue
+    try {
+      await moveEntryRequest(file.is_folder ? 'folder' : 'file', file.id, targetId)
+      movedCount += 1
+    } catch { /* skip failed drag item */ }
+  }
+  if (movedCount > 0) {
+    ElMessage.success('已移动到文件夹')
+    refreshDesktop()
+  }
+})
+
 function handleOpenApp(appKey: string) { windowManager.openWindow(appKey) }
-function openSidebar(appKey = 'dashboard') { rightSidebarAppKey.value = appKey; showRightSidebar.value = true }
+function openSidebar(appKey = 'desktop') { rightSidebarAppKey.value = appKey; showRightSidebar.value = true }
 function handleLauncherOpen(appKey: string) {
   showLauncher.value = false
   const app = getApp(appKey)
@@ -115,8 +134,7 @@ function handleLauncherOpen(appKey: string) {
 }
 async function handleLauncherCommand(command: string) {
   const { windows: ws, toggleMinimized: toggle } = windowManager
-  if (command === 'open-sidebar') openSidebar('dashboard')
-  else if (command === 'refresh-desktop') updateContainerSize()
+  if (command === 'refresh-desktop') updateContainerSize()
   else if (command === 'logout') { await userStore.logout(); window.location.href = '/' }
   else if (command === 'minimize-all' || command === 'restore-all') ws.forEach((w: { id: string }) => toggle(w.id))
   showLauncher.value = false
@@ -180,7 +198,10 @@ function getCtxtFile(): FileEntry | null { return ctxtTarget.value }
 function refreshDesktop() {
   emit('refresh:file-list', { folderId: 0 })
   updateContainerSize()
+  requestAnimationFrame(() => restorePersistedIconPositions())
 }
+
+const fileOps = useFileOperations({ refresh: refreshDesktop })
 
 // Inline file upload trigger
 const uploadInputRef = ref<HTMLInputElement | null>(null)
@@ -203,22 +224,8 @@ async function onUploadSelected(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  try {
-    await uploadFileRequest(file, _pendingUploadFolderId ?? undefined)
-    ElMessage.success('上传成功')
-    input.value = ''
-    refreshDesktop()
-  } catch { ElMessage.warning('上传失败') }
-}
-
-async function createNewFolder(folderId: number | null) {
-  try {
-    const { value } = await ElMessageBox.prompt('文件夹名称', '新建文件夹', { confirmButtonText: '确定', cancelButtonText: '取消' })
-    if (!value) return
-    await api.post('/files/folder', { name: value, parent_id: folderId })
-    ElMessage.success('已创建')
-    refreshDesktop()
-  } catch { /* cancelled */ }
+  input.value = ''
+  await fileOps.uploadFile(file, _pendingUploadFolderId)
 }
 
 // ── Menu Action Handlers ──────────────────────────────────────────────
@@ -236,18 +243,22 @@ async function handleContextMenuSelect(menuKey: string) {
 
   // Desktop blank: upload, create folder, paste
   if (menuKey === 'upload-file') { triggerUpload(null); return }
-  if (menuKey === 'new-folder' || menuKey === 'create-folder') { await createNewFolder(null); return }
-  if (menuKey === 'paste' && hasContent.value) { await pasteToFolder(null); return }
+  if (menuKey === 'new-folder' || menuKey === 'create-folder') { await fileOps.createFolder(null); return }
+  if (menuKey === 'paste' && hasContent.value) {
+    const isCut = currentClipboardType.value === 'cut'
+    await fileOps.pasteToFolder(null, currentClipboardItems.value, isCut)
+    if (isCut) clearClipboard()
+    return
+  }
 
   // File actions
   if (file && file.id) {
     if (menuKey === 'open') { openDesktopEntry(file); return }
-    if (menuKey === 'download') { await downloadFile(file); return }
-    if (menuKey === 'preview') { windowManager.openWindow('filePreview', { fileId: file.id, fileName: file.file_name, format: file.format }); return }
-    if (menuKey === 'copy-path') { await copyFilePath(file); return }
+    if (menuKey === 'download') { await fileOps.downloadFile(file); return }
+    if (menuKey === 'copy-path') { await fileOps.copyPath(file); return }
     if (menuKey === 'details') { await showFileDetails(file); return }
-    if (menuKey === 'rename' && canWrite.value) { await renameFile(file); return }
-    if (menuKey === 'delete' && canWrite.value) { await deleteFile(file); return }
+    if (menuKey === 'rename' && canWrite.value) { await fileOps.renameEntry(file); return }
+    if (menuKey === 'delete' && canWrite.value) { await fileOps.deleteEntry(file); return }
     if (menuKey === 'cut' && canWrite.value) { cutItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name }]); ElMessage.success('已剪切'); return }
     if (menuKey === 'copy' && canWrite.value) { copyItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name }]); ElMessage.success('已复制'); return }
   }
@@ -255,8 +266,13 @@ async function handleContextMenuSelect(menuKey: string) {
   // Folder-specific actions
   if (file && file.is_folder) {
     if (menuKey === 'upload-here' && canWrite.value) { triggerUpload(file.id); return }
-    if (menuKey === 'create-folder-here' && canWrite.value) { await createNewFolder(file.id); return }
-    if (menuKey === 'paste-here' && canWrite.value && hasContent.value) { await pasteToFolder(file.id); return }
+    if (menuKey === 'create-folder-here' && canWrite.value) { await fileOps.createFolder(file.id); return }
+    if (menuKey === 'paste-here' && canWrite.value && hasContent.value) {
+      const isCut = currentClipboardType.value === 'cut'
+      await fileOps.pasteToFolder(file.id, currentClipboardItems.value, isCut)
+      if (isCut) clearClipboard()
+      return
+    }
   }
 
   // Create file by extension
@@ -265,8 +281,7 @@ async function handleContextMenuSelect(menuKey: string) {
     const folderId = (file && file.is_folder) ? file.id : null
     const format = creatableFormats.value.find(f => f.extension === ext)
     const label = format?.label || `.${ext} 文件`
-    try { await createFileRequest(label, ext, folderId); ElMessage.success(`已创建 ${label}`); refreshDesktop() }
-    catch { ElMessage.warning('创建失败') }
+    await fileOps.createFile(ext, folderId, label)
     return
   }
 
@@ -277,25 +292,7 @@ async function handleContextMenuSelect(menuKey: string) {
   }
 }
 
-// ── File Operations ───────────────────────────────────────────────────
-async function downloadFile(file: FileEntry) {
-  try {
-    const res = await api.get(`/files/download/${file.id}`, { responseType: 'blob' })
-    const url = URL.createObjectURL(res.data)
-    const a = document.createElement('a')
-    a.href = url
-    const fullName = file.format ? `${file.file_name}.${file.format}` : file.file_name
-    a.download = fullName
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch { ElMessage.warning('下载失败') }
-}
-
-async function copyFilePath(file: FileEntry) {
-  const fullName = file.format ? `${file.file_name}.${file.format}` : file.file_name
-  try { await navigator.clipboard.writeText(fullName); ElMessage.success('已复制路径') }
-  catch { ElMessage.warning('复制失败') }
-}
+// ── File Operations (delegated to shared useFileOperations) ────────────
 
 async function showFileDetails(file: FileEntry) {
   const lines = [
@@ -306,47 +303,6 @@ async function showFileDetails(file: FileEntry) {
   ]
   if (file.created_at) lines.push(`创建时间: ${file.created_at}`)
   ElMessageBox.alert(lines.join('\n'), '属性')
-}
-
-async function renameFile(file: FileEntry) {
-  try {
-    const { value } = await ElMessageBox.prompt('输入新名称', '重命名', {
-      inputValue: file.file_name,
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-    })
-    if (!value || value === file.file_name) return
-    await renameEntryRequest(file.is_folder ? 'folder' : 'file', file.id, value)
-    ElMessage.success('重命名成功')
-    emit('refresh:file-list', { folderId: 0 })
-  } catch { /* cancelled */ }
-}
-
-async function deleteFile(file: FileEntry) {
-  try { await ElMessageBox.confirm(`确定删除 "${file.file_name}"？`, '确认删除', { type: 'warning' }) } catch { return }
-  try {
-    await moveToRecycleBinRequest(file.is_folder ? 'folder' : 'file', file.id)
-    ElMessage.success('已移至回收站')
-    emit('refresh:file-list', { folderId: 0 })
-  } catch { ElMessage.warning('删除失败') }
-}
-
-async function pasteToFolder(folderId: number | null) {
-  if (!hasContent.value) return
-  const items = currentClipboardItems.value
-  const isCut = currentClipboardType.value === 'cut'
-  for (const item of items) {
-    try {
-      if (isCut) {
-        await moveEntryRequest(item.type, item.id, folderId)
-      } else {
-        await copyEntryRequest(item.type, item.id, folderId)
-      }
-    } catch { /* skip failed items */ }
-  }
-  if (isCut) clearClipboard()
-  ElMessage.success(isCut ? '已移动' : '已粘贴')
-  emit('refresh:file-list', { folderId: 0 })
 }
 
 function formatSize(bytes: number): string {

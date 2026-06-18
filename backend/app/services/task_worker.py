@@ -1,0 +1,154 @@
+"""Framework-level background task worker.
+
+Consumes SystemTaskQueue (framework_system_task_queues). Concurrency-safe via
+FOR UPDATE SKIP LOCKED. Modules register handlers by task_type.
+"""
+import asyncio
+import json
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Awaitable, Callable
+
+from sqlalchemy import select, update
+
+from app.database import AsyncSessionLocal
+from app.models.system import SystemTaskQueue
+
+logger = logging.getLogger("v2.task_worker")
+
+POLL_INTERVAL_SECONDS = 2.0
+RUNNING_TIMEOUT_SECONDS = 1200  # running 超过 20 分钟视为死任务，回收重排
+
+# task_type -> async handler(parameters: dict) -> dict | None
+TaskHandler = Callable[[dict], Awaitable[dict | None]]
+_HANDLERS: dict[str, TaskHandler] = {}
+
+_worker_task: asyncio.Task | None = None
+_stop_flag = False
+_last_active: datetime | None = None
+
+
+def register_task_handler(task_type: str, handler: TaskHandler) -> None:
+    """模块调用此函数注册自己的任务处理器。"""
+    _HANDLERS[task_type] = handler
+    logger.info("Registered task handler: %s", task_type)
+
+
+async def _echo_handler(parameters: dict) -> dict:
+    """内置自检处理器，用于验证 worker 链路。"""
+    return {"echo": parameters}
+
+
+_HANDLERS["_echo"] = _echo_handler
+
+
+async def _recover_stale_tasks(db) -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=RUNNING_TIMEOUT_SECONDS)
+    await db.execute(
+        update(SystemTaskQueue)
+        .where(SystemTaskQueue.status == "running", SystemTaskQueue.started_at < cutoff)
+        .values(status="pending", started_at=None)
+    )
+    await db.commit()
+
+
+async def _claim_one_task(db) -> SystemTaskQueue | None:
+    """原子抢占一条 pending 任务（FOR UPDATE SKIP LOCKED 防多 worker 抢同一条）。"""
+    row = await db.execute(
+        select(SystemTaskQueue)
+        .where(SystemTaskQueue.status == "pending")
+        .order_by(SystemTaskQueue.priority.desc(), SystemTaskQueue.id)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    task = row.scalar_one_or_none()
+    if not task:
+        return None
+    task.status = "running"
+    task.started_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+
+async def _run_handler(task: SystemTaskQueue) -> tuple[bool, dict | None, str | None]:
+    handler = _HANDLERS.get(task.task_type)
+    if not handler:
+        return False, None, f"No handler registered for task_type '{task.task_type}'"
+    try:
+        params = json.loads(task.parameters) if task.parameters else {}
+    except Exception as exc:
+        return False, None, f"Invalid parameters JSON: {exc}"
+    try:
+        result = await handler(params)
+        return True, result, None
+    except Exception as exc:
+        logger.error("Task %s (%s) handler failed: %s", task.id, task.task_type, exc)
+        return False, None, str(exc)
+
+
+async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: str | None) -> None:
+    task = await db.get(SystemTaskQueue, task_id)
+    if not task:
+        return
+    now = datetime.now(timezone.utc)
+    if ok:
+        task.status = "completed"
+        task.result = json.dumps(result, ensure_ascii=False) if result is not None else None
+        task.error_message = None
+        task.completed_at = now
+    else:
+        task.retry_count = (task.retry_count or 0) + 1
+        task.error_message = error
+        if task.retry_count >= (task.max_retries or 3):
+            task.status = "failed"
+            task.completed_at = now
+        else:
+            task.status = "pending"  # 重排重试
+            task.started_at = None
+    await db.commit()
+
+
+async def _worker_loop() -> None:
+    global _last_active
+    logger.info("Task worker loop started")
+    while not _stop_flag:
+        try:
+            async with AsyncSessionLocal() as db:
+                await _recover_stale_tasks(db)
+                task = await _claim_one_task(db)
+            if task is None:
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                continue
+            _last_active = datetime.now(timezone.utc)
+            ok, result, error = await _run_handler(task)
+            async with AsyncSessionLocal() as db:
+                await _finish_task(db, task.id, ok, result, error)
+        except Exception as exc:
+            logger.error("Task worker loop error: %s", exc)
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+    logger.info("Task worker loop stopped")
+
+
+def start_worker() -> None:
+    global _worker_task, _stop_flag
+    _stop_flag = False
+    _worker_task = asyncio.create_task(_worker_loop())
+
+
+async def stop_worker() -> None:
+    global _stop_flag
+    _stop_flag = True
+    if _worker_task:
+        try:
+            await asyncio.wait_for(_worker_task, timeout=POLL_INTERVAL_SECONDS + 1)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            _worker_task.cancel()
+
+
+def worker_health() -> dict:
+    return {
+        "running": _worker_task is not None and not _worker_task.done(),
+        "registered_handlers": sorted(_HANDLERS.keys()),
+        "last_active": _last_active.isoformat() if _last_active else None,
+    }

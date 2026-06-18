@@ -8,7 +8,7 @@ function viewSubItems(separatorItems: () => MenuItemConfig[]) {
 export function buildFileMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
     { key: 'open', label: '打开', icon: '↗' },
-    { key: 'open-with', label: '打开方式', icon: '⋯', children: [{ key: 'preview', label: '窗口预览', icon: '🗔' }, { key: 'download', label: '下载到本地', icon: '⬇' }] },
+    { key: 'download', label: '下载到本地', icon: '⬇' },
     ...separatorItems(),
     ...(writable ? [{ key: 'cut', label: '剪切', icon: '✂' }, { key: 'copy', label: '复制', icon: '📋' }] : []),
     { key: 'copy-path', label: '复制路径', icon: '⎘' },

@@ -21,18 +21,13 @@
   position: absolute;
   left: 0;
   top: 0;
+  right: 0;
   bottom: 0;
-  width: 100px;
+  width: auto;
   z-index: 1;
   padding-top: 12px;
-  overflow-y: auto;
-}
-.desktop-shell-icon-layer::-webkit-scrollbar {
-  width: 3px;
-}
-.desktop-shell-icon-layer::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.2);
-  border-radius: 3px;
+  overflow: visible;
+  pointer-events: none;
 }
 .desktop-shell-hint {
   position: absolute;
@@ -72,7 +67,7 @@
   height: 32px;
   background: linear-gradient(180deg, rgba(248,248,249,0.98), rgba(240,240,242,0.96));
   border-bottom: 1px solid rgba(228,228,230,0.96);
-  cursor: default;
+  cursor: move;
   user-select: none;
   flex-shrink: 0;
   position: relative;
@@ -130,8 +125,4 @@
 }
 .window-content-padding {
   height: 100%;
-}
-
-.desktop-dragging .desktop-icon-item:not(.desktop-icon-item-drag-over) {
-  pointer-events: none;
 }

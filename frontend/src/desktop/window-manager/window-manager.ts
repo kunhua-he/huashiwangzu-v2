@@ -42,22 +42,28 @@ function openWindow(appKey: string, payload?: unknown): string | null {
 
   if (!app.allowMultiple) {
     const existingWindow = windows.find(w => w.appKey === appKey)
-    if (existingWindow) { activateWindow(existingWindow.id); existingWindow.minimized = false; return existingWindow.id }
+    if (existingWindow) {
+      updateWindowPayload(existingWindow.id, payload)
+      activateWindow(existingWindow.id)
+      existingWindow.minimized = false
+      return existingWindow.id
+    }
   }
 
   const offset = (windows.length % 10) * 30
   const id = generateId()
+  const windowPayload = normalizeWindowPayload(payload)
 
   windows.push({
     id, appKey,
-    title: app.appName, icon: app.icon,
+    title: resolveWindowTitle(appKey, app.appName, windowPayload), icon: app.icon,
     x: app.defaultWidth > 800 ? 120 + offset : 160 + offset,
     y: 110 + offset,
     width: app.defaultWidth, height: app.defaultHeight,
     zIndex: nextZIndex++,
     minimized: false, maximized: false, isActive: true,
-     windowType: app.windowType || WINDOW_TYPE_NORMAL,
-     payload: (payload ?? {}) as Record<string, unknown>,
+    windowType: app.windowType || WINDOW_TYPE_NORMAL,
+    payload: windowPayload,
   })
 
   windows.forEach(w => { if (w.id !== id) w.isActive = false })
@@ -125,6 +131,30 @@ function updateWindowGeometry(id: string, x: number, y: number, width: number, h
   if (w && !w.maximized) { w.x = x; w.y = y; w.width = width; w.height = height }
 }
 
+function normalizeWindowPayload(payload?: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {}
+  return { ...(payload as Record<string, unknown>) }
+}
+
+function resolveWindowTitle(appKey: string, defaultTitle: string, payload: Record<string, unknown>): string {
+  if (appKey === 'desktop') {
+    const folderName = typeof payload.folderName === 'string' ? payload.folderName.trim() : ''
+    return folderName ? `${defaultTitle} · ${folderName}` : defaultTitle
+  }
+  return defaultTitle
+}
+
+function updateWindowPayload(id: string, payload?: unknown) {
+  const w = windows.find(win => win.id === id)
+  if (!w) return
+  const nextPayload = normalizeWindowPayload(payload)
+  w.payload = { ...(w.payload || {}), ...nextPayload }
+  const app = getApp(w.appKey)
+  if (app) {
+    w.title = resolveWindowTitle(w.appKey, app.appName, w.payload)
+  }
+}
+
 function restoreWindows(snapshot: DesktopWindowSnapshot[], currentRole?: string) {
   const restoredWindows = buildRestoreWindowList({
     snapshots: snapshot,
@@ -135,8 +165,11 @@ function restoreWindows(snapshot: DesktopWindowSnapshot[], currentRole?: string)
     generateZIndex,
   })
   for (const w of restoredWindows) {
-    const existingWindow = windows.find(x => x.appKey === w.appKey && x.minimized === w.minimized)
-    if (existingWindow) { activateWindow(existingWindow.id); continue }
+    const app = getApp(w.appKey)
+    if (app && !app.allowMultiple) {
+      const existingWindow = windows.find(x => x.appKey === w.appKey && x.minimized === w.minimized)
+      if (existingWindow) { activateWindow(existingWindow.id); continue }
+    }
     windows.push(w)
   }
 }

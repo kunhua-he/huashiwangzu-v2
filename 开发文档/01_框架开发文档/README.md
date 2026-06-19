@@ -22,7 +22,7 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 | 模块模板 | `modules/_template/`，含 sandbox 开发环境 + runtime SDK 壳 |
 | 业务模块 | 当前无已接入模块；AI 助手/知识库待从 V1 或新设计重建 |
 | 前端构建 | `vue-tsc -b` 0 错误，Element Plus 最大 chunk ~475 kB |
-| 后端测试 | 框架 42 个测试通过；文件系统 16 个新增测试通过 |
+| 后端测试 | pytest 72 通过（G9–G12 修复后）|
 
 ## 框架能力清单
 
@@ -78,7 +78,7 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 | Runtime SDK | `modules/{module}/runtime/index.ts` 的 `platform` 对象 |
 | manifest 声明 | `manifest.json`：组件入口、`supported_formats`、权限、后端 router |
 
-Runtime SDK 的 `platform` 对象含 8 个 namespace：`auth`、`files`、`office`、`gateway`、`tasks`、`notifications`、`logs`、`settings`。
+Runtime SDK 的 `platform` 对象含 9 个 namespace：`auth`、`files`、`office`、`gateway`、`tasks`、`notifications`、`logs`、`settings`、`modules`（跨模块调用，含 `call`/`capabilities`）。
 
 禁止模块 `import frontend/src/*`、`import backend/app/services/*`、直接读写框架数据库表。
 
@@ -112,9 +112,9 @@ Runtime SDK 的 `platform` 对象含 8 个 namespace：`auth`、`files`、`offic
 | C16 | 内容去重：`md5_hash` + 内容寻址，相同内容共享一份物理文件（复制也复用，不另存）；删除统计同 md5 未删除记录数，归零才删盘（`ref_count` 为冗余字段，不参与删除判断）；分享：`framework_file_shares` + owner/shared 双重检查 |
 | C17 | 打开调度：`editable_formats` 优先 + `sort_order` + `["*"]` 仅 desktop |
 | C18 | 表命名：`{owner}_{domain}_{sub_domain}`，框架 `framework_*`，模块用自身 key |
-| C19 | 模块公开接口：HTTP API + runtime SDK（8 namespace）+ manifest |
+| C19 | 模块公开接口：HTTP API + runtime SDK（9 namespace）+ manifest |
 | C20 | 框架 = 公共能力层（商场模型）：框架只提供横向公共能力，数量固定稳定，**不随模块数量膨胀**；模块的业务表与业务接口全在模块自己里，加模块不改框架。这是兼容性的根（类比 Windows：系统接口几十年不变，软件自带业务） |
-| C21 | 跨模块调用必须 100% 经框架统一通路，禁止互相 import / 直接读对方表。前端引擎已有（`desktop-app-handle-v2` 的 `sendCommand`/`requestData` + `registerActionHandler` + 权限/审计/超时），但**尚未暴露到 runtime SDK**；后端跨模块通路**待补（G12）** |
+| C21 | 跨模块调用必须 100% 经框架统一通路，禁止互相 import / 直接读对方表。前端：runtime SDK 已暴露 `platform.modules.call/capabilities`（底层经 `desktop-app-handle-v2` 的 `sendCommand`/`requestData` + `registerActionHandler` + 权限/审计/超时）；后端：模块能力注册表 `module_registry.py` + `/api/modules/call` + `/api/modules/capabilities`，运行时以 `register_capability` 注册为准，manifest `public_actions` 当前作为声明元数据同步 |
 
 ## 验证命令
 

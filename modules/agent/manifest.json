@@ -1,0 +1,37 @@
+{
+  "key": "agent",
+  "name": "AI 助手",
+  "icon": "ChatDotRound",
+  "icon_asset": "",
+  "category": "AI",
+  "component_key": "index.vue",
+  "route_prefix": "/api/agent",
+  "permissions": ["viewer", "editor", "admin"],
+  "sort_order": 100,
+  "default_width": 900,
+  "default_height": 650,
+  "singleton": true,
+  "show_in_launcher": true,
+  "show_on_desktop": true,
+  "show_in_tray": true,
+  "show_in_sidebar": false,
+  "window_type": "normal",
+  "allow_multiple": false,
+  "supported_formats": [],
+  "editable_formats": [],
+  "creatable_formats": [],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "permission_declaration": {
+    "default": "viewer",
+    "actions": [
+      {"action": "agent_view", "name": "查看AI助手", "min_role": "viewer"},
+      {"action": "agent_chat", "name": "发起对话", "min_role": "viewer"},
+      {"action": "agent_manage", "name": "管理设置", "min_role": "admin"}
+    ]
+  },
+  "dependency_declaration": [{"module": "knowledge", "optional": true}],
+  "event_handler_declaration": [],
+  "db_migration_declaration": [],
+  "backend": {"enabled": true, "router": "backend/router.py"}
+}

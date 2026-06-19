@@ -150,8 +150,17 @@ class ModelGatewayRouter:
                 tools=tools,
             )
         except Exception as exc:
-            logger.error("AI gateway chat failed: %s", exc)
-            return {"error": str(exc), "content": f"(Model error: {exc})"}
+            detail = str(exc)
+            # 尝试从 httpx.HTTPStatusError 中提取响应体
+            if hasattr(exc, "response"):
+                try:
+                    body = exc.response.text
+                    if body:
+                        detail = f"{detail}\n响应体: {body[:1000]}"
+                except Exception:
+                    pass
+            logger.error("AI gateway chat failed: %s", detail)
+            return {"error": str(exc), "content": f"(Model error: {detail})"}
         if "error" in raw:
             return raw
         if profile["provider"] in ("local",):

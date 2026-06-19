@@ -51,8 +51,10 @@ backend/    Desktop shell backend / platform service layer
 11. Do not commit empty features, temporary comments, or fake-success logic.
 12. When a temporary task document is complete, merge the useful result back into the relevant `README.md`, then delete the temporary document.
 13. After code changes, run the relevant tests. For backend changes, default to `cd backend && pytest`.
-17. **跨模块调用必须 100% 经框架统一通路。** 模块之间（如 Agent 调知识库）禁止互相 `import` 代码、禁止直接读写对方的数据库表。只能通过框架的跨模块通路（前端 `desktop-app-handle-v2` 的 `sendCommand`/`requestData`；后端能力注册表，待 G12 补齐）。模块对外开放的能力在 manifest 的 `public_actions` 声明，未声明的不可被其他模块调用。详见 `开发文档/03_模块开发文档/README.md` → 模块数据与交互契约。
+17. **跨模块调用必须 100% 经框架统一通路。** 模块之间（如 Agent 调知识库）禁止互相 `import` 代码、禁止直接读写对方的数据库表。只能通过框架的跨模块通路（前端 runtime SDK `platform.modules.call/capabilities`；后端 `/api/modules/call` + 能力注册表）。后端运行时以 `register_capability` 注册为准，未注册能力不可被其他模块调用；manifest 的 `public_actions` 当前作为对外能力声明元数据。详见 `开发文档/03_模块开发文档/README.md` → 模块数据与交互契约。
 18. **框架接口不随模块膨胀。** 模块的业务表（`{key}_*` 前缀）和业务接口（`modules/{key}/backend/router.py`）全在模块自己里，加模块不改框架。只有"所有模块都需要的新公共能力"才往框架加接口，且要保持长期稳定（契约）。
+19. **模块开发任务禁止修改框架（调用可以、修改不行）。** 做某模块任务时，所有改动只许落在 `modules/{该模块}/` 内。可**调用**框架公开能力（数据库连接、统一响应、模型网关、runtime SDK、跨模块注册表），但禁止**修改** `backend/app/`、`frontend/src/` 或其他模块。模块需要框架新增公共能力时，必须作为独立「框架任务」单独提出。**验收硬守卫**：每个模块任务必跑 `git diff --name-only`，凡改动落在 `modules/{当前模块}/` 之外，直接判不通过。
+20. **后端模块"独立开发"= 独立运行 + 只碰自己的表 + 不碰其他模块，不是"代码零依赖框架"。** 后端模块用框架的数据库连接、统一响应、模型网关是正常且必须的（公共能力），**直接调真的即可**，不得另造一套。数据与外部依赖：全新项目可直接连生产库、调真网关（省事，边界由"只碰 `{key}_*` 表"限制死）；如需隔离测试，也可用独立库/ mock，但不强制。
 
 ## TypeScript Rules
 

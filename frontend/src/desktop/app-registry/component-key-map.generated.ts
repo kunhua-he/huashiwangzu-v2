@@ -4,5 +4,14 @@
 import type { Component } from 'vue'
 
 export const componentKeyMap: Record<string, () => Promise<{ default: Component }>> = {
+  'agent/index.vue': () => import('@modules/agent/frontend/index.vue'),
+  'desktop-tools/index.vue': () => import('@modules/desktop-tools/frontend/index.vue'),
+  'docx-parser/index.vue': () => import('@modules/docx-parser/frontend/index.vue'),
+  'excel-engine/index.vue': () => import('@modules/excel-engine/frontend/index.vue'),
   'hello-world/index.vue': () => import('@modules/hello-world/frontend/index.vue'),
+  'image-vision/index.vue': () => import('@modules/image-vision/frontend/index.vue'),
+  'pdf-parser/index.vue': () => import('@modules/pdf-parser/frontend/index.vue'),
+  'pptx-parser/index.vue': () => import('@modules/pptx-parser/frontend/index.vue'),
+  'text-parser/index.vue': () => import('@modules/text-parser/frontend/index.vue'),
+  'xlsx-parser/index.vue': () => import('@modules/xlsx-parser/frontend/index.vue'),
 }

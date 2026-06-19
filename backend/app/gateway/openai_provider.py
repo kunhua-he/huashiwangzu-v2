@@ -30,7 +30,14 @@ class OpenAIProvider(BaseProvider):
         payload = _payload(messages, model, temperature, max_tokens, False, tools)
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(self.api_url, json=payload, headers=self._headers())
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                body_text = await _read_error_body(resp)
+                payload_preview = json.dumps(payload, ensure_ascii=False)[:2000]
+                logger.error(
+                    "AI provider %s returned %s\n请求体: %s\n响应体: %s",
+                    self.provider_name, resp.status_code, payload_preview, body_text,
+                )
+                resp.raise_for_status()
             return resp.json()
 
     async def chat_stream(
@@ -76,6 +83,13 @@ class OpenAIProvider(BaseProvider):
         except Exception as e:
             logger.warning("OpenAI-compatible health check failed: %s", e)
             return False
+
+async def _read_error_body(resp: httpx.Response) -> str:
+    try:
+        body = resp.text
+        return body[:500] if len(body) > 500 else body
+    except Exception:
+        return "(无法读取响应体)"
 
 
 def _payload(

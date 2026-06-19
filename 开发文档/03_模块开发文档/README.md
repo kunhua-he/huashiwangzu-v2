@@ -10,7 +10,8 @@
 
 - `modules/_template/` 已创建，包含标准 sandbox 模板、runtime 中间层和最小 `frontend/index.vue` 入口，新模块复制即用。
 - `modules/hello-world/` 是第一个跑通端到端接入的最小模块（纯前端），验证了"复制模板→build 扫描→后端 sync→桌面加载→调 runtime SDK"全链路，可作为新模块参考样板。
-- 业务模块（Agent、知识库）尚未迁入；它们在旧项目已开发完，是迁移问题，等接入契约（尤其跨模块调用）补齐后再迁。
+- **Agent 模块迁移中**（从 V1 PHP 用 V2 架构重建）：M0（骨架 + 后端 sandbox，连生产库 + 真网关）、M1（对话 + SSE 流式 + 消息入库）、M2（工具框架 = 技能发现器，读框架技能清单自动生成工具、走 `call_capability` 执行）已完成；M3（提示词渲染 + 引用校验）待做。Agent 是技能消费方，不暴露能力。
+- 知识库尚未迁入（Agent 的可选插件，独立于 Agent 主体）。迁知识库时一并做 G12.2（manifest `public_actions` 声明式能力注册：模块只声明 + 写 handler，框架扫 manifest 自动注册，Agent 经 M2 自动发现 = 0 修改闭环）。
 - 前端模块扫描链路：`frontend/scripts/scan-modules.js` 扫描 `modules/*/manifest.json`（跳过 `_` 开头目录），生成 `component-key-map.generated.ts`。平台 app 则由 `platform-component-key-map.ts` 用 `import.meta.glob` 自动扫描 `platform/components/apps/*/index.vue`（有组件才有映射，物理上不产生空壳）。
 - 后端应用清单同步链路：`backend/app/services/app_service.py` 合并 `backend/app/seed_data/apps.json` 和 `modules/*/manifest.json`，同步到数据库；应用启动时自动 sync，并清理 manifest 中已删除的孤儿 app。
 - 平台层已无业务模块代码：`backend/app/services/agent/` 和 `backend/app/services/knowledge/` 已删除。
@@ -23,6 +24,7 @@
 ### 数据归属
 - 模块业务表用模块 key 做前缀（如 `oa_*`、`erp_*`、`order_*`、`kb_*`），框架表用 `framework_*`。
 - 物理隔离：框架不碰模块表；模块**不直接读写** `framework_*` 表，要框架数据一律走公共 API（runtime SDK）。
+- **模块表不加数据库外键**到框架表或其他模块表。跨实体关联只用逻辑编号（如 `owner_id` 存 int、`conversation_id` 存 int），不加 `ForeignKey` 约束；要用户/其他模块的数据走框架鉴权注入或跨模块接口。这样模块表彻底自包含，sandbox 里只建自己的表就能跑，换库/迁移互不牵连。
 - 模块自带建表/迁移，跟模块一起进出。**【待定稿】模块自带表的建表/升级标准尚未确定**（当前框架表走 SQLAlchemy `create_all` + Alembic 双轨，见底层文档）。计划在第一个带后端表的模块（Agent 或知识库）落地时定标准、写进 `_template`，之后模块照抄。
 
 ### 业务接口归属
@@ -31,8 +33,8 @@
 
 ### 跨模块调用（必须 100% 经框架，禁止跳过）
 模块间交互（如 Agent 调知识库检索、Agent 调 ERP 数据）必须经框架统一通路，**禁止互相 import 代码、禁止直接读对方的表**。现状：
-- **前端跨模块（引擎已有，但模块够不着）**：`desktop/app-registry/desktop-app-handle-v2.ts` 提供 `sendCommand(目标模块, 动作, 参数)`、`requestData(目标模块, 数据类型, 过滤)`；目标模块用 `registerActionHandler` 声明对外开放的动作，未声明的调不到（`ERR_ACTION_NOT_PUBLIC`）；含权限校验 + 审计 + 超时。**【待补 G12】此引擎尚未暴露到模块 runtime SDK，模块当前调不到，需封装为 `platform.modules.call/request`。**
-- **后端跨模块（待补 G12）**：Agent 后端调知识库后端检索这类业务调用，**当前后端无标准通路**。规划：模块能力注册表（`register_capability` + `call_capability`，进程内调用 + 框架校验 `public_actions` + 审计，与任务 worker 的 handler 注册同一模式）。manifest 的 `public_actions` 字段用于声明模块对外开放的能力（字段已存在，执行逻辑待补）。
+- **前端跨模块（已有，G12 已交付）**：底層引擎 `desktop/app-registry/desktop-app-handle-v2.ts` 提供 `sendCommand(目标模块, 动作, 参数)`、`requestData(目标模块, 数据类型, 过滤)`；目标模块用 `registerActionHandler` 声明对外开放的动作，未声明的调不到（`ERR_ACTION_NOT_PUBLIC`）；含权限校验 + 审计 + 超时。**runtime SDK 已封装为 `platform.modules.call(targetModule, action, parameters)` + `platform.modules.capabilities()`**，模块可直接调用。
+- **后端跨模块（已有，G12 已交付）**：`backend/app/services/module_registry.py`（`register_capability` + `call_capability`） + `/api/modules/call` + `/api/modules/capabilities`。进程内调用经框架统一入口，运行时以 `register_capability(module, action, handler)` 注册为准；未注册的能力调不到。manifest 的 `public_actions` 字段当前作为模块对外能力声明元数据同步到应用注册表。
 
 ### 文件存储 / 去重（契约已就绪）
 模块上传文件统一走框架文件接口。框架内容寻址去重：相同内容（md5 相同）只存一份物理文件、多条记录共享 `storage_path`；永久删除时统计同 md5 的未删除记录数，归零才删物理文件（复制也复用同一物理文件，不破坏去重）。模块无需关心去重，调框架文件接口即可，存储空间由框架保持干净。

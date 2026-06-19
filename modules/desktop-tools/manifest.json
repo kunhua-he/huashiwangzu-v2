@@ -1,0 +1,82 @@
+{
+  "key": "desktop-tools",
+  "name": "Desktop Tools",
+  "icon": "List",
+  "icon_asset": "",
+  "category": "tools",
+  "component_key": "index.vue",
+  "route_prefix": "/api/desktop-tools",
+  "permissions": ["viewer", "editor", "admin"],
+  "sort_order": 200,
+  "default_width": 800,
+  "default_height": 600,
+  "singleton": true,
+  "show_in_launcher": false,
+  "show_on_desktop": false,
+  "show_in_tray": false,
+  "show_in_sidebar": false,
+  "window_type": "normal",
+  "allow_multiple": false,
+  "supported_formats": [],
+  "editable_formats": [],
+  "creatable_formats": [],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "public_actions": [
+    {
+      "action": "list_files",
+      "description": "List files in a folder (or root). Returns file name, type, size, and id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "folder_id": {"type": "integer", "description": "Folder ID (0 or omit for root)"},
+          "page": {"type": "integer", "description": "Page number"},
+          "page_size": {"type": "integer", "description": "Items per page"}
+        }
+      }
+    },
+    {
+      "action": "search_files",
+      "description": "Search files by keyword and/or extension. Returns matching file metadata.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keyword": {"type": "string", "description": "Search keyword"},
+          "extension": {"type": "string", "description": "Filter by extension"},
+          "page": {"type": "integer", "description": "Page number"},
+          "page_size": {"type": "integer", "description": "Items per page"}
+        }
+      }
+    },
+    {
+      "action": "read_file",
+      "description": "Read file content by file_id. Routes to format parsers (PDF, DOCX, XLSX, etc.).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_id": {"type": "integer", "description": "File ID in the file storage system"}
+        },
+        "required": ["file_id"]
+      }
+    },
+    {
+      "action": "list_apps",
+      "description": "List desktop applications available to the current user.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "permission_declaration": {
+    "default": "viewer",
+    "actions": []
+  },
+  "dependency_declaration": [],
+  "event_handler_declaration": [],
+  "db_migration_declaration": [],
+  "backend": {
+    "enabled": true,
+    "router": "backend/router.py"
+  }
+}

@@ -1,0 +1,7 @@
+Hello World
+
+This is a plain text file for testing.
+It has multiple paragraphs separated by blank lines.
+
+Another paragraph here.
+And a third one for good measure.

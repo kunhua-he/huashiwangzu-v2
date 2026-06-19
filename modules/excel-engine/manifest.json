@@ -1,0 +1,38 @@
+{
+  "key": "excel-engine",
+  "name": "Excel 编辑器",
+  "icon": "Grid",
+  "icon_asset": "",
+  "category": "file-editor",
+  "component_key": "index.vue",
+  "route_prefix": null,
+  "permissions": ["viewer", "editor", "admin"],
+  "sort_order": 10,
+  "default_width": 1100,
+  "default_height": 700,
+  "min_width": 800,
+  "min_height": 500,
+  "singleton": false,
+  "show_in_launcher": true,
+  "show_on_desktop": false,
+  "show_in_tray": false,
+  "show_in_sidebar": false,
+  "window_type": "normal",
+  "allow_multiple": true,
+  "supported_formats": ["xlsx", "xls", "csv"],
+  "editable_formats": ["xlsx", "csv"],
+  "creatable_formats": ["xlsx", "csv"],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "backend": {
+    "enabled": true,
+    "router": "backend/router.py"
+  },
+  "public_actions": [
+    {
+      "action": "parse",
+      "description": "Parse XLSX/CSV files into cell data",
+      "parameters": {"file_id": {"type": "int"}}
+    }
+  ]
+}

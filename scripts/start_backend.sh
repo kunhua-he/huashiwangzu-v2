@@ -30,9 +30,11 @@ is_running() {
 
 if [ "$1" = "--restart" ]; then
   echo "[start_backend] Forcing restart..."
+  # 先杀守护进程，否则它会立刻把旧 uvicorn 拉起来
+  pkill -f "backend_watchdog.sh" 2>/dev/null && echo "[start_backend] Killed watchdog"
   PID=$(lsof -i :$PORT -P -n 2>/dev/null | awk '/LISTEN/{print $2}' | head -1)
   if [ -n "$PID" ]; then
-    kill "$PID" 2>/dev/null && echo "[start_backend] Killed old process $PID"
+    kill "$PID" 2>/dev/null && echo "[start_backend] Killed old uvicorn $PID"
     sleep 2
   fi
 fi
@@ -44,16 +46,12 @@ if is_running; then
   exit 0
 fi
 
-echo "[start_backend] Starting FastAPI on $HOST:$PORT ..."
-nohup python3 -m uvicorn app.main:app \
-  --host "$HOST" \
-  --port "$PORT" \
-  --workers 1 \
-  --log-level info \
-  > "$BACKEND_DIR/logs/backend.log" 2>&1 &
-
-BACKEND_PID=$!
-echo "[start_backend] Backend PID: $BACKEND_PID"
+echo "[start_backend] Starting FastAPI on $HOST:$PORT (with auto-restart watchdog) ..."
+mkdir -p "$BACKEND_DIR/logs"
+# 通过守护进程拉起：uvicorn 崩溃/退出会被自动重启，日志超限自动归档（防磁盘打满导致暴毙）
+nohup zsh "$SCRIPT_DIR/backend_watchdog.sh" > /dev/null 2>&1 &
+WATCHDOG_PID=$!
+echo "[start_backend] Watchdog PID: $WATCHDOG_PID (auto-restarts backend if it dies)"
 
 # Wait for startup
 echo "[start_backend] Waiting for backend to become healthy..."

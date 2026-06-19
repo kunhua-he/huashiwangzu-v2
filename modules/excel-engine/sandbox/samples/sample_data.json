@@ -1,0 +1,18 @@
+{
+  "cells": {
+    "A1": "姓名", "B1": "年龄", "C1": "城市",
+    "A2": "张三", "B2": "28", "C2": "北京",
+    "A3": "李四", "B3": "32", "C3": "上海",
+    "A4": "王五", "B4": "25", "C4": "广州"
+  },
+  "styles": {
+    "A1": {"bold": true, "fontName": "微软雅黑", "fontSize": 12, "fillColor": "#4472C4", "color": "#FFFFFF"},
+    "B1": {"bold": true, "fontName": "微软雅黑", "fontSize": 12, "fillColor": "#4472C4", "color": "#FFFFFF"},
+    "C1": {"bold": true, "fontName": "微软雅黑", "fontSize": 12, "fillColor": "#4472C4", "color": "#FFFFFF"}
+  },
+  "merges": {},
+  "col_widths": {"A": 100, "B": 60, "C": 100},
+  "row_heights": {},
+  "total_rows": 40,
+  "total_cols": 10
+}

@@ -1,0 +1,61 @@
+{
+  "key": "codemap",
+  "name": "代码地图",
+  "icon": "DataBoard",
+  "icon_asset": "",
+  "category": "tools",
+  "component_key": "",
+  "route_prefix": "/api/codemap",
+  "permissions": ["viewer", "editor", "admin"],
+  "sort_order": 700,
+  "default_width": 0,
+  "default_height": 0,
+  "singleton": true,
+  "show_in_launcher": false,
+  "show_on_desktop": false,
+  "show_in_tray": false,
+  "show_in_sidebar": false,
+  "window_type": "background-service",
+  "allow_multiple": false,
+  "supported_formats": [],
+  "editable_formats": [],
+  "creatable_formats": [],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "backend": {
+    "enabled": true,
+    "router": "backend/router.py"
+  },
+  "public_actions": [
+    {
+      "action": "get_file",
+      "description": "查询文件的代码地图信息：所属层/模块、语言、符号清单、依赖与被依赖、注册/调用的能力、涉及的表。",
+      "parameters": { "path": "文件路径（相对项目根目录）" }
+    },
+    {
+      "action": "impact",
+      "description": "查询影响面：正向（我依赖谁）+ 反向（谁依赖我）的传递闭包，返回波及的文件、模块、跨模块能力清单和风险等级。",
+      "parameters": { "path": "文件路径", "symbol": "符号名（可选）" }
+    },
+    {
+      "action": "check_boundary",
+      "description": "检查文件或模块的边界合规性，返回违反隔离铁律的引用清单。",
+      "parameters": { "path": "文件路径", "module_key": "模块 key（与 path 二选一）" }
+    },
+    {
+      "action": "module_map",
+      "description": "查询模块的对外能力、依赖的外部能力、边界健康状态。",
+      "parameters": { "module_key": "模块 key" }
+    },
+    {
+      "action": "search",
+      "description": "按关键词模糊搜索文件和符号。",
+      "parameters": { "keyword": "搜索关键词" }
+    },
+    {
+      "action": "stats",
+      "description": "返回索引规模、构建耗时、最后更新时间。",
+      "parameters": {}
+    }
+  ]
+}

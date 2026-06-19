@@ -1,0 +1,657 @@
+"""Tests for the codemap module — graph, parser, boundary engine.
+
+These tests create temporary project structures, build the code graph,
+and verify all query capabilities.
+
+Run from project root:
+  cd backend && .venv/bin/python -m pytest ../modules/codemap/tests/test_codemap.py -v
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+# ── Properly set up codemap.backend package hierarchy for relative imports ──
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_CODEMAP_DIR = _PROJECT_ROOT / "modules" / "codemap"
+_BACKEND_DIR = _CODEMAP_DIR / "backend"
+
+# Build package hierarchy so "from .graph import ..." works
+_codemap_pkg = types.ModuleType("codemap")
+_codemap_pkg.__path__ = [str(_CODEMAP_DIR)]
+sys.modules["codemap"] = _codemap_pkg
+
+_backend_pkg = types.ModuleType("codemap.backend")
+_backend_pkg.__path__ = [str(_BACKEND_DIR)]
+sys.modules["codemap.backend"] = _backend_pkg
+_codemap_pkg.backend = _backend_pkg
+
+
+def _load_backend_module(name: str) -> types.ModuleType:
+    """Load a codemap.backend.* module with proper package prefix."""
+    full_name = f"codemap.backend.{name}"
+    file_path = _BACKEND_DIR / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(full_name, file_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[full_name] = module
+    setattr(_backend_pkg, name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Load all backend modules
+graph_module = _load_backend_module("graph")
+indexer_module = _load_backend_module("indexer")
+boundary_module = _load_backend_module("boundary_engine")
+
+CodeGraph = graph_module.CodeGraph
+ImportEdge = graph_module.ImportEdge
+CallEdge = graph_module.CallEdge
+CapabilityEdge = graph_module.CapabilityEdge
+DbTableEdge = graph_module.DbTableEdge
+get_graph = graph_module.get_graph
+
+CodeIndexer = indexer_module.CodeIndexer
+_scan_files = indexer_module._scan_files
+get_indexer = indexer_module.get_indexer
+
+
+# ── Test helpers ─────────────────────────────────────────────────────────────
+
+def _write_file(base: Path, rel_path: str, content: str) -> None:
+    abs_path = base / rel_path
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_text(content, encoding="utf-8")
+
+
+def _create_mini_project(tmp_path: Path) -> dict:
+    """Create a mini project structure with Python/TS/Vue files and a boundary violation."""
+    base = tmp_path
+
+    # Framework backend files
+    _write_file(base, "backend/app/config.py", """
+SETTINGS = {}
+def get_settings():
+    return SETTINGS
+""")
+
+    _write_file(base, "backend/app/database.py", """
+from sqlalchemy.ext.asyncio import AsyncSession
+def get_db():
+    pass
+""")
+
+    _write_file(base, "backend/app/services/module_registry.py", """
+_CAPABILITIES = {}
+def register_capability(module_key, action, handler, **kwargs):
+    _CAPABILITIES[f"{module_key}:{action}"] = handler
+def call_capability(target_module, action, params, caller):
+    pass
+""")
+
+    _write_file(base, "backend/app/services/file_service.py", """
+from app.config import get_settings
+def list_files(owner_id):
+    return []
+""")
+
+    _write_file(base, "backend/app/models/user.py", """
+from sqlalchemy import Column, Integer, String
+class User:
+    __tablename__ = "framework_users"
+    id = Column(Integer)
+""")
+
+    # Framework frontend files
+    _write_file(base, "frontend/src/desktop/window.ts", """
+import { ref } from 'vue'
+export function openWindow(name: string) {
+    return { id: name }
+}
+""")
+
+    _write_file(base, "frontend/src/shared/api.ts", """
+export function fetchApi(path: string) {
+    return fetch(path)
+}
+""")
+
+    # Module A (compliant)
+    _write_file(base, "modules/agent/backend/router.py", """
+from app.database import get_db
+from app.services.module_registry import register_capability, call_capability
+
+async def my_handler(params, caller):
+    result = await call_capability("terminal-tools", "exec", params, caller)
+    return result
+
+register_capability("agent", "chat", my_handler, description="Chat")
+""")
+
+    _write_file(base, "modules/agent/backend/service.py", """
+from .router import my_handler
+
+class AgentService:
+    def process(self, msg):
+        pass
+""")
+
+    _write_file(base, "modules/agent/frontend/index.vue", """
+<script setup>
+import { ref } from 'vue'
+import { fetchApi } from '@/shared/api'
+
+const messages = ref([])
+
+async function sendMessage(content: string) {
+    const result = await fetchApi('/api/agent/chat')
+    platform.modules.call('terminal-tools', 'exec', { command: 'ls' })
+}
+</script>
+<template>
+    <div>{{ messages }}</div>
+</template>
+""")
+
+    # Module B (has boundary violations)
+    _write_file(base, "modules/bad_module/backend/router.py", """
+import sys
+# VIOLATION: importing another module's internal file
+from modules.agent.backend.service import AgentService
+
+# VIOLATION: importing framework internal
+from app.services.file_service import list_files
+
+# VIOLATION: framework table name in string
+TABLE = "framework_users"
+
+service = AgentService()
+""")
+
+    _write_file(base, "modules/bad_module/backend/models.py", """
+from sqlalchemy import Column, Integer, ForeignKey
+
+class BadModel:
+    __tablename__ = "bad_module_items"
+    id = Column(Integer)
+    # VIOLATION: ForeignKey to framework table
+    user_id = Column(Integer, ForeignKey("framework_users.id"))
+""")
+
+    # Module C (terminal-tools)
+    _write_file(base, "modules/terminal-tools/backend/router.py", """
+from app.database import get_db
+from app.services.module_registry import register_capability
+
+async def exec_cmd(params, caller):
+    return {"stdout": "ok"}
+
+register_capability("terminal-tools", "exec", exec_cmd)
+register_capability("terminal-tools", "write_file", exec_cmd)
+register_capability("terminal-tools", "read_file", exec_cmd)
+""")
+
+    # TypeScript file in module
+    _write_file(base, "modules/terminal-tools/frontend/index.ts", """
+import { ref } from 'vue'
+import type { Ref } from 'vue'
+
+export function useTerminal(): Ref<string> {
+    const output = ref('')
+    return output
+}
+
+async function doCall() {
+    await platform.modules.call('agent', 'chat', { content: 'hi' })
+}
+""")
+
+    return {
+        "python_files": [
+            "backend/app/config.py", "backend/app/database.py",
+            "backend/app/services/module_registry.py",
+            "backend/app/services/file_service.py",
+            "backend/app/models/user.py",
+            "modules/agent/backend/router.py",
+            "modules/agent/backend/service.py",
+            "modules/bad_module/backend/router.py",
+            "modules/bad_module/backend/models.py",
+            "modules/terminal-tools/backend/router.py",
+        ],
+        "ts_files": [
+            "frontend/src/desktop/window.ts",
+            "frontend/src/shared/api.ts",
+            "modules/terminal-tools/frontend/index.ts",
+        ],
+        "vue_files": [
+            "modules/agent/frontend/index.vue",
+        ],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestCodeGraphIsolated:
+    """Tests for the graph data structure in isolation."""
+
+    def test_add_file_and_symbol(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("backend/app/main.py", "framework-backend", None, "python")
+        graph.add_symbol("backend/app/main.py::setup", "setup", "function",
+                         "backend/app/main.py", 10, 50)
+
+        assert len(graph._files) == 1
+        assert len(graph._symbols) == 1
+        node = graph._files["backend/app/main.py"]
+        assert node.layer == "framework-backend"
+        assert len(node.symbols) == 1
+
+    def test_import_edge(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("a.py", "module", "alpha")
+        graph._ensure_file_node("b.py", "module", "beta")
+        graph.add_import(ImportEdge(source="a.py", target="b.py",
+                                     cross_module=True, line=5))
+
+        result = graph.get_file("a.py")
+        assert result is not None
+        assert len(result["imports"]) == 1
+
+    def test_clear_file(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("a.py", "module", "alpha")
+        graph._ensure_file_node("b.py", "module", "beta")
+        graph.add_import(ImportEdge(source="a.py", target="b.py",
+                                     cross_module=True))
+
+        graph.clear_file("a.py")
+        assert "a.py" not in graph._files
+
+    def test_stats_initial(self):
+        graph = CodeGraph()
+        stats = graph.stats()
+        assert stats["ready"] is False
+        assert stats["file_count"] == 0
+
+    def test_impact_simple(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("a.py", "module", "alpha")
+        graph._ensure_file_node("b.py", "module", "beta")
+        graph._ensure_file_node("c.py", "framework-backend", None)
+        graph.add_import(ImportEdge(source="a.py", target="b.py"))
+        graph.add_import(ImportEdge(source="b.py", target="c.py"))
+
+        result = graph.impact("a.py")
+        assert "error" not in result
+        forward_files = result["forward_impact"]["files"]
+        assert "b.py" in forward_files
+        assert "c.py" in forward_files
+
+    def test_check_boundary_compliant(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("modules/ok/backend/r.py", "module", "ok")
+        result = graph.check_boundary(path="modules/ok/backend/r.py")
+        assert result["compliant"] is True
+
+    def test_check_boundary_violation(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("modules/ok/backend/r.py", "module", "ok")
+        graph._ensure_file_node("modules/other/backend/s.py", "module", "other")
+        graph.add_import(ImportEdge(
+            source="modules/ok/backend/r.py",
+            target="modules/other/backend/s.py",
+            cross_module=True,
+            line=10,
+        ))
+
+        result = graph.check_boundary(path="modules/ok/backend/r.py")
+        assert result["compliant"] is False
+        assert len(result["violations"]) >= 1
+        assert any(v["type"] == "cross_module_import" for v in result["violations"])
+
+    def test_search(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("modules/agent/router.py", "module", "agent")
+        graph._ensure_file_node("modules/terminal/router.py", "module", "terminal-tools")
+        graph.add_symbol("modules/agent/router.py::chat", "chat", "function",
+                         "modules/agent/router.py", 42)
+
+        result = graph.search("router")
+        assert result["file_match_count"] >= 2
+
+        result2 = graph.search("chat")
+        assert result2["symbol_match_count"] >= 1
+
+    def test_module_map(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("modules/tt/backend/r.py", "module", "terminal-tools")
+        graph.add_capability(CapabilityEdge(
+            file="modules/tt/backend/r.py", target="terminal-tools:exec",
+            kind="register"))
+        graph.add_capability(CapabilityEdge(
+            file="modules/tt/backend/r.py", target="terminal-tools:read_file",
+            kind="register"))
+
+        result = graph.module_map("terminal-tools")
+        assert len(result["exposed_capabilities"]) == 2
+        assert "terminal-tools:exec" in result["exposed_capabilities"]
+
+    def test_normalize_path_absolute(self):
+        """Absolute path should normalize to project-relative."""
+        normalize_path = graph_module.normalize_path
+        project_root = Path(__file__).resolve().parents[3]
+        abs_path = str(project_root / "modules" / "agent" / "backend" / "router.py")
+        rel = normalize_path(abs_path)
+        assert rel == "modules/agent/backend/router.py", f"Got {rel}"
+
+    def test_normalize_path_relative_cleanup(self):
+        """Relative paths with ./ or trailing / should be cleaned."""
+        normalize_path = graph_module.normalize_path
+        assert normalize_path("./modules/agent/backend/router.py") == "modules/agent/backend/router.py"
+        assert normalize_path("modules/agent/backend/router.py/") == "modules/agent/backend/router.py"
+        assert normalize_path("modules//agent//backend//router.py") == "modules/agent/backend/router.py"
+
+    def test_get_file_absolute_path(self):
+        """get_file should accept absolute paths and return same result as relative."""
+        graph = CodeGraph()
+        graph._ensure_file_node("modules/agent/backend/router.py", "module", "agent", "python")
+        graph.add_symbol("modules/agent/backend/router.py::chat", "chat", "function",
+                         "modules/agent/backend/router.py", 42)
+
+        # Relative
+        rel_result = graph.get_file("modules/agent/backend/router.py")
+        assert rel_result is not None
+
+        # Absolute
+        project_root = Path(__file__).resolve().parents[3]
+        abs_path = str(project_root / "modules" / "agent" / "backend" / "router.py")
+        abs_result = graph.get_file(abs_path)
+        assert abs_result is not None
+        assert abs_result["path"] == rel_result["path"]
+        assert abs_result["module_key"] == rel_result["module_key"]
+
+
+class TestIndexerFullBuild:
+    """Tests that build a complete mini index from a temporary project."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, monkeypatch, tmp_path):
+        self.tmp = tmp_path
+        self.fixture_files = _create_mini_project(tmp_path)
+
+        # Monkey-patch the indexer to use tmp_path
+        monkeypatch.setattr(indexer_module, "_PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(indexer_module, "_SCAN_ROOTS",
+                            ["backend/app", "frontend/src", "modules"])
+
+        self.graph = CodeGraph()
+        self.indexer = CodeIndexer(graph=self.graph)
+        self.indexer.build_full()
+
+    def test_scan_finds_all_files(self):
+        files = _scan_files()
+        expected = (len(self.fixture_files["python_files"]) +
+                    len(self.fixture_files["ts_files"]) +
+                    len(self.fixture_files["vue_files"]))
+        assert len(files) == expected, f"Expected {expected} files, got {len(files)}"
+
+    def test_build_completes(self):
+        assert self.graph.ready is True
+        stats = self.graph.stats()
+        assert stats["file_count"] > 0
+
+    def test_get_file_python(self):
+        result = self.graph.get_file("modules/agent/backend/router.py")
+        assert result is not None
+        assert result["layer"] == "module"
+        assert result["module_key"] == "agent"
+        assert result["language"] == "python"
+        assert len(result["imports"]) >= 1
+        assert len(result["capabilities"]) >= 1
+
+    def test_get_file_vue(self):
+        result = self.graph.get_file("modules/agent/frontend/index.vue")
+        assert result is not None
+        assert result["layer"] == "module"
+        assert result["language"] == "vue"
+        caps = [c for c in result.get("capabilities", []) if c["kind"] == "call"]
+        assert len(caps) >= 1
+        assert any("terminal-tools" in c["target"] for c in caps)
+
+    def test_impact_framework_file(self):
+        result = self.graph.impact("backend/app/database.py")
+        assert "error" not in result
+        reverse_files = result["reverse_impact"]["files"]
+        assert len(reverse_files) >= 1
+
+    def test_impact_module_file(self):
+        result = self.graph.impact("modules/agent/backend/router.py")
+        assert "error" not in result
+        forward = result["forward_impact"]["files"]
+        assert len(forward) >= 1
+
+    def test_check_boundary_violations_detected(self):
+        result = self.graph.check_boundary(
+            path="modules/bad_module/backend/router.py")
+        assert result["compliant"] is False
+        violation_types = [v["type"] for v in result["violations"]]
+        assert "cross_module_import" in violation_types
+        assert "framework_internal_import" in violation_types
+
+    def test_check_boundary_compliant_module(self):
+        result = self.graph.check_boundary(module_key="agent")
+        assert result["compliant"] is True
+        assert len(result["violations"]) == 0
+
+    def test_module_map_terminal_tools(self):
+        result = self.graph.module_map("terminal-tools")
+        assert len(result["exposed_capabilities"]) >= 3
+        capabilities = result["exposed_capabilities"]
+        assert any("terminal-tools:exec" in c for c in capabilities)
+        assert any("terminal-tools:write_file" in c for c in capabilities)
+        assert any("terminal-tools:read_file" in c for c in capabilities)
+        assert result["boundary"]["compliant"] is True
+
+    def test_module_map_agent(self):
+        result = self.graph.module_map("agent")
+        assert "agent:chat" in result["exposed_capabilities"]
+        consumed = result["consumed_capabilities"]
+        assert any("terminal-tools" in c for c in consumed)
+
+    def test_search_finds_files(self):
+        result = self.graph.search("router")
+        assert result["file_match_count"] >= 3
+        file_paths = [m["path"] for m in result["file_matches"]]
+        assert any("router.py" in p for p in file_paths)
+
+    def test_search_finds_symbols(self):
+        result = self.graph.search("get_db")
+        assert result["symbol_match_count"] >= 1
+
+    def test_stats(self):
+        stats = self.graph.stats()
+        assert stats["ready"] is True
+        assert stats["file_count"] > 0
+        assert stats["build_time_seconds"] >= 0
+
+    def test_incremental_update(self):
+        old_count = len(self.graph._files)
+
+        new_file = self.tmp / "modules" / "agent" / "backend" / "utils.py"
+        new_file.parent.mkdir(parents=True, exist_ok=True)
+        new_file.write_text("""
+from app.database import get_db
+
+def helper():
+    return get_db()
+""")
+
+        self.indexer.update_file("modules/agent/backend/utils.py")
+        assert "modules/agent/backend/utils.py" in self.graph._files
+        result = self.graph.get_file("modules/agent/backend/utils.py")
+        assert result is not None
+        assert len(result["imports"]) >= 1
+
+    def test_boundary_violation_after_fix(self):
+        fixed_content = """
+from app.database import get_db
+# import removed
+""".strip()
+        bad_file = self.tmp / "modules" / "bad_module" / "backend" / "router.py"
+        bad_file.write_text(fixed_content)
+
+        self.indexer.update_file("modules/bad_module/backend/router.py")
+        result = self.graph.check_boundary(
+            path="modules/bad_module/backend/router.py")
+        violation_types = [v["type"] for v in result["violations"]]
+        assert "cross_module_import" not in violation_types
+        assert "framework_internal_import" not in violation_types
+
+
+class TestRealProjectIntegration:
+    """Integration tests against the real project (not temp dir)."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, monkeypatch):
+        # Use real project root — indexer already uses Path(__file__).resolve().parents[3]
+        # which points to the real project root from within modules/codemap/tests/
+        self.graph = CodeGraph()
+        self.indexer = CodeIndexer(graph=self.graph)
+
+        # Collect parse errors via a hook
+        self.parse_errors: list[str] = []
+        original_parse_file = indexer_module._parse_file
+
+        def _tracking_parse_file(file_path, graph):
+            try:
+                original_parse_file(file_path, graph)
+            except Exception as exc:
+                self.parse_errors.append(f"{file_path}: {exc}")
+
+        monkeypatch.setattr(indexer_module, "_parse_file", _tracking_parse_file)
+        self.indexer.build_full()
+
+    def test_zero_parse_errors(self):
+        """build_full() must produce 0 Parse errors."""
+        if self.parse_errors:
+            print("\nParse errors found:")
+            for e in self.parse_errors:
+                print(f"  {e}")
+        assert len(self.parse_errors) == 0, (
+            f"Expected 0 parse errors, got {len(self.parse_errors)}"
+        )
+
+    def test_key_frontend_files_not_empty(self):
+        """frontend/src/main.ts must have imports."""
+        info = self.graph.get_file("frontend/src/main.ts")
+        assert info is not None, "main.ts not found in index"
+        assert len(info["imports"]) >= 1, (
+            f"main.ts has {len(info['imports'])} imports, expected >= 1"
+        )
+
+    def test_stats_post_fix(self):
+        """Verify post-fix stats are within expected ranges."""
+        stats = self.graph.stats()
+        assert stats["ready"] is True
+        assert stats["file_count"] >= 280
+        assert stats["symbol_count"] >= 1000
+        assert stats["import_edges"] >= 600, (
+            f"import_edges={stats['import_edges']}, expected >= 600 after fix"
+        )
+
+    def test_ts_vue_coverage(self):
+        """≥95% of TS/Vue files with project-internal imports resolve edges."""
+        try:
+            import tree_sitter_typescript as tstypescript
+            from tree_sitter import Parser, Language
+        except ImportError:
+            pytest.skip("tree-sitter-typescript not available")
+
+        ts_lang = Language(tstypescript.language_typescript())
+        parser = Parser(ts_lang)
+        _VUE_SCRIPT_RE = __import__("re").compile(
+            r"<script\b[^>]*>(.*?)</script>", __import__("re").DOTALL)
+
+        def _get_internal_imports(source: str) -> list[str]:
+            """Extract ./, ../, @/ import specifiers via tree-sitter."""
+            specs = []
+            tree = parser.parse(source.encode())
+            def walk(node):
+                if node.type == "import_statement":
+                    src_node = node.child_by_field_name("source")
+                    if src_node and src_node.type == "string":
+                        val = source[src_node.start_byte:src_node.end_byte]
+                        if len(val) >= 2:
+                            inner = val[1:-1]
+                            if inner.startswith(".") or (
+                            inner.startswith("@") and inner.startswith("@/")):
+                                specs.append(inner)
+                for c in node.children:
+                    walk(c)
+            walk(tree.root_node)
+            return specs
+
+        has_internal = 0
+        has_internal_and_resolved = 0
+        unresolved: list[tuple[str, list[str]]] = []
+
+        for path, node in self.graph._files.items():
+            if node.language not in ("typescript", "vue"):
+                continue
+            abs_path = _PROJECT_ROOT / path
+            if not abs_path.exists():
+                continue
+            source = abs_path.read_text(encoding="utf-8", errors="ignore")
+
+            if node.language == "vue":
+                scripts = _VUE_SCRIPT_RE.findall(source)
+                imports = []
+                for s in scripts:
+                    if s.strip():
+                        imports.extend(_get_internal_imports(s))
+            else:
+                imports = _get_internal_imports(source)
+
+            if imports:
+                has_internal += 1
+                edges = self.graph._imports.get(path, [])
+                if len(edges) >= 1:
+                    has_internal_and_resolved += 1
+                else:
+                    unresolved.append((path, imports))
+
+        print(f"\nTS/Vue files with internal imports (./ ../ @/): {has_internal}")
+        print(f"With >=1 resolved import edge: {has_internal_and_resolved}")
+        if has_internal > 0:
+            pct = has_internal_and_resolved / has_internal * 100
+            print(f"Coverage: {pct:.1f}%")
+            if unresolved:
+                print(f"Still unresolved ({len(unresolved)}):")
+                for p, imps in unresolved[:5]:
+                    print(f"  {p}: {imps[:3]}")
+            assert pct >= 95.0, f"Coverage {pct:.1f}% < 95%"
+
+    def test_python_no_regression(self):
+        """Python-side stats should not regress."""
+        python_files = sum(
+            1 for n in self.graph._files.values() if n.language == "python"
+        )
+        assert python_files >= 100, f"Only {python_files} Python files"
+        # __init__.py files are legit empty; check non-init files
+        non_init_empty = [
+            p for p, n in self.graph._files.items()
+            if n.language == "python" and len(n.symbols) == 0
+            and len(self.graph._imports.get(p, [])) == 0
+            and not p.endswith("__init__.py")
+        ]
+        assert len(non_init_empty) < 5, (
+            f"Empty non-init Python files: {non_init_empty}"
+        )

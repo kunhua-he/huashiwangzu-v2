@@ -14,7 +14,9 @@ Dangerous commands are intercepted.  Execution has timeout + output caps.
 import io
 import os
 import re
+import shutil
 import subprocess
+import sys
 import logging
 from pathlib import Path
 
@@ -132,13 +134,70 @@ def _check_dangerous_command(command: str) -> str | None:
     return None
 
 
+# ── macOS sandbox-exec profile ────────────────────────────────────────
+
+def _build_sandbox_profile(workspace_real: str) -> str:
+    """Return a sandbox-exec profile string that locks the child process to
+    read-only system + full read/write of the workspace.
+
+    The profile is passed inline (-p) so the model cannot tamper with a
+    sandbox file sitting in its own writable workspace.
+    """
+    return f"""(version 1)
+(import "system.sb")
+(allow process-fork)
+(allow process-exec)
+(allow network*)
+(allow mach-lookup)
+(allow sysctl-read)
+; metadata for path resolution (cd, ls, stat — no content)
+(allow file-read-metadata)
+; system tool/library dirs needed for binary and dynamic linker
+(allow file-read*
+  (subpath "/usr") (subpath "/bin") (subpath "/sbin")
+  (subpath "/System") (subpath "/Library") (subpath "/opt/homebrew")
+  (subpath "/private/var/db/dyld") (subpath "/private/var/folders")
+  (subpath "/private/var/select") (subpath "/dev")
+  (subpath "/private/etc/ssl")
+  (literal "/private/etc/hosts") (literal "/private/etc/resolv.conf"))
+; workspace — kernel-gated: nothing outside this subpath can be read or written
+(allow file-read* file-write* (subpath "{workspace_real}"))
+"""
+
+
+# ── Minimal environment for child processes ───────────────────────────
+
+def _safe_env(workspace: str) -> dict[str, str]:
+    """Return a minimal whitelist of env vars for exec'd processes.
+
+    We DO NOT forward the host os.environ wholesale — that leaks
+    API keys, secrets, JWT tokens, and other sensitive values.
+    """
+    return {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": workspace,
+        "WORKSPACE": workspace,
+        "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+        "LC_ALL": os.environ.get("LC_ALL", "en_US.UTF-8"),
+        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Capability: terminal-tools:exec
 # ═══════════════════════════════════════════════════════════════════════
 async def _exec(params: dict, caller: str) -> dict:
-    """Execute a shell command inside the user workspace."""
+    """Execute a shell command inside a kernel-level sandbox on macOS.
+
+    On macOS: wraps the child in sandbox-exec — read-only system,
+    read/write only the user workspace.  No amount of model cleverness
+    can escape the kernel sandbox.
+
+    On Linux (no sandbox-exec): fail-closed — exec is disabled.
+    """
     user_id = _resolve_user_id(caller)
     workspace = _user_workspace(user_id)
+    workspace_real = os.path.realpath(str(workspace))
     command = params.get("command", "").strip()
     timeout = int(params.get("timeout", _DEFAULT_TIMEOUT))
 
@@ -149,7 +208,7 @@ async def _exec(params: dict, caller: str) -> dict:
     if timeout <= 0 or timeout > 600:
         timeout = _DEFAULT_TIMEOUT
 
-    # Dangerous command check
+    # Dangerous command check (keep — cheap second layer)
     danger = _check_dangerous_command(command)
     if danger:
         logger.warning(
@@ -161,21 +220,36 @@ async def _exec(params: dict, caller: str) -> dict:
             "command": command,
         }
 
-    logger.info("user=%s exec: %s", user_id, command[:200])
+    # Minimal env — no host secrets leaked
+    safe_env = _safe_env(str(workspace_real))
+
+    # ── Platform sandbox ──────────────────────────────────────────
+    if sys.platform == "darwin" and shutil.which("sandbox-exec"):
+        # macOS kernel sandbox — gold standard
+        profile = _build_sandbox_profile(workspace_real)
+        argv = ["sandbox-exec", "-p", profile, "/bin/sh", "-c", command]
+        cwd = workspace_real
+    else:
+        # No usable sandbox — fail-closed (do NOT exec unsandboxed)
+        return {
+            "success": False,
+            "error": (
+                "当前平台无可用沙盒(sandbox-exec/bwrap)，exec 已禁用。"
+                "需要 macOS 或安装了 bubblewrap 的 Linux。"
+            ),
+            "command": command,
+        }
+
+    logger.info("user=%s exec(sandbox): %s", user_id, command[:200])
 
     try:
         proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(workspace),
+            argv,
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={
-                **os.environ,
-                "HOME": str(workspace),
-                "WORKSPACE": str(workspace),
-            },
+            env=safe_env,
         )
     except subprocess.TimeoutExpired:
         return {

@@ -151,6 +151,12 @@ cd modules/agent/sandbox && bash run.sh
 # Uses production DB + real gateway + fixed dev user
 ```
 
+Sandbox frontend port is fixed to **5180** (vite.config default + run.sh), deliberately avoiding the
+main framework's 5173 so the two never fight over the port. The sandbox has its OWN login form
+(`sandbox/src/App.vue`) because it has no framework login session — this shell does NOT run inside the
+main framework. In the main framework the Agent loads `modules/agent/frontend/index.vue` and auth is
+handled by the framework (runtime SDK `authHeaders()`), so `App.vue` is sandbox-only.
+
 ## Key Design Decisions
 
 - Tool discovery is dynamic: reads `list_capabilities(role)` → no hardcoded tools.

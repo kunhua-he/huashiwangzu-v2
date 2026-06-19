@@ -40,7 +40,7 @@
 
         <template v-for="(m, i) in messages" :key="`${m.id}-${i}`">
           <ToolCallCard v-if="m.eventType === 'tool_call' || m.eventType === 'tool_result'" :message="m" />
-          <ThinkingCard v-else-if="m.eventType === 'thinking'" :content="m.content" :running="streaming" />
+          <ThinkingCard v-else-if="m.eventType === 'thinking'" :content="m.content" :running="m.running" :collapsed="m.collapsed" />
           <MessageBubble v-else :message="m" @focusRef="focusReference" />
         </template>
 
@@ -68,7 +68,7 @@
         @select="(r: RefItem) => activeReference = r"
       />
 
-      <InputArea ref="inputAreaRef" v-model="inputText" :sending="sending" @send="sendMessage" />
+      <InputArea ref="inputAreaRef" v-model="inputText" :sending="sending" @send="sendMessage" @stop="stopGeneration" />
 
       <p v-if="error" class="error-text">{{ error }}</p>
     </section>
@@ -92,7 +92,7 @@ interface ConvItem { id: number; title: string; status?: string }
 interface ModelProfile { key: string; name: string; provider: string; model: string }
 interface RefItem { type: string; title: string; source: string; excerpt: string }
 interface ApiBody<T> { success: boolean; data: T; error?: string | null }
-interface MsgItem { id: number; role: string; content: string; created_at?: string | null; eventType?: string; toolName?: string; toolResult?: unknown; thinking?: string; references?: RefItem[]; tool_events?: unknown[] }
+interface MsgItem { id: number; role: string; content: string; created_at?: string | null; eventType?: string; toolName?: string; toolResult?: unknown; thinking?: string; references?: RefItem[]; tool_events?: unknown[]; collapsed?: boolean; running?: boolean }
 
 // ── 状态 ──
 const conversations = ref<ConvItem[]>([])
@@ -120,10 +120,25 @@ const allReferences = computed<RefItem[]>(() => {
   return result
 })
 
+// ── 401 auto-heal ──
+let _redirecting = false
+
+function handleUnauthorized(status: number): boolean {
+  if (status !== 401) return false
+  localStorage.removeItem('v2_auth_token')
+  if (!_redirecting) {
+    _redirecting = true
+    window.location.replace('/')
+  }
+  return true
+}
+
 // ── API helper ──
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = getApiUrl(path)
-  const r = await fetch(url, { headers: { ...init?.headers as Record<string, string> || {}, ...authHeaders() }, ...init })
+  const { headers: initHeaders, ...restInit } = init || {}
+  const r = await fetch(url, { headers: { ...initHeaders as Record<string, string> || {}, ...authHeaders() }, ...restInit })
+  if (handleUnauthorized(r.status)) throw new Error('登录已失效，请重新登录')
   const body: ApiBody<T> = await r.json()
   if (!body.success) throw new Error(body.error || '请求失败')
   return body.data as T
@@ -131,7 +146,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function apiFetchRaw(path: string, init?: RequestInit): Promise<Response> {
   const url = getApiUrl(path)
-  return fetch(url, { headers: { ...init?.headers as Record<string, string> || {}, ...authHeaders() }, ...init })
+  const { headers: initHeaders, ...restInit } = init || {}
+  const resp = await fetch(url, { headers: { ...initHeaders as Record<string, string> || {}, ...authHeaders() }, ...restInit })
+  if (handleUnauthorized(resp.status)) throw new Error('登录已失效，请重新登录')
+  return resp
 }
 
 // ── Conv operations ──
@@ -151,7 +169,15 @@ async function renameConversation(p: ConvItem) {
 async function deleteConversation(item: ConvItem) {
   await apiFetch(`/agent/conversations/${item.id}`, { method: 'DELETE' })
   conversations.value = conversations.value.filter(c => c.id !== item.id)
-  if (activeConvId.value === item.id) { messages.value = []; activeConvId.value = null }
+  if (activeConvId.value === item.id) {
+    messages.value = []; activeConvId.value = null
+    // 自动选第一个剩余对话，没有就新建
+    if (conversations.value.length > 0) {
+      await selectConversation(conversations.value[0].id)
+    } else {
+      await newConversation()
+    }
+  }
 }
 
 async function selectConversation(id: number) {
@@ -182,10 +208,29 @@ async function loadMetadata() {
 }
 
 // ── Chat ──
+function normalizeThinking(text: string): string {
+  // The model's thinking/reasoning stream arrives as small token chunks
+  // that may contain arbitrary whitespace and newlines.  Collapse all
+  // whitespace runs (spaces, tabs, newlines) into single spaces so the
+  // thinking reads as clean prose rather than scattered fragments.
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+let abortController: AbortController | null = null
+
+function stopGeneration() {
+  if (abortController) { abortController.abort(); abortController = null }
+  sending.value = false
+  streaming.value = false
+  streamingText.value = ''
+}
+
 async function sendMessage() {
   if (sending.value || !activeConvId.value) return
   const text = inputText.value.trim()
   if (!text) return
+  if (abortController) { abortController.abort() }
+  abortController = new AbortController()
   inputText.value = ''
   sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
   messages.value.push({ id: 0, role: 'user', content: text, created_at: new Date().toISOString() })
@@ -195,41 +240,92 @@ async function sendMessage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversation_id: activeConvId.value, content: text, profile_key: profileKey.value }),
+      signal: abortController.signal,
     })
-    if (!resp.ok) { error.value = `请求失败 (${resp.status})`; streaming.value = false; return }
-    if (!resp.body) { error.value = '无响应体'; streaming.value = false; return }
+    if (!resp.ok) { error.value = `请求失败 (${resp.status})`; return }
+    if (!resp.body) { error.value = '无响应体'; return }
     const reader = resp.body.getReader()
     const decoder = new TextDecoder()
-    while (true) {
-      const { done, value } = await reader.read()
+    let finished = false
+    while (!finished) {
+      let done = false; let value: Uint8Array | undefined
+      try { const r = await reader.read(); done = r.done; value = r.value } catch { break }
       if (done) break
-      const chunk = decoder.decode(value, { stream: true })
+      const chunk = decoder.decode(value!, { stream: true })
       for (const line of chunk.split('\n')) {
         const trimmed = line.trim()
         if (!trimmed.startsWith('data: ')) continue
         const payload = trimmed.slice(6)
-        if (payload === '[DONE]') { streaming.value = false; await reloadMessages(activeConvId.value!); scrollToBottom(); continue }
-        const evt = JSON.parse(payload)
-        if (evt.type === 'content') { streaming.value = false; messages.value.push({ id: 0, role: 'assistant', content: evt.content || '', created_at: new Date().toISOString() }) }
+        if (payload === '[DONE]') {
+          abortController = null
+          streaming.value = false; sending.value = false
+          for (const m of messages.value) {
+            if (m.eventType === 'thinking') { m.collapsed = true; m.running = false }
+          }
+          const finalText = streamingText.value.trim()
+          streamingText.value = ''
+          if (finalText) {
+            messages.value.push({ id: 0, role: 'assistant', content: finalText, created_at: new Date().toISOString() })
+          }
+          scrollToBottom()
+          finished = true
+          reader.cancel().catch(() => {})
+          break
+        }
+        let evt: { type?: string; content?: string; name?: string; result?: unknown }
+        try { evt = JSON.parse(payload) } catch { continue }
+        if (evt.type === 'content') {
+          abortController = null
+          streaming.value = false; sending.value = false
+          messages.value.push({ id: 0, role: 'assistant', content: evt.content || '', created_at: new Date().toISOString() })
+          finished = true
+          reader.cancel().catch(() => {})
+          break
+        }
         else if (evt.type === 'thinking') {
-          const chunk: string = evt.content || ''
-          streamingText.value += chunk
+          const chunk: string = normalizeThinking(evt.content || '')
+          if (!chunk) continue
           const last = messages.value[messages.value.length - 1]
           if (last && last.eventType === 'thinking') {
             last.content += chunk
           } else {
-            messages.value.push({ id: 0, role: '', content: chunk, eventType: 'thinking' })
+            for (let i = messages.value.length - 1; i >= 0; i--) {
+              if (messages.value[i].eventType === 'thinking') {
+                messages.value[i] = { ...messages.value[i], collapsed: true, running: false }
+                break
+              }
+            }
+            messages.value.push({ id: 0, role: '', content: chunk, eventType: 'thinking', collapsed: false, running: true })
           }
         }
         else if (evt.type === 'tool_call') { messages.value.push({ id: 0, role: '', content: '', eventType: 'tool_call', toolName: evt.name }) }
-        else if (evt.type === 'tool_result') { messages.value.push({ id: 0, role: '', content: '', eventType: 'tool_result', toolName: evt.name, toolResult: evt.result }) }
+        else if (evt.type === 'tool_result') {
+          const msgs = messages.value
+          let merged = false
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].eventType === 'tool_call' && msgs[i].toolName === evt.name) {
+              msgs[i] = { ...msgs[i], eventType: 'tool_result', toolResult: evt.result }
+              merged = true
+              break
+            }
+          }
+          if (!merged) {
+            msgs.push({ id: 0, role: '', content: '', eventType: 'tool_result', toolName: evt.name, toolResult: evt.result })
+          }
+        }
         else if (evt.type === 'token') { streamingText.value += evt.content || '' }
-        else if (evt.type === 'error') { streaming.value = false; error.value = evt.content || '流式错误' }
+        else if (evt.type === 'error') { streaming.value = false; sending.value = false; error.value = evt.content || '流式错误'; finished = true; reader.cancel().catch(() => {}); break }
         scrollToBottom()
       }
     }
-  } catch (e: unknown) { error.value = String((e as Error).message || e); streaming.value = false }
-  finally { sending.value = false; inputAreaRef.value?.focus() }
+  } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === 'AbortError') { /* 用户主动停止 */ }
+    else { error.value = String((e as Error).message || e) }
+  } finally {
+    sending.value = false; streaming.value = false
+    abortController = null
+    inputAreaRef.value?.focus()
+  }
 }
 
 async function reloadMessages(convId: number) { try { messages.value = await apiFetch<MsgItem[]>(`/agent/conversations/${convId}/messages`) } catch { /* ignore */ } }
@@ -249,7 +345,7 @@ onMounted(async () => { await initRuntime('agent'); await Promise.all([loadMetad
 .msg-empty-hint { font-size: var(--ag-font-size-sm); }
 
 /* ── Streaming row ── */
-.msg-row.streaming { display: flex; gap: var(--ag-space-md); margin-bottom: var(--ag-space-xl); animation: msgSlideUp 0.25s ease-out; }
+.msg-row.streaming { flex-shrink: 0; display: flex; gap: var(--ag-space-md); margin-bottom: var(--ag-space-xl); animation: msgSlideUp 0.25s ease-out; }
 @keyframes msgSlideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .streaming-ai { display: flex; gap: var(--ag-space-md); max-width: 85%; }
 .streaming-content { display: flex; align-items: flex-start; gap: 2px; padding: var(--ag-space-md) var(--ag-space-lg); border-radius: var(--ag-radius-sm) var(--ag-radius-xl) var(--ag-radius-xl) var(--ag-radius-xl); background: var(--ag-bg-assistant-msg); border: 1px solid var(--ag-border-light); box-shadow: var(--ag-shadow-sm); font-size: var(--ag-font-size-md); line-height: var(--ag-line-height-relaxed); min-width: 80px; }

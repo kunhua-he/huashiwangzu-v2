@@ -1,6 +1,10 @@
 import json
+import logging
 import sys
+from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger("v2.agent.router")
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -89,9 +93,13 @@ def _tool_calls_for_history(tool_calls: list[dict]) -> list[dict]:
 
 
 async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: list[str]):
+    logger.info("[DIAG] _yield_final_stream ENTER")
+    event_count = 0
     async for event in gateway_router.chat_stream(**kwargs):
+        event_count += 1
         event_type = event.get("type")
         content = str(event.get("content") or "")
+        logger.info("[DIAG] _yield_final_stream event #%d type=%s content_len=%d", event_count, event_type, len(content))
         if event_type == "thinking" and content:
             thinking_parts.append(content)
             yield f"data: {json.dumps({'type': 'thinking', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
@@ -100,6 +108,9 @@ async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: lis
             yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
         elif event_type == "error" and content:
             yield f"data: {json.dumps({'type': 'error', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
+        elif event_type == "done":
+            logger.info("[DIAG] _yield_final_stream got done event — stream ending")
+    logger.info("[DIAG] _yield_final_stream EXIT after %d events", event_count)
 
 
 @router.get("/health")
@@ -222,17 +233,22 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
     tools = tool_discovery.build_tools(user.role)
 
     async def event_stream():
+        logger.info("[DIAG] event_stream ENTER conv=%d user=%d", payload.conversation_id, user.id)
         full: list[str] = []
         thinking_parts: list[str] = []
         tool_events: list[dict] = []
         try:
             for _round in range(MAX_TOOL_ROUNDS):
+                logger.info("[DIAG] event_stream tool_round %d/%d", _round + 1, MAX_TOOL_ROUNDS)
                 kwargs: dict = {"messages": messages}
                 if payload.profile_key:
                     kwargs["profile_key"] = payload.profile_key
                 if tools:
                     kwargs["tools"] = tools
+                logger.info("[DIAG] event_stream calling gateway_router.chat")
                 result = await gateway_router.chat(**kwargs)
+                logger.info("[DIAG] event_stream chat returned tool_calls=%s error=%s",
+                    bool(result.get("tool_calls")), bool(result.get("error")))
                 if result.get("error"):
                     error_msg = result.get("error") or ""
                     yield f"data: {json.dumps({'type': 'error', 'content': error_msg}, ensure_ascii=False)}\n\n".encode("utf-8")
@@ -246,12 +262,15 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                     result = await recover_tool_calls(messages, payload.profile_key or "deepseek-v4-flash", tools)
                     tool_calls = result.get("tool_calls") or []
                 if not tool_calls:
+                    logger.info("[DIAG] event_stream entering _yield_final_stream")
                     stream_kwargs: dict = {"messages": messages}
                     if payload.profile_key:
                         stream_kwargs["profile_key"] = payload.profile_key
                     async for chunk in _yield_final_stream(stream_kwargs, full, thinking_parts):
                         yield chunk
+                    logger.info("[DIAG] event_stream _yield_final_stream finished")
                     break
+                logger.info("[DIAG] event_stream executing tool_calls count=%d", len(tool_calls))
                 messages.append({
                     "role": "assistant",
                     "content": result.get("content") or "",
@@ -272,7 +291,7 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                     tool_events.append(call_event)
                     yield f"data: {json.dumps(call_event, ensure_ascii=False)}\n\n".encode("utf-8")
                     try:
-                        tool_result = await call_capability(module_key, action, args, caller=f"agent:user{user.id}")
+                        tool_result = await call_capability(module_key, action, args, caller=f"user:{user.id}")
                     except Exception as exc:
                         tool_result = {"error": str(exc)}
                     result_event = {"type": "tool_result", "name": name, "result": tool_result}
@@ -287,8 +306,11 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                         tool_message["tool_call_id"] = tool_call_id
                     messages.append(tool_message)
         except Exception as exc:
+            logger.info("[DIAG] event_stream EXCEPTION %s: %s", type(exc).__name__, str(exc)[:300])
             yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n".encode("utf-8")
+        logger.info("[DIAG] event_stream try/except done, full_count=%d", len(full))
         from app.database import AsyncSessionLocal
+        logger.info("[DIAG] event_stream starting DB persist")
         async with AsyncSessionLocal() as s2:
             if full:
                 msg = await conv_svc.add_message(s2, user.id, payload.conversation_id, "assistant", "".join(full))
@@ -304,8 +326,12 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                 # 画像进化：提交后台任务（不阻塞对话）
                 user_msg_count = await conv_svc.count_conversation_messages(s2, user.id, payload.conversation_id)
                 if user_msg_count > 0 and user_msg_count % EVOLVE_EVERY_N_MESSAGES == 0:
+                    logger.info("[DIAG] event_stream submitting profile_evolve task")
                     await _submit_profile_evolve_task(payload.conversation_id, user.id)
+                    logger.info("[DIAG] event_stream profile_evolve task submitted")
+        logger.info("[DIAG] event_stream DB persist done, yielding [DONE]")
         yield b"data: [DONE]\n\n"
+        logger.info("[DIAG] event_stream EXIT")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

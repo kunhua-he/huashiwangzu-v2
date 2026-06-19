@@ -22,12 +22,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-defineProps<{ content: string; running?: boolean }>()
-const isOpen = ref(true)
+const props = defineProps<{ content: string; running?: boolean; collapsed?: boolean }>()
+const isOpen = ref(!props.collapsed)
 </script>
 
 <style scoped>
 .thinking-card {
+  flex-shrink: 0;
   align-self: flex-start;
   max-width: 85%;
   margin-bottom: var(--ag-space-lg);
@@ -76,11 +77,10 @@ const isOpen = ref(true)
   margin: 0 var(--ag-space-md) var(--ag-space-sm);
   padding-left: var(--ag-space-sm);
 }
-.th-body p {
-  margin: 0;
-  font-size: var(--ag-font-size-sm);
-  color: var(--ag-text-secondary);
-  line-height: var(--ag-line-height-base);
-  white-space: pre-wrap;
-}
+	.th-body p {
+	  margin: 0;
+	  font-size: var(--ag-font-size-sm);
+	  color: var(--ag-text-secondary);
+	  line-height: var(--ag-line-height-base);
+	}
 </style>

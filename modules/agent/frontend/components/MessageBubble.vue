@@ -138,6 +138,7 @@ function formatToolResult(r: unknown): string {
 
 <style scoped>
 .msg-row {
+  flex-shrink: 0;
   display: flex;
   gap: var(--ag-space-md);
   margin-bottom: var(--ag-space-xl);

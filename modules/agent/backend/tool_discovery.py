@@ -63,6 +63,9 @@ def build_tools(role: str) -> list[dict]:
 
 
 def parse_tool_name(name: str) -> tuple[str, str]:
-    """module__action -> (module, action)"""
-    module, _, action = name.partition(SEP)
+    """module__action -> (module, action).  Uses rpartition so module
+    names containing '__' still parse correctly."""
+    module, sep, action = name.rpartition(SEP)
+    if not sep:
+        return name, ""
     return module, action

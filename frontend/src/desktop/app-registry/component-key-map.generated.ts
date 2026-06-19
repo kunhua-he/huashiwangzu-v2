@@ -12,6 +12,7 @@ export const componentKeyMap: Record<string, () => Promise<{ default: Component 
   'image-vision/index.vue': () => import('@modules/image-vision/frontend/index.vue'),
   'pdf-parser/index.vue': () => import('@modules/pdf-parser/frontend/index.vue'),
   'pptx-parser/index.vue': () => import('@modules/pptx-parser/frontend/index.vue'),
+  'terminal-tools/index.vue': () => import('@modules/terminal-tools/frontend/index.vue'),
   'text-parser/index.vue': () => import('@modules/text-parser/frontend/index.vue'),
   'xlsx-parser/index.vue': () => import('@modules/xlsx-parser/frontend/index.vue'),
 }

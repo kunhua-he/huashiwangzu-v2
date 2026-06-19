@@ -53,6 +53,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   send: []
+  stop: []
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -67,7 +68,8 @@ const placeholder = '输入消息…'
 const canSend = computed(() => text.value.trim().length > 0 && !props.sending && !props.disabled)
 
 function handleSend() {
-  if (canSend.value || props.sending) emit('send')
+  if (props.sending) { emit('stop'); return }
+  if (canSend.value) emit('send')
 }
 
 function autoResize() {

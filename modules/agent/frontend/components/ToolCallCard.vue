@@ -58,6 +58,7 @@ function formatResult(r: unknown): string {
 
 <style scoped>
 .tool-card {
+  flex-shrink: 0;
   align-self: flex-start;
   max-width: 85%;
   margin-bottom: var(--ag-space-lg);

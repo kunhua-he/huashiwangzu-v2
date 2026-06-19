@@ -24,6 +24,24 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 | 前端构建 | `vue-tsc -b` 0 错误，Element Plus 最大 chunk ~475 kB |
 | 后端测试 | pytest 72 通过（G9–G12 修复后）|
 
+## 本地运行入口与端口(分清主框架 vs 模块沙盒)
+
+**同事/华哥日常测试 = 主框架。** 模块沙盒只给开发某个模块时单独调试用,两者是不同的进程和端口,别混。
+
+| 跑什么 | 谁 | 地址/端口 | 怎么起 | 常驻? |
+|--------|----|-----------|--------|-------|
+| **主框架·前端** | 桌面壳(加载所有模块,框架统一登录发 token) | `http://127.0.0.1:5173` | `cd frontend && npm run dev` | 否(开发服务器,关终端就没) |
+| **主框架·后端** | 平台服务层 FastAPI | `127.0.0.1:30004` | `scripts/start_backend.sh`(watchdog 守护) | ✅ 是(崩了自动拉起) |
+| 模块沙盒·agent | Agent 模块单独调试壳(**自己的登录表单**,非框架登录态) | 前端 `127.0.0.1:5180` / 后端 `38010` | `cd modules/agent/sandbox && bash run.sh` | 否 |
+
+**关键区别**：
+- 主框架前端访问 **必须带端口 5173**——直接开 `127.0.0.1`(=80 端口)会 `ERR_CONNECTION_REFUSED`,因为 80 上没服务。
+- 主框架里 Agent 走 `modules/agent/frontend/index.vue`，登录/token 由**框架统一接管**（runtime SDK `authHeaders()`），模块沙盒的登录壳 `sandbox/src/App.vue` **不上场**。
+- 模块沙盒(5180)是**独立世界**，没有框架登录态，要在沙盒里单独登录拿 token——开发自测用，跟生产无关。
+- 端口约定：主框架前端固定 5173，**模块沙盒一律避开 5173**（agent 沙盒用 5180），防止跟主框架抢端口。新模块沙盒照此避开。
+
+> 鉴权链路自测(命令行)：`POST /api/login {username,password}` 拿 `access_token` → 带 `Authorization: Bearer <token>` 调模块接口。无 token = 401，有效 token 不再 401(字段不对会是 422，与鉴权无关)。
+
 ## 框架能力清单
 
 ### 桌面壳

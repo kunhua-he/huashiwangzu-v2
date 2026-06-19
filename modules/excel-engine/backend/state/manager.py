@@ -5,7 +5,7 @@ Central state management with DB persistence, history, snapshot, styles.
 import os
 from typing import Any
 
-from backend.tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
+from ..tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
 
 TEMP_DIR: str = ''
 

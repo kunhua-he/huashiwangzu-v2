@@ -7,8 +7,10 @@
 - **目标**：把 Agent "N 次工具逐层翻文件" 换成 "1 次查表"，不烧 LLM token
 - **索引模型**：文件节点 + 符号节点 + 5 种边 (import / call / capability_register / capability_call / db_table)
 - **扫描范围**：`backend/app/*`、`frontend/src/*`、`modules/*`
+- **扫描排除**：自动跳过 `node_modules`、`.venv`、`dist`、`__pycache__`、`.git`、`data`、`sandbox`、`tests` 等第三方/构建/测试目录。**不索引第三方库**。
 - **语言支持**：Python (ast)、TypeScript/Vue (regex)
 - **热更新**：watchdog 监听文件变更，500ms 防抖增量更新
+- **可信度**：stats 返回 0-100 confidence（基于就绪 + 解析成功率 + 新鲜度）；`get_file`/`impact` 返回 `stale` 标记
 
 ## 模块结构
 
@@ -17,12 +19,13 @@ modules/codemap/
   manifest.json          # 模块身份，background-service
   requirements.txt       # tree-sitter>=0.25, watchdog>=6.0
   backend/
-    router.py            # HTTP 端点 (6) + 跨模块能力注册 (6)
+    router.py            # HTTP 端点 (11) + 跨模块能力注册 (11)
     graph.py             # 内存图数据结构 + 查询算法
     indexer.py           # 文件扫描 + 多语言解析
     boundary_engine.py   # 边界规则引擎
     watcher.py           # watchdog 热更新
-  data/                  # 预留持久化目录
+    file_lock.py         # 跨 worker 文件持久化锁
+  data/                  # 持久化数据目录（已 .gitignore）
   tests/
     test_codemap.py      # 24 个单元测试
 ```
@@ -32,42 +35,60 @@ modules/codemap/
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/codemap/health` | 健康检查 |
-| GET | `/api/codemap/stats` | 索引统计 |
-| POST | `/api/codemap/get-file` | 文件级代码地图 |
-| POST | `/api/codemap/impact` | 影响面分析（传递闭包） |
+| GET | `/api/codemap/stats` | 索引统计（含 confidence/解析失败/新鲜度） |
+| POST | `/api/codemap/get-file` | 文件级代码地图（含 stale 标记） |
+| POST | `/api/codemap/impact` | 影响面分析（传递闭包，含 stale 标记） |
 | POST | `/api/codemap/check-boundary` | 边界合规检查 |
 | POST | `/api/codemap/module-map` | 模块总览 |
 | POST | `/api/codemap/search` | 关键词搜索 |
+| POST | `/api/codemap/rebuild` | 全量重建索引（admin） |
+| POST | `/api/codemap/acquire-lock` | 获取文件锁（跨 worker） |
+| POST | `/api/codemap/check-lock` | 检查文件锁 |
+| POST | `/api/codemap/release-lock` | 释放文件锁 |
+| GET | `/api/codemap/list-locks` | 列出所有活跃锁 |
 
 ## 跨模块能力（供 Agent 技能发现器使用）
 
 | 能力 key | 入参 | 返回 |
 |----------|------|------|
-| `codemap:get_file` | `{path}` | 文件节点、依赖、被依赖、能力、表 |
-| `codemap:impact` | `{path, symbol?}` | 正向+反向传递闭包、风险等级 |
+| `codemap:get_file` | `{path}` | 文件节点、依赖、被依赖、能力、表、stale |
+| `codemap:impact` | `{path, symbol?}` | 正向+反向传递闭包、风险等级、stale |
 | `codemap:check_boundary` | `{path? , module_key?}` | 违规清单或"合规" |
 | `codemap:module_map` | `{module_key}` | 暴露/消费的能力、边界健康 |
 | `codemap:search` | `{keyword}` | 匹配的文件和符号 |
-| `codemap:stats` | `{}` | 索引规模、耗时、就绪状态 |
+| `codemap:stats` | `{}` | 索引规模、耗时、就绪状态、confidence |
+| `codemap:rebuild` | `{}` | 全量重建索引（admin） |
+| `codemap:acquire_lock` | `{path, agent_id, ttl?}` | 获取文件锁 |
+| `codemap:check_lock` | `{path}` | 检查文件锁 |
+| `codemap:release_lock` | `{path}` | 释放文件锁 |
+| `codemap:list_locks` | `{}` | 列出所有活跃锁 |
 
 ## 查询示例
 
 ```bash
 # 文件信息
-curl -X POST http://127.0.0.1:30004/api/codemap/get-file \
+curl -X POST http://127.0.0.1:33000/api/codemap/get-file \
   -H "Content-Type: application/json" \
   -d '{"path": "modules/agent/backend/router.py"}'
 
 # 影响面分析
-curl -X POST http://127.0.0.1:30004/api/codemap/impact \
+curl -X POST http://127.0.0.1:33000/api/codemap/impact \
   -H "Content-Type: application/json" \
   -d '{"path": "backend/app/database.py"}'
 
 # 边界检查
-curl -X POST http://127.0.0.1:30004/api/codemap/check-boundary \
+curl -X POST http://127.0.0.1:33000/api/codemap/check-boundary \
   -H "Content-Type: application/json" \
   -d '{"module_key": "agent"}'
 ```
+
+## 文件锁协作约定
+
+并行任务（多 Agent 改文件）应遵循：
+1. 改文件前先 `check_lock` 检查目标文件是否被锁
+2. 有活锁 → 跳过或等待
+3. 无锁 → `acquire_lock` → 改文件 → `release_lock`
+4. TTL 到期自动释放，防 Agent 崩溃后锁残留
 
 ## 依赖
 
@@ -87,7 +108,7 @@ pip install tree-sitter watchdog
 cd backend && .venv/bin/python -m pytest ../modules/codemap/tests/ -v
 ```
 
-## 索引模型详述
+## 索引模型
 
 ### 节点
 
@@ -118,3 +139,4 @@ cd backend && .venv/bin/python -m pytest ../modules/codemap/tests/ -v
 - 索引就绪前，查询返回 `{status: "indexing"}`
 - watchdog 监听文件变更，**500ms 防抖合并**，只增量重解析受影响文件
 - 查询始终读当前快照，更新期间不阻塞
+- `POST /api/codemap/rebuild` 可手动触发全量重建（admin）

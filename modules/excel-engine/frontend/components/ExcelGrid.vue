@@ -31,7 +31,8 @@
               @contextmenu.prevent="onCellContextMenu($event, r, c)">
               <template v-if="isEditing && editAddr === `${colLetter(c - 1)}${r}`">
                 <input ref="editInput" class="cell-editor"
-                  v-model="editValue"
+                  :value="editValue"
+                  @input="$emit('update:editValue', ($event.target as HTMLInputElement).value)"
                   @keydown.enter="confirmEdit"
                   @keydown.tab.prevent="onTabEdit"
                   @keydown.escape="cancelEdit"

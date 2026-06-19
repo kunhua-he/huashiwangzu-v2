@@ -5,9 +5,9 @@ from datetime import datetime
 from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models import ExcelWorkbook, ExcelSheet, ExcelCell, ExcelColWidth, ExcelRowHeight, ExcelHistory, ExcelRedoStack, ExcelVersion
-from backend.tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS, AUTO_SAVE_INTERVAL
-from backend.state.manager import build_snapshot
+from ..models import ExcelWorkbook, ExcelSheet, ExcelCell, ExcelColWidth, ExcelRowHeight, ExcelHistory, ExcelRedoStack, ExcelVersion
+from ..tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS, AUTO_SAVE_INTERVAL
+from .manager import build_snapshot
 
 
 async def find_workbook(db: AsyncSession, state_key: str) -> Optional[dict]:
@@ -18,11 +18,11 @@ async def find_workbook(db: AsyncSession, state_key: str) -> Optional[dict]:
     return None
 
 
-async def find_or_create_workbook(db: AsyncSession, state_key: str) -> dict:
+async def find_or_create_workbook(db: AsyncSession, state_key: str, owner_id: int = 0) -> dict:
     wb = await find_workbook(db, state_key)
     if wb:
         return wb
-    new_wb = ExcelWorkbook(state_key=state_key, name=state_key, owner_id=0, upload_time=datetime.utcnow(), last_active_time=datetime.utcnow())
+    new_wb = ExcelWorkbook(state_key=state_key, name=state_key, owner_id=owner_id, upload_time=datetime.utcnow(), last_active_time=datetime.utcnow())
     db.add(new_wb)
     await db.commit()
     await db.refresh(new_wb)
@@ -88,10 +88,10 @@ async def read_history(db: AsyncSession, state_key: str) -> list[dict]:
     return [{'id': r[0], 'action': r[1], 'cell_addr': r[2], 'description': r[3], 'created_at': r[4].isoformat() if r[4] else ''} for r in result.fetchall()]
 
 
-async def record_snapshot(db: AsyncSession, state: dict, state_key: str, action: str, addr: str = '', description: str = ''):
+async def record_snapshot(db: AsyncSession, state: dict, state_key: str, action: str, addr: str = '', description: str = '', owner_id: int = 0):
     sheet_id = state.get('_sheet_id')
     if not sheet_id:
-        wb = await find_or_create_workbook(db, state_key)
+        wb = await find_or_create_workbook(db, state_key, owner_id)
         sheet = await find_sheet(db, wb['id'], state.get('_current_sheet', 'Sheet1'))
         sheet_id = sheet['id'] if sheet else None
     if not sheet_id:
@@ -164,8 +164,8 @@ async def history_preview(db: AsyncSession, history_id: int, sheet_id: int) -> O
     return snapshot if isinstance(snapshot, dict) else None
 
 
-async def read_state_full(db: AsyncSession, state_key: str, sheet_name: str = 'Sheet1') -> dict:
-    wb = await find_or_create_workbook(db, state_key)
+async def read_state_full(db: AsyncSession, state_key: str, sheet_name: str = 'Sheet1', owner_id: int = 0) -> dict:
+    wb = await find_or_create_workbook(db, state_key, owner_id)
     sheet = await find_or_create_sheet(db, wb['id'], sheet_name)
     sheet_id = sheet['id']
 
@@ -263,7 +263,7 @@ async def archive_workbook(db: AsyncSession, state: dict, state_key: str, output
     wb = await find_workbook(db, state_key)
     if not wb:
         return None
-    from backend.engine.xlsx_generator import generate_xlsx
+    from ..engine.xlsx_generator import generate_xlsx
     name = wb['name']
     result = await db.execute(text(f"SELECT id, name, total_rows, total_cols FROM {ExcelSheet.__tablename__} WHERE workbook_id = :wid ORDER BY id"), {'wid': wb['id']})
     sheets = result.fetchall()

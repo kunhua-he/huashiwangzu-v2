@@ -1,6 +1,6 @@
 """Style operations - 1:1 from old 表格/样式.php"""
 from typing import Any
-from backend.state.manager import cell_get_style_ref
+from ..state.manager import cell_get_style_ref
 
 
 class StyleOperations:

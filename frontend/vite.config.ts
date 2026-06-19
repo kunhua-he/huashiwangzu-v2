@@ -1,9 +1,23 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
+import fs from 'fs'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+
+function getBackendTarget(): string {
+  if (process.env.VITE_API_TARGET) return process.env.VITE_API_TARGET
+
+  const portFile = path.resolve(__dirname, '../backend/logs/.backend.port')
+  try {
+    const port = fs.readFileSync(portFile, 'utf-8').trim()
+    if (/^\d+$/.test(port)) return `http://127.0.0.1:${port}`
+  } catch {
+    // Backend has not been started by the watchdog yet.
+  }
+  return 'http://127.0.0.1:33000'
+}
 
 export default defineConfig({
   plugins: [
@@ -32,7 +46,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:30004',
+        target: getBackendTarget(),
         changeOrigin: true,
       },
     },

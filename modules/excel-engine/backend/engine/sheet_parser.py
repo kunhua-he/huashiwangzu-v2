@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 import re
 from typing import Any
 
-from backend.engine.color_parser import parse_color_node
+from .color_parser import parse_color_node
 
 SPREAD_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 

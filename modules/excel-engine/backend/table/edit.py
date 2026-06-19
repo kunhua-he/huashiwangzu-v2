@@ -2,8 +2,8 @@
 import json
 from typing import Any
 
-from backend.state.manager import cell_set_text, cell_get_style_ref, cell_set_style_val
-from backend.tool.formula import calculate_formula
+from ..state.manager import cell_set_text, cell_get_style_ref, cell_set_style_val
+from ..tool.formula import calculate_formula
 
 
 class EditOperations:

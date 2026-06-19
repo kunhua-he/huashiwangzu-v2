@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.file import Folder, File
-from app.core.exceptions import NotFound, AppException
+from app.core.exceptions import NotFound, AppException, PermissionDenied
 from app.services.file_share_service import get_accessible_file_ids
 
 
@@ -159,6 +159,22 @@ async def _recursive_delete_folder(db: AsyncSession, folder_id: int):
 async def get_file_record(db: AsyncSession, file_id: int) -> File | None:
     result = await db.get(File, file_id)
     return result if result and not result.deleted else None
+
+
+async def check_file_access(db: AsyncSession, file_id: int, user_id: int) -> File:
+    """Return an accessible file record or raise a framework API exception."""
+    file = await db.get(File, file_id)
+    if not file or file.deleted:
+        raise NotFound("File not found")
+    if file.owner_id == user_id:
+        return file
+
+    from app.services.file_share_service import check_file_access as check_shared_file_access
+
+    access = await check_shared_file_access(db, file_id, user_id)
+    if not access["accessible"]:
+        raise PermissionDenied("Permission denied")
+    return file
 
 
 async def search_files(db: AsyncSession, owner_id: int, keyword: str = "", extension: str | None = None, page: int = 1, page_size: int = 50) -> dict:

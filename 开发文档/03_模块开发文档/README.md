@@ -10,7 +10,12 @@
 
 - `modules/_template/` 已创建，包含标准 sandbox 模板、runtime 中间层和最小 `frontend/index.vue` 入口，新模块复制即用。
 - `modules/hello-world/` 是第一个跑通端到端接入的最小模块（纯前端），验证了"复制模板→build 扫描→后端 sync→桌面加载→调 runtime SDK"全链路，可作为新模块参考样板。
-- **Agent 模块迁移中**（从 V1 PHP 用 V2 架构重建）：M0（骨架 + 后端 sandbox，连生产库 + 真网关）、M1（对话 + SSE 流式 + 消息入库）、M2（工具框架 = 技能发现器，读框架技能清单自动生成工具、走 `call_capability` 执行）已完成；M3（提示词渲染 + 引用校验）待做。Agent 是技能消费方，不暴露能力。
+- **Agent 模块已完整迁移并深度强化**（从 V1 PHP 用 V2 架构重建）：对话 + SSE 流式 + 消息入库、工具框架（技能发现器，读框架技能清单自动生成工具、走 `call_capability` 执行）、三层提示词（系统/企业/个人画像，DB 存储 + 画像自动进化）、桌面感知、终端工具能力、UI 优化均已完成。Agent 是技能消费方，不暴露能力。流式收尾必发 `[DONE]`（在 finally 里）防前端卡死；前端 401 自愈（清 token 跳登录）。
+- **已接入的其他模块**：
+  - `codemap`（代码地图服务）：常驻内存索引全代码库（生产代码 310 文件，Python 用 ast、TS/Vue 用 tree-sitter），watchdog 热更新。注册 6 个能力 `get_file`/`impact`/`check_boundary`/`module_map`/`search`/`stats`，**POST 文件路径（绝对或相对均可，内部归一化）→ 拿关联文件 + 影响面**。Agent 改代码前查影响面用，省 token、防改炸。排除 `sandbox/`/`tests/` 等开发壳。
+  - `terminal-tools`（终端能力）：工作区内执行命令，**macOS `sandbox-exec` 内核级沙盒**关死（只读系统 + 只读写工作区，越界/读宿主机全拒），非 macOS fail-closed。
+  - `desktop-tools`（桌面/文件感知）：查框架文件系统（非宿主机桌面）。
+  - `excel-engine`（在线表格编辑器，后端已挂载）、6 个格式解析模块 `pdf/docx/pptx/xlsx/text-parser` + `image-vision`、`hello-world`（最小样板）、`_template`（模板）。
 - 知识库尚未迁入（Agent 的可选插件，独立于 Agent 主体）。迁知识库时一并做 G12.2（manifest `public_actions` 声明式能力注册：模块只声明 + 写 handler，框架扫 manifest 自动注册，Agent 经 M2 自动发现 = 0 修改闭环）。
 - 前端模块扫描链路：`frontend/scripts/scan-modules.js` 扫描 `modules/*/manifest.json`（跳过 `_` 开头目录），生成 `component-key-map.generated.ts`。平台 app 则由 `platform-component-key-map.ts` 用 `import.meta.glob` 自动扫描 `platform/components/apps/*/index.vue`（有组件才有映射，物理上不产生空壳）。
 - 后端应用清单同步链路：`backend/app/services/app_service.py` 合并 `backend/app/seed_data/apps.json` 和 `modules/*/manifest.json`，同步到数据库；应用启动时自动 sync，并清理 manifest 中已删除的孤儿 app。

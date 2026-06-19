@@ -38,3 +38,10 @@ backend/data/uploads/
 
 # Terminal tools workspace
 backend/data/workspaces/
+
+# Codemap persistence
+modules/codemap/backend/data/
+
+# Module-specific logs
+backend/logs/modules/
+backend/logs/modules.log

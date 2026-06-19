@@ -90,6 +90,7 @@ async def add_message_meta(
     thinking: str = "",
     references: list | None = None,
     tool_events: list | None = None,
+    timeline: list | None = None,
 ) -> AgentMessageMeta:
     meta = AgentMessageMeta(
         owner_id=owner_id,
@@ -98,6 +99,7 @@ async def add_message_meta(
         thinking=thinking,
         references=references or [],
         tool_events=tool_events or [],
+        timeline=timeline or [],
     )
     db.add(meta)
     await db.commit()
@@ -127,6 +129,7 @@ async def get_messages_with_meta(db: AsyncSession, owner_id: int, conversation_i
             "thinking": meta.thinking if meta else "",
             "references": meta.references if meta else [],
             "tool_events": meta.tool_events if meta else [],
+            "timeline": meta.timeline if meta else [],
         })
     return result
 

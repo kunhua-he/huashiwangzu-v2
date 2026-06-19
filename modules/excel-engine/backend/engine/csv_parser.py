@@ -2,7 +2,7 @@
 import csv
 import io
 from typing import Any
-from backend.tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
+from ..tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
 
 
 def parse_csv(path: str, filename: str = '') -> dict[str, Any]:

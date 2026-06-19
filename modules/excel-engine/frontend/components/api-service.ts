@@ -3,7 +3,7 @@
  *
  * Handles all backend communication for the Excel editor.
  */
-import { platform } from '../runtime'
+import { getApiUrl } from '../../runtime'
 
 export interface CellEditRequest {
   state_key: string
@@ -45,7 +45,7 @@ export interface OpenResult {
 }
 
 function apiUrl(path: string): string {
-  return platform.getApiUrl(path)
+  return getApiUrl(path)
 }
 
 async function post<T>(path: string, body: any): Promise<T> {

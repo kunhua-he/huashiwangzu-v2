@@ -19,22 +19,33 @@ class ParseRequest(BaseModel):
     file_id: int
 
 
+def _resolve_user_id(caller: str) -> int:
+    from app.core.exceptions import PermissionDenied
+
+    try:
+        prefix, raw_id = caller.split(":", 1)
+        if prefix == "user":
+            return int(raw_id)
+    except (TypeError, ValueError):
+        pass
+    raise PermissionDenied("Invalid caller")
+
+
 async def _parse(params: dict, caller: str) -> dict:
     """Parse TXT/MD file into unified content blocks."""
     file_id = int(params.get("file_id", 0))
     if file_id <= 0:
         raise ValueError("file_id must be a positive integer")
 
-    from app.models.file import File
     from app.config import get_settings
     from app.core.exceptions import NotFound, ValidationError, AppException
+    from app.services.file_service import check_file_access
     from pathlib import Path
 
     allowed = {"txt", "md", "markdown", "text", "log"}
+    user_id = _resolve_user_id(caller)
     async with AsyncSessionLocal() as db:
-        file = await db.get(File, file_id)
-        if not file or file.deleted:
-            raise NotFound("File not found")
+        file = await check_file_access(db, file_id, user_id)
         ext = (file.extension or "").lower()
         if ext not in allowed:
             raise ValidationError("Unsupported format '%s'. Allowed: %s" % (ext, ", ".join(sorted(allowed))))
@@ -126,7 +137,7 @@ async def _parse(params: dict, caller: str) -> dict:
 
 
 @router.get("/health")
-async def health(user: User = Depends(require_permission("viewer"))):
+async def health():
     return ApiResponse(data={"module": "text-parser", "status": "ok"})
 
 

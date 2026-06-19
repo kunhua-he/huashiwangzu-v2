@@ -31,6 +31,7 @@ class AgentMessageMeta(Base, TimestampMixin):
     thinking: Mapped[str] = mapped_column(Text, default="")
     references: Mapped[list] = mapped_column(JSON, default=list)
     tool_events: Mapped[list] = mapped_column(JSON, default=list)
+    timeline: Mapped[list] = mapped_column(JSON, default=list)
 
 
 # ── 三层提示词系统 ──────────────────────────────────────────

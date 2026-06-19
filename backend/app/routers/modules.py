@@ -18,7 +18,11 @@ class ModuleCallRequest(BaseModel):
 @router.post("/call")
 async def module_call(payload: ModuleCallRequest, user: User = Depends(require_permission("viewer"))):
     result = await call_capability(
-        payload.target_module, payload.action, payload.parameters, caller=f"user:{user.id}",
+        payload.target_module,
+        payload.action,
+        payload.parameters,
+        caller=f"user:{user.id}",
+        caller_role=user.role,
     )
     return ApiResponse(data=result)
 

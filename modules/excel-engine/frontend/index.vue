@@ -2,14 +2,14 @@
   <div class="excel-editor">
     <!-- Loading -->
     <div v-if="loading" class="state-layer">
-      <el-icon class="spin" :size="28"><Loading /></el-icon>
+      <span class="loading-spinner"></span>
       <p>加载 Excel 数据…</p>
     </div>
 
     <!-- Error -->
     <div v-else-if="errorMsg" class="state-layer">
       <p class="error-text">{{ errorMsg }}</p>
-      <el-button v-if="retryable" @click="init" size="small">重试</el-button>
+      <button v-if="retryable" class="retry-btn" @click="init">重试</button>
     </div>
 
     <!-- Editor -->
@@ -79,13 +79,20 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { Loading } from '@element-plus/icons-vue'
+import { getApiUrl } from '../runtime'
 import { colLetter, parseCellAddr } from './components/address-util'
 import ExcelGrid from './components/ExcelGrid.vue'
 import ExcelToolbar from './components/ExcelToolbar.vue'
 import ContextMenu from './components/ContextMenu.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 import * as api from './components/api-service'
+
+// ── Global declaration for desktop shell file-open payload ──
+declare global {
+  interface Window {
+    __MODULE_OPEN_FILE_PAYLOAD__?: { fileId: number; fileName: string }
+  }
+}
 
 // ── State ──
 const loading = ref(true)
@@ -181,7 +188,7 @@ async function init() {
 
 async function tryGetFilePayload(): Promise<{ fileId: number; fileName: string } | null> {
   try {
-    const payload = (window as any).__MODULE_OPEN_FILE_PAYLOAD__
+    const payload = window.__MODULE_OPEN_FILE_PAYLOAD__
     if (payload?.fileId) {
       return { fileId: payload.fileId, fileName: payload.fileName || '' }
     }
@@ -193,7 +200,7 @@ async function openFile(fileId: number, fileName: string) {
   stateKey.value = `knowledge_${fileId}`
   // Try loading via API
   try {
-    const response = await fetch(platform.getApiUrl('/excel-engine/open'), {
+    const response = await fetch(getApiUrl('/excel-engine/open'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -207,7 +214,7 @@ async function openFile(fileId: number, fileName: string) {
   } catch {}
   // If API fails, try parse
   try {
-    const response = await fetch(platform.getApiUrl('/excel-engine/parse'), {
+    const response = await fetch(getApiUrl('/excel-engine/parse'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -374,7 +381,7 @@ async function onToolbarAction(action: string) {
 
 async function onStyleChange(method: string, params: Record<string, any>) {
   if (selectedRange.value.length === 0) return
-  await fetch(platform.getApiUrl('/excel-engine/style'), {
+  await fetch(getApiUrl('/excel-engine/style'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -392,7 +399,7 @@ async function onStyleChange(method: string, params: Record<string, any>) {
 async function sendEdit(method: string, addr: string, value: string) {
   if (!stateKey.value) return
   try {
-    await fetch(platform.getApiUrl('/excel-engine/edit'), {
+    await fetch(getApiUrl('/excel-engine/edit'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -410,7 +417,7 @@ async function sendEdit(method: string, addr: string, value: string) {
 async function sendStyleAction(method: string) {
   if (!stateKey.value || selectedRange.value.length === 0) return
   try {
-    await fetch(platform.getApiUrl('/excel-engine/style'), {
+    await fetch(getApiUrl('/excel-engine/style'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -428,7 +435,7 @@ async function sendStyleAction(method: string) {
 async function sendStateOp(method: string) {
   if (!stateKey.value) return
   try {
-    const res = await fetch(platform.getApiUrl('/excel-engine/state'), {
+    const res = await fetch(getApiUrl('/excel-engine/state'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -455,7 +462,7 @@ async function sendSave() {
 
 async function exportXlsx() {
   if (!stateKey.value) return
-  window.open(platform.getApiUrl(`/excel-engine/download/${stateKey.value}`), '_blank')
+  window.open(getApiUrl(`/excel-engine/download/${stateKey.value}`), '_blank')
 }
 
 // ── Context menu ──
@@ -499,7 +506,7 @@ async function execContextAction(action: string) {
           pasteData[0].push(clipboardData.value[key].text)
         }
       }
-      await fetch(platform.getApiUrl('/excel-engine/clipboard'), {
+      await fetch(getApiUrl('/excel-engine/clipboard'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -602,7 +609,7 @@ function toggleHistory() {
 async function loadHistory() {
   if (!stateKey.value) return
   try {
-    const res = await fetch(platform.getApiUrl('/excel-engine/state'), {
+    const res = await fetch(getApiUrl('/excel-engine/state'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -624,7 +631,7 @@ async function loadHistory() {
 async function previewHistory(historyId: number) {
   if (!stateKey.value) return
   try {
-    const res = await fetch(platform.getApiUrl('/excel-engine/state'), {
+    const res = await fetch(getApiUrl('/excel-engine/state'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -667,7 +674,7 @@ function formatTime(isoStr: string): string {
 }
 
 // Watch for file open payload
-watch(() => (window as any).__MODULE_OPEN_FILE_PAYLOAD__, (payload) => {
+watch(() => window.__MODULE_OPEN_FILE_PAYLOAD__, (payload) => {
   if (payload?.fileId) {
     openFile(payload.fileId, payload.fileName || '')
   }
@@ -699,6 +706,31 @@ watch(() => (window as any).__MODULE_OPEN_FILE_PAYLOAD__, (payload) => {
 
 .spin {
   animation: spin 1.5s linear infinite;
+}
+
+.loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e4e7ed;
+  border-top-color: #409eff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.retry-btn {
+  padding: 6px 16px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #606266;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.retry-btn:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: #ecf5ff;
 }
 
 @keyframes spin {

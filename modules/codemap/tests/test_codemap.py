@@ -95,9 +95,8 @@ def call_capability(target_module, action, params, caller):
     pass
 """)
 
-    _write_file(base, "backend/app/services/file_service.py", """
-from app.config import get_settings
-def list_files(owner_id):
+    _write_file(base, "backend/app/routers/internal_admin.py", """
+def list_all_files():
     return []
 """)
 
@@ -166,7 +165,7 @@ import sys
 from modules.agent.backend.service import AgentService
 
 # VIOLATION: importing framework internal
-from app.services.file_service import list_files
+from app.routers.internal_admin import list_all_files
 
 # VIOLATION: framework table name in string
 TABLE = "framework_users"
@@ -216,7 +215,7 @@ async function doCall() {
         "python_files": [
             "backend/app/config.py", "backend/app/database.py",
             "backend/app/services/module_registry.py",
-            "backend/app/services/file_service.py",
+            "backend/app/routers/internal_admin.py",
             "backend/app/models/user.py",
             "modules/agent/backend/router.py",
             "modules/agent/backend/service.py",
@@ -316,6 +315,28 @@ class TestCodeGraphIsolated:
         assert result["compliant"] is False
         assert len(result["violations"]) >= 1
         assert any(v["type"] == "cross_module_import" for v in result["violations"])
+
+    def test_framework_public_imports_are_allowed(self):
+        graph = CodeGraph()
+        graph._ensure_file_node("modules/ok/backend/r.py", "module", "ok")
+        public_paths = [
+            "backend/app/middleware/auth.py",
+            "backend/app/models/user.py",
+            "backend/app/models/file.py",
+            "backend/app/core/exceptions.py",
+            "backend/app/gateway/router.py",
+        ]
+        for idx, target in enumerate(public_paths, start=1):
+            graph._ensure_file_node(target, "framework-backend", None)
+            graph.add_import(ImportEdge(
+                source="modules/ok/backend/r.py",
+                target=target,
+                line=idx,
+            ))
+
+        result = graph.check_boundary(path="modules/ok/backend/r.py")
+        assert result["compliant"] is True
+        assert result["violations"] == []
 
     def test_search(self):
         graph = CodeGraph()
@@ -514,6 +535,42 @@ from app.database import get_db
         violation_types = [v["type"] for v in result["violations"]]
         assert "cross_module_import" not in violation_types
         assert "framework_internal_import" not in violation_types
+
+    def test_plain_strings_are_not_table_edges(self):
+        sample = self.tmp / "modules" / "codemap" / "backend" / "sample.py"
+        sample.parent.mkdir(parents=True, exist_ok=True)
+        sample.write_text("""
+RULE = "framework_table_access"
+EXAMPLE = "agent_conversations"
+def explain():
+    return "framework_internal_import"
+""")
+
+        self.indexer.update_file("modules/codemap/backend/sample.py")
+        info = self.graph.get_file("modules/codemap/backend/sample.py")
+        assert info is not None
+        assert info["db_tables"] == []
+
+    def test_sql_and_orm_contexts_are_table_edges(self):
+        sample = self.tmp / "modules" / "agent" / "backend" / "sql_sample.py"
+        sample.write_text("""
+from sqlalchemy import ForeignKey, text
+
+class Conversation:
+    __tablename__ = "agent_conversations"
+    owner_id = ForeignKey("framework_user_accounts.id")
+
+async def load(db):
+    await db.execute(text("SELECT id FROM agent_messages WHERE conversation_id = :cid"))
+""")
+
+        self.indexer.update_file("modules/agent/backend/sql_sample.py")
+        info = self.graph.get_file("modules/agent/backend/sql_sample.py")
+        assert info is not None
+        tables = {edge["table_name"] for edge in info["db_tables"]}
+        assert "agent_conversations" in tables
+        assert "framework_user_accounts" in tables
+        assert "agent_messages" in tables
 
 
 class TestRealProjectIntegration:

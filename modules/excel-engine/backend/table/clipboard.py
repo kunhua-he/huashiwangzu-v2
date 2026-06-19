@@ -1,7 +1,7 @@
 """Clipboard operations - 1:1 from old 表格/剪贴板.php"""
 from typing import Any
-from backend.state.manager import cell_get_text, cell_set_text, cell_get_style_ref
-from backend.tool.address import parse_address, rc_to_address
+from ..state.manager import cell_get_text, cell_set_text, cell_get_style_ref
+from ..tool.address import parse_address, rc_to_address
 
 
 class ClipboardOperations:

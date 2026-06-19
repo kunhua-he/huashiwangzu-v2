@@ -18,36 +18,13 @@
             <path d="M4 3l4 3-4 3"/>
           </svg>
         </button>
-        <div v-show="showThinking" class="inline-th-body">{{ message.thinking }}</div>
+        <div v-show="showThinking" class="inline-th-body">{{ normalizedThinking }}</div>
       </div>
 
-      <div class="msg-bubble" :class="message.role">
-        <!-- Markdown rendered content for AI, plain text for user -->
-        <div v-if="message.role === 'assistant'" class="msg-md" v-html="renderedContent"></div>
-        <div v-else class="msg-text">{{ message.content }}</div>
-      </div>
-
-      <!-- Reference chips -->
-      <div v-if="message.references?.length" class="ref-chips">
-        <button
-          v-for="(r, idx) in message.references" :key="idx"
-          class="ref-chip" @click="$emit('focusRef', r)"
-          :title="r.title || r.source"
-        >
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" width="10" height="10">
-            <path d="M2 2h3l2 2v8H4a2 2 0 01-2-2V2z"/>
-            <path d="M7 4h5v8a2 2 0 01-2 2H7V4z"/>
-          </svg>
-          <span>{{ r.title || r.source }}</span>
-        </button>
-      </div>
-
-      <!-- Tool events inline -->
+      <!-- 工具记录（思考之后、气泡之前） -->
       <div v-if="message.tool_events?.length" class="inline-tools">
         <button class="inline-tools-toggle" @click="showTools = !showTools">
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" width="12" height="12">
-            <path d="M6.5 1.5L9 5h4l-2.5 3.5L11 12l-3.5-2L4 12l1.5-3.5L3 5h4l2.5-3.5z"/>
-          </svg>
+          <span class="tools-dot"></span>
           <span>工具记录 {{ message.tool_events.length }}</span>
           <svg :class="{ rotated: showTools }" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" width="10" height="10">
             <path d="M4 3l4 3-4 3"/>
@@ -56,6 +33,12 @@
         <div v-show="showTools" class="inline-tools-body">
           <pre>{{ formatToolResult(message.tool_events) }}</pre>
         </div>
+      </div>
+
+      <div class="msg-bubble" :class="message.role">
+        <!-- Markdown rendered content for AI, plain text for user -->
+        <div v-if="message.role === 'assistant'" class="msg-md" v-html="renderedContent"></div>
+        <div v-else class="msg-text">{{ message.content }}</div>
       </div>
 
       <time class="msg-time">{{ formatTime(message.created_at) }}</time>
@@ -69,22 +52,30 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 
-interface ReferenceItem { type: string; title: string; source: string; excerpt: string }
 interface MsgItem {
   id: number
   role: string
   content: string
   created_at?: string | null
   thinking?: string
-  references?: ReferenceItem[]
   tool_events?: unknown[]
 }
 
 const props = defineProps<{ message: MsgItem }>()
-defineEmits<{ focusRef: [ref: ReferenceItem] }>()
 
 const showThinking = ref(false)
 const showTools = ref(false)
+
+/** 去掉换行符，压缩连续空格，与 ThinkingCard 保持一致 */
+const normalizedThinking = computed(() => {
+  if (!props.message.thinking) return ''
+  return props.message.thinking.replace(/[\n\r]+/g, '').replace(/[ \t]{2,}/g, ' ').trim()
+})
+
+function formatToolResult(r: unknown): string {
+  if (typeof r === 'string') return r
+  try { return JSON.stringify(r, null, 2) } catch { return String(r) }
+}
 
 // Configure marked to use highlight.js for code blocks
 const renderer = new marked.Renderer()
@@ -128,11 +119,6 @@ function formatTime(iso?: string | null): string {
     const d = new Date(iso)
     return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   } catch { return '' }
-}
-
-function formatToolResult(r: unknown): string {
-  if (typeof r === 'string') return r
-  try { return JSON.stringify(r, null, 2) } catch { return String(r) }
 }
 </script>
 
@@ -317,34 +303,9 @@ function formatToolResult(r: unknown): string {
   line-height: var(--ag-line-height-base);
 }
 
-/* Reference chips */
-.ref-chips {
-  display: flex; gap: var(--ag-space-xs); flex-wrap: wrap;
-  margin-top: var(--ag-space-sm);
-  padding-top: var(--ag-space-sm);
-  border-top: 1px solid var(--ag-border-light);
-}
-.ref-chip {
-  display: flex; align-items: center; gap: 3px;
-  padding: 3px 8px;
-  border: 1px solid var(--ag-border-light);
-  border-radius: 20px;
-  background: var(--ag-bg-page);
-  color: var(--ag-text-link);
-  font-size: var(--ag-font-size-sm);
-  cursor: pointer;
-  transition: all var(--ag-transition-fast);
-  max-width: 200px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.ref-chip:hover { background: var(--ag-primary-light); border-color: var(--ag-primary); }
-.ref-chip span { overflow: hidden; text-overflow: ellipsis; }
-
 /* Tool events inline */
 .inline-tools {
-  margin-top: var(--ag-space-sm);
-  padding-top: var(--ag-space-sm);
-  border-top: 1px solid var(--ag-border-light);
+  margin-top: var(--ag-space-xs);
 }
 .inline-tools-toggle {
   display: flex; align-items: center; gap: 5px;
@@ -355,6 +316,10 @@ function formatToolResult(r: unknown): string {
 .inline-tools-toggle:hover { color: var(--ag-text-secondary); }
 .inline-tools-toggle svg { transition: transform var(--ag-transition-base); }
 .inline-tools-toggle svg.rotated { transform: rotate(90deg); }
+.tools-dot {
+  width: 6px; height: 6px; border-radius: var(--ag-radius-full);
+  background: var(--ag-success); flex-shrink: 0;
+}
 .inline-tools-body {
   margin-top: var(--ag-space-xs);
 }

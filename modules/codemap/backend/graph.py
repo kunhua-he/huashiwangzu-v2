@@ -164,6 +164,12 @@ class CodeGraph:
         self._build_end: float = 0.0
         self._ready: bool = False
         self._file_count_at_build: int = 0
+        self._file_mtimes: dict[str, float] = {}
+        self._failed_files: list[dict] = []
+        self._total_files_scanned: int = 0
+
+        # ── Rebuild trigger ──────────────────────────────────────────
+        self._reindex_callback: callable | None = None
 
     # ── Write helpers ──────────────────────────────────────────────────
 
@@ -205,61 +211,106 @@ class CodeGraph:
         self._capabilities.setdefault(edge.file, []).append(edge)
 
     def add_db_table(self, edge: DbTableEdge) -> None:
-        self._db_tables.setdefault(edge.file, []).append(edge)
+        existing = self._db_tables.setdefault(edge.file, [])
+        if any(e.table_name == edge.table_name and e.line == edge.line for e in existing):
+            return
+        existing.append(edge)
 
     # ── Bulk operations ────────────────────────────────────────────────
 
     def clear_file(self, path: str) -> None:
         """Remove a file and all its edges from the graph."""
-        # Remove reverse import edges pointing to this file
-        for rev_edge in self._rev_imports.pop(path, []):
-            src_list = self._imports.get(rev_edge.source)
-            if src_list:
-                src_list[:] = [e for e in src_list if e.target != path]
+        with self._lock:
+            # Remove reverse import edges pointing to this file
+            for rev_edge in self._rev_imports.pop(path, []):
+                src_list = self._imports.get(rev_edge.source)
+                if src_list:
+                    src_list[:] = [e for e in src_list if e.target != path]
 
-        # Remove forward import edges from this file
-        for fwd_edge in self._imports.pop(path, []):
-            rev_list = self._rev_imports.get(fwd_edge.target)
-            if rev_list:
-                rev_list[:] = [e for e in rev_list if e.source != path]
-
-        # Remove capability edges
-        self._capabilities.pop(path, None)
-
-        # Remove db table edges
-        self._db_tables.pop(path, None)
-
-        # Remove symbols belonging to this file
-        removed_ids = [sid for sid, s in self._symbols.items() if s["file"] == path]
-
-        # Remove call edges for removed symbols
-        for sid in removed_ids:
-            for ce in self._calls.pop(sid, []):
-                rev_list = self._rev_calls.get(ce.target_symbol_id)
+            # Remove forward import edges from this file
+            for fwd_edge in self._imports.pop(path, []):
+                rev_list = self._rev_imports.get(fwd_edge.target)
                 if rev_list:
-                    rev_list[:] = [e for e in rev_list if e.source_symbol_id != sid]
-            self._rev_calls.pop(sid, None)
+                    rev_list[:] = [e for e in rev_list if e.source != path]
 
-        for sid in removed_ids:
-            self._symbols.pop(sid, None)
+            # Remove capability edges
+            self._capabilities.pop(path, None)
 
-        # Remove file node
-        self._files.pop(path, None)
+            # Remove db table edges
+            self._db_tables.pop(path, None)
+
+            # Remove symbols belonging to this file
+            removed_ids = [sid for sid, s in self._symbols.items() if s["file"] == path]
+
+            # Remove call edges for removed symbols
+            for sid in removed_ids:
+                for ce in self._calls.pop(sid, []):
+                    rev_list = self._rev_calls.get(ce.target_symbol_id)
+                    if rev_list:
+                        rev_list[:] = [e for e in rev_list if e.source_symbol_id != sid]
+                self._rev_calls.pop(sid, None)
+
+            for sid in removed_ids:
+                self._symbols.pop(sid, None)
+
+            # Remove file node
+            self._files.pop(path, None)
+            # Remove mtime tracking
+            self._file_mtimes.pop(path, None)
 
     def begin_build(self) -> None:
         with self._lock:
             self._ready = False
             self._build_start = time.time()
+            self._file_mtimes.clear()
+            self._failed_files.clear()
+            self._total_files_scanned = 0
 
     def finish_build(self, file_count: int) -> None:
         with self._lock:
             self._build_end = time.time()
             self._file_count_at_build = file_count
+            self._total_files_scanned = file_count
             self._ready = True
 
     @property
     def ready(self) -> bool:
         return self._ready
+
+    # ── Index tracking ────────────────────────────────────────────────
+
+    def record_file_index(self, file_path: str) -> None:
+        """Record file's mtime at index time (for stale detection)."""
+        abs_path = _PROJECT_ROOT / file_path
+        try:
+            mtime = abs_path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        self._file_mtimes[file_path] = mtime
+
+    def record_file_fail(self, file_path: str, error: str) -> None:
+        """Record a file that failed to parse."""
+        self._failed_files.append({"path": file_path, "error": str(error)[:200]})
+
+    def is_file_stale(self, file_path: str) -> bool:
+        """Check if a file's disk mtime is newer than its index time."""
+        indexed_mtime = self._file_mtimes.get(file_path)
+        if indexed_mtime is None:
+            return True
+        try:
+            disk_mtime = (_PROJECT_ROOT / file_path).stat().st_mtime
+        except OSError:
+            return True
+        return disk_mtime > indexed_mtime
+
+    def set_reindex_callback(self, cb: callable | None) -> None:
+        """Set a callback to trigger a full rebuild from outside."""
+        self._reindex_callback = cb
+
+    def reindex_now(self) -> None:
+        """Trigger a full rebuild via the registered callback."""
+        if self._reindex_callback:
+            self._reindex_callback()
 
     # ── Query: get_file ────────────────────────────────────────────────
 
@@ -275,6 +326,7 @@ class CodeGraph:
             info["imported_by"] = [e.to_dict() for e in self._rev_imports.get(path, [])]
             info["capabilities"] = [e.to_dict() for e in self._capabilities.get(path, [])]
             info["db_tables"] = [e.to_dict() for e in self._db_tables.get(path, [])]
+            info["stale"] = self.is_file_stale(path)
             return info
 
     # ── Query: impact (transitive closure) ─────────────────────────────
@@ -349,6 +401,7 @@ class CodeGraph:
                 "path": path,
                 "symbol": symbol_name,
                 "symbol_ids": start_symbols,
+                "stale": self.is_file_stale(path),
                 "forward_impact": {
                     "files": sorted(forward_files),
                     "file_count": len(forward_files),
@@ -578,6 +631,16 @@ class CodeGraph:
     def stats(self) -> dict:
         with self._lock:
             build_time = (self._build_end - self._build_start) if self._build_end > 0 else 0
+            success_count = self._total_files_scanned - len(self._failed_files)
+            fail_count = len(self._failed_files)
+            parse_rate = (success_count / self._total_files_scanned * 100) if self._total_files_scanned > 0 else 0.0
+            freshness_hours = (time.time() - self._build_end) / 3600 if self._build_end > 0 else -1
+            ready_score = 50 if self._ready else 0
+            freshness_score = max(0, 25 - int(freshness_hours)) if freshness_hours >= 0 else 0
+            freshness_score = max(0, min(25, freshness_score))
+            parse_score = min(25, int(parse_rate * 0.25))
+            confidence = ready_score + freshness_score + parse_score
+            confidence = max(0, min(100, confidence))
             return {
                 "ready": self._ready,
                 "file_count": len(self._files),
@@ -590,6 +653,11 @@ class CodeGraph:
                 "build_time_seconds": round(build_time, 3),
                 "last_build_time": time.strftime("%Y-%m-%d %H:%M:%S",
                                                  time.localtime(self._build_end)) if self._build_end else None,
+                "parse_success_count": success_count,
+                "parse_fail_count": fail_count,
+                "failed_files": self._failed_files[:50],
+                "freshness_hours": round(freshness_hours, 1) if freshness_hours >= 0 else None,
+                "confidence": confidence,
             }
 
 

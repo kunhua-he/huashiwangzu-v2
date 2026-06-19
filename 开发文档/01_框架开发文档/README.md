@@ -20,7 +20,7 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 | 数据库 | 21 张 `framework_*` 表，干净基线迁移 `v2_clean_framework_baseline` |
 | 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容，指数退避重试 |
 | 模块模板 | `modules/_template/`，含 sandbox 开发环境 + runtime SDK 壳 |
-| 业务模块 | 当前无已接入模块；AI 助手/知识库待从 V1 或新设计重建 |
+| 业务模块 | 已接入 11 个：agent（AI助手，含三层提示词/桌面感知/终端工具）、codemap（代码地图）、desktop-tools、terminal-tools、excel-engine、6 个格式解析（pdf/docx/pptx/xlsx/text/image-vision）、hello-world 样板（另含模板 1 个 `_template`）。知识库待迁 |
 | 前端构建 | `vue-tsc -b` 0 错误，Element Plus 最大 chunk ~475 kB |
 | 后端测试 | pytest 72 通过（G9–G12 修复后）|
 
@@ -98,7 +98,26 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 
 Runtime SDK 的 `platform` 对象含 9 个 namespace：`auth`、`files`、`office`、`gateway`、`tasks`、`notifications`、`logs`、`settings`、`modules`（跨模块调用，含 `call`/`capabilities`）。
 
-禁止模块 `import frontend/src/*`、`import backend/app/services/*`、直接读写框架数据库表。
+### 模块可用框架公开能力清单
+
+模块可以调用框架公开能力，但不能把框架内部实现当业务依赖。当前事实源如下，codemap 边界检查以此清单判定：
+
+| 类型 | 允许模块使用 | 规则 |
+|------|--------------|------|
+| 后端数据库会话 | `app.database.get_db`、`app.database.AsyncSessionLocal` | 只作为连接和事务入口；模块只能读写自身 `{key}_*` 表，不能直接读写 `framework_*` 或其他模块表 |
+| 鉴权与当前用户 | `app.middleware.auth.require_permission`、`app.models.user.User` | router 依赖注入用；业务查询不得绕过 owner/user 隔离 |
+| 统一响应与异常 | `app.schemas.common.ApiResponse`、`app.core.exceptions.AppException`/`NotFound`/`ValidationError`/`ConflictError`/`PermissionDenied` | API 必须保持 `{success,data,error}`；业务错误抛异常，不返回假成功 |
+| 模块能力注册/调用 | `app.services.module_registry.register_capability`、`call_capability`、`list_capabilities` | 跨模块调用唯一后端通路；禁止 import 其他模块代码 |
+| 任务队列 | `app.services.task_worker.register_task_handler`、`app.models.system.SystemTaskQueue` | 模块注册 handler 或投递框架任务；任务 payload 只存逻辑 ID |
+| 模型网关 | `app.gateway.router.gateway_router` | 作为统一模型入口；模块不得绕过网关散落 provider/key |
+| 框架文件/应用桥接 | `app.models.file.File/Folder`、`app.models.app.App`、`app.services.file_service`（推荐入口：`check_file_access(db, file_id, user_id)`）、`file_upload_service`、`file_preview_service`、`app.services.app_service.can_user_access_app`、`app.config.get_settings` | 仅限桥接型模块或文件解析/发布场景；读盘前必须先经 `check_file_access` 校验 owner/share；禁止直接 `db.get(File, file_id)` 后读文件内容；其他文件操作必须经框架服务函数保持 owner 隔离、去重、审计等底座规则 |
+| SQLAlchemy 基类 | `app.models.base.Base`、`TimestampMixin` | 模块 ORM 可复用基类；模块表仍不得加到框架迁移或加跨表外键 |
+| 前端 runtime SDK | `modules/{module}/runtime/index.ts` 注入的 `platform` 对象 | 模块前端优先通过 runtime 调 `auth/files/office/gateway/tasks/notifications/logs/settings/modules` |
+| 前端共享工具 | `frontend/src/shared/` | 仅可使用明确共享的 API/组件；不得 import `frontend/src/desktop/`、`frontend/src/router/`、`frontend/src/stores/` 等壳内部实现 |
+
+未列入本表的 `backend/app/services/*`、`backend/app/models/*`、`backend/app/routers/*`、`backend/app/middleware/*`、`backend/app/core/*`、`backend/app/gateway/*` 和 `frontend/src/*` 均按框架内部实现处理。确有多个模块都需要的新能力，先作为独立框架任务把契约写进本清单，再让模块使用。
+
+禁止模块 `import frontend/src/*`（除 `frontend/src/shared/`）、导入未列入本清单的 `backend/app/*` 内部实现、直接读写框架数据库表或其他模块表。
 
 ### 扩展边界
 

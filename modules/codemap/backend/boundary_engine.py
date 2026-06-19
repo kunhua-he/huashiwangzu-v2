@@ -35,9 +35,21 @@ _FRAMEWORK_INTERNAL_PREFIXES = (
 _FRAMEWORK_PUBLIC_PREFIXES = (
     "backend/app/database.py",
     "backend/app/config.py",
+    "backend/app/core/exceptions.py",
     "backend/app/schemas/common.py",
     "backend/app/services/module_registry.py",
     "backend/app/services/task_worker.py",
+    "backend/app/services/app_service.py",
+    "backend/app/services/file_service.py",
+    "backend/app/services/file_upload_service.py",
+    "backend/app/services/file_preview_service.py",
+    "backend/app/middleware/auth.py",
+    "backend/app/models/app.py",
+    "backend/app/models/base.py",
+    "backend/app/models/file.py",
+    "backend/app/models/system.py",
+    "backend/app/models/user.py",
+    "backend/app/gateway/router.py",
     # Frontend shared utilities are the framework's public JS surface
     "frontend/src/shared/",
 )

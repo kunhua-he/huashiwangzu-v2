@@ -2,7 +2,7 @@
 import logging
 from typing import Awaitable, Callable
 
-from app.core.exceptions import NotFound
+from app.core.exceptions import NotFound, PermissionDenied
 
 logger = logging.getLogger("v2.module_registry")
 
@@ -35,12 +35,26 @@ def register_capability(
     logger.info("Registered capability: %s:%s", module_key, action)
 
 
-async def call_capability(target_module: str, action: str, params: dict, caller: str) -> dict:
-    """跨模块调用的唯一入口。target 未公开该能力则抛 NotFound。"""
+async def call_capability(
+    target_module: str,
+    action: str,
+    params: dict,
+    caller: str,
+    caller_role: str = "viewer",
+) -> dict:
+    """跨模块调用的唯一入口。target 未公开或角色不足则抛异常。"""
     entry = _CAPABILITIES.get(_key(target_module, action))
     if not entry:
         raise NotFound(f"Module '{target_module}' does not expose action '{action}'")
-    logger.info("Cross-module call: caller=%s -> %s:%s", caller, target_module, action)
+    min_role = entry.get("min_role", "viewer")
+    if _ROLE_ORDER.get(caller_role, -1) < _ROLE_ORDER.get(min_role, 0):
+        raise PermissionDenied(
+            f"Requires at least '{min_role}' role, got '{caller_role}'"
+        )
+    logger.info(
+        "Cross-module call: caller=%s role=%s -> %s:%s",
+        caller, caller_role, target_module, action,
+    )
     return await entry["handler"](params, caller)
 
 

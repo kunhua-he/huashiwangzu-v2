@@ -134,6 +134,66 @@ def _check_dangerous_command(command: str) -> str | None:
     return None
 
 
+def _check_path_escape(command: str, workspace_real: str) -> str | None:
+    """Check if command tries to access filesystem paths outside the workspace.
+
+    Intercepts:
+      - cd to absolute path outside workspace (cd /, cd /tmp)
+      - cd with ~ expansion (cd ~, cd ~/Downloads)
+      - cd .. traversal that exits workspace
+      - ls / find / tree / cat etc. with absolute path outside workspace
+
+    This is an application-layer guard; the kernel sandbox (sandbox-exec)
+    remains the primary defence against content escape.
+    """
+    import shlex
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None  # Malformed shell syntax, let shell handle
+
+    if not tokens:
+        return None
+
+    cmd_name = tokens[0]
+    args = tokens[1:]
+
+    # Commands that traverse or read directory/filesystem metadata
+    TRAVERSAL_CMDS = frozenset({
+        'cd', 'ls', 'find', 'tree', 'cat', 'less', 'more',
+        'head', 'tail', 'nl', 'wc', 'stat', 'du', 'file',
+        'readlink', 'realpath', 'dirname',
+    })
+
+    if cmd_name not in TRAVERSAL_CMDS:
+        return None
+
+    for arg in args:
+        # Skip flags and shell operators
+        if arg.startswith('-') or arg in {'&&', '||', ';', '|', '>', '>>', '<'}:
+            continue
+
+        # Block ~ expansion (home directory is outside workspace)
+        if arg == '~' or arg.startswith('~/'):
+            return (f"Path escape blocked: '{arg}' expands to"
+                    " home directory outside workspace")
+
+        # Resolve the path relative to the workspace root
+        try:
+            resolved = os.path.realpath(os.path.join(workspace_real, arg))
+        except (OSError, ValueError):
+            continue
+
+        resolved_str = str(resolved)
+        ws_prefix = workspace_real.rstrip('/') + '/'
+        if not resolved_str.startswith(ws_prefix) and resolved_str != workspace_real:
+            return (f"Path escape blocked: '{arg}' resolves to"
+                    f" {resolved_str} outside workspace")
+
+    return None
+
+
 # ── macOS sandbox-exec profile ────────────────────────────────────────
 
 def _build_sandbox_profile(workspace_real: str) -> str:
@@ -217,6 +277,18 @@ async def _exec(params: dict, caller: str) -> dict:
         return {
             "success": False,
             "error": danger,
+            "command": command,
+        }
+
+    # Path escape check — prevent cd /, ls /etc, etc.
+    escape = _check_path_escape(command, str(workspace_real))
+    if escape:
+        logger.warning(
+            "user=%s blocked path escape: %s", user_id, command
+        )
+        return {
+            "success": False,
+            "error": escape,
             "command": command,
         }
 

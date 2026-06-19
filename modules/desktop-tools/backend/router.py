@@ -179,9 +179,9 @@ async def _read_file(params: dict, caller: str) -> dict:
 
     If a format parser module is registered, delegates via call_capability.
     Pure text formats fall back to direct disk read when no parser is registered.
-    Owner-isolated: only the file's owner can read it.
+    Access-controlled: owner or shared users can read it.
     """
-    from app.models.file import File
+    from app.services.file_service import check_file_access
 
     owner_id = _resolve_user_id(caller)
     file_id = int(params.get("file_id", 0))
@@ -189,11 +189,10 @@ async def _read_file(params: dict, caller: str) -> dict:
         raise ValueError("file_id must be a positive integer")
 
     async with AsyncSessionLocal() as db:
-        file = await db.get(File, file_id)
-        if not file or file.deleted:
-            return {"success": False, "error": "File not found"}
-        if file.owner_id != owner_id:
-            return {"success": False, "error": "Access denied: file does not belong to current user"}
+        try:
+            file = await check_file_access(db, file_id, owner_id)
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
 
         ext = (file.extension or "").lower()
         file_info = {
@@ -210,7 +209,11 @@ async def _read_file(params: dict, caller: str) -> dict:
             # Try to delegate to the format parser module
             try:
                 parse_result = await call_capability(
-                    parser_module, "parse", {"file_id": file_id}, caller=caller,
+                    parser_module,
+                    "parse",
+                    {"file_id": file_id},
+                    caller=caller,
+                    caller_role="viewer",
                 )
                 # Convert unified content blocks to plain text for Agent consumption
                 blocks = parse_result.get("blocks", [])
@@ -401,7 +404,7 @@ class ReadFileRequest(BaseModel):
 
 
 @router.get("/health")
-async def health(user: User = Depends(require_permission("viewer"))):
+async def health():
     return ApiResponse(data={"module": "desktop-tools", "status": "ok"})
 
 

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .graph import (CallEdge, CapabilityEdge, CodeGraph, DbTableEdge,
-                    ImportEdge, get_graph)
+                       ImportEdge, get_graph)
 
 logger = logging.getLogger("v2.codemap.indexer")
 
@@ -31,6 +31,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # ── Scan roots (relative to project root) ───────────────────────────────────
 _SCAN_ROOTS = ["backend/app", "frontend/src", "modules"]
+
+# ── Public aliases (used by watcher.py) ──────────────────────────────────────
+PROJECT_ROOT = _PROJECT_ROOT
+SCAN_ROOTS = _SCAN_ROOTS
 
 # ── Exclude patterns ────────────────────────────────────────────────────────
 _EXCLUDE_DIRS = {
@@ -87,11 +91,32 @@ _RE_CALL_CAPABILITY = re.compile(
 _RE_REGISTER_CAPABILITY = re.compile(
     r"""register_capability\s*\(\s*['"]([\w-]+)['"]\s*,\s*['"]([\w-]+)['"]""")
 
-# SQL table patterns in strings
-_RE_TABLE_NAME = re.compile(
-    r"""['"](?:framework_|[a-z]+_)[a-z_]+['"]""")
-_RE_FOREIGN_KEY = re.compile(
-    r"""ForeignKey\s*\(\s*['"]([^'"]+)['"]""")
+# SQL table patterns in actual SQL/ORM contexts.
+_SQL_TABLE_REF_RE = re.compile(
+    r"""\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+["`]?([a-z][a-z0-9_]*_[a-z0-9_]+)["`]?""",
+    re.IGNORECASE,
+)
+_SQL_DELETE_FROM_RE = re.compile(
+    r"""\bDELETE\s+FROM\s+["`]?([a-z][a-z0-9_]*_[a-z0-9_]+)["`]?""",
+    re.IGNORECASE,
+)
+_SQL_ALTER_TABLE_RE = re.compile(
+    r"""\bALTER\s+TABLE\s+["`]?([a-z][a-z0-9_]*_[a-z0-9_]+)["`]?""",
+    re.IGNORECASE,
+)
+_SQL_CREATE_TABLE_RE = re.compile(
+    r"""\bCREATE\s+(?:TEMPORARY\s+|TEMP\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?([a-z][a-z0-9_]*_[a-z0-9_]+)["`]?""",
+    re.IGNORECASE,
+)
+_SQL_CONTEXT_FUNCS = {
+    "text",
+    "sqlalchemy.text",
+    "execute",
+    "db.execute",
+    "conn.execute",
+    "connection.execute",
+    "session.execute",
+}
 
 # Vue script block extraction
 _RE_VUE_SCRIPT = re.compile(
@@ -275,6 +300,9 @@ class _PythonVisitor(ast.NodeVisitor):
         sid = self._symbol_id(node.name)
         self.graph.add_symbol(sid, node.name, "class", self.file_path,
                               node.lineno, node.end_lineno or node.lineno)
+        for child in node.body:
+            if isinstance(child, (ast.Assign, ast.AnnAssign)):
+                self._handle_assign(child)
         old_class = self._current_class
         self._current_class = node.name
         self.generic_visit(node)
@@ -284,8 +312,10 @@ class _PythonVisitor(ast.NodeVisitor):
         """Check a node for calls, string table references, capability registrations."""
         if isinstance(node, ast.Call):
             self._handle_call(node)
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            self._check_string(node.value, node.lineno if hasattr(node, 'lineno') else 0)
+        elif isinstance(node, ast.Assign):
+            self._handle_assign(node)
+        elif isinstance(node, ast.AnnAssign):
+            self._handle_assign(node)
 
     def _handle_call(self, node: ast.Call) -> None:
         """Record function calls and capability registrations."""
@@ -310,13 +340,13 @@ class _PythonVisitor(ast.NodeVisitor):
                     source_line=node.lineno if hasattr(node, 'lineno') else 0,
                 ))
 
-        # Check args for strings (table names, ForeignKey)
+        # Check args for SQL/ORM table references.
         for arg in node.args:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                self._check_string(arg.value, node.lineno if hasattr(node, 'lineno') else 0)
+                self._check_call_string(func_name, arg.value, node.lineno if hasattr(node, 'lineno') else 0)
         for kw in node.keywords:
             if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                self._check_string(kw.value.value, node.lineno if hasattr(node, 'lineno') else 0)
+                self._check_call_string(func_name, kw.value.value, node.lineno if hasattr(node, 'lineno') else 0)
 
     def _get_call_name(self, node: ast.Call) -> str | None:
         if isinstance(node.func, ast.Name):
@@ -371,28 +401,50 @@ class _PythonVisitor(ast.NodeVisitor):
                         line=node.lineno if hasattr(node, 'lineno') else 0,
                     ))
 
-    def _check_string(self, value: str, lineno: int) -> None:
-        """Check a string literal for table names or ForeignKey references."""
-        # SQL table name detection: framework_* or {key}_*
-        for match in re.finditer(r'\b(framework_\w+|[a-z]+_\w+)\b', value):
-            table_name = match.group(1)
-            # Filter out common non-table patterns
-            if table_name in ("edit_pen", "go_back", "no_data", "all_rights",
-                              "v2_clean", "test_data", "user_id", "file_id",
-                              "owner_id", "task_id", "sort_order"):
-                continue
-            if "/" in table_name or "\\" in table_name:
-                continue
-            self.graph.add_db_table(DbTableEdge(
-                file=self.file_path, table_name=table_name, line=lineno,
-            ))
+    def _handle_assign(self, node: ast.Assign | ast.AnnAssign) -> None:
+        """Extract ORM __tablename__ assignments."""
+        value = node.value
+        if isinstance(value, ast.Call):
+            self._handle_call(value)
+            return
+        if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+            return
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == "__tablename__":
+                self._add_db_table(value.value, node.lineno if hasattr(node, 'lineno') else 0)
 
-        # ForeignKey detection
-        for match in re.finditer(r'''ForeignKey\s*\(\s*['"](\w+\.\w+)['"]''', value):
-            table_ref = match.group(1)
-            self.graph.add_db_table(DbTableEdge(
-                file=self.file_path, table_name=table_ref, line=lineno,
-            ))
+    def _check_call_string(self, func_name: str, value: str, lineno: int) -> None:
+        """Record table names only from real SQL/ORM call contexts."""
+        if func_name in ("ForeignKey", "sqlalchemy.ForeignKey"):
+            table_name = value.split(".", 1)[0]
+            self._add_db_table(table_name, lineno)
+            return
+        if func_name in ("Table", "sqlalchemy.Table"):
+            self._add_db_table(value, lineno)
+            return
+        if func_name in _SQL_CONTEXT_FUNCS:
+            self._check_sql_string(value, lineno)
+
+    def _check_sql_string(self, value: str, lineno: int) -> None:
+        """Extract table names from SQL statements, not from arbitrary strings."""
+        for pattern in (
+            _SQL_TABLE_REF_RE,
+            _SQL_DELETE_FROM_RE,
+            _SQL_ALTER_TABLE_RE,
+            _SQL_CREATE_TABLE_RE,
+        ):
+            for match in pattern.finditer(value):
+                self._add_db_table(match.group(1), lineno)
+
+    def _add_db_table(self, table_name: str, lineno: int) -> None:
+        """Add a normalized DB table edge if it looks like a project table."""
+        normalized = table_name.split(".", 1)[0].strip('"`').lower()
+        if not re.fullmatch(r"(?:framework_|[a-z][a-z0-9]*_)[a-z0-9_]+", normalized):
+            return
+        self.graph.add_db_table(DbTableEdge(
+            file=self.file_path, table_name=normalized, line=lineno,
+        ))
 
 
 def _parse_python(file_path: str, graph: CodeGraph) -> None:
@@ -571,23 +623,9 @@ def _walk_ts_tree(node, src: bytes, file_path: str, graph: CodeGraph) -> None:
     elif node.type == "call_expression":
         _check_ts_call_expr(node, src, file_path, graph)
 
-    # ── String literals for table names ────────────────────────────────
+    # ── SQL literals for table names ───────────────────────────────────
     elif node.type == "string":
-        text = src[node.start_byte:node.end_byte].decode()
-        # Strip quotes
-        inner = text[1:-1] if len(text) >= 2 else ""
-        if inner and re.search(r'\b(framework_\w+|[a-z]+_\w+)\b', inner):
-            lineno = node.start_point[0] + 1
-            # Filter common non-table patterns
-            if not any(skip in inner.lower() for skip in
-                       ("/", "\\", ".vue", ".ts", ".tsx", ".js", ".css", ".scss")):
-                for m in re.finditer(r'\b(framework_\w+|[a-z]+_\w+)\b', inner):
-                    tname = m.group(1)
-                    if tname not in ("edit_pen", "go_back", "all_rights",
-                                     "user_id", "file_id", "owner_id"):
-                        graph.add_db_table(DbTableEdge(
-                            file=file_path, table_name=tname, line=lineno,
-                        ))
+        _check_ts_sql_string(node, src, file_path, graph)
 
     # Recurse into children
     for child in node.children:
@@ -694,6 +732,26 @@ def _ts_string_value(string_node, src: bytes) -> str | None:
         if text[0] == "`" and text[-1] == "`":
             return text[1:-1]
     return text
+
+
+def _check_ts_sql_string(string_node, src: bytes, file_path: str, graph: CodeGraph) -> None:
+    """Extract table names only from SQL-looking TS string literals."""
+    inner = _ts_string_value(string_node, src)
+    if not inner:
+        return
+    if not re.search(r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|FROM|JOIN)\b", inner, re.IGNORECASE):
+        return
+    lineno = string_node.start_point[0] + 1
+    for pattern in (
+        _SQL_TABLE_REF_RE,
+        _SQL_DELETE_FROM_RE,
+        _SQL_ALTER_TABLE_RE,
+        _SQL_CREATE_TABLE_RE,
+    ):
+        for match in pattern.finditer(inner):
+            graph.add_db_table(DbTableEdge(
+                file=file_path, table_name=match.group(1).lower(), line=lineno,
+            ))
 
 
 # ── Regex fallback for when tree-sitter is unavailable ───────────────────────
@@ -832,8 +890,10 @@ def _parse_file(file_path: str, graph: CodeGraph) -> None:
         return
     try:
         parser(file_path, graph)
+        graph.record_file_index(file_path)
     except Exception as exc:
         logger.warning("Parse error in %s: %s", file_path, exc)
+        graph.record_file_fail(file_path, str(exc))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

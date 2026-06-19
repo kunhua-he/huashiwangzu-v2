@@ -1,8 +1,8 @@
 """Row/Column operations - 1:1 from old 表格/表格_行列操作.php"""
 import re
 from typing import Any
-from backend.state.manager import cell_get_text, cell_set_text
-from backend.tool.address import rc_to_address
+from ..state.manager import cell_get_text, cell_set_text
+from ..tool.address import rc_to_address
 
 
 class RowColOperations:

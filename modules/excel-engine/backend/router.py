@@ -3,13 +3,6 @@
 1:1 translation of old 表格.php API entry + 表格_调用.php routing.
 All operations go through this unified router.
 """
-import sys
-import pathlib
-# 插入模块根目录（excel-engine/），使 `from backend.xxx import` 能找到本模块的 backend 包
-_module_dir = str(pathlib.Path(__file__).resolve().parent.parent)
-if _module_dir not in sys.path:
-    sys.path.insert(0, _module_dir)
-
 import json
 import os
 import tempfile
@@ -22,28 +15,29 @@ from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.file_service import check_file_access
 from app.services.module_registry import register_capability
 
-from backend.state.manager import (
+from .state.manager import (
     init_state, cell_set_text, cell_get_style_ref,
     parse_addresses, empty_state,
     TEMP_DIR,
 )
-from backend.state.db_ops import (
+from .state.db_ops import (
     find_or_create_workbook, find_or_create_sheet,
     read_state_full, read_history, record_snapshot,
     undo_operation, redo_operation, history_preview,
     sync_cells, sync_col_widths, sync_row_heights,
     find_workbook, find_sheet,
 )
-from backend.table.edit import EditOperations
-from backend.table.style_ops import StyleOperations
-from backend.table.clipboard import ClipboardOperations
-from backend.table.row_col import RowColOperations
-from backend.engine.xlsx_parser import parse_xlsx
-from backend.engine.csv_parser import parse_csv
-from backend.engine.xlsx_generator import generate_xlsx
-from backend.tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
+from .table.edit import EditOperations
+from .table.style_ops import StyleOperations
+from .table.clipboard import ClipboardOperations
+from .table.row_col import RowColOperations
+from .engine.xlsx_parser import parse_xlsx
+from .engine.csv_parser import parse_csv
+from .engine.xlsx_generator import generate_xlsx
+from .tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
 
 # Constants matching old project
 WRITE_OPERATIONS = [
@@ -67,6 +61,18 @@ os.makedirs(_init_temp, exist_ok=True)
 init_state(_init_temp)
 
 router = APIRouter(prefix="/api/excel-engine", tags=["excel-engine"])
+
+
+def _resolve_user_id(caller: str) -> int:
+    from app.core.exceptions import PermissionDenied
+
+    try:
+        prefix, raw_id = caller.split(":", 1)
+        if prefix == "user":
+            return int(raw_id)
+    except (TypeError, ValueError):
+        pass
+    raise PermissionDenied("Invalid caller")
 
 
 # ── Schema ──
@@ -187,7 +193,8 @@ def _generate_description(op_key: str, addr: str = '', addrs: list[str] | None =
 async def _dispatch(
     module: str, method: str, params: dict,
     state_key: str, sheet: str, db: AsyncSession,
-    state: dict | None = None
+    state: dict | None = None,
+    owner_id: int = 0
 ) -> dict:
     """Unified dispatch matching old 表格_调用::调用"""
     load_state = state is None
@@ -199,7 +206,7 @@ async def _dispatch(
         return await _handle_state_direct(method, params, db)
 
     if load_state:
-        state = await read_state_full(db, state_key, sheet)
+        state = await read_state_full(db, state_key, sheet, owner_id=owner_id)
         if not state.get('cells'):
             state = empty_state(sheet)
 
@@ -208,12 +215,13 @@ async def _dispatch(
 
     if op_key in WRITE_OPERATIONS:
         await record_snapshot(db, state, state_key, op_key, addrs[0] if addrs else '',
-                              _generate_description(op_key, addrs[0] if addrs else '', addrs, params))
+                              _generate_description(op_key, addrs[0] if addrs else '', addrs, params),
+                              owner_id=owner_id)
         # Clear redo stack
         sheet_id = state.get('_sheet_id')
         if sheet_id and hasattr(db, 'execute'):
             from sqlalchemy import text
-            from backend.state.db_ops import ExcelRedoStack
+            from .state.db_ops import ExcelRedoStack
             await db.execute(
                 text(f"DELETE FROM {ExcelRedoStack.__tablename__} WHERE sheet_id = :sid"),
                 {'sid': sheet_id}
@@ -241,7 +249,7 @@ async def _dispatch(
 
     # Persist state after write operations (skip for download exports)
     if op_key in WRITE_OPERATIONS and not (module == 'export' and method == 'download'):
-        workbook_id = state.get('_workbook_id') or (await find_or_create_workbook(db, state_key))['id']
+        workbook_id = state.get('_workbook_id') or (await find_or_create_workbook(db, state_key, owner_id=owner_id))['id']
         sheet_id = state.get('_sheet_id')
         if not sheet_id:
             sheet_rec = await find_or_create_sheet(db, workbook_id, state.get('_current_sheet', sheet))
@@ -339,7 +347,7 @@ async def _handle_state_direct(method: str, params: dict, db: AsyncSession) -> d
 
 async def _handle_export(method: str, state: dict, state_key: str, sheet: str, params: dict, db: AsyncSession) -> dict:
     if method == 'download':
-        from backend.state.db_ops import build_snapshot
+        from .state.db_ops import build_snapshot
         all_sheet_data = {}
         sheet_set_raw = state.get('sheet_set', {})
         first = next(iter(sheet_set_raw.values()), None) if sheet_set_raw else None
@@ -403,7 +411,7 @@ async def _handle_import_method(method: str, state: dict, state_key: str, params
 # ── API Endpoints ──
 
 @router.get("/health")
-async def health(user: User = Depends(require_permission("viewer"))):
+async def health():
     return ApiResponse(data={"module": "excel-engine", "status": "ok"})
 
 
@@ -411,18 +419,15 @@ async def health(user: User = Depends(require_permission("viewer"))):
 async def parse_xlsx_file(payload: OpenRequest, db: AsyncSession = Depends(get_db),
                           user: User = Depends(require_permission("viewer"))):
     """Parse XLSX/CSV file from file storage"""
-    from app.models.file import File
     from app.config import get_settings
-    from app.core.exceptions import NotFound, AppException
+    from app.core.exceptions import NotFound, ValidationError
     from pathlib import Path
 
     allowed = {"xlsx", "xls", "csv"}
-    file = await db.get(File, payload.file_id)
-    if not file or file.deleted:
-        raise NotFound("File not found")
+    file = await check_file_access(db, payload.file_id, user.id)
     ext = (file.extension or "").lower()
     if ext not in allowed:
-        return ApiResponse(success=False, error=f"Unsupported format '{ext}'")
+        raise ValidationError(f"Unsupported format '{ext}'")
 
     upload_root = Path(get_settings().UPLOAD_DIR).resolve()
     full_path = (upload_root / file.storage_path).resolve()
@@ -443,21 +448,18 @@ async def parse_xlsx_file(payload: OpenRequest, db: AsyncSession = Depends(get_d
 async def open_xlsx(payload: OpenRequest, db: AsyncSession = Depends(get_db),
                     user: User = Depends(require_permission("viewer"))):
     """Open XLSX file - loads into DB state and returns initialized state"""
-    from app.models.file import File
     from app.config import get_settings
-    from app.core.exceptions import NotFound, AppException
+    from app.core.exceptions import NotFound
     from pathlib import Path
 
-    file = await db.get(File, payload.file_id)
-    if not file or file.deleted:
-        raise NotFound("File not found")
+    file = await check_file_access(db, payload.file_id, user.id)
     ext = (file.extension or "").lower()
     state_key = f'knowledge_{payload.file_id}'
 
     # Check if already loaded
     existing = await find_workbook(db, state_key)
     if existing:
-        state = await read_state_full(db, state_key, payload.target_sheet or 'Sheet1')
+        state = await read_state_full(db, state_key, payload.target_sheet or 'Sheet1', owner_id=user.id)
         return ApiResponse(data={
             'state_key': state_key,
             'cells': state.get('cells', {}),
@@ -485,7 +487,7 @@ async def open_xlsx(payload: OpenRequest, db: AsyncSession = Depends(get_db),
     if result.get('code') != 0:
         return ApiResponse(success=False, error=result.get('msg', 'Parse failed'))
 
-    wb = await find_or_create_workbook(db, state_key)
+    wb = await find_or_create_workbook(db, state_key, owner_id=user.id)
     sheet_name = payload.target_sheet or (result.get('all_sheets', ['Sheet1'])[0])
 
     if 'sheet_set' in result:
@@ -496,7 +498,7 @@ async def open_xlsx(payload: OpenRequest, db: AsyncSession = Depends(get_db),
             await sync_cells(db, sheet_rec['id'], s_data.get('cells', {}), s_data.get('styles', {}), s_data.get('merges', {}))
 
     # Read back
-    state = await read_state_full(db, state_key, sheet_name)
+    state = await read_state_full(db, state_key, sheet_name, owner_id=user.id)
     return ApiResponse(data={
         'state_key': state_key,
         'cells': state.get('cells', {}),
@@ -516,7 +518,7 @@ async def dispatch(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
                    user: User = Depends(require_permission("editor"))):
     """Unified dispatch endpoint - mirrors old 表格.php API"""
     result = await _dispatch(payload.module, payload.method, payload.params,
-                             payload.state_key, payload.sheet, db)
+                             payload.state_key, payload.sheet, db, owner_id=user.id)
     return ApiResponse(data=result)
 
 
@@ -531,13 +533,14 @@ async def edit_cell(payload: CellEditRequest, db: AsyncSession = Depends(get_db)
     if not addrs:
         addrs = ['A1']
 
-    state = await read_state_full(db, payload.state_key, payload.sheet)
+    state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
     result = await EditOperations.execute(payload.method, state, payload.state_key, addrs, params)
 
     op_key = f'edit.{payload.method}'
     if op_key in WRITE_OPERATIONS:
         await record_snapshot(db, state, payload.state_key, op_key, addrs[0],
-                              _generate_description(op_key, addrs[0], addrs, params))
+                              _generate_description(op_key, addrs[0], addrs, params),
+                              owner_id=user.id)
         # Persist
         sheet_id = state.get('_sheet_id')
         if sheet_id:
@@ -551,13 +554,14 @@ async def edit_style(payload: StyleRequest, db: AsyncSession = Depends(get_db),
                      user: User = Depends(require_permission("editor"))):
     """Edit cell style"""
     addrs = payload.address_list or ['A1']
-    state = await read_state_full(db, payload.state_key, payload.sheet)
+    state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
     result = await StyleOperations.execute(payload.method, state, payload.state_key, addrs, payload.params)
 
     op_key = f'style.{payload.method}'
     if op_key in WRITE_OPERATIONS:
         await record_snapshot(db, state, payload.state_key, op_key, addrs[0],
-                              _generate_description(op_key, addrs[0], addrs, payload.params))
+                              _generate_description(op_key, addrs[0], addrs, payload.params),
+                              owner_id=user.id)
         sheet_id = state.get('_sheet_id')
         if sheet_id:
             await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
@@ -570,7 +574,7 @@ async def clipboard(payload: ClipboardRequest, db: AsyncSession = Depends(get_db
                     user: User = Depends(require_permission("editor"))):
     """Clipboard copy/paste"""
     addrs = payload.address_list or ([payload.address] if payload.address else [])
-    state = await read_state_full(db, payload.state_key, payload.sheet)
+    state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
     result = await ClipboardOperations.execute(payload.method, state, payload.state_key, addrs, payload.params)
     return ApiResponse(data=result)
 
@@ -580,13 +584,14 @@ async def table_op(payload: TableRequest, db: AsyncSession = Depends(get_db),
                    user: User = Depends(require_permission("editor"))):
     """Row/column operations"""
     addrs = payload.address_list or ([payload.address] if payload.address else [])
-    state = await read_state_full(db, payload.state_key, payload.sheet)
+    state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
     result = await RowColOperations.execute(payload.method, state, payload.state_key, addrs, payload.params)
 
     op_key = f'table.{payload.method}'
     if op_key in WRITE_OPERATIONS:
         await record_snapshot(db, state, payload.state_key, op_key, addrs[0] if addrs else '',
-                              _generate_description(op_key, addrs[0] if addrs else '', addrs, payload.params))
+                              _generate_description(op_key, addrs[0] if addrs else '', addrs, payload.params),
+                              owner_id=user.id)
         sheet_id = state.get('_sheet_id')
         if sheet_id:
             await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
@@ -601,7 +606,7 @@ async def state_op(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
     if payload.method in ('archive_timeout', 'archive', 'workbook_list'):
         result = await _handle_state_direct(payload.method, payload.params, db)
     else:
-        state = await read_state_full(db, payload.state_key, payload.sheet)
+        state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
         result = await _handle_state(payload.method, state, payload.state_key, payload.params, payload.sheet, db)
     return ApiResponse(data=result)
 
@@ -610,7 +615,7 @@ async def state_op(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
 async def export_op(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
                     user: User = Depends(require_permission("editor"))):
     """Export operations"""
-    state = await read_state_full(db, payload.state_key, payload.sheet)
+    state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
     result = await _handle_export(payload.method, state, payload.state_key, payload.sheet, payload.params, db)
     return ApiResponse(data=result)
 
@@ -620,7 +625,7 @@ async def download_file(state_key: str, db: AsyncSession = Depends(get_db),
                         user: User = Depends(require_permission("viewer"))):
     """Download generated XLSX file"""
     from fastapi.responses import FileResponse
-    state = await read_state_full(db, state_key)
+    state = await read_state_full(db, state_key, owner_id=user.id)
     result = await _handle_export('download', state, state_key, 'Sheet1', {}, db)
     if result.get('code') != 0:
         raise HTTPException(status_code=404, detail=result.get('msg', 'Export failed'))
@@ -640,15 +645,13 @@ async def _parse_capability(params: dict, caller: str) -> dict:
         raise ValueError("file_id must be a positive integer")
 
     from app.config import get_settings
-    from app.models.file import File
     from pathlib import Path
     from app.database import AsyncSessionLocal
-    from app.core.exceptions import NotFound, AppException
+    from app.core.exceptions import NotFound
 
+    user_id = _resolve_user_id(caller)
     async with AsyncSessionLocal() as db:
-        file = await db.get(File, file_id)
-        if not file or file.deleted:
-            raise NotFound("File not found")
+        file = await check_file_access(db, file_id, user_id)
         ext = (file.extension or "").lower()
         if ext not in ("xlsx", "xls", "csv"):
             raise ValueError(f"Unsupported format '{ext}'")

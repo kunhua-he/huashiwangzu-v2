@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 import json
+import sys
 from importlib import import_module
 import importlib.util
 import logging
@@ -12,6 +13,15 @@ MODULES_ROOT = PROJECT_ROOT / "modules"
 logger = logging.getLogger("v2.module_registry")
 
 _module_load_errors: dict[str, str] = {}
+
+# ── Module metadata for self-healing ──
+# Maps: URL prefix (e.g. "/api/codemap") -> module_key (e.g. "codemap")
+_module_prefix_map: dict[str, str] = {}
+# Maps: module_key -> router_path
+_module_router_paths: dict[str, Path] = {}
+# Retry throttle: module_key -> last_attempt_timestamp
+_retry_last_attempt: dict[str, float] = {}
+RETRY_INTERVAL = 5.0  # seconds between retry attempts
 
 PLATFORM_ROUTER_MODULES: tuple[str, ...] = (
     "app.routers.auth",
@@ -83,10 +93,31 @@ def iter_module_router_files(modules_root: Path = MODULES_ROOT) -> Iterable[tupl
 
 def import_module_router(module_key: str, router_path: Path) -> APIRouter:
     safe_key = module_key.replace("-", "_")
-    spec = importlib.util.spec_from_file_location(f"huashiwangzu_modules.{safe_key}.router", router_path)
+    backend_dir = router_path.parent
+
+    # ── Register the huashiwangzu_modules top-level namespace package ──
+    if "huashiwangzu_modules" not in sys.modules:
+        import types
+        top_pkg = types.ModuleType("huashiwangzu_modules")
+        top_pkg.__path__ = []
+        sys.modules["huashiwangzu_modules"] = top_pkg
+
+    # ── Register this module's backend as a proper package under the namespace ──
+    pkg_name = f"huashiwangzu_modules.{safe_key}"
+    if pkg_name not in sys.modules:
+        import types
+        pkg = types.ModuleType(pkg_name)
+        pkg.__path__ = [str(backend_dir)]
+        sys.modules[pkg_name] = pkg
+
+    # ── Clear any stale 'backend' module that would pollute namespace for next module ──
+    sys.modules.pop("backend", None)
+
+    spec = importlib.util.spec_from_file_location(f"{pkg_name}.router", router_path)
     if not spec or not spec.loader:
         raise RuntimeError(f"Cannot load module router spec: {router_path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     router = getattr(module, "router", None)
     if not isinstance(router, APIRouter):
@@ -96,6 +127,94 @@ def import_module_router(module_key: str, router_path: Path) -> APIRouter:
 
 def get_module_load_errors() -> dict[str, str]:
     return dict(_module_load_errors)
+
+
+def clear_module_error(module_key: str) -> None:
+    """Remove a module from the load error dict after successful self-heal."""
+    _module_load_errors.pop(module_key, None)
+
+
+def clear_all_module_errors() -> None:
+    """Clear all module load errors (e.g. on full restart)."""
+    _module_load_errors.clear()
+
+
+def get_module_route_prefix_map() -> dict[str, str]:
+    """Return a copy of the prefix→module_key mapping for use by middleware."""
+    return dict(_module_prefix_map)
+
+
+def get_module_router_path(module_key: str) -> Path | None:
+    """Return the router file path for a module key, if known."""
+    return _module_router_paths.get(module_key)
+
+
+def build_default_prefix_map() -> None:
+    """Build the default prefix→module_key map from manifests before module loading.
+
+    Uses the manifest's ``route_prefix`` field if present, otherwise falls back to
+    ``/api/{module_key}`` convention.  After modules are loaded, the actual router
+    prefix overrides the guess.
+    """
+    _module_prefix_map.clear()
+    _module_router_paths.clear()
+
+    manifest_dir = PROJECT_ROOT / "modules"
+    if not manifest_dir.exists():
+        return
+
+    for manifest_path in sorted(manifest_dir.glob("*/manifest.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if manifest.get("enabled") is False:
+            continue
+        backend_config = manifest.get("backend")
+        if not isinstance(backend_config, dict) or backend_config.get("enabled") is False:
+            continue
+        router_entry = backend_config.get("router")
+        if not router_entry:
+            continue
+        module_key = str(manifest.get("key") or manifest_path.parent.name)
+
+        # Resolve router path
+        module_dir = manifest_path.parent.resolve()
+        router_path = (module_dir / router_entry).resolve()
+        if router_path.exists():
+            _module_router_paths[module_key] = router_path
+
+        # Determine prefix: manifest's route_prefix or /api/{key}
+        prefix = manifest.get("route_prefix")
+        if not prefix:
+            prefix = f"/api/{module_key}"
+        _module_prefix_map[prefix.rstrip("/")] = module_key
+
+
+def extract_module_key_from_path(path: str) -> str | None:
+    """Given a URL path, return the module key if it matches a known prefix."""
+    path = path.rstrip("/")
+    for prefix, module_key in sorted(_module_prefix_map.items(), key=lambda x: -len(x[0])):
+        if path == prefix or path.startswith(f"{prefix}/"):
+            return module_key
+    return None
+
+
+def try_retry_module_router(module_key: str) -> tuple[APIRouter | None, str | None]:
+    """Attempt to load / re-load a module's router.
+
+    Returns (router, None) on success or (None, error_message) on failure.
+    Caller is responsible for calling ``app.include_router(router)`` on success.
+    """
+    router_path = _module_router_paths.get(module_key)
+    if not router_path:
+        return None, f"Module '{module_key}' not found in route map"
+    try:
+        router = import_module_router(module_key, router_path)
+        return router, None
+    except Exception as exc:
+        logger.error("Retry failed for module '%s': %s", module_key, exc)
+        return None, str(exc)
 
 
 def _normalize_router_prefix(prefix: str) -> str:
@@ -127,6 +246,10 @@ def _ensure_prefix_available(prefix: str, module_key: str, seen_prefixes: dict[s
 def register_module_routers(app: FastAPI, modules_root: Path = MODULES_ROOT) -> None:
     seen_prefixes: dict[str, str] = {}
     _module_load_errors.clear()
+
+    # Build prefix and router path maps from manifests before loading
+    build_default_prefix_map()
+
     for module_key, router_path in iter_module_router_files(modules_root):
         try:
             router = import_module_router(module_key, router_path)
@@ -137,6 +260,8 @@ def register_module_routers(app: FastAPI, modules_root: Path = MODULES_ROOT) -> 
         prefix = _normalize_router_prefix(router.prefix)
         _ensure_prefix_available(prefix, module_key, seen_prefixes)
         seen_prefixes[prefix] = module_key
+        # Update prefix map with actual router prefix
+        _module_prefix_map[prefix] = module_key
         app.include_router(router)
         logger.info("Loaded module router: %s (prefix=%s)", module_key, prefix)
 

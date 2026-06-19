@@ -19,24 +19,35 @@ class DescribeRequest(BaseModel):
     file_id: int
 
 
+def _resolve_user_id(caller: str) -> int:
+    from app.core.exceptions import PermissionDenied
+
+    try:
+        prefix, raw_id = caller.split(":", 1)
+        if prefix == "user":
+            return int(raw_id)
+    except (TypeError, ValueError):
+        pass
+    raise PermissionDenied("Invalid caller")
+
+
 async def _describe(params: dict, caller: str) -> dict:
     """Generate text description of an image via vision model."""
     file_id = int(params.get("file_id", 0))
     if file_id <= 0:
         raise ValueError("file_id must be a positive integer")
 
-    from app.models.file import File
     from app.config import get_settings
     from app.core.exceptions import NotFound, ValidationError, AppException
+    from app.services.file_service import check_file_access
     from pathlib import Path
     import base64
     import io
 
     allowed = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "ico"}
+    user_id = _resolve_user_id(caller)
     async with AsyncSessionLocal() as db:
-        file = await db.get(File, file_id)
-        if not file or file.deleted:
-            raise NotFound("File not found")
+        file = await check_file_access(db, file_id, user_id)
         ext = (file.extension or "").lower()
         if ext not in allowed:
             raise ValidationError(f"Unsupported format '{ext}'. Allowed: {', '.join(sorted(allowed))}")
@@ -97,7 +108,7 @@ async def _describe(params: dict, caller: str) -> dict:
 
 
 @router.get("/health")
-async def health(user: User = Depends(require_permission("viewer"))):
+async def health():
     return ApiResponse(data={"module": "image-vision", "status": "ok"})
 
 

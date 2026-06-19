@@ -2,12 +2,12 @@
 from typing import Any
 import zipfile
 
-from backend.engine.color_parser import read_theme_colors
-from backend.engine.shared_strings import read_shared_strings
-from backend.engine.style_parser import read_styles
-from backend.engine.workbook_parser import read_workbook_list
-from backend.engine.sheet_parser import parse_sheet_data
-from backend.tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
+from .color_parser import read_theme_colors
+from .shared_strings import read_shared_strings
+from .style_parser import read_styles
+from .workbook_parser import read_workbook_list
+from .sheet_parser import parse_sheet_data
+from ..tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
 
 
 def parse_xlsx(path: str, filename: str = '', target_sheet: str = '') -> dict[str, Any]:

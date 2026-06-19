@@ -1,6 +1,6 @@
-"""Agent 模块表初始化：确保三层提示词默认数据存在。"""
+"""Agent 模块表初始化：确保三层提示词默认数据存在，并执行无痛迁移。"""
 import logging
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import AgentSystemPrompt, AgentEnterprisePrompt, AgentUserProfile
 
@@ -58,3 +58,26 @@ async def ensure_user_profile(db: AsyncSession, owner_id: int) -> AgentUserProfi
         await db.commit()
         await db.refresh(profile)
     return profile
+
+
+async def ensure_timeline_column(db: AsyncSession) -> None:
+    """无痛迁移：旧 agent_message_meta 表缺 timeline 列时自动补齐。"""
+    try:
+        await db.execute(text("ALTER TABLE agent_message_meta ADD COLUMN IF NOT EXISTS timeline JSON DEFAULT '[]'::json"))
+        await db.commit()
+        logger.info("Migration: ensured timeline column on agent_message_meta")
+    except Exception as e:
+        # IF NOT EXISTS handles "column already exists"; this catches real errors only
+        await db.rollback()
+        if hasattr(e, 'orig') and hasattr(e.orig, 'pgcode'):
+            # PostgreSQL error code — log and swallow known migration-safe errors
+            logger.warning("Migration: timeline column check (%s): %s", e.orig.pgcode, e)
+        else:
+            # Unknown error — log but don't crash the startup
+            logger.warning("Migration: timeline column check failed: %s", e)
+
+
+async def run_init(db: AsyncSession) -> None:
+    """Agent 模块启动初始化入口。"""
+    await ensure_timeline_column(db)
+    await ensure_default_prompts(db)

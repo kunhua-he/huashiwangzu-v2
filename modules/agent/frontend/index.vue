@@ -13,16 +13,7 @@
     />
 
     <section class="agent-main">
-      <ChatToolbar
-        :profiles="profiles"
-        :profileKey="profileKey"
-        :refPanelVisible="showReferencePanel"
-        @update:profileKey="profileKey = $event"
-        @toggleRef="showReferencePanel = !showReferencePanel"
-        @newConv="newConversation"
-      />
-
-      <!-- 消息区域 -->
+	      <!-- 消息区域 -->
       <div class="msg-area" ref="msgArea">
         <div v-if="!activeConvId && !loading" class="msg-empty">
           <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1" width="40" height="40" class="msg-empty-icon">
@@ -41,7 +32,7 @@
         <template v-for="(m, i) in messages" :key="`${m.id}-${i}`">
           <ToolCallCard v-if="m.eventType === 'tool_call' || m.eventType === 'tool_result'" :message="m" />
           <ThinkingCard v-else-if="m.eventType === 'thinking'" :content="m.content" :running="m.running" :collapsed="m.collapsed" />
-          <MessageBubble v-else :message="m" @focusRef="focusReference" />
+          <MessageBubble v-else :message="m" />
         </template>
 
         <!-- 流式输出指示器 -->
@@ -79,7 +70,7 @@
 import { computed, ref, nextTick, onMounted } from 'vue'
 import { initRuntime, getApiUrl, authHeaders } from '../runtime'
 import ConversationSidebar from './components/ConversationSidebar.vue'
-import ChatToolbar from './components/ChatToolbar.vue'
+
 import InputArea from './components/InputArea.vue'
 import MessageBubble from './components/MessageBubble.vue'
 import ThinkingCard from './components/ThinkingCard.vue'
@@ -92,7 +83,7 @@ interface ConvItem { id: number; title: string; status?: string }
 interface ModelProfile { key: string; name: string; provider: string; model: string }
 interface RefItem { type: string; title: string; source: string; excerpt: string }
 interface ApiBody<T> { success: boolean; data: T; error?: string | null }
-interface MsgItem { id: number; role: string; content: string; created_at?: string | null; eventType?: string; toolName?: string; toolResult?: unknown; thinking?: string; references?: RefItem[]; tool_events?: unknown[]; collapsed?: boolean; running?: boolean }
+interface MsgItem { id: number; role: string; content: string; created_at?: string | null; eventType?: string; toolName?: string; toolResult?: unknown; thinking?: string; references?: RefItem[]; tool_events?: unknown[]; timeline?: unknown[]; collapsed?: boolean; running?: boolean }
 
 // ── 状态 ──
 const conversations = ref<ConvItem[]>([])
@@ -182,7 +173,10 @@ async function deleteConversation(item: ConvItem) {
 
 async function selectConversation(id: number) {
   activeConvId.value = id; messages.value = []; showReferencePanel.value = false; error.value = ''
-  try { messages.value = await apiFetch<MsgItem[]>(`/agent/conversations/${id}/messages`) } catch { /* ignore */ }
+  try {
+    const raw = await apiFetch<MsgItem[]>(`/agent/conversations/${id}/messages`)
+    messages.value = expandTimeline(raw)
+  } catch { /* ignore */ }
   nextTick(scrollToBottom)
 }
 
@@ -193,6 +187,42 @@ function scrollToBottom() {
 
 function focusReference(ref: RefItem) {
   activeReference.value = ref; showReferencePanel.value = true
+}
+
+/** 按 timeline 展开历史消息：还原思考↔工具↔回复的真实交错顺序 */
+function expandTimeline(msgs: MsgItem[]): MsgItem[] {
+  const out: MsgItem[] = []
+  for (const m of msgs) {
+    const tl = m.timeline
+    if (!tl || !Array.isArray(tl) || tl.length === 0) {
+      out.push(m)  // 无 timeline：原样渲染（MessageBubble inline）
+      continue
+    }
+    let textBuf = ''
+    let hasExpanded = false
+    for (const entry of tl) {
+      const e = entry as Record<string, unknown>
+      const entryType = e.type as string
+      if (entryType === 'thinking') {
+        const c = (e.content as string) || ''
+        if (!c.trim()) continue
+        out.push({ id: 0, role: '', content: c, eventType: 'thinking', collapsed: true, running: false } as MsgItem)
+        hasExpanded = true
+      } else if (entryType === 'tool_call') {
+        out.push({ id: 0, role: '', content: '', eventType: 'tool_call', toolName: (e.name as string) || 'unknown' } as MsgItem)
+        hasExpanded = true
+      } else if (entryType === 'tool_result') {
+        out.push({ id: 0, role: '', content: '', eventType: 'tool_result', toolName: (e.name as string) || 'unknown', toolResult: e.result } as MsgItem)
+      } else if (entryType === 'text') {
+        textBuf += (e.content as string) || ''
+      }
+    }
+    const content = textBuf.trim() || m.content
+    if (content || hasExpanded) {
+      out.push({ id: m.id, role: m.role, content, created_at: m.created_at, thinking: '', tool_events: [], references: m.references } as MsgItem)
+    }
+  }
+  return out
 }
 
 // ── Metadata ──
@@ -209,126 +239,167 @@ async function loadMetadata() {
 
 // ── Chat ──
 function normalizeThinking(text: string): string {
-  // The model's thinking/reasoning stream arrives as small token chunks
-  // that may contain arbitrary whitespace and newlines.  Collapse all
-  // whitespace runs (spaces, tabs, newlines) into single spaces so the
-  // thinking reads as clean prose rather than scattered fragments.
-  return text.replace(/\s+/g, ' ').trim()
+  // The model's thinking stream arrives as small token chunks separated by
+  // newlines (SSE framing).  Strip newlines without introducing extra spaces
+  // (critical for Chinese where tokens can be single characters), then
+  // collapse accidental multi-space runs.
+  return text.replace(/[\n\r]+/g, '').replace(/[ \t]{2,}/g, ' ').trim()
 }
 
-let abortController: AbortController | null = null
+	let abortController: AbortController | null = null
+	let idleTimer: ReturnType<typeof setTimeout> | null = null
+	const STREAM_IDLE_TIMEOUT_MS = 30000  // 30s 无数据自动收尾
+	
+	function clearIdleTimer() {
+	  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+	}
+	
+	function resetIdleTimer(onTimeout: () => void) {
+	  clearIdleTimer()
+	  idleTimer = setTimeout(() => {
+	    idleTimer = null
+	    onTimeout()
+	  }, STREAM_IDLE_TIMEOUT_MS)
+	}
+	
+	function stopGeneration() {
+	  clearIdleTimer()
+	  if (abortController) { abortController.abort(); abortController = null }
+	  sending.value = false
+	  streaming.value = false
+	  streamingText.value = ''
+	}
+	
+	/** 将 streamingText 落成 assistant 消息 + 折叠 thinking */
+	function flushStreamingAsMessage() {
+	  for (const m of messages.value) {
+	    if (m.eventType === 'thinking') { m.collapsed = true; m.running = false }
+	  }
+	  const finalText = streamingText.value.trim()
+	  streamingText.value = ''
+	  if (finalText) {
+	    messages.value.push({ id: 0, role: 'assistant', content: finalText, created_at: new Date().toISOString() })
+	  }
+	  scrollToBottom()
+	}
+	
+	async function sendMessage() {
+	  if (sending.value || !activeConvId.value) return
+	  const text = inputText.value.trim()
+	  if (!text) return
+	  if (abortController) { abortController.abort() }
+	  abortController = new AbortController()
+	  clearIdleTimer()
+	  inputText.value = ''
+	  sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
+	  messages.value.push({ id: 0, role: 'user', content: text, created_at: new Date().toISOString() })
+	  scrollToBottom()
+	  try {
+	    const resp = await apiFetchRaw('/agent/chat', {
+	      method: 'POST',
+	      headers: { 'Content-Type': 'application/json' },
+	      body: JSON.stringify({ conversation_id: activeConvId.value, content: text, profile_key: profileKey.value }),
+	      signal: abortController.signal,
+	    })
+	    if (!resp.ok) { error.value = `请求失败 (${resp.status})`; return }
+	    if (!resp.body) { error.value = '无响应体'; return }
+	    const reader = resp.body.getReader()
+	    const decoder = new TextDecoder()
+	    let finished = false
+	
+	    // 启动空闲超时定时器
+	    resetIdleTimer(() => {
+	      if (abortController) { abortController.abort() }
+	      error.value = '响应超时，请重试'
+	    })
+	
+	    while (!finished) {
+	      let done = false; let value: Uint8Array | undefined
+	      try { const r = await reader.read(); done = r.done; value = r.value } catch { break }
+	      if (done) {
+	        // 流自然结束（EOF）：也要 flush streamingText
+	        abortController = null
+	        streaming.value = false; sending.value = false
+	        flushStreamingAsMessage()
+	        finished = true
+	        break
+	      }
+	      // 收到数据 → 重置空闲计时
+	      resetIdleTimer(() => {
+	        if (abortController) { abortController.abort() }
+	        error.value = '响应超时，请重试'
+	      })
+	      const chunk = decoder.decode(value!, { stream: true })
+	      for (const line of chunk.split('\n')) {
+	        const trimmed = line.trim()
+	        if (!trimmed.startsWith('data: ')) continue
+	        const payload = trimmed.slice(6)
+	        if (payload === '[DONE]') {
+	          abortController = null
+	          streaming.value = false; sending.value = false
+	          flushStreamingAsMessage()
+	          finished = true
+	          reader.cancel().catch(() => {})
+	          break
+	        }
+	        let evt: { type?: string; content?: string; name?: string; result?: unknown }
+	        try { evt = JSON.parse(payload) } catch { continue }
+	        if (evt.type === 'content') {
+	          abortController = null
+	          streaming.value = false; sending.value = false
+	          messages.value.push({ id: 0, role: 'assistant', content: evt.content || '', created_at: new Date().toISOString() })
+	          finished = true
+	          reader.cancel().catch(() => {})
+	          break
+	        }
+	        else if (evt.type === 'thinking') {
+	          const chunk: string = normalizeThinking(evt.content || '')
+	          if (!chunk) continue
+	          const last = messages.value[messages.value.length - 1]
+	          if (last && last.eventType === 'thinking') {
+	            last.content += chunk
+	          } else {
+	            for (let i = messages.value.length - 1; i >= 0; i--) {
+	              if (messages.value[i].eventType === 'thinking') {
+	                messages.value[i] = { ...messages.value[i], collapsed: true, running: false }
+	                break
+	              }
+	            }
+	            messages.value.push({ id: 0, role: '', content: chunk, eventType: 'thinking', collapsed: false, running: true })
+	          }
+	        }
+	        else if (evt.type === 'tool_call') { messages.value.push({ id: 0, role: '', content: '', eventType: 'tool_call', toolName: evt.name }) }
+	        else if (evt.type === 'tool_result') {
+	          const msgs = messages.value
+	          let merged = false
+	          for (let i = msgs.length - 1; i >= 0; i--) {
+	            if (msgs[i].eventType === 'tool_call' && msgs[i].toolName === evt.name) {
+	              msgs[i] = { ...msgs[i], eventType: 'tool_result', toolResult: evt.result }
+	              merged = true
+	              break
+	            }
+	          }
+	          if (!merged) {
+	            msgs.push({ id: 0, role: '', content: '', eventType: 'tool_result', toolName: evt.name, toolResult: evt.result })
+	          }
+	        }
+	        else if (evt.type === 'token') { streamingText.value += evt.content || '' }
+	        else if (evt.type === 'error') { streaming.value = false; sending.value = false; error.value = evt.content || '流式错误'; finished = true; reader.cancel().catch(() => {}); break }
+	        scrollToBottom()
+	      }
+	    }
+	  } catch (e: unknown) {
+	    if (e instanceof DOMException && e.name === 'AbortError') { console.warn('[Agent] fetch aborted (stop/timeout)') }
+	    else { console.error('[Agent] fetch failed:', e); error.value = String((e as Error).message || e) }
+	  } finally {
+	    clearIdleTimer()
+	    sending.value = false; streaming.value = false
+	    abortController = null
+	    inputAreaRef.value?.focus()
+	  }
+	}
 
-function stopGeneration() {
-  if (abortController) { abortController.abort(); abortController = null }
-  sending.value = false
-  streaming.value = false
-  streamingText.value = ''
-}
-
-async function sendMessage() {
-  if (sending.value || !activeConvId.value) return
-  const text = inputText.value.trim()
-  if (!text) return
-  if (abortController) { abortController.abort() }
-  abortController = new AbortController()
-  inputText.value = ''
-  sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
-  messages.value.push({ id: 0, role: 'user', content: text, created_at: new Date().toISOString() })
-  scrollToBottom()
-  try {
-    const resp = await apiFetchRaw('/agent/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation_id: activeConvId.value, content: text, profile_key: profileKey.value }),
-      signal: abortController.signal,
-    })
-    if (!resp.ok) { error.value = `请求失败 (${resp.status})`; return }
-    if (!resp.body) { error.value = '无响应体'; return }
-    const reader = resp.body.getReader()
-    const decoder = new TextDecoder()
-    let finished = false
-    while (!finished) {
-      let done = false; let value: Uint8Array | undefined
-      try { const r = await reader.read(); done = r.done; value = r.value } catch { break }
-      if (done) break
-      const chunk = decoder.decode(value!, { stream: true })
-      for (const line of chunk.split('\n')) {
-        const trimmed = line.trim()
-        if (!trimmed.startsWith('data: ')) continue
-        const payload = trimmed.slice(6)
-        if (payload === '[DONE]') {
-          abortController = null
-          streaming.value = false; sending.value = false
-          for (const m of messages.value) {
-            if (m.eventType === 'thinking') { m.collapsed = true; m.running = false }
-          }
-          const finalText = streamingText.value.trim()
-          streamingText.value = ''
-          if (finalText) {
-            messages.value.push({ id: 0, role: 'assistant', content: finalText, created_at: new Date().toISOString() })
-          }
-          scrollToBottom()
-          finished = true
-          reader.cancel().catch(() => {})
-          break
-        }
-        let evt: { type?: string; content?: string; name?: string; result?: unknown }
-        try { evt = JSON.parse(payload) } catch { continue }
-        if (evt.type === 'content') {
-          abortController = null
-          streaming.value = false; sending.value = false
-          messages.value.push({ id: 0, role: 'assistant', content: evt.content || '', created_at: new Date().toISOString() })
-          finished = true
-          reader.cancel().catch(() => {})
-          break
-        }
-        else if (evt.type === 'thinking') {
-          const chunk: string = normalizeThinking(evt.content || '')
-          if (!chunk) continue
-          const last = messages.value[messages.value.length - 1]
-          if (last && last.eventType === 'thinking') {
-            last.content += chunk
-          } else {
-            for (let i = messages.value.length - 1; i >= 0; i--) {
-              if (messages.value[i].eventType === 'thinking') {
-                messages.value[i] = { ...messages.value[i], collapsed: true, running: false }
-                break
-              }
-            }
-            messages.value.push({ id: 0, role: '', content: chunk, eventType: 'thinking', collapsed: false, running: true })
-          }
-        }
-        else if (evt.type === 'tool_call') { messages.value.push({ id: 0, role: '', content: '', eventType: 'tool_call', toolName: evt.name }) }
-        else if (evt.type === 'tool_result') {
-          const msgs = messages.value
-          let merged = false
-          for (let i = msgs.length - 1; i >= 0; i--) {
-            if (msgs[i].eventType === 'tool_call' && msgs[i].toolName === evt.name) {
-              msgs[i] = { ...msgs[i], eventType: 'tool_result', toolResult: evt.result }
-              merged = true
-              break
-            }
-          }
-          if (!merged) {
-            msgs.push({ id: 0, role: '', content: '', eventType: 'tool_result', toolName: evt.name, toolResult: evt.result })
-          }
-        }
-        else if (evt.type === 'token') { streamingText.value += evt.content || '' }
-        else if (evt.type === 'error') { streaming.value = false; sending.value = false; error.value = evt.content || '流式错误'; finished = true; reader.cancel().catch(() => {}); break }
-        scrollToBottom()
-      }
-    }
-  } catch (e: unknown) {
-    if (e instanceof DOMException && e.name === 'AbortError') { /* 用户主动停止 */ }
-    else { error.value = String((e as Error).message || e) }
-  } finally {
-    sending.value = false; streaming.value = false
-    abortController = null
-    inputAreaRef.value?.focus()
-  }
-}
-
-async function reloadMessages(convId: number) { try { messages.value = await apiFetch<MsgItem[]>(`/agent/conversations/${convId}/messages`) } catch { /* ignore */ } }
+async function reloadMessages(convId: number) { try { const raw = await apiFetch<MsgItem[]>(`/agent/conversations/${convId}/messages`); messages.value = expandTimeline(raw) } catch { /* ignore */ } }
 
 onMounted(async () => { await initRuntime('agent'); await Promise.all([loadMetadata(), loadConversations()]); if (conversations.value.length === 0) await newConversation(); else await selectConversation(conversations.value[0].id) })
 </script>

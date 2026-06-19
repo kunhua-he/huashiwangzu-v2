@@ -24,6 +24,11 @@ FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # Set up module-specific log files
+    from app.services.module_logger import setup_module_logging
+    setup_module_logging()
+
     from app.database import AsyncSessionLocal
     from app.services.app_service import sync_apps_from_manifest
     from app.services.task_worker import start_worker, stop_worker
@@ -34,6 +39,11 @@ async def lifespan(app: FastAPI):
 
     start_worker()
     logging.getLogger(__name__).info("Background task worker started")
+
+    # After modules are loaded, set up per-module file handlers
+    from app.services.module_logger import setup_v2_loggers_for_modules
+    setup_v2_loggers_for_modules()
+
     yield
     await stop_worker()
     await dispose_db()
@@ -59,6 +69,18 @@ app.add_middleware(
 
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# ── Module self-heal (intercepts requests to broken modules, tries to recover) ──
+from app.middleware.module_self_heal import ModuleSelfHealMiddleware
+app.add_middleware(ModuleSelfHealMiddleware, fastapi_app=app)
+
+# ── Request timeout (SSE endpoints exempt) ──
+from app.middleware.timeout_middleware import TimeoutMiddleware
+app.add_middleware(TimeoutMiddleware)
+
+# ── Request ID (per-request UUID, injected into all logs) ──
+from app.middleware.request_id import RequestIdMiddleware
+app.add_middleware(RequestIdMiddleware)
 
 # Exception handlers
 register_exception_handlers(app)

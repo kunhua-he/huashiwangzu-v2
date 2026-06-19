@@ -1,12 +1,17 @@
 """FastAPI router for codemap module.
 
-Provides 6 HTTP endpoints and 6 cross-module capabilities:
-  codemap:get_file       — File-level code map info
-  codemap:impact         — Transitive impact analysis
-  codemap:check_boundary — Boundary compliance check
-  codemap:module_map     — Module-level overview
-  codemap:search         — Keyword search
-  codemap:stats          — Index statistics
+Provides 11 HTTP endpoints and 11 cross-module capabilities:
+  codemap:get_file
+  codemap:impact
+  codemap:check_boundary
+  codemap:module_map
+  codemap:search
+  codemap:stats
+  codemap:rebuild
+  codemap:acquire_lock
+  codemap:check_lock
+  codemap:release_lock
+  codemap:list_locks
 
 Index is built asynchronously on module import (not blocking startup).
 Query returns "indexing" status while build is in progress.
@@ -25,6 +30,7 @@ from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
 
+from . import file_lock
 from .graph import get_graph
 from .indexer import get_indexer
 from .watcher import get_watcher
@@ -40,7 +46,6 @@ _init_lock = threading.Lock()
 
 
 def _ensure_initialized() -> None:
-    """Thread-safe one-shot initialisation: build index + start watcher."""
     global _initialized
     if _initialized:
         return
@@ -56,6 +61,9 @@ def _ensure_initialized() -> None:
             watcher.start()
         except Exception as exc:
             logger.warning("File watcher failed to start: %s", exc)
+
+        # Wire up reindex callback for /rebuild endpoint
+        get_graph().set_reindex_callback(get_indexer().build_full)
 
         _initialized = True
 
@@ -80,6 +88,7 @@ class CheckBoundaryRequest(BaseModel):
 
 
 class ModuleMapRequest(BaseModel):
+    path: str
     module_key: str
 
 
@@ -90,7 +99,6 @@ class SearchRequest(BaseModel):
 # ── Helper ───────────────────────────────────────────────────────────────────
 
 def _check_ready() -> dict | None:
-    """Return an error dict if the index is not ready, else None."""
     graph = get_graph()
     if not graph.ready:
         return {"success": False, "error": "索引构建中，请稍后重试", "data": {"status": "indexing"}}
@@ -185,6 +193,56 @@ async def http_search(
     return ApiResponse(data=result)
 
 
+# ── Rebuild endpoint ─────────────────────────────────────────────────────────
+
+@router.post("/rebuild")
+async def http_rebuild(user: User = Depends(require_permission("admin"))):
+    graph = get_graph()
+    graph.reindex_now()
+    return ApiResponse(data=graph.stats())
+
+
+# ── File lock endpoints ──────────────────────────────────────────────────────
+
+class AcquireLockRequest(BaseModel):
+    path: str
+    agent_id: str
+    ttl: int = 600
+
+
+class LockPathRequest(BaseModel):
+    path: str
+
+
+@router.post("/acquire-lock")
+async def http_acquire_lock(
+    body: AcquireLockRequest,
+    user: User = Depends(require_permission("viewer")),
+):
+    return ApiResponse(data=file_lock.acquire_lock(body.path, body.agent_id, body.ttl))
+
+
+@router.post("/check-lock")
+async def http_check_lock(
+    body: LockPathRequest,
+    user: User = Depends(require_permission("viewer")),
+):
+    return ApiResponse(data=file_lock.check_lock(body.path))
+
+
+@router.post("/release-lock")
+async def http_release_lock(
+    body: LockPathRequest,
+    user: User = Depends(require_permission("viewer")),
+):
+    return ApiResponse(data=file_lock.release_lock(body.path))
+
+
+@router.get("/list-locks")
+async def http_list_locks(user: User = Depends(require_permission("viewer"))):
+    return ApiResponse(data=file_lock.list_locks())
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Cross-module capabilities (registered with framework registry)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -237,6 +295,31 @@ async def _cap_search(params: dict, caller: str) -> dict:
 async def _cap_stats(params: dict, caller: str) -> dict:
     graph = get_graph()
     return {"success": True, "data": graph.stats()}
+
+
+async def _cap_rebuild(params: dict, caller: str) -> dict:
+    graph = get_graph()
+    graph.reindex_now()
+    return {"success": True, "data": graph.stats()}
+
+
+async def _cap_acquire_lock(params: dict, caller: str) -> dict:
+    path = params.get("path", "")
+    agent_id = params.get("agent_id", caller)
+    ttl = params.get("ttl", 600)
+    return file_lock.acquire_lock(path, agent_id, ttl)
+
+
+async def _cap_check_lock(params: dict, caller: str) -> dict:
+    return file_lock.check_lock(params.get("path", ""))
+
+
+async def _cap_release_lock(params: dict, caller: str) -> dict:
+    return file_lock.release_lock(params.get("path", ""))
+
+
+async def _cap_list_locks(params: dict, caller: str) -> dict:
+    return file_lock.list_locks()
 
 
 # Register all capabilities
@@ -302,7 +385,58 @@ register_capability(
 
 register_capability(
     "codemap", "stats", _cap_stats,
-    description="返回索引规模、构建耗时、最后更新时间、是否就绪",
+    description="返回索引规模、构建耗时、最后更新时间、是否就绪、新鲜度与可信度",
+    parameters={"type": "object", "properties": {}},
+    min_role="viewer",
+)
+
+register_capability(
+    "codemap", "rebuild", _cap_rebuild,
+    description="全量重建代码索引，返回重建后的 stats",
+    parameters={"type": "object", "properties": {}},
+    min_role="admin",
+)
+
+register_capability(
+    "codemap", "acquire_lock", _cap_acquire_lock,
+    description="获取文件锁（跨 worker 持久化，租约式 TTL）",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "文件或资源路径"},
+            "agent_id": {"type": "string", "description": "锁主标识"},
+            "ttl": {"type": "integer", "description": "租约秒数（默认 600）"},
+        },
+        "required": ["path", "agent_id"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "codemap", "check_lock", _cap_check_lock,
+    description="检查文件锁状态",
+    parameters={
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "文件或资源路径"}},
+        "required": ["path"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "codemap", "release_lock", _cap_release_lock,
+    description="释放文件锁",
+    parameters={
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "文件或资源路径"}},
+        "required": ["path"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "codemap", "list_locks", _cap_list_locks,
+    description="列出所有活跃文件锁",
     parameters={"type": "object", "properties": {}},
     min_role="viewer",
 )

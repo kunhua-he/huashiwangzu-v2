@@ -279,9 +279,6 @@ function renderGraph() {
   for (let y = gridSize; y < H; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() }
 
   const { nodes, edges } = graphData.value
-  // DEBUG: 画两个色块确认绘制正常
-  ctx.fillStyle = '#2395bc'; ctx.fillRect(10, 10, 30, 30)
-  ctx.fillStyle = '#f0b240'; ctx.fillRect(50, 10, 30, 30)
 
   if (!nodes.length) {
     ctx.fillStyle = '#9aabbd'; ctx.font = '14px 苹方,"微软雅黑",sans-serif'
@@ -345,15 +342,21 @@ function renderGraph() {
 
   // 节点
   for (const n of layout) {
-    ctx.beginPath(); ctx.arc(n.x, n.y, 14, 0, Math.PI * 2)
-    ctx.fillStyle = '#fff'; ctx.fill()
-    ctx.strokeStyle = '#2395bc'; ctx.lineWidth = 2.5; ctx.stroke()
-    ctx.beginPath(); ctx.arc(n.x, n.y, 8, 0, Math.PI * 2)
-    ctx.fillStyle = '#2395bc'; ctx.fill()
-    ctx.fillStyle = '#1f2a37'; ctx.font = '12px 苹方,"微软雅黑",sans-serif'
+    // 阴影
+    ctx.beginPath(); ctx.arc(n.x + 1, n.y + 2, 18, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.fill()
+    // 主体
+    ctx.beginPath(); ctx.arc(n.x, n.y, 18, 0, Math.PI * 2)
+    const grad = ctx.createRadialGradient(n.x - 4, n.y - 4, 2, n.x, n.y, 18)
+    grad.addColorStop(0, '#e6f4fa')
+    grad.addColorStop(1, '#2395bc')
+    ctx.fillStyle = grad; ctx.fill()
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke()
+    // 标签
+    ctx.fillStyle = '#1f2a37'; ctx.font = 'bold 12px 苹方,"微软雅黑",sans-serif'
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'
     const txt = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label
-    ctx.fillText(txt, n.x, n.y + 18)
+    ctx.fillText(txt, n.x, n.y + 24)
   }
 }
 

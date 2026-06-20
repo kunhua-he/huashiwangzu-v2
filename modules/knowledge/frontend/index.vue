@@ -231,7 +231,6 @@ const relationCount = ref(0)
 const graphContainer = ref<HTMLElement | null>(null)
 const graphCanvas = ref<HTMLCanvasElement | null>(null)
 const layoutPositions = ref<Map<number, { x: number; y: number }>>(new Map())
-let graphAnimationId = 0
 
 async function loadGlobalGraph() {
   try {
@@ -253,8 +252,9 @@ function renderGraph() {
   const canvas = graphCanvas.value
   const container = graphContainer.value
   if (!canvas || !container) return
-  const dpr = window.devicePixelRatio || 1
   const rect = container.getBoundingClientRect()
+  if (rect.width < 10 || rect.height < 10) return  // 容器还没尺寸
+  const dpr = window.devicePixelRatio || 1
   canvas.width = rect.width * dpr
   canvas.height = rect.height * dpr
   canvas.style.width = rect.width + 'px'
@@ -266,23 +266,21 @@ function renderGraph() {
   const { nodes, edges } = graphData.value
   const layoutNodes: Array<{ id: number; label: string; x: number; y: number; vx: number; vy: number }> = nodes.map(n => ({
     id: n.id, label: n.label,
-    x: centerX + (Math.random() - 0.5) * W * 0.6,
-    y: centerY + (Math.random() - 0.5) * H * 0.6,
+    x: centerX + (Math.random() - 0.5) * W * 0.5,
+    y: centerY + (Math.random() - 0.5) * H * 0.5,
     vx: 0, vy: 0,
   }))
   const nodeMap = new Map<number, typeof layoutNodes[0]>()
   layoutNodes.forEach(n => nodeMap.set(n.id, n))
   const maxScore = Math.max(1, ...edges.map(e => e.similarity_score))
 
-  // 预热：先跑 80 帧让节点散开，再开始渲染
-  let warmup = 80
-  function tick() {
-    const kRepel = 800, kAttract = 0.003, kCenter = 0.001, damp = 0.85
+  // 同步跑物理迭代
+  for (let iter = 0; iter < 200; iter++) {
     for (const a of layoutNodes) {
       for (const b of layoutNodes) {
         if (a === b) continue
         const dx = b.x - a.x, dy = b.y - a.y, dist = Math.max(1, Math.sqrt(dx * dx + dy * dy))
-        const force = kRepel / (dist * dist)
+        const force = 600 / (dist * dist)
         a.vx -= (dx / dist) * force; a.vy -= (dy / dist) * force
       }
     }
@@ -290,56 +288,43 @@ function renderGraph() {
       const s = nodeMap.get(e.source), t = nodeMap.get(e.target)
       if (!s || !t) continue
       const dx = t.x - s.x, dy = t.y - s.y, dist = Math.max(1, Math.sqrt(dx * dx + dy * dy))
-      const force = (dist - 120) * kAttract * (e.similarity_score / maxScore)
+      const force = (dist - 100) * 0.005 * (e.similarity_score / maxScore)
       s.vx += (dx / dist) * force; s.vy += (dy / dist) * force
       t.vx -= (dx / dist) * force; t.vy -= (dy / dist) * force
     }
     for (const n of layoutNodes) {
-      n.vx += (centerX - n.x) * kCenter; n.vy += (centerY - n.y) * kCenter
-      n.vx *= damp; n.vy *= damp
+      n.vx += (centerX - n.x) * 0.002; n.vy += (centerY - n.y) * 0.002
+      n.vx *= 0.85; n.vy *= 0.85
       n.x += n.vx; n.y += n.vy
-      n.x = Math.max(40, Math.min(W - 40, n.x)); n.y = Math.max(20, Math.min(H - 20, n.y))
+      n.x = Math.max(30, Math.min(W - 30, n.x))
+      n.y = Math.max(30, Math.min(H - 30, n.y))
     }
-
-    // 预热阶段不画
-    if (warmup > 0) { warmup--; graphAnimationId = requestAnimationFrame(tick); return }
-
-    const posMap = new Map<number, { x: number; y: number }>()
-    for (const n of layoutNodes) posMap.set(n.id, { x: n.x, y: n.y })
-    layoutPositions.value = posMap
-
-    ctx.clearRect(0, 0, W, H)
-    // 画边
-    for (const e of edges) {
-      const s = nodeMap.get(e.source), t = nodeMap.get(e.target)
-      if (!s || !t) continue
-      const alpha = 0.12 + (e.similarity_score / maxScore) * 0.45
-      const width = 1 + (e.similarity_score / maxScore) * 4
-      ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y)
-      ctx.strokeStyle = `rgba(35,149,188,${alpha})`; ctx.lineWidth = width; ctx.stroke()
-    }
-    // 画节点
-    for (const n of layoutNodes) {
-      // 光晕
-      const grad = ctx.createRadialGradient(n.x, n.y, 6, n.x, n.y, 22)
-      grad.addColorStop(0, 'rgba(35,149,188,0.3)')
-      grad.addColorStop(1, 'rgba(35,149,188,0)')
-      ctx.beginPath(); ctx.arc(n.x, n.y, 22, 0, Math.PI * 2)
-      ctx.fillStyle = grad; ctx.fill()
-      // 节点圆
-      ctx.beginPath(); ctx.arc(n.x, n.y, 14, 0, Math.PI * 2)
-      ctx.fillStyle = '#2395bc'; ctx.fill()
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke()
-      // 标签
-      ctx.fillStyle = '#46586b'; ctx.font = '11px 苹方,"微软雅黑",sans-serif'
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      const label = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label
-      ctx.fillText(label, n.x, n.y + 26)
-    }
-    graphAnimationId = requestAnimationFrame(tick)
   }
-  if (graphAnimationId) cancelAnimationFrame(graphAnimationId)
-  tick()
+
+  // 存位置
+  const posMap = new Map<number, { x: number; y: number }>()
+  for (const n of layoutNodes) posMap.set(n.id, { x: n.x, y: n.y })
+  layoutPositions.value = posMap
+
+  // 画
+  ctx.clearRect(0, 0, W, H)
+  for (const e of edges) {
+    const s = nodeMap.get(e.source), t = nodeMap.get(e.target)
+    if (!s || !t) continue
+    const alpha = 0.15 + (e.similarity_score / maxScore) * 0.4
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y)
+    ctx.strokeStyle = `rgba(35,149,188,${alpha})`; ctx.lineWidth = 1.5 + (e.similarity_score / maxScore) * 3
+    ctx.stroke()
+  }
+  for (const n of layoutNodes) {
+    ctx.beginPath(); ctx.arc(n.x, n.y, 16, 0, Math.PI * 2)
+    ctx.fillStyle = '#2395bc'; ctx.fill()
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke()
+    ctx.fillStyle = '#46586b'; ctx.font = '12px 苹方,"微软雅黑",sans-serif'
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+    const label = n.label.length > 12 ? n.label.slice(0, 12) + '…' : n.label
+    ctx.fillText(label, n.x, n.y + 22)
+  }
 }
 
 function onGraphClick(e: MouseEvent) {
@@ -560,7 +545,7 @@ onMounted(async () => {
   await initRuntime('knowledge')
   await Promise.all([loadFileTree(), loadGlobalGraph()])
 })
-onUnmounted(() => { stopPolling(); if (graphAnimationId) cancelAnimationFrame(graphAnimationId) })
+onUnmounted(stopPolling)
 </script>
 
 <style scoped>

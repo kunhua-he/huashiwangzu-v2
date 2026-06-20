@@ -239,17 +239,6 @@ async def process_document_entities(
         if not source_id or not target_id:
             continue
 
-        # 查重
-        existing_r = await db.execute(
-            select(KbGraphEdge).where(
-                KbGraphEdge.source_node_id == source_id,
-                KbGraphEdge.target_node_id == target_id,
-                KbGraphEdge.relation == relation,
-            )
-        )
-        if existing_r.scalar_one_or_none():
-            continue
-
         # 查 source/target node_id（entity_id 到 node_id）
         s_node_r = await db.execute(
             select(KbGraphNode).where(KbGraphNode.entity_id == source_id, KbGraphNode.owner_id == owner_id).limit(1)
@@ -260,6 +249,17 @@ async def process_document_entities(
         s_node = s_node_r.scalars().first()
         t_node = t_node_r.scalars().first()
         if not s_node or not t_node:
+            continue
+
+        # 查重（按 node_id 查，entity_id ≠ node_id）
+        existing_r = await db.execute(
+            select(KbGraphEdge).where(
+                KbGraphEdge.source_node_id == s_node.id,
+                KbGraphEdge.target_node_id == t_node.id,
+                KbGraphEdge.relation == relation,
+            )
+        )
+        if existing_r.scalar_one_or_none():
             continue
 
         edge = KbGraphEdge(
@@ -319,51 +319,49 @@ async def process_document_entities_from_fusions(
 
     stats = {"entities_found": 0, "relationships_found": 0, "errors": []}
 
-    # ── 幂等：清该文档旧实体关联数据（不删实体词典——其他文档可能也引用了同一实体） ──
-    # 查出本文档创建的 entity_id 列表
-    old_entities_r = await db.execute(
-        select(KbChunkEntity.entity_id)
-        .where(KbChunkEntity.document_id == document_id)
+    # ── 幂等：捕获旧实体ID后再清数据 ──
+    # 先查出本文档旧证据引用的 entity_id（在删之前捕获，用于后续删 graph node/edge）
+    old_evidence_entity_r = await db.execute(
+        select(KbEvidence.entity_id).where(KbEvidence.document_id == document_id)
     )
-    old_entity_ids = {row[0] for row in old_entities_r.all()}
+    old_entity_ids_for_nodes = {row[0] for row in old_evidence_entity_r.all()}
 
-    old_candidates_r = await db.execute(
-        select(KbGovernanceCandidate.id)
-        .where(KbGovernanceCandidate.document_id == document_id)
+    # 再删本文档的 evidence、chunk_entity 和 governance_candidate
+    await db.execute(
+        sa_delete(KbEvidence).where(KbEvidence.document_id == document_id)
     )
-    old_candidate_ids = [row[0] for row in old_candidates_r.all()]
+    await db.execute(
+        sa_delete(KbChunkEntity).where(KbChunkEntity.document_id == document_id)
+    )
+    await db.execute(
+        sa_delete(KbGovernanceCandidate).where(KbGovernanceCandidate.document_id == document_id)
+    )
 
-    # 删除本文档的关联数据
-    if old_entity_ids:
-        await db.execute(
-            sa_delete(KbChunkEntity).where(KbChunkEntity.document_id == document_id)
+    # 删图谱节点和边
+    if old_entity_ids_for_nodes:
+        node_ids_r = await db.execute(
+            select(KbGraphNode.id).where(
+                KbGraphNode.entity_id.in_(old_entity_ids_for_nodes),
+                KbGraphNode.owner_id == owner_id,
+            )
         )
-        await db.execute(
-            sa_delete(KbEvidence).where(KbEvidence.document_id == document_id)
-        )
-        # 只删本文档创建的图谱节点和边
-        old_nodes_r = await db.execute(
-            select(KbGraphNode.id).where(KbGraphNode.entity_id.in_(old_entity_ids))
-        )
-        old_node_ids = [row[0] for row in old_nodes_r.all()]
-        if old_node_ids:
+        node_ids = [row[0] for row in node_ids_r.all()]
+        if node_ids:
             await db.execute(
                 sa_delete(KbGraphEdge).where(
-                    (KbGraphEdge.source_node_id.in_(old_node_ids))
-                    | (KbGraphEdge.target_node_id.in_(old_node_ids))
+                    (KbGraphEdge.source_node_id.in_(node_ids))
+                    | (KbGraphEdge.target_node_id.in_(node_ids))
                 )
             )
             await db.execute(
-                sa_delete(KbGraphNode).where(KbGraphNode.entity_id.in_(old_entity_ids))
+                sa_delete(KbGraphNode).where(
+                    KbGraphNode.entity_id.in_(old_entity_ids_for_nodes),
+                    KbGraphNode.owner_id == owner_id,
+                )
             )
 
-    if old_candidate_ids:
-        await db.execute(
-            sa_delete(KbGovernanceCandidate).where(KbGovernanceCandidate.document_id == document_id)
-        )
-
     await db.commit()
-    logger.info("Cleared old entity data for document_id=%d", document_id)
+    logger.info("Cleared old entity/graph data for document_id=%d", document_id)
 
     # 读取所有页融合正文
     r = await db.execute(
@@ -499,6 +497,16 @@ async def process_document_entities_from_fusions(
         tgt_node = tgt_node_r.scalars().first()
 
         if src_node and tgt_node:
+            # 查重（node 维度的唯一性检查）
+            dup_r = await db.execute(
+                select(KbGraphEdge).where(
+                    KbGraphEdge.source_node_id == src_node.id,
+                    KbGraphEdge.target_node_id == tgt_node.id,
+                    KbGraphEdge.relation == rel_type,
+                ).limit(1)
+            )
+            if dup_r.scalars().first():
+                continue
             edge = KbGraphEdge(
                 owner_id=owner_id, source_node_id=src_node.id,
                 target_node_id=tgt_node.id, relation=rel_type,
@@ -543,7 +551,7 @@ async def get_graph_context(db: AsyncSession, owner_id: int, entity_id: int) -> 
     node_r = await db.execute(
         select(KbGraphNode).where(KbGraphNode.entity_id == entity_id, KbGraphNode.owner_id == owner_id)
     )
-    node = node_r.scalar_one_or_none()
+    node = node_r.scalars().first()
     if not node:
         return {"node": None, "edges": [], "nodes": []}
 

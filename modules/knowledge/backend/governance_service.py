@@ -70,8 +70,13 @@ async def approve_candidate(db: AsyncSession, candidate_id: int, user_id: int) -
     c.reviewed_at = datetime.now(timezone.utc)
 
     # 同步更新实体词典状态
-    ent_r = await db.execute(select(KbEntityDictionary).where(KbEntityDictionary.name == c.entity_name))
-    ent = ent_r.scalar_one_or_none()
+    ent_r = await db.execute(
+        select(KbEntityDictionary).where(
+            KbEntityDictionary.name == c.entity_name,
+            KbEntityDictionary.owner_id == c.owner_id,
+        ).limit(1)
+    )
+    ent = ent_r.scalars().first()
     if ent:
         ent.status = "confirmed"
 
@@ -96,8 +101,13 @@ async def reject_candidate(db: AsyncSession, candidate_id: int, user_id: int) ->
     c.reviewed_at = datetime.now(timezone.utc)
 
     # 同时归档实体词典条目
-    ent_r = await db.execute(select(KbEntityDictionary).where(KbEntityDictionary.name == c.entity_name))
-    ent = ent_r.scalar_one_or_none()
+    ent_r = await db.execute(
+        select(KbEntityDictionary).where(
+            KbEntityDictionary.name == c.entity_name,
+            KbEntityDictionary.owner_id == c.owner_id,
+        ).limit(1)
+    )
+    ent = ent_r.scalars().first()
     if ent:
         ent.status = "archived"
 
@@ -247,6 +257,7 @@ async def calibrate_extraction(
     ent_r = await db.execute(
         select(KbEntityDictionary).where(
             KbEntityDictionary.name == c.entity_name,
+            KbEntityDictionary.owner_id == c.owner_id,
         )
     )
     for ent in ent_r.scalars().all():

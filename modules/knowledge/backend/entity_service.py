@@ -180,9 +180,9 @@ async def process_document_entities(
             select(KbEntityDictionary).where(
                 KbEntityDictionary.name == name,
                 KbEntityDictionary.owner_id == owner_id,
-            )
+            ).order_by(KbEntityDictionary.id).limit(1)
         )
-        existing_entity = existing_r.scalar_one_or_none()
+        existing_entity = existing_r.scalars().first()
 
         if existing_entity:
             entity_id = existing_entity.id
@@ -417,9 +417,9 @@ async def process_document_entities_from_fusions(
             select(KbEntityDictionary).where(
                 KbEntityDictionary.name == name,
                 KbEntityDictionary.owner_id == owner_id,
-            )
+            ).order_by(KbEntityDictionary.id).limit(1)
         )
-        existing_entity = existing_r.scalar_one_or_none()
+        existing_entity = existing_r.scalars().first()
 
         if existing_entity:
             entity_id = existing_entity.id

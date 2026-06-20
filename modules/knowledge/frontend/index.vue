@@ -33,16 +33,9 @@
 
     <!-- 右侧主区 -->
     <main class="kb-main">
-      <!-- 工作台：全局知识网络 -->
+      <!-- 工作台：3D 深空星图 -->
       <template v-if="showWorkspace && !active">
-        <div class="ws-header">
-          <h2>知识网络全景</h2>
-          <span class="ws-sub">系统自动织网，连线越粗关联越强</span>
-        </div>
-        <div v-if="graphData.nodes.length" class="graph-container" ref="graphContainer">
-          <canvas ref="graphCanvas" @click="onGraphClick"></canvas>
-        </div>
-        <div v-else class="empty-tip pad">尚无关联数据。上传并分析多份资料后自动织网。</div>
+        <WorkspaceGraph @select="handleGraphSelect" />
       </template>
 
       <!-- 无选中：欢迎 -->
@@ -163,14 +156,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { initRuntime, platform } from '../runtime'
+import WorkspaceGraph from './WorkspaceGraph.vue'
 import {
   apiDelete, apiPost, apiGet,
   startPipeline, getProgress, getProgressBatch, getFusions, getProfile, getRelations, parseJsonField,
-  getFileTree, getFileList, buildFolderTree, getRelationGraph,
+  getFileTree, getFileList, buildFolderTree,
   type KnowledgeDocument, type DocumentProgress, type ProgressStage,
   type FusionPage, type DocumentProfile, type FileRelation, type SearchResult,
-  type FileTreeNode, type RelationGraph,
+  type FileTreeNode,
 } from './api'
+import type { GraphNode } from './graph3d/types'
 
 const documents = ref<KnowledgeDocument[]>([])
 const active = ref<KnowledgeDocument | null>(null)
@@ -268,44 +263,11 @@ const visibleTree = computed(() => {
   return flatten(fileTree.value, 0)
 })
 
-// ── 全局知识网络 ──
-const graphData = ref<RelationGraph>({ nodes: [], edges: [] })
-const relationCount = ref(0)
-const graphContainer = ref<HTMLElement | null>(null)
-const graphCanvas = ref<HTMLCanvasElement | null>(null)
-const layoutPositions = ref<Map<number, { x: number; y: number }>>(new Map())
-
-async function loadGlobalGraph() {
-  try {
-    // 优先用实体图（节点=概念/标签），没有则回退文档关系图
-    const eg = await apiGet<RelationGraph>('/knowledge/entity-graph')
-    if (eg.nodes.length) {
-      // 实体图：标准化字段名
-      graphData.value = {
-        nodes: eg.nodes,
-        edges: (eg.edges || []).map((e: any) => ({
-          source: e.source, target: e.target,
-          relation_type: e.relation || 'related',
-          similarity_score: e.weight || 0.5,
-          shared_entities: e.description ? [e.description] : [],
-        })),
-      }
-    } else {
-      const g = await getRelationGraph()
-      graphData.value = g
-    }
-    relationCount.value = graphData.value.edges.length
-    if (showWorkspace.value && graphData.value.nodes.length) { await nextTick(); renderGraph() }
-  } catch { /* ignore */ }
-}
+// ── 全局知识网络（由 WorkspaceGraph 接管） ──
 
 function openWorkspace() {
   showWorkspace.value = true
   active.value = null
-  if (graphData.value.nodes.length) {
-    // 等 flex 布局完成再渲染
-    requestAnimationFrame(() => requestAnimationFrame(() => renderGraph()))
-  }
 }
 
 function jumpToFirstRunning() {
@@ -316,127 +278,24 @@ function jumpToFirstRunning() {
   }
 }
 
-function renderGraph() {
-  const canvas = graphCanvas.value
-  const container = graphContainer.value
-  if (!canvas || !container) return
-  const rect = container.getBoundingClientRect()
-  const W = rect.width, H = rect.height
-  if (W < 10 || H < 10) return
-
-  const dpr = window.devicePixelRatio || 1
-  canvas.width = W * dpr; canvas.height = H * dpr
-  canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
-  const ctx = canvas.getContext('2d')!
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
-  const { nodes, edges } = graphData.value
-  if (!nodes.length) { return }
-
-  // ═══ 背景 ═══
-  ctx.fillStyle = '#030812'; ctx.fillRect(0, 0, W, H)
-  ctx.strokeStyle = 'rgba(23,65,95,0.25)'; ctx.lineWidth = 0.5
-  const gs = 50
-  for (let x = gs; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke() }
-  for (let y = gs; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() }
-
-  // ═══ 力导向布局 ═══
-  const cx = W / 2, cy = H / 2
-  type LNode = { id: number; label: string; x: number; y: number; vx: number; vy: number }
-  const lays: LNode[] = nodes.map((n, i) => {
-    const a = (i / nodes.length) * Math.PI * 2 - Math.PI / 2
-    const r = Math.min(W, H) * 0.28
-    return { id: n.id, label: n.label, x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, vx: 0, vy: 0 }
-  })
-  const nmap = new Map<number, LNode>()
-  lays.forEach(n => nmap.set(n.id, n))
-  const maxSim = Math.max(1, ...edges.map(e => e.similarity_score))
-
-  for (let iter = 0; iter < 200; iter++) {
-    for (let a = 0; a < lays.length; a++) {
-      for (let b = a + 1; b < lays.length; b++) {
-        const dx = lays[b].x - lays[a].x, dy = lays[b].y - lays[a].y
-        const d = Math.max(1, Math.hypot(dx, dy)); const f = 450 / (d * d)
-        lays[a].vx -= (dx / d) * f; lays[a].vy -= (dy / d) * f
-        lays[b].vx += (dx / d) * f; lays[b].vy += (dy / d) * f
-      }
-    }
-    for (const e of edges) {
-      const s = nmap.get(e.source), t = nmap.get(e.target)
-      if (!s || !t) continue
-      const dx = t.x - s.x, dy = t.y - s.y, d = Math.max(1, Math.hypot(dx, dy))
-      const f = (d - 80) * 0.004 * (e.similarity_score / maxSim)
-      s.vx += (dx / d) * f; s.vy += (dy / d) * f
-      t.vx -= (dx / d) * f; t.vy -= (dy / d) * f
-    }
-    for (const n of lays) {
-      n.vx += (cx - n.x) * 0.001; n.vy += (cy - n.y) * 0.001
-      if (!isFinite(n.vx)) n.vx = 0; if (!isFinite(n.vy)) n.vy = 0
-      n.vx *= 0.72; n.vy *= 0.72
-      n.x += n.vx; n.y += n.vy
-      n.x = Math.max(60, Math.min(W - 60, n.x)); n.y = Math.max(60, Math.min(H - 60, n.y))
-    }
+/** Handle node selection from 3D graph */
+function handleGraphSelect(node: GraphNode) {
+  const nodeId = node.id
+  // Try document lookup first (relation-graph nodes use document ids)
+  const doc = documents.value.find(d => d.id === nodeId)
+  if (doc) {
+    openDocument(doc)
+    return
   }
-  const posMap = new Map<number, { x: number; y: number }>()
-  lays.forEach(n => posMap.set(n.id, { x: n.x, y: n.y }))
-  layoutPositions.value = posMap
-
-  // ═══ 边（双层发光：粗暗底 + 细亮线） ═══
-  const edgeColors: Record<string, string> = {
-    semantic_similar: '#5599cc', entity_overlap: '#66dd66',
-    hierarchy: '#ffaa44', reference: '#ff7777',
-    属于: '#ffaa44', 位于: '#5599cc', 产生: '#66dd66',
-    包含: '#c098ff', 引用: '#ff7777', 相关: '#6699cc',
+  // For entity-graph nodes, try by entity_id or graph node id
+  // Fallback: try node.label match in document filenames
+  const docByName = documents.value.find(d => d.filename.includes(node.label))
+  if (docByName) {
+    openDocument(docByName)
+    return
   }
-  for (const e of edges) {
-    const s = nmap.get(e.source), t = nmap.get(e.target)
-    if (!s || !t) continue
-    const w = e.similarity_score / maxSim
-    const color = edgeColors[e.relation_type] || '#6699cc'
-    // glow
-    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y)
-    ctx.strokeStyle = color + '1a'; ctx.lineWidth = 3 + w * 10; ctx.stroke()
-    // core
-    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y)
-    const alpha = Math.floor(0x30 + w * 0x50).toString(16)
-    ctx.strokeStyle = color + alpha; ctx.lineWidth = 0.8 + w * 2.5; ctx.stroke()
-  }
-
-  // ═══ 节点（HoloGram 色板） ═══
-  const nodeColors = [0x7eb8ff, 0xf0c060, 0xc098ff, 0x8ec8ff, 0x6aadff, 0x66dd66]
-  const R = 20
-  for (let i = 0; i < lays.length; i++) {
-    const n = lays[i]
-    const hex = '#' + nodeColors[i % nodeColors.length].toString(16).padStart(6, '0')
-    // glow
-    const g = ctx.createRadialGradient(n.x, n.y, R * 0.2, n.x, n.y, R * 2)
-    g.addColorStop(0, hex + '55'); g.addColorStop(1, 'transparent')
-    ctx.beginPath(); ctx.arc(n.x, n.y, R * 2, 0, Math.PI * 2)
-    ctx.fillStyle = g; ctx.fill()
-    // circle
-    ctx.beginPath(); ctx.arc(n.x, n.y, R, 0, Math.PI * 2)
-    ctx.fillStyle = hex; ctx.fill()
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1.5; ctx.stroke()
-    // label
-    ctx.fillStyle = '#ccd6e0'; ctx.font = '12px 苹方,"微软雅黑",sans-serif'
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top'
-    ctx.fillText(n.label, n.x, n.y + R + 8)
-  }
-}
-function onGraphClick(e: MouseEvent) {
-  const canvas = graphCanvas.value
-  if (!canvas) return
-  const rect = canvas.getBoundingClientRect()
-  const mx = e.clientX - rect.left, my = e.clientY - rect.top
-  let closestId = 0, closestDist = Infinity
-  for (const [id, pos] of layoutPositions.value) {
-    const dist = Math.hypot(mx - pos.x, my - pos.y)
-    if (dist < 40 && dist < closestDist) { closestDist = dist; closestId = id }
-  }
-  if (closestId) {
-    const doc = documents.value.find(d => d.id === closestId)
-    if (doc) openDocument(doc)
-  }
+  // Last resort: log and ignore
+  console.log('[kb] graph node selected (no document match):', nodeId, node.label)
 }
 
 // ── 进度/分析 ──
@@ -671,7 +530,7 @@ function askAI() {
 
 onMounted(async () => {
   await initRuntime('knowledge')
-  await Promise.all([loadFileTree(), loadGlobalGraph()])
+  await loadFileTree()
 })
 onUnmounted(stopPolling)
 </script>
@@ -707,12 +566,6 @@ onUnmounted(stopPolling)
 
 /* 主区 */
 .kb-main { display: flex; flex-direction: column; min-width: 0; padding: 18px 20px; gap: 14px; overflow: hidden; height: 100%; }
-
-.ws-header { display: flex; align-items: baseline; gap: 12px; flex: none; }
-.ws-header h2 { margin: 0; font-size: 18px; color: #1c3a4a; }
-.ws-sub { font-size: 12px; color: #8aa0b5; }
-.graph-container { flex: 1; min-height: 200px; border: 1px solid #1a2d42; border-radius: 12px; background: #0a1628; overflow: hidden; position: relative; }
-.graph-container canvas { display: block; }
 
 .main-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #e3e9f2; }
 .head-left { display: flex; align-items: center; gap: 12px; min-width: 0; }

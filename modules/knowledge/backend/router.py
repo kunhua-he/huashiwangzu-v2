@@ -365,7 +365,7 @@ async def api_entity_graph(
                 "description": e.description,
             })
     return ApiResponse(data={
-        "nodes": [{"id": n.id, "label": n.label, "category": n.category} for n in nodes],
+        "nodes": [{"id": n.id, "label": n.label, "category": n.category, "type": n.category} for n in nodes],
         "edges": edges_list,
     })
 

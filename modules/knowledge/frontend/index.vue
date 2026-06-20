@@ -148,8 +148,8 @@
         </div>
         <p class="redo-body">将重跑 LLM 分析层（画像 / 图谱 / 关联）。<br/>是否同时重跑固化数据层（原始采集 + 融合）？</p>
         <div class="redo-actions">
-          <button class="redo-skip" @click="confirmRedo(false)">跳过</button>
           <button class="redo-force" @click="confirmRedo(true)">重跑</button>
+          <button class="redo-skip" @click="confirmRedo(false)">跳过</button>
         </div>
       </div>
     </div>

@@ -543,7 +543,7 @@ onUnmounted(() => { stopPolling(); if (graphAnimationId) cancelAnimationFrame(gr
 </script>
 
 <style scoped>
-.kb-app { display: grid; grid-template-columns: 280px minmax(0, 1fr); height: 100%; min-height: 640px; background: #f3f6fb; color: #1f2a37; font-family: 苹方,"微软雅黑",宋体,sans-serif; }
+.kb-app { display: grid; grid-template-columns: 260px minmax(0, 1fr); height: 100%; min-height: 640px; background: #f3f6fb; color: #1f2a37; font-family: 苹方,"微软雅黑",宋体,sans-serif; }
 
 /* 左侧 */
 .kb-side { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: #fff; border-right: 1px solid #e3e9f2; min-width: 0; }

@@ -34,14 +34,23 @@
         :class="{ active: c.id === activeConvId }"
         @click="$emit('select', c.id)"
       >
-        <div class="conv-content">
+        <div class="conv-content" @dblclick.stop="startEdit(c)">
           <svg class="conv-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" width="14" height="14">
             <path d="M2 3h12v8H6l-4 3V3z"/>
           </svg>
-          <span class="conv-title">{{ c.title }}</span>
+          <input
+            v-if="editingId === c.id"
+            ref="editInputRef"
+            v-model="editTitle"
+            class="conv-title-edit"
+            @keydown.enter="finishEdit(c)"
+            @blur="finishEdit(c)"
+            @click.stop
+          />
+          <span v-else class="conv-title">{{ c.title }}</span>
         </div>
         <div class="conv-actions" @click.stop>
-          <button class="conv-act-btn" title="重命名" @click.stop="$emit('rename', c)">
+          <button class="conv-act-btn" title="重命名" @click.stop="startEdit(c)">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" width="12" height="12">
               <path d="M11.5 2.5l2 2L7 11H5V9l6.5-6.5z"/>
             </svg>
@@ -85,14 +94,16 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { ref, nextTick } from 'vue'
+
+const props = defineProps<{
   conversations: ConvItem[]
   activeConvId: number | null
   loading: boolean
   collapsed: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   select: [id: number]
   new: []
   rename: [item: ConvItem]
@@ -101,6 +112,25 @@ defineEmits<{
 }>()
 
 interface ConvItem { id: number; title: string; status?: string }
+
+const editingId = ref<number | null>(null)
+const editTitle = ref('')
+const editInputRef = ref<HTMLInputElement | null>(null)
+
+function startEdit(c: ConvItem) {
+  editingId.value = c.id
+  editTitle.value = c.title
+  nextTick(() => editInputRef.value?.focus())
+}
+
+function finishEdit(c: ConvItem) {
+  if (editingId.value !== c.id) return
+  const newTitle = editTitle.value.trim()
+  editingId.value = null
+  if (newTitle && newTitle !== c.title) {
+    emit('rename', { ...c, title: newTitle })
+  }
+}
 </script>
 
 <style scoped>
@@ -196,6 +226,18 @@ interface ConvItem { id: number; title: string; status?: string }
   font-size: var(--ag-font-size-base); color: var(--ag-text-primary);
 }
 .conv-item.active .conv-title { color: var(--ag-primary); font-weight: 500; }
+
+.conv-title-edit {
+  flex: 1; min-width: 0;
+  border: 1px solid var(--ag-primary);
+  border-radius: var(--ag-radius-sm);
+  padding: 2px 6px;
+  font-size: var(--ag-font-size-base);
+  font-family: inherit;
+  color: var(--ag-text-primary);
+  background: var(--ag-bg-base);
+  outline: none;
+}
 
 .conv-actions {
   display: none; gap: 2px; flex-shrink: 0; margin-left: var(--ag-space-sm);

@@ -138,6 +138,18 @@
         </section>
       </template>
     </main>
+
+    <!-- 重新分析确认弹窗 -->
+    <div v-if="showRedoDialog" class="redo-overlay" @click.self="showRedoDialog = false">
+      <div class="redo-dialog">
+        <p class="redo-title">重新分析</p>
+        <p class="redo-body">将重跑 LLM 分析层（画像 / 图谱 / 关联）。<br/>是否同时重跑固化数据层（原始采集 + 融合）？</p>
+        <div class="redo-actions">
+          <button class="redo-skip" @click="confirmRedo(false)">跳过</button>
+          <button class="redo-force" @click="confirmRedo(true)">重跑</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -531,14 +543,15 @@ async function startAnalyze() {
   if (!active.value) return
   const isRedo = progress.value?.overall_status === 'done'
   let forceRaw = false, forceFusion = false
+
   if (isRedo) {
-    const choice = window.confirm(
-      '重新分析将重跑 LLM 分析层（画像/图谱/关联）。\n\n' +
-      '是否同时重跑固化数据层（原始采集 + 融合）？\n\n' +
-      '点击「确定」全部重跑，「取消」仅重跑 LLM 分析层。'
-    )
+    showRedoDialog.value = true
+    redoResolve = null as any
+    const choice = await new Promise<boolean>(r => { redoResolve = r })
+    showRedoDialog.value = false
     forceRaw = choice; forceFusion = choice
   }
+
   try {
     await apiPost('/knowledge/documents/full-pipeline', {
       document_id: active.value.id,
@@ -549,6 +562,10 @@ async function startAnalyze() {
     ensurePolling()
   } catch (error) { window.alert((error as Error).message) }
 }
+
+const showRedoDialog = ref(false)
+let redoResolve: ((v: boolean) => void) | null = null
+function confirmRedo(v: boolean) { if (redoResolve) redoResolve(v) }
 
 async function removeDocument() {
   if (!active.value) return
@@ -731,4 +748,15 @@ onUnmounted(stopPolling)
 
 .empty-tip { color: #9aabbd; font-size: 13px; text-align: center; padding: 14px; }
 .empty-tip.pad { padding: 40px; }
+
+/* 重新分析弹窗 */
+.redo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.redo-dialog { background: #fff; border-radius: 14px; padding: 28px 32px; min-width: 360px; max-width: 420px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+.redo-title { margin: 0 0 12px; font-size: 17px; font-weight: 700; color: #1c3a4a; }
+.redo-body { margin: 0 0 24px; font-size: 14px; color: #5a6b7d; line-height: 1.7; }
+.redo-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.redo-skip { height: 36px; padding: 0 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; background: #2bb673; color: #fff; }
+.redo-skip:hover { background: #239a5d; }
+.redo-force { height: 36px; padding: 0 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; background: #e5534b; color: #fff; }
+.redo-force:hover { background: #c94039; }
 </style>

@@ -49,16 +49,19 @@ async def _run_pipeline(
     else:
         return {"error": f"Document {document_id} not found"}
 
-    # 第2步：融合
+    # 第2步：融合（固化数据，done 则跳过）
     logger.info("Pipeline step 2/5: fusion doc_id=%d", document_id)
-    try:
-        steps["fusion"] = await fuse_all_pages(db, document_id, owner_id)
-        await db.commit()
-    except Exception as e:
-        steps["fusion"] = {"error": str(e)}
-        logger.error("Pipeline fusion failed: %s", e)
+    if doc.fusion_status != "done":
+        try:
+            steps["fusion"] = await fuse_all_pages(db, document_id, owner_id)
+            await db.commit()
+        except Exception as e:
+            steps["fusion"] = {"error": str(e)}
+            logger.error("Pipeline fusion failed: %s", e)
+    else:
+        steps["fusion"] = {"status": "skipped", "reason": "already done"}
 
-    # 第3步：画像
+    # 第3步：画像（LLM 分析层，始终重跑——模型升级后可能产出更好结果）
     logger.info("Pipeline step 3/5: profile doc_id=%d", document_id)
     try:
         steps["profile"] = await generate_document_profile(db, document_id, owner_id)
@@ -67,7 +70,7 @@ async def _run_pipeline(
         steps["profile"] = {"error": str(e)}
         logger.error("Pipeline profile failed: %s", e)
 
-    # 第4步：图谱
+    # 第4步：图谱（LLM 分析层，始终重跑）
     logger.info("Pipeline step 4/5: graph doc_id=%d", document_id)
     try:
         steps["graph"] = await process_document_entities_from_fusions(db, document_id, owner_id)
@@ -76,7 +79,7 @@ async def _run_pipeline(
         steps["graph"] = {"error": str(e)}
         logger.error("Pipeline graph failed: %s", e)
 
-    # 第5步：跨文件关联
+    # 第5步：跨文件关联（依赖图谱+画像，始终重跑但内部幂等）
     logger.info("Pipeline step 5/5: relations doc_id=%d", document_id)
     try:
         steps["relations"] = await compute_file_relations(db, document_id, owner_id)

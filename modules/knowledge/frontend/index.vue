@@ -142,7 +142,10 @@
     <!-- 重新分析确认弹窗 -->
     <div v-if="showRedoDialog" class="redo-overlay" @click.self="showRedoDialog = false">
       <div class="redo-dialog">
-        <p class="redo-title">重新分析</p>
+        <div class="redo-head">
+          <p class="redo-title">重新分析</p>
+          <button class="redo-close" @click="confirmRedo(false)">✕</button>
+        </div>
         <p class="redo-body">将重跑 LLM 分析层（画像 / 图谱 / 关联）。<br/>是否同时重跑固化数据层（原始采集 + 融合）？</p>
         <div class="redo-actions">
           <button class="redo-skip" @click="confirmRedo(false)">跳过</button>
@@ -752,7 +755,10 @@ onUnmounted(stopPolling)
 /* 重新分析弹窗 */
 .redo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .redo-dialog { background: #fff; border-radius: 14px; padding: 28px 32px; min-width: 360px; max-width: 420px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
-.redo-title { margin: 0 0 12px; font-size: 17px; font-weight: 700; color: #1c3a4a; }
+.redo-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.redo-title { margin: 0; font-size: 17px; font-weight: 700; color: #1c3a4a; }
+.redo-close { border: none; background: none; cursor: pointer; font-size: 16px; color: #8aa0b5; padding: 2px 4px; border-radius: 4px; }
+.redo-close:hover { color: #46586b; background: #f0f2f5; }
 .redo-body { margin: 0 0 24px; font-size: 14px; color: #5a6b7d; line-height: 1.7; }
 .redo-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .redo-skip { height: 36px; padding: 0 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; background: #2bb673; color: #fff; }

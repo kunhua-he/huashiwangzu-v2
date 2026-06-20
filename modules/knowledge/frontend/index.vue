@@ -266,6 +266,7 @@ function renderGraph() {
   canvas.style.height = H + 'px'
 
   const ctx = canvas.getContext('2d')!
+  // 直接用 CSS 坐标画，不缩放——简单可靠
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   // 背景网格
@@ -278,6 +279,10 @@ function renderGraph() {
   for (let y = gridSize; y < H; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() }
 
   const { nodes, edges } = graphData.value
+  // DEBUG: 画两个色块确认绘制正常
+  ctx.fillStyle = '#2395bc'; ctx.fillRect(10, 10, 30, 30)
+  ctx.fillStyle = '#f0b240'; ctx.fillRect(50, 10, 30, 30)
+
   if (!nodes.length) {
     ctx.fillStyle = '#9aabbd'; ctx.font = '14px 苹方,"微软雅黑",sans-serif'
     ctx.textAlign = 'center'; ctx.fillText('暂无数据', W/2, H/2)
@@ -285,10 +290,9 @@ function renderGraph() {
   }
 
   const cx = W / 2, cy = H / 2
-  // 初始化节点位置
   const layout: Array<{ id: number; label: string; x: number; y: number; vx: number; vy: number }> = nodes.map((n, i) => {
-    const angle = (i / nodes.length) * Math.PI * 2
-    const r = Math.min(W, H) * 0.25
+    const angle = (i / nodes.length) * Math.PI * 2 - Math.PI / 2
+    const r = Math.min(W, H) * 0.3
     return { id: n.id, label: n.label, x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r, vx: 0, vy: 0 }
   })
   const nmap = new Map<number, typeof layout[0]>()
@@ -296,46 +300,44 @@ function renderGraph() {
   const maxSim = Math.max(1, ...edges.map(e => e.similarity_score))
 
   // 物理迭代
-  for (let iter = 0; iter < 150; iter++) {
-    for (const a of layout) {
-      for (const b of layout) {
-        if (a === b) continue
-        const dx = b.x - a.x, dy = b.y - a.y, d = Math.max(1, Math.hypot(dx, dy))
-        const f = 500 / (d * d)
-        a.vx -= (dx / d) * f; a.vy -= (dy / d) * f
+  for (let iter = 0; iter < 120; iter++) {
+    for (let a = 0; a < layout.length; a++) {
+      for (let b = a + 1; b < layout.length; b++) {
+        const dx = layout[b].x - layout[a].x, dy = layout[b].y - layout[a].y
+        const d = Math.max(1, Math.hypot(dx, dy))
+        const f = 400 / (d * d)
+        layout[a].vx -= (dx / d) * f; layout[a].vy -= (dy / d) * f
+        layout[b].vx += (dx / d) * f; layout[b].vy += (dy / d) * f
       }
     }
     for (const e of edges) {
       const s = nmap.get(e.source), t = nmap.get(e.target)
       if (!s || !t) continue
       const dx = t.x - s.x, dy = t.y - s.y, d = Math.max(1, Math.hypot(dx, dy))
-      const f = (d - 100) * 0.004 * (e.similarity_score / maxSim)
+      const f = (d - 100) * 0.003 * (e.similarity_score / maxSim)
       s.vx += (dx / d) * f; s.vy += (dy / d) * f
       t.vx -= (dx / d) * f; t.vy -= (dy / d) * f
     }
     for (const n of layout) {
       n.vx += (cx - n.x) * 0.001; n.vy += (cy - n.y) * 0.001
-      n.vx *= 0.82; n.vy *= 0.82
+      n.vx *= 0.8; n.vy *= 0.8
       n.x += n.vx; n.y += n.vy
-      n.x = Math.max(40, Math.min(W - 40, n.x))
-      n.y = Math.max(40, Math.min(H - 40, n.y))
+      n.x = Math.max(50, Math.min(W - 50, n.x))
+      n.y = Math.max(50, Math.min(H - 50, n.y))
     }
   }
 
-  // 存位置供点击
   const posMap = new Map<number, { x: number; y: number }>()
   layout.forEach(n => posMap.set(n.id, { x: n.x, y: n.y }))
   layoutPositions.value = posMap
 
   // ── 绘制 ──
-  // 边：曲线
+  // 边
   for (const e of edges) {
     const s = nmap.get(e.source), t = nmap.get(e.target)
     if (!s || !t) continue
-    const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2 - 20
-    const alpha = 0.1 + (e.similarity_score / maxSim) * 0.35
-    ctx.beginPath(); ctx.moveTo(s.x, s.y)
-    ctx.quadraticCurveTo(mx, my, t.x, t.y)
+    const alpha = 0.12 + (e.similarity_score / maxSim) * 0.3
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y)
     ctx.strokeStyle = `rgba(35,149,188,${alpha})`
     ctx.lineWidth = 1 + (e.similarity_score / maxSim) * 3
     ctx.stroke()
@@ -343,21 +345,15 @@ function renderGraph() {
 
   // 节点
   for (const n of layout) {
-    // 阴影
-    ctx.beginPath(); ctx.arc(n.x + 1, n.y + 1, 16, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(0,0,0,0.06)'; ctx.fill()
-    // 外环
-    ctx.beginPath(); ctx.arc(n.x, n.y, 16, 0, Math.PI * 2)
+    ctx.beginPath(); ctx.arc(n.x, n.y, 14, 0, Math.PI * 2)
     ctx.fillStyle = '#fff'; ctx.fill()
-    ctx.strokeStyle = '#2395bc'; ctx.lineWidth = 2; ctx.stroke()
-    // 内圆
-    ctx.beginPath(); ctx.arc(n.x, n.y, 10, 0, Math.PI * 2)
+    ctx.strokeStyle = '#2395bc'; ctx.lineWidth = 2.5; ctx.stroke()
+    ctx.beginPath(); ctx.arc(n.x, n.y, 8, 0, Math.PI * 2)
     ctx.fillStyle = '#2395bc'; ctx.fill()
-    // 标签
-    ctx.fillStyle = '#1c3a4a'; ctx.font = 'bold 11px 苹方,"微软雅黑",sans-serif'
+    ctx.fillStyle = '#1f2a37'; ctx.font = '12px 苹方,"微软雅黑",sans-serif'
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'
     const txt = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label
-    ctx.fillText(txt, n.x, n.y + 22)
+    ctx.fillText(txt, n.x, n.y + 18)
   }
 }
 

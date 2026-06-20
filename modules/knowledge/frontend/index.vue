@@ -555,6 +555,18 @@ async function startAnalyze() {
     forceRaw = choice; forceFusion = choice
   }
 
+  // 立即给用户感知：按钮灰 + 进度面板出现
+  progress.value = {
+    document_id: active.value.id,
+    filename: active.value.filename,
+    total_pages: active.value.total_pages,
+    overall_status: 'running',
+    overall_percent: 0,
+    current_stage: '提交中',
+    stages: [],
+  }
+  ensurePolling()
+
   try {
     await apiPost('/knowledge/documents/full-pipeline', {
       document_id: active.value.id,
@@ -562,7 +574,6 @@ async function startAnalyze() {
       force_fusion: forceFusion,
     })
     progress.value = await getProgress(active.value.id)
-    ensurePolling()
   } catch (error) { window.alert((error as Error).message) }
 }
 

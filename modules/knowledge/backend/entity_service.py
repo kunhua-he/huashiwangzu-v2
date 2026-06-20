@@ -248,13 +248,13 @@ async def process_document_entities(
 
         # 查 source/target node_id（entity_id 到 node_id）
         s_node_r = await db.execute(
-            select(KbGraphNode).where(KbGraphNode.entity_id == source_id)
+            select(KbGraphNode).where(KbGraphNode.entity_id == source_id, KbGraphNode.owner_id == owner_id).limit(1)
         )
         t_node_r = await db.execute(
-            select(KbGraphNode).where(KbGraphNode.entity_id == target_id)
+            select(KbGraphNode).where(KbGraphNode.entity_id == target_id, KbGraphNode.owner_id == owner_id).limit(1)
         )
-        s_node = s_node_r.scalar_one_or_none()
-        t_node = t_node_r.scalar_one_or_none()
+        s_node = s_node_r.scalars().first()
+        t_node = t_node_r.scalars().first()
         if not s_node or not t_node:
             continue
 
@@ -401,13 +401,13 @@ async def process_document_entities_from_fusions(
 
         # 查找源/目标 node
         src_node_r = await db.execute(
-            select(KbGraphNode).where(KbGraphNode.label == source_name, KbGraphNode.owner_id == owner_id)
+            select(KbGraphNode).where(KbGraphNode.label == source_name, KbGraphNode.owner_id == owner_id).limit(1)
         )
-        src_node = src_node_r.scalar_one_or_none()
+        src_node = src_node_r.scalars().first()
         tgt_node_r = await db.execute(
-            select(KbGraphNode).where(KbGraphNode.label == target_name, KbGraphNode.owner_id == owner_id)
+            select(KbGraphNode).where(KbGraphNode.label == target_name, KbGraphNode.owner_id == owner_id).limit(1)
         )
-        tgt_node = tgt_node_r.scalar_one_or_none()
+        tgt_node = tgt_node_r.scalars().first()
 
         if src_node and tgt_node:
             edge = KbGraphEdge(

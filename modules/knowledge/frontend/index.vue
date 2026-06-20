@@ -317,6 +317,8 @@ function renderGraph() {
     }
     for (const n of layout) {
       n.vx += (cx - n.x) * 0.001; n.vy += (cy - n.y) * 0.001
+      if (!isFinite(n.vx)) n.vx = 0
+      if (!isFinite(n.vy)) n.vy = 0
       n.vx *= 0.8; n.vy *= 0.8
       n.x += n.vx; n.y += n.vy
       n.x = Math.max(50, Math.min(W - 50, n.x))
@@ -342,21 +344,19 @@ function renderGraph() {
 
   // 节点
   for (const n of layout) {
+    if (!isFinite(n.x) || !isFinite(n.y)) continue
     // 阴影
     ctx.beginPath(); ctx.arc(n.x + 1, n.y + 2, 18, 0, Math.PI * 2)
     ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.fill()
     // 主体
     ctx.beginPath(); ctx.arc(n.x, n.y, 18, 0, Math.PI * 2)
-    const grad = ctx.createRadialGradient(n.x - 4, n.y - 4, 2, n.x, n.y, 18)
-    grad.addColorStop(0, '#e6f4fa')
-    grad.addColorStop(1, '#2395bc')
-    ctx.fillStyle = grad; ctx.fill()
+    ctx.fillStyle = '#2395bc'; ctx.fill()
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke()
     // 标签
-    ctx.fillStyle = '#1f2a37'; ctx.font = 'bold 12px 苹方,"微软雅黑",sans-serif'
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px 苹方,"微软雅黑",sans-serif'
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
     const txt = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label
-    ctx.fillText(txt, n.x, n.y + 24)
+    ctx.fillText(txt, n.x, n.y)
   }
 }
 

@@ -204,9 +204,13 @@ async def parse_and_index_document(
     document_id: int,
     owner_id: int,
     caller: str,
-    extract_graph: bool = True,
+    extract_graph: bool = False,
 ) -> dict:
-    """解析 + 分块 + 向量化 + 页级融合 + 可选图谱抽取。"""
+    """解析 + 分块 + 向量化 + 页级融合 + 可选图谱抽取。
+
+    注意：实体/图谱抽取建议通过后台任务 kb_pipeline 完成（process_document_entities_from_fusions），
+    本方法仅提供基础的解析/分块/向量化能力。extract_graph 默认为 False。
+    """
     from .models import KbDocument, KbChunk, KbPageFusion
 
     # 查询文档并抢占任务状态，防多 worker 重复处理

@@ -168,6 +168,8 @@ async def process_document_entities(
 
     # 保存实体到词典和图谱
     entity_name_to_id: dict[str, int] = {}
+    # 本地 dedup：避免同一 session 内重复 governance candidate
+    created_candidates: set[str] = set()
     for key, ent in seen_entities.items():
         name = ent["name"]
         category = ent.get("category", "通用")
@@ -211,17 +213,19 @@ async def process_document_entities(
             db.add(node)
             await db.flush()
 
-            # 写入治理候选
-            candidate = KbGovernanceCandidate(
-                owner_id=owner_id,
-                document_id=document_id,
-                entity_name=name,
-                category=category,
-                excerpt=description[:300] if description else name,
-                confidence=0.7,
-                audit_status="pending",
-            )
-            db.add(candidate)
+            # 写入治理候选（本地 set 去重）
+            if name not in created_candidates:
+                created_candidates.add(name)
+                candidate = KbGovernanceCandidate(
+                    owner_id=owner_id,
+                    document_id=document_id,
+                    entity_name=name,
+                    category=category,
+                    excerpt=description[:300] if description else name,
+                    confidence=0.7,
+                    audit_status="pending",
+                )
+                db.add(candidate)
 
     # 保存关系（图谱边）
     for rel in all_relationships:
@@ -305,6 +309,7 @@ async def process_document_entities_from_fusions(
     """基于融合层重建实体/图谱（第6层）。
 
     从 kb_page_fusions 读取各页融合正文 → LLM 抽取 → 去重 → 写入图谱表。
+    幂等：每次重跑先清该文档的旧实体/图谱数据（kb_entity_dictionary 保留已有条目供其他文档引用）。
     """
     from .models import (
         KbEntityDictionary, KbEntityAlias, KbGraphNode, KbGraphEdge,
@@ -313,6 +318,52 @@ async def process_document_entities_from_fusions(
     )
 
     stats = {"entities_found": 0, "relationships_found": 0, "errors": []}
+
+    # ── 幂等：清该文档旧实体关联数据（不删实体词典——其他文档可能也引用了同一实体） ──
+    # 查出本文档创建的 entity_id 列表
+    old_entities_r = await db.execute(
+        select(KbChunkEntity.entity_id)
+        .where(KbChunkEntity.document_id == document_id)
+    )
+    old_entity_ids = {row[0] for row in old_entities_r.all()}
+
+    old_candidates_r = await db.execute(
+        select(KbGovernanceCandidate.id)
+        .where(KbGovernanceCandidate.document_id == document_id)
+    )
+    old_candidate_ids = [row[0] for row in old_candidates_r.all()]
+
+    # 删除本文档的关联数据
+    if old_entity_ids:
+        await db.execute(
+            sa_delete(KbChunkEntity).where(KbChunkEntity.document_id == document_id)
+        )
+        await db.execute(
+            sa_delete(KbEvidence).where(KbEvidence.document_id == document_id)
+        )
+        # 只删本文档创建的图谱节点和边
+        old_nodes_r = await db.execute(
+            select(KbGraphNode.id).where(KbGraphNode.entity_id.in_(old_entity_ids))
+        )
+        old_node_ids = [row[0] for row in old_nodes_r.all()]
+        if old_node_ids:
+            await db.execute(
+                sa_delete(KbGraphEdge).where(
+                    (KbGraphEdge.source_node_id.in_(old_node_ids))
+                    | (KbGraphEdge.target_node_id.in_(old_node_ids))
+                )
+            )
+            await db.execute(
+                sa_delete(KbGraphNode).where(KbGraphNode.entity_id.in_(old_entity_ids))
+            )
+
+    if old_candidate_ids:
+        await db.execute(
+            sa_delete(KbGovernanceCandidate).where(KbGovernanceCandidate.document_id == document_id)
+        )
+
+    await db.commit()
+    logger.info("Cleared old entity data for document_id=%d", document_id)
 
     # 读取所有页融合正文
     r = await db.execute(
@@ -353,34 +404,72 @@ async def process_document_entities_from_fusions(
         if key not in seen_entities:
             seen_entities[key] = ent
 
+    # 本地 dedup：避免重复 governance candidate（DB query 看不到 same-session 未 flush 的数据）
+    seen_candidate_names: set[str] = set()
+
     for key, ent in seen_entities.items():
         name = ent.get("name", key.split("|")[0])
         category = ent.get("category", "通用")
         description = ent.get("description", "")
 
-        entity_record = KbEntityDictionary(
-            owner_id=owner_id, name=name, category=category,
-            description=description, status="candidate", source="fusion_extraction",
+        # 查重：是否已有同名实体（避免跨文档重复创建）
+        existing_r = await db.execute(
+            select(KbEntityDictionary).where(
+                KbEntityDictionary.name == name,
+                KbEntityDictionary.owner_id == owner_id,
+            )
         )
-        db.add(entity_record)
-        await db.flush()
+        existing_entity = existing_r.scalar_one_or_none()
 
-        node = KbGraphNode(
-            owner_id=owner_id, entity_id=entity_record.id,
-            label=name, category=category, description=description,
-        )
-        db.add(node)
-        await db.flush()
+        if existing_entity:
+            entity_id = existing_entity.id
+            # 更新描述（保留更长的那个）
+            existing_desc = existing_entity.description or ""
+            if len(description) > len(existing_desc):
+                existing_entity.description = description
+            # 建图谱节点（如果还没有的话）
+            node_r = await db.execute(
+                select(KbGraphNode)
+                .where(KbGraphNode.entity_id == entity_id, KbGraphNode.owner_id == owner_id)
+                .limit(1)
+            )
+            existing_node = node_r.scalars().first()
+            if not existing_node:
+                node = KbGraphNode(
+                    owner_id=owner_id, entity_id=entity_id,
+                    label=name, category=category, description=description,
+                )
+                db.add(node)
+                await db.flush()
+        else:
+            entity_record = KbEntityDictionary(
+                owner_id=owner_id, name=name, category=category,
+                description=description, status="candidate", source="fusion_extraction",
+            )
+            db.add(entity_record)
+            await db.flush()
+            entity_id = entity_record.id
 
-        candidate = KbGovernanceCandidate(
-            owner_id=owner_id, document_id=document_id,
-            entity_name=name, category=category, excerpt=description[:500],
-            confidence=0.7, audit_status="pending",
-        )
-        db.add(candidate)
+            node = KbGraphNode(
+                owner_id=owner_id, entity_id=entity_id,
+                label=name, category=category, description=description,
+            )
+            db.add(node)
+            await db.flush()
 
+        # 治理候选（本文档的，本地 set 去重避免 same-session 重复）
+        if name not in seen_candidate_names:
+            seen_candidate_names.add(name)
+            candidate = KbGovernanceCandidate(
+                owner_id=owner_id, document_id=document_id,
+                entity_name=name, category=category, excerpt=description[:500],
+                confidence=0.7, audit_status="pending",
+            )
+            db.add(candidate)
+
+        # 证据（本文档的）
         evidence = KbEvidence(
-            owner_id=owner_id, entity_id=entity_record.id,
+            owner_id=owner_id, entity_id=entity_id,
             document_id=document_id, chunk_id=0, page=0,
             excerpt=description[:500], confidence=0.7, status="pending",
         )

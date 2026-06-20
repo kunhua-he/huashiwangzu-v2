@@ -90,7 +90,10 @@ async def _run_pipeline(
         steps["relations"] = {"error": str(e)}
         logger.error("Pipeline relations failed: %s", e)
 
-    return {"document_id": document_id, "status": "done", "steps": steps}
+    # 汇总结果
+    has_errors = any("error" in s for s in steps.values())
+    status = "done_with_errors" if has_errors else "done"
+    return {"document_id": document_id, "status": status, "steps": steps}
 
 
 # ── 框架任务 handler ────────────────────────────────

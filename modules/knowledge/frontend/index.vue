@@ -245,7 +245,10 @@ async function loadGlobalGraph() {
 function openWorkspace() {
   showWorkspace.value = true
   active.value = null
-  if (graphData.value.nodes.length) nextTick(() => renderGraph())
+  if (graphData.value.nodes.length) {
+    // 等 flex 布局完成再渲染
+    requestAnimationFrame(() => requestAnimationFrame(() => renderGraph()))
+  }
 }
 
 function renderGraph() {
@@ -253,77 +256,108 @@ function renderGraph() {
   const container = graphContainer.value
   if (!canvas || !container) return
   const rect = container.getBoundingClientRect()
-  if (rect.width < 10 || rect.height < 10) return  // 容器还没尺寸
+  const W = rect.width, H = rect.height
+  if (W < 10 || H < 10) return
+
   const dpr = window.devicePixelRatio || 1
-  canvas.width = rect.width * dpr
-  canvas.height = rect.height * dpr
-  canvas.style.width = rect.width + 'px'
-  canvas.style.height = rect.height + 'px'
+  canvas.width = W * dpr
+  canvas.height = H * dpr
+  canvas.style.width = W + 'px'
+  canvas.style.height = H + 'px'
+
   const ctx = canvas.getContext('2d')!
-  ctx.scale(dpr, dpr)
-  const W = rect.width, H = rect.height, centerX = W / 2, centerY = H / 2
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+  // 背景网格
+  ctx.fillStyle = '#fafcfd'
+  ctx.fillRect(0, 0, W, H)
+  ctx.strokeStyle = '#e8eef4'
+  ctx.lineWidth = 0.5
+  const gridSize = 40
+  for (let x = gridSize; x < W; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke() }
+  for (let y = gridSize; y < H; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() }
 
   const { nodes, edges } = graphData.value
-  const layoutNodes: Array<{ id: number; label: string; x: number; y: number; vx: number; vy: number }> = nodes.map(n => ({
-    id: n.id, label: n.label,
-    x: centerX + (Math.random() - 0.5) * W * 0.5,
-    y: centerY + (Math.random() - 0.5) * H * 0.5,
-    vx: 0, vy: 0,
-  }))
-  const nodeMap = new Map<number, typeof layoutNodes[0]>()
-  layoutNodes.forEach(n => nodeMap.set(n.id, n))
-  const maxScore = Math.max(1, ...edges.map(e => e.similarity_score))
+  if (!nodes.length) {
+    ctx.fillStyle = '#9aabbd'; ctx.font = '14px 苹方,"微软雅黑",sans-serif'
+    ctx.textAlign = 'center'; ctx.fillText('暂无数据', W/2, H/2)
+    return
+  }
 
-  // 同步跑物理迭代
-  for (let iter = 0; iter < 200; iter++) {
-    for (const a of layoutNodes) {
-      for (const b of layoutNodes) {
+  const cx = W / 2, cy = H / 2
+  // 初始化节点位置
+  const layout: Array<{ id: number; label: string; x: number; y: number; vx: number; vy: number }> = nodes.map((n, i) => {
+    const angle = (i / nodes.length) * Math.PI * 2
+    const r = Math.min(W, H) * 0.25
+    return { id: n.id, label: n.label, x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r, vx: 0, vy: 0 }
+  })
+  const nmap = new Map<number, typeof layout[0]>()
+  layout.forEach(n => nmap.set(n.id, n))
+  const maxSim = Math.max(1, ...edges.map(e => e.similarity_score))
+
+  // 物理迭代
+  for (let iter = 0; iter < 150; iter++) {
+    for (const a of layout) {
+      for (const b of layout) {
         if (a === b) continue
-        const dx = b.x - a.x, dy = b.y - a.y, dist = Math.max(1, Math.sqrt(dx * dx + dy * dy))
-        const force = 600 / (dist * dist)
-        a.vx -= (dx / dist) * force; a.vy -= (dy / dist) * force
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.max(1, Math.hypot(dx, dy))
+        const f = 500 / (d * d)
+        a.vx -= (dx / d) * f; a.vy -= (dy / d) * f
       }
     }
     for (const e of edges) {
-      const s = nodeMap.get(e.source), t = nodeMap.get(e.target)
+      const s = nmap.get(e.source), t = nmap.get(e.target)
       if (!s || !t) continue
-      const dx = t.x - s.x, dy = t.y - s.y, dist = Math.max(1, Math.sqrt(dx * dx + dy * dy))
-      const force = (dist - 100) * 0.005 * (e.similarity_score / maxScore)
-      s.vx += (dx / dist) * force; s.vy += (dy / dist) * force
-      t.vx -= (dx / dist) * force; t.vy -= (dy / dist) * force
+      const dx = t.x - s.x, dy = t.y - s.y, d = Math.max(1, Math.hypot(dx, dy))
+      const f = (d - 100) * 0.004 * (e.similarity_score / maxSim)
+      s.vx += (dx / d) * f; s.vy += (dy / d) * f
+      t.vx -= (dx / d) * f; t.vy -= (dy / d) * f
     }
-    for (const n of layoutNodes) {
-      n.vx += (centerX - n.x) * 0.002; n.vy += (centerY - n.y) * 0.002
-      n.vx *= 0.85; n.vy *= 0.85
+    for (const n of layout) {
+      n.vx += (cx - n.x) * 0.001; n.vy += (cy - n.y) * 0.001
+      n.vx *= 0.82; n.vy *= 0.82
       n.x += n.vx; n.y += n.vy
-      n.x = Math.max(30, Math.min(W - 30, n.x))
-      n.y = Math.max(30, Math.min(H - 30, n.y))
+      n.x = Math.max(40, Math.min(W - 40, n.x))
+      n.y = Math.max(40, Math.min(H - 40, n.y))
     }
   }
 
-  // 存位置
+  // 存位置供点击
   const posMap = new Map<number, { x: number; y: number }>()
-  for (const n of layoutNodes) posMap.set(n.id, { x: n.x, y: n.y })
+  layout.forEach(n => posMap.set(n.id, { x: n.x, y: n.y }))
   layoutPositions.value = posMap
 
-  // 画
-  ctx.clearRect(0, 0, W, H)
+  // ── 绘制 ──
+  // 边：曲线
   for (const e of edges) {
-    const s = nodeMap.get(e.source), t = nodeMap.get(e.target)
+    const s = nmap.get(e.source), t = nmap.get(e.target)
     if (!s || !t) continue
-    const alpha = 0.15 + (e.similarity_score / maxScore) * 0.4
-    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y)
-    ctx.strokeStyle = `rgba(35,149,188,${alpha})`; ctx.lineWidth = 1.5 + (e.similarity_score / maxScore) * 3
+    const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2 - 20
+    const alpha = 0.1 + (e.similarity_score / maxSim) * 0.35
+    ctx.beginPath(); ctx.moveTo(s.x, s.y)
+    ctx.quadraticCurveTo(mx, my, t.x, t.y)
+    ctx.strokeStyle = `rgba(35,149,188,${alpha})`
+    ctx.lineWidth = 1 + (e.similarity_score / maxSim) * 3
     ctx.stroke()
   }
-  for (const n of layoutNodes) {
+
+  // 节点
+  for (const n of layout) {
+    // 阴影
+    ctx.beginPath(); ctx.arc(n.x + 1, n.y + 1, 16, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(0,0,0,0.06)'; ctx.fill()
+    // 外环
     ctx.beginPath(); ctx.arc(n.x, n.y, 16, 0, Math.PI * 2)
+    ctx.fillStyle = '#fff'; ctx.fill()
+    ctx.strokeStyle = '#2395bc'; ctx.lineWidth = 2; ctx.stroke()
+    // 内圆
+    ctx.beginPath(); ctx.arc(n.x, n.y, 10, 0, Math.PI * 2)
     ctx.fillStyle = '#2395bc'; ctx.fill()
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke()
-    ctx.fillStyle = '#46586b'; ctx.font = '12px 苹方,"微软雅黑",sans-serif'
+    // 标签
+    ctx.fillStyle = '#1c3a4a'; ctx.font = 'bold 11px 苹方,"微软雅黑",sans-serif'
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'
-    const label = n.label.length > 12 ? n.label.slice(0, 12) + '…' : n.label
-    ctx.fillText(label, n.x, n.y + 22)
+    const txt = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label
+    ctx.fillText(txt, n.x, n.y + 22)
   }
 }
 

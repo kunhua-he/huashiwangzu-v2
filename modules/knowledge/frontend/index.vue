@@ -234,11 +234,25 @@ const layoutPositions = ref<Map<number, { x: number; y: number }>>(new Map())
 
 async function loadGlobalGraph() {
   try {
-    const g = await getRelationGraph()
-    graphData.value = g
-    relationCount.value = g.edges.length
-    // 如果工作台已打开，立即渲染；否则等 openWorkspace 触发
-    if (showWorkspace.value && g.nodes.length) { await nextTick(); renderGraph() }
+    // 优先用实体图（节点=概念/标签），没有则回退文档关系图
+    const eg = await apiGet<RelationGraph>('/knowledge/entity-graph')
+    if (eg.nodes.length) {
+      // 实体图：标准化字段名
+      graphData.value = {
+        nodes: eg.nodes,
+        edges: (eg.edges || []).map((e: any) => ({
+          source: e.source, target: e.target,
+          relation_type: e.relation || 'related',
+          similarity_score: e.weight || 0.5,
+          shared_entities: e.description ? [e.description] : [],
+        })),
+      }
+    } else {
+      const g = await getRelationGraph()
+      graphData.value = g
+    }
+    relationCount.value = graphData.value.edges.length
+    if (showWorkspace.value && graphData.value.nodes.length) { await nextTick(); renderGraph() }
   } catch { /* ignore */ }
 }
 
@@ -320,6 +334,8 @@ function renderGraph() {
   const edgeColors: Record<string, string> = {
     semantic_similar: '#5599cc', entity_overlap: '#66dd66',
     hierarchy: '#ffaa44', reference: '#ff7777',
+    属于: '#ffaa44', 位于: '#5599cc', 产生: '#66dd66',
+    包含: '#c098ff', 引用: '#ff7777', 相关: '#6699cc',
   }
   for (const e of edges) {
     const s = nmap.get(e.source), t = nmap.get(e.target)

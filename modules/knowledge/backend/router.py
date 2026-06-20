@@ -328,9 +328,44 @@ async def api_relation_graph(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    """获取知识网络全景图。"""
+    """获取文档级知识网络全景图。"""
     result = await get_relation_graph(db, user.id)
     return ApiResponse(data=result)
+
+
+@router.get("/entity-graph")
+async def api_entity_graph(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    """获取实体级知识图谱（节点=实体/概念/标签，边=关系）。"""
+    from .models import KbGraphNode, KbGraphEdge
+    node_r = await db.execute(
+        select(KbGraphNode).where(KbGraphNode.owner_id == user.id).limit(200)
+    )
+    nodes = node_r.scalars().all()
+    node_ids = [n.id for n in nodes]
+    edges_list: list[dict] = []
+    if node_ids:
+        edge_r = await db.execute(
+            select(KbGraphEdge).where(
+                KbGraphEdge.owner_id == user.id,
+                KbGraphEdge.source_node_id.in_(node_ids),
+                KbGraphEdge.target_node_id.in_(node_ids),
+            ).limit(500)
+        )
+        for e in edge_r.scalars().all():
+            edges_list.append({
+                "source": e.source_node_id,
+                "target": e.target_node_id,
+                "relation": e.relation,
+                "weight": e.weight,
+                "description": e.description,
+            })
+    return ApiResponse(data={
+        "nodes": [{"id": n.id, "label": n.label, "category": n.category} for n in nodes],
+        "edges": edges_list,
+    })
 
 
 @router.post("/documents/rebuild-graph")

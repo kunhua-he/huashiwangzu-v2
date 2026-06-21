@@ -20,9 +20,11 @@ function detectHoveredFolder(e: MouseEvent) {
   const el = document.elementFromPoint(e.clientX, e.clientY)
   const folder = el?.closest?.('[data-folder]') as HTMLElement | null
   if (!folder) { leaveFolder(); return }
-  const id = folder.getAttribute('data-selection-key')?.replace('file:', '') || ''
-  if (id && !dragState.draggedIds.includes(`file:${id}`)) enterFolder(id)
-  else leaveFolder()
+  const id = folder.getAttribute('data-folder')
+  if (!id) { leaveFolder(); return }
+  // Don't highlight when hovering the item being dragged
+  if (dragState.draggedIds.some(did => did.endsWith(`:${id}`))) { leaveFolder(); return }
+  enterFolder(id)
 }
 
 function snapDraggedIcons(e: MouseEvent) {
@@ -37,6 +39,13 @@ function snapDraggedIcons(e: MouseEvent) {
     if (!el) return
     const offset = offsets[id]
     if (offset) el.style.transform = `translate(${offset.x}px, ${offset.y}px)`
+  })
+}
+
+function isDesktopSource(): boolean {
+  return dragState.draggedIds.some(id => {
+    const el = document.querySelector(`[data-selection-key="${id}"]`)
+    return el?.closest('.desktop-icon-grid') !== null
   })
 }
 
@@ -64,9 +73,21 @@ export function useDesktopPointer() {
   function handleDesktopMouseUp(e: MouseEvent) {
     if (dragState.isDragging) {
       const targetFolder = dragState.dragOverId
-      if (targetFolder) emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: targetFolder })
-      else snapDraggedIcons(e)
-      endDrag({ keepTransform: !targetFolder })
+      if (targetFolder) {
+        // Drag ended on a folder target → move into it
+        emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: targetFolder })
+        endDrag({ keepTransform: true })
+      } else {
+        // No folder hit → determine action based on source origin
+        if (isDesktopSource()) {
+          // Desktop icon dragged to blank → free positioning
+          snapDraggedIcons(e)
+        } else {
+          // File manager item on blank/nav → move to root
+          emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: null })
+        }
+        endDrag()
+      }
       return
     }
     endBoxSelection()

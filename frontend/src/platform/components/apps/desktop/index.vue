@@ -38,8 +38,6 @@
           @open="state.openItem"
           @context-menu="state.handleItemMenu"
           @sort="handleSort"
-          @drag-move="handleDragMove"
-          @drag-move-to="handleDragMoveTo"
         />
       </div>
     </div>
@@ -96,8 +94,6 @@ import FmFileList from './file-manager/fm-file-list.vue'
 import FmStatusBar from './file-manager/fm-status-bar.vue'
 import FmPropertiesDialog from './file-manager/fm-properties-dialog.vue'
 import { useFileManagerState } from './file-manager/use-file-manager-state'
-import { moveEntryRequest } from '@/shared/api/desktop'
-import type { FileEntry } from '@/shared/api/types'
 
 const props = defineProps<{
   folderId?: number
@@ -119,45 +115,12 @@ function handleSort(column: string) {
   }
 }
 
-async function handleDragMove(source: FileEntry, targetFolder: FileEntry) {
-  if (!targetFolder.is_folder) return
-  if (source.id === targetFolder.id) return
-  try {
-    await moveEntryRequest(source.is_folder ? 'folder' : 'file', source.id, targetFolder.id)
-    await state.loadFiles()
-  } catch {
-    // 移动失败静默忽略
-  }
-}
-
-async function handleDragMoveTo(source: FileEntry, targetFolderId: number | null) {
-  // 移到当前位置则忽略
-  const currentId = state.currentFolderId.value
-  const tId = targetFolderId ?? 0
-  if (tId === currentId) return
-  try {
-    await moveEntryRequest(source.is_folder ? 'folder' : 'file', source.id, targetFolderId ?? undefined)
-    await state.loadFiles()
-  } catch {
-    // 移动失败静默忽略
-  }
-}
-
 onMounted(() => {
   state.uploadInput.value = uploadInputRef.value
   state.applyInitialFolder()
   void state.loadFiles()
 })
 </script>
-
-<style>
-.nav-drop-over,
-.nav-drop-over:hover {
-  background: #dbeafe !important;
-  border-color: #2395bc !important;
-  box-shadow: 0 0 0 2px rgba(35, 149, 188, 0.2) !important;
-}
-</style>
 
 <style scoped>
 .desktop-file-manager {

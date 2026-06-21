@@ -266,7 +266,7 @@ function resetMouseDrag() {
 
 function findDropFolder(x: number, y: number): FileEntry | null {
   const element = document.elementFromPoint(x, y)
-  const entry = element instanceof HTMLElement ? element.closest<HTMLElement>('[data-fm-entry-id]') : null
+  const entry = element instanceof Element ? element.closest<HTMLElement>('[data-fm-entry-id]') : null
   if (!entry || entry.dataset.fmEntryKind !== 'folder') return null
   const id = Number(entry.dataset.fmEntryId)
   if (!Number.isFinite(id)) return null

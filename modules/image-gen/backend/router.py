@@ -98,7 +98,8 @@ async def _call_image_model(
                             images.append(base64.b64decode(raw))
 
                 if not images:
-                    raise ValueError("No image_generation_call items in response")
+                    # 外层 200 但内层没出图(常见:image_generation_call 里塞了 502/错误)→ 当可重试
+                    raise ValueError("no image returned (retryable upstream)")
 
                 return images
 
@@ -111,6 +112,8 @@ async def _call_image_model(
                 "upstream access",
                 "403", "forbidden",          # 中转站轮到没图权限的号,换一发可能就中
                 "429", "rate limit",         # 限流
+                "no image returned",         # 外层200内层没出图(内层502/错误),换一发
+                "bad gateway",               # 502 网关错(代理/上游)
                 "500", "502", "503",
                 "timeout",
                 "connection error",

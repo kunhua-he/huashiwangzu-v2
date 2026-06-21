@@ -24,7 +24,14 @@ DEFAULT_SYSTEM_PROMPT = (
     "用 web-tools__search 搜索关键词、web-tools__fetch 读取网页正文，基于结果回答，"
     "并在末尾列出来源链接。\n"
     "9. 需要更灵活的网络操作时，可用 terminal-tools__exec 跑 curl/python 脚本。\n"
-    "10. 内部资料仍优先 knowledge__search，只有知识库未覆盖时才用联网搜索。"
+    "10. 内部资料仍优先 knowledge__search，只有知识库未覆盖时才用联网搜索。\n\n"
+    "提示词管理：\n"
+    "11. 你能按权限读写提示词内容。管理员用户可要求你读取或修改系统提示词（agent__get_system_prompt / agent__update_system_prompt）"
+    "和企业提示词（agent__get_enterprise_prompt / agent__update_enterprise_prompt）。\n"
+    "12. 任何用户（包括你自己）都可以读取和修改自己的个人画像（agent__get_my_profile / agent__update_my_profile），"
+    "如语气偏好、禁忌话题等。用户要求改设定时，调用对应工具，改完复述结果。\n"
+    "13. 非管理员看不到、也无法调用管理员级别的提示词修改工具。如果非管理员用户要求改全局提示词，"
+    "礼貌告知『只有管理员才能修改系统/企业提示词，请联系管理员』。"
 )
 
 DEFAULT_ENTERPRISE_PROMPT = (
@@ -111,7 +118,14 @@ NEW_SYSTEM_PROMPT_CONTENT = (
     "用 web-tools__search 搜索关键词、web-tools__fetch 读取网页正文，基于结果回答，"
     "并在末尾列出来源链接。\n"
     "9. 需要更灵活的网络操作时，可用 terminal-tools__exec 跑 curl/python 脚本。\n"
-    "10. 内部资料仍优先 knowledge__search，只有知识库未覆盖时才用联网搜索。"
+    "10. 内部资料仍优先 knowledge__search，只有知识库未覆盖时才用联网搜索。\n\n"
+    "提示词管理：\n"
+    "11. 你能按权限读写提示词内容。管理员用户可要求你读取或修改系统提示词（agent__get_system_prompt / agent__update_system_prompt）"
+    "和企业提示词（agent__get_enterprise_prompt / agent__update_enterprise_prompt）。\n"
+    "12. 任何用户（包括你自己）都可以读取和修改自己的个人画像（agent__get_my_profile / agent__update_my_profile），"
+    "如语气偏好、禁忌话题等。用户要求改设定时，调用对应工具，改完复述结果。\n"
+    "13. 非管理员看不到、也无法调用管理员级别的提示词修改工具。如果非管理员用户要求改全局提示词，"
+    "礼貌告知『只有管理员才能修改系统/企业提示词，请联系管理员』。"
 )
 
 NEW_ENTERPRISE_PROMPT_CONTENT = (

@@ -25,8 +25,8 @@ if str(MODULE_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_BACKEND_DIR))
 
 import conversation_service as conv_svc
-from init_db import ensure_default_prompts, ensure_timeline_column, ensure_user_profile
-from model_client import recover_tool_calls
+from init_db import ensure_default_prompts, ensure_timeline_column, ensure_user_profile, update_existing_prompts
+from model_client import recover_tool_calls, parse_inline_tool_calls
 import tool_discovery
 from profile_evolve import handle_profile_evolve
 
@@ -128,8 +128,17 @@ def _tool_calls_for_history(tool_calls: list[dict]) -> list[dict]:
 
 
 async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: list[str], timeline: list[dict]):
+    """Stream final content while checking for inline XML tool calls.
+
+    Buffers token events, checks accumulated content for inline tool calls when
+    streaming completes. If inline calls found, they are stripped from `full`
+    and a special dict event `{"type": "_inline_tool_calls", "tool_calls": [...]}`
+    is yielded as the last event (caller should re-enter tool loop). Otherwise,
+    buffered events are flushed to the frontend normally.
+    """
     logger.info("[DIAG] _yield_final_stream ENTER")
     event_count = 0
+    token_buffer: list[tuple[str, str]] = []
     async for event in gateway_router.chat_stream(**kwargs):
         event_count += 1
         event_type = event.get("type")
@@ -142,12 +151,29 @@ async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: lis
         elif event_type in ("token", "content") and content:
             full.append(content)
             timeline.append({"type": "text", "content": content})
-            yield f"data: {json.dumps({'type': 'token', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
+            token_buffer.append((event_type, content))
         elif event_type == "error" and content:
             yield f"data: {json.dumps({'type': 'error', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
         elif event_type == "done":
             logger.info("[DIAG] _yield_final_stream got done event — stream ending")
-    logger.info("[DIAG] _yield_final_stream EXIT after %d events", event_count)
+
+    # After stream completion, check accumulated content for inline tool calls
+    full_content = "".join(full)
+    clean_content, inline_calls = parse_inline_tool_calls(full_content)
+    if inline_calls:
+        # Inline tool calls found — strip markup, don't flush tokens to frontend
+        full.clear()
+        full.append(clean_content)
+        logger.info("[DIAG] _yield_final_stream found %d inline tool calls, re-entering tool loop", len(inline_calls))
+        # Yield a special sentinel that main loop interprets as "re-enter tool loop"
+        yield {"type": "_inline_tool_calls", "tool_calls": inline_calls}
+        return
+
+    # No inline calls — flush buffered tokens to frontend
+    for etype, econtent in token_buffer:
+        yield f"data: {json.dumps({'type': 'token', 'content': econtent}, ensure_ascii=False)}\n\n".encode("utf-8")
+
+    logger.info("[DIAG] _yield_final_stream EXIT after %d events — no inline calls", event_count)
 
 
 @router.get("/health")
@@ -260,6 +286,7 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
     # 确保默认数据、画像和表结构迁移存在
     await ensure_timeline_column(db)
     await ensure_default_prompts(db)
+    await update_existing_prompts(db)
     await ensure_user_profile(db, user.id)
 
     # 持久化用户消息
@@ -302,19 +329,37 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                 if not tool_calls and result.get("finish_reason") == "tool_calls" and tools:
                     result = await recover_tool_calls(messages, payload.profile_key or "deepseek-v4-flash", tools)
                     tool_calls = result.get("tool_calls") or []
+                # 兜底：检查 content 里是否有 XML 式工具调用标记
+                if not tool_calls:
+                    clean_content, inline_calls = parse_inline_tool_calls(result.get("content", ""))
+                    if inline_calls:
+                        result["content"] = clean_content
+                        tool_calls = inline_calls
+                        logger.info("[DIAG] event_stream parsed %d inline tool calls from chat() content", len(inline_calls))
                 if not tool_calls:
                     logger.info("[DIAG] event_stream entering _yield_final_stream")
                     stream_kwargs: dict = {"messages": messages}
                     if payload.profile_key:
                         stream_kwargs["profile_key"] = payload.profile_key
+                    inline_from_stream = None
                     async for chunk in _yield_final_stream(stream_kwargs, full, thinking_parts, timeline):
-                        yield chunk
-                    logger.info("[DIAG] event_stream _yield_final_stream finished")
-                    break
+                        if isinstance(chunk, dict) and chunk.get("type") == "_inline_tool_calls":
+                            inline_from_stream = chunk.get("tool_calls", [])
+                        else:
+                            yield chunk
+                    if inline_from_stream:
+                        tool_calls = inline_from_stream
+                        logger.info("[DIAG] event_stream re-entering tool loop with %d inline tool calls from stream", len(tool_calls))
+                        # Continue to tool execution below instead of breaking
+                    else:
+                        logger.info("[DIAG] event_stream _yield_final_stream finished")
+                        break
                 logger.info("[DIAG] event_stream executing tool_calls count=%d", len(tool_calls))
+                # 若 inline 工具调用来自流式，内容在 full 中而非 result["content"]
+                content_source = "".join(full) if full else (result.get("content") or "")
                 messages.append({
                     "role": "assistant",
-                    "content": result.get("content") or "",
+                    "content": content_source,
                     "tool_calls": _tool_calls_for_history(tool_calls),
                 })
                 for tc in tool_calls:

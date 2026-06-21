@@ -17,7 +17,7 @@
   "show_in_sidebar": false,
   "window_type": "normal",
   "allow_multiple": false,
-  "supported_formats": ["docx", "xlsx", "pptx", "pdf"],
+  "supported_formats": [],
   "editable_formats": [],
   "creatable_formats": ["docx", "xlsx", "pptx", "pdf"],
   "module_version": "1.0.0",

@@ -1,5 +1,5 @@
 <template>
-  <div class="desktop-file-manager" @contextmenu.prevent="state.handleBlankContextMenu" @click="state.closeContextMenu">
+  <div class="desktop-file-manager" :data-folder="String(state.currentFolderId.value || 0)" @contextmenu.prevent="state.handleBlankContextMenu" @click="state.closeContextMenu">
     <FmNavigationBar
       :can-go-back="state.canGoBack.value"
       :can-go-forward="state.canGoForward.value"
@@ -22,7 +22,7 @@
         @open-recycle="state.openRecycle"
       />
 
-      <div class="fm-main">
+      <div class="fm-main" :data-folder="String(state.currentFolderId.value || 0)" :class="{ 'fm-main-drag-over': dragState.dragOverId === String(state.currentFolderId.value) && dragState.isDragging }">
         <FmRecycleView v-if="state.isRecycleBin.value" />
         <FmFileList
           v-else
@@ -87,6 +87,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
+import { dragState } from '@/desktop/drag-drop/drag-state'
 import FmNavigationBar from './file-manager/fm-navigation-bar.vue'
 import FmNavPane from './file-manager/fm-nav-pane.vue'
 import FmRecycleView from './file-manager/fm-recycle-view.vue'
@@ -146,6 +147,12 @@ onMounted(() => {
 
 .fm-hidden-input {
   display: none;
+}
+
+.fm-main-drag-over {
+  background: rgba(35, 149, 188, 0.05) !important;
+  box-shadow: inset 0 0 0 1.5px #2395bc;
+  border-radius: 4px;
 }
 
 .ctx-overlay {

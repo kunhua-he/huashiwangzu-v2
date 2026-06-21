@@ -1,11 +1,5 @@
-/**
- * 拖拽状态 — 桌面图标拖拽移入文件夹
- *
- * - 拖拽时记录被拖图标列表（支持框选后批量拖）
- * - 悬停文件夹 150ms 延迟触发高亮（防路过误触）
- * - 拖拽过程中禁用其他图标的 hover 样式
- */
 import { reactive } from 'vue'
+import { createDragGhost, updateDragGhostPosition, removeDragGhost } from './drag-ghost'
 
 interface DragState {
   isDragging: boolean
@@ -66,21 +60,20 @@ export function startDrag(ids: string[], x: number, y: number): void {
     }
   })
   document.body.classList.add('desktop-dragging')
+
+  ids.forEach(id => {
+    const el = document.querySelector(`[data-selection-key="${id}"]`) as HTMLElement | null
+    if (!el) return
+    el.style.opacity = '0.4'
+    el.style.pointerEvents = 'none'
+  })
+
+  createDragGhost(ids, x, y)
 }
 
 export function updateDragOffset(dx: number, dy: number): void {
   if (!dragState.isDragging) return
-  dragState.offsetList.forEach(item => {
-    const el = document.querySelector(`[data-selection-key="${item.id}"]`) as HTMLElement | null
-    if (!el) return
-    const previewLeft = dragState.originLeft + item.dx + dx
-    const previewTop = dragState.originTop + item.dy + dy
-    el.style.position = 'relative'
-    el.style.zIndex = '999'
-    el.style.pointerEvents = 'none'
-    el.style.transition = 'none'
-    el.style.transform = `translate(${previewLeft - item.baseLeft}px, ${previewTop - item.baseTop}px)`
-  })
+  updateDragGhostPosition(dragState.originX + dx, dragState.originY + dy)
 }
 
 export function enterFolder(id: string): void {
@@ -101,6 +94,7 @@ export function endDrag(options: { keepTransform?: boolean } = {}): void {
   dragState.offsetList = []
   if (_hoverTimer) clearTimeout(_hoverTimer)
   document.body.classList.remove('desktop-dragging')
+  removeDragGhost()
   document.querySelectorAll('[data-selection-key]').forEach(el => {
     (el as HTMLElement).style.position = ''
     ;(el as HTMLElement).style.left = ''
@@ -108,6 +102,7 @@ export function endDrag(options: { keepTransform?: boolean } = {}): void {
     ;(el as HTMLElement).style.zIndex = ''
     ;(el as HTMLElement).style.pointerEvents = ''
     ;(el as HTMLElement).style.transition = ''
+    ;(el as HTMLElement).style.opacity = ''
     if (!options.keepTransform && draggedIds.has(el.getAttribute('data-selection-key') || '')) {
       ;(el as HTMLElement).style.transform = ''
     }

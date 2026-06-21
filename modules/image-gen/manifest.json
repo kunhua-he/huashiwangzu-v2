@@ -1,0 +1,67 @@
+{
+  "key": "image-gen",
+  "name": "Image Generation",
+  "icon": "EditPen",
+  "icon_asset": "",
+  "category": "tools",
+  "component_key": "index.vue",
+  "route_prefix": "/api/image-gen",
+  "permissions": [
+    "viewer",
+    "editor",
+    "admin"
+  ],
+  "sort_order": 300,
+  "default_width": 800,
+  "default_height": 600,
+  "singleton": false,
+  "show_in_launcher": false,
+  "show_on_desktop": false,
+  "show_in_tray": false,
+  "show_in_sidebar": false,
+  "window_type": "normal",
+  "allow_multiple": false,
+  "supported_formats": [],
+  "editable_formats": [],
+  "creatable_formats": [],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "public_actions": [
+    {
+      "action": "generate",
+      "description": "Generate image from prompt (placeholder — real generation pending model integration)",
+      "parameters": {
+        "prompt": {
+          "type": "string",
+          "description": "Text description of the desired image"
+        },
+        "size": {
+          "type": "string",
+          "description": "Image dimensions (e.g. 1024x1024)",
+          "default": "1024x1024"
+        },
+        "style": {
+          "type": "string",
+          "description": "Style hint",
+          "default": ""
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of images to generate",
+          "default": 1
+        }
+      }
+    }
+  ],
+  "permission_declaration": {
+    "default": "editor",
+    "actions": []
+  },
+  "dependency_declaration": [],
+  "event_handler_declaration": [],
+  "db_migration_declaration": [],
+  "backend": {
+    "enabled": true,
+    "router": "backend/router.py"
+  }
+}

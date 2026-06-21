@@ -74,20 +74,12 @@ export function setupInteraction(
     adjacency.get(e.target)?.add(e.source)
   }
 
-  // Edge index: for any pair (source,target), find the edge
-  const edgeIndex = new Map<string, GraphEdge>()
-  for (const e of edges) {
-    // Store both directions
-    edgeIndex.set(`${e.source}-${e.target}`, e)
-    edgeIndex.set(`${e.target}-${e.source}`, e)
-  }
-
   // Track highlight state
   let highlightedId: number | null = null
   let hoveredId: number | null = null
 
-  // Store original sprite opacities
-  const spriteOpacity = new Map<number, number>()
+  // Store original card opacities
+  const origOpacity = new Map<number, number>()
 
   // Hovered edge info
   let hoveredEdgeInfo: { edge: GraphEdge; nodeA: GraphNode; nodeB: GraphNode } | null = null
@@ -100,50 +92,31 @@ export function setupInteraction(
     return pointer
   }
 
-  /** Cast ray, return hit node id or null */
+  /** Cast ray against card meshes, return hit node id or null */
   function raycastNodes(event: MouseEvent): number | null {
     raycaster.setFromCamera(getPointer(event), scene.camera)
 
-    // Collect all instanced meshes
-    const meshes: THREE.InstancedMesh[] = []
-    scene.scene.children.forEach((child: THREE.Object3D) => {
-      if (child instanceof THREE.InstancedMesh) {
-        meshes.push(child)
-      }
-    })
+    // Collect all card meshes from node context
+    const cardMeshes: THREE.Mesh[] = []
+    for (const entry of nodeCtx.cards.values()) {
+      cardMeshes.push(entry.mesh)
+    }
 
-    const intersects = raycaster.intersectObjects(meshes)
+    const intersects = raycaster.intersectObjects(cardMeshes)
     if (intersects.length > 0) {
       const hit = intersects[0]
-      if (hit.instanceId !== undefined) {
-        // Find closest node by position distance
-        const hitPos = hit.point
-        let closestNode: number | null = null
-        let closestDist = 30
-        for (const n of nodes) {
-          const pos = positions.get(n.id)
-          if (!pos) continue
-          const dist = Math.sqrt(
-            (pos.x - hitPos.x) ** 2 + (pos.y - hitPos.y) ** 2 + (pos.z - hitPos.z) ** 2,
-          )
-          if (dist < closestDist) {
-            closestDist = dist
-            closestNode = n.id
-          }
-        }
-        return closestNode
-      }
+      return (hit.object.userData?.nodeId as number) ?? null
     }
     return null
   }
 
-  /** Dim/restore all sprites */
-  function dimAllSprites(dim: boolean) {
-    for (const [id, entry] of nodeCtx.nodeMap) {
-      if (!spriteOpacity.has(id)) {
-        spriteOpacity.set(id, entry.sprite.material.opacity)
+  /** Dim/restore all cards */
+  function dimAllCards(dim: boolean) {
+    for (const [id, entry] of nodeCtx.cards) {
+      if (!origOpacity.has(id)) {
+        origOpacity.set(id, entry.mesh.material.opacity)
       }
-      entry.sprite.material.opacity = dim ? 0.08 : (spriteOpacity.get(id) ?? 0.5)
+      entry.mesh.material.opacity = dim ? 0.12 : (origOpacity.get(id) ?? 1)
     }
   }
 
@@ -154,16 +127,16 @@ export function setupInteraction(
 
     const neighborIds: Set<number> = nodeId ? (adjacency.get(nodeId) ?? new Set()) : new Set()
 
-    // Dim all sprites first
-    dimAllSprites(true)
+    // Dim all cards first
+    dimAllCards(true)
 
     if (nodeId) {
       // Restore the highlighted node and its neighbors
       const brightSet = new Set([nodeId, ...neighborIds])
       for (const id of brightSet) {
-        const entry = nodeCtx.nodeMap.get(id)
+        const entry = nodeCtx.cards.get(id)
         if (entry) {
-          entry.sprite.material.opacity = spriteOpacity.get(id) ?? 0.5
+          entry.mesh.material.opacity = origOpacity.get(id) ?? 1
         }
       }
     }
@@ -267,7 +240,7 @@ export function setupInteraction(
     } else {
       // Click empty space → clear highlight
       highlightNode(null)
-      dimAllSprites(false)
+      dimAllCards(false)
       callbacks.onHover(null, { x: 0, y: 0 })
     }
   }

@@ -53,14 +53,14 @@ export interface LayoutOptions {
 }
 
 const defaults: Required<LayoutOptions> = {
-  repulsion: 800,
-  springStiffness: 0.006,
-  restLength: 60,
-  centripetal: 0.002,
+  repulsion: 1200,
+  springStiffness: 0.005,
+  restLength: 80,
+  centripetal: 0.0015,
   damping: 0.65,
   energyThreshold: 0.5,
-  maxIterations: 150,
-  bounds: 400,
+  maxIterations: 200,
+  bounds: 500,
 }
 
 /** Run force-directed layout, returning positions keyed by node id */
@@ -205,6 +205,33 @@ export function computeLayout(
       n.vx -= n.x * opts.centripetal
       n.vy -= n.y * opts.centripetal
       n.vz -= n.z * opts.centripetal
+    }
+
+    // Category cluster: pull same-type nodes together
+    if (!useGrid) {
+      const catGroup = new Map<string, number[]>()
+      lays.forEach((n, i) => {
+        const t = n.type
+        if (!catGroup.has(t)) catGroup.set(t, [])
+        catGroup.get(t)!.push(i)
+      })
+      for (const [, indices] of catGroup) {
+        if (indices.length < 2) continue
+        for (let a = 0; a < indices.length; a++) {
+          for (let b = a + 1; b < indices.length; b++) {
+            const na = lays[indices[a]], nb = lays[indices[b]]
+            const dx = nb.x - na.x, dy = nb.y - na.y, dz = nb.z - na.z
+            const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy + dz * dz))
+            const force = dist * 0.0003  // Gentle pull proportional to distance
+            na.vx += (dx / dist) * force
+            na.vy += (dy / dist) * force
+            na.vz += (dz / dist) * force
+            nb.vx -= (dx / dist) * force
+            nb.vy -= (dy / dist) * force
+            nb.vz -= (dz / dist) * force
+          }
+        }
+      }
     }
 
     // Apply damping and update positions

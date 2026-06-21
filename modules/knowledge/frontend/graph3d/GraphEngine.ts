@@ -1,7 +1,7 @@
 /**
  * GraphEngine — the main entry point for the 3D knowledge graph.
  *
- * Orchestrates layout, scene, nodes, edges, labels, and interaction.
+ * Orchestrates layout, scene, nodes, edges, and interaction.
  * Pure TS — no Vue dependency. Can be tested independently.
  *
  * Usage:
@@ -16,7 +16,6 @@ import { computeLayout, type LayoutPosition } from './layout3d'
 import { createScene, resizeScene, type SceneContext } from './scene'
 import { buildNodes, type NodeRenderContext } from './nodes'
 import { buildEdges, type EdgeRenderContext } from './edges'
-import { buildLabels, type LabelRenderContext } from './labels'
 import { setupInteraction, type InteractionContext } from './interaction'
 
 type EventCallback = (event: any) => void
@@ -26,9 +25,8 @@ export class GraphEngine {
   readonly options: Required<GraphEngineOptions>
 
   private sceneCtx: SceneContext | null = null
-  private nodeCtx: NodeRenderContext | null = null
+  nodeCtx: NodeRenderContext | null = null
   private edgeCtx: EdgeRenderContext | null = null
-  labelCtx: LabelRenderContext | null = null
   interactionCtx: InteractionContext | null = null
 
   nodes: GraphNode[] = []
@@ -63,6 +61,10 @@ export class GraphEngine {
     if (this.sceneCtx) return // already initialized
 
     this.sceneCtx = createScene(this.canvas, this.options)
+    // Disable bloom for card-based rendering (cards don't need bloom glow)
+    if (this.sceneCtx.bloomPass) {
+      this.sceneCtx.bloomPass.enabled = false
+    }
     this.startRenderLoop()
   }
 
@@ -77,22 +79,6 @@ export class GraphEngine {
     })
 
     // Rebuild scene objects
-    this.rebuildVisuals()
-  }
-
-  /** Add nodes incrementally without full layout recompute */
-  addNodes(newNodes: GraphNode[], allEdges: GraphEdge[]): void {
-    this.edges = allEdges
-    const existing = new Map<number, GraphNode>()
-    for (const n of this.nodes) existing.set(n.id, n)
-    const trulyNew = newNodes.filter(n => !existing.has(n.id))
-    if (trulyNew.length === 0) return
-
-    this.nodes = [...this.nodes, ...trulyNew]
-    this.positions = computeLayout(this.nodes, this.edges, {
-      maxIterations: this.options.layoutIterations,
-    })
-
     this.rebuildVisuals()
   }
 
@@ -138,11 +124,6 @@ export class GraphEngine {
   /** Resize (call when container dimensions change) */
   resize(): void {
     if (this.sceneCtx) resizeScene(this.sceneCtx)
-    if (this.labelCtx) {
-      const h = this.canvas.clientHeight
-      const w = this.canvas.clientWidth
-      this.labelCtx.renderer.setSize(w, h)
-    }
   }
 
   /** Pause render loop (e.g. when tab is hidden) */
@@ -166,15 +147,6 @@ export class GraphEngine {
     }
   }
 
-  /** Set mode (for future mode switching — currently supports 'standard') */
-  setMode(mode: string): void {
-    if (mode === 'minimal' && this.sceneCtx) {
-      this.sceneCtx.bloomPass.enabled = false
-    } else if (this.sceneCtx) {
-      this.sceneCtx.bloomPass.enabled = this.options.bloomEnabled
-    }
-  }
-
   /** Full cleanup — dispose all Three.js resources */
   dispose(): void {
     this.paused = true
@@ -184,8 +156,6 @@ export class GraphEngine {
     }
     this.interactionCtx?.dispose()
     this.interactionCtx = null
-    this.labelCtx?.dispose()
-    this.labelCtx = null
     this.edgeCtx?.dispose()
     this.edgeCtx = null
     this.nodeCtx?.dispose()
@@ -210,15 +180,10 @@ export class GraphEngine {
     // Clean old visuals
     this.nodeCtx?.dispose()
     this.edgeCtx?.dispose()
-    this.labelCtx?.dispose()
 
     // Build new
     this.nodeCtx = buildNodes(this.nodes, this.positions, scene, this.edges)
     this.edgeCtx = buildEdges(this.nodes, this.edges, this.positions, scene)
-
-    // Labels (CSS2D) — need a container
-    const labelContainer = this.canvas.parentElement!
-    this.labelCtx = buildLabels(this.nodes, this.positions, labelContainer, scene, this.edges)
 
     // Interaction
     this.interactionCtx?.dispose()
@@ -236,17 +201,27 @@ export class GraphEngine {
       this.canvas,
     )
 
-    // Update label visibility
-    this.labelCtx.showLabels(this.options.labelDistanceThreshold)
-    this.labelCtx.showLabels(this.options.labelDistanceThreshold)
+    // Update card billboards immediately
+    this.updateCardBillboards()
+  }
+
+  /** Make all card meshes face the camera (billboard) */
+  private updateCardBillboards(): void {
+    if (!this.sceneCtx || !this.nodeCtx) return
+    const camera = this.sceneCtx.camera
+    const camPos = camera.position
+    for (const entry of this.nodeCtx.cards.values()) {
+      entry.mesh.lookAt(camPos)
+    }
   }
 
   private startRenderLoop(): void {
     const loop = () => {
       if (!this.paused && this.sceneCtx && this.interactionCtx) {
         this.interactionCtx.controls.update()
+        // Update card billboards each frame so they face the camera
+        this.updateCardBillboards()
         this.sceneCtx.composer.render()
-        this.labelCtx?.renderer.render(this.sceneCtx.scene, this.sceneCtx.camera)
       }
       this.animFrameId = requestAnimationFrame(loop)
     }

@@ -384,12 +384,12 @@ function onSearch() {
   if (!engine.value) return
   const q = searchQuery.value.trim().toLowerCase()
   if (q && searchResults.value.length > 0) {
-    // Highlight all matched nodes
+    // Highlight all matched nodes via card fade
     const matchedIds = new Set(searchResults.value.map(r => r.node.id))
-    for (const n of nodes.value) {
-      const isMatched = matchedIds.has(n.id)
-      if (engine.value.labelCtx) {
-        engine.value.labelCtx.showForNode(n.id, isMatched)
+    if (engine.value.nodeCtx) {
+      for (const n of nodes.value) {
+        const isMatched = matchedIds.has(n.id)
+        engine.value.nodeCtx.fadeTo(n.id, isMatched ? 1 : 0.12)
       }
     }
     // Focus the first match
@@ -401,13 +401,10 @@ function onSearch() {
 
 function clearSearch() {
   searchQuery.value = ''
-  // Restore all label visibility
-  if (engine.value?.labelCtx) {
-    for (const n of nodes.value) {
-      engine.value.labelCtx.showForNode(n.id, true)
-    }
+  // Restore all card visibility
+  if (engine.value?.nodeCtx) {
+    engine.value.nodeCtx.fadeAll(1)
   }
-  engine.value?.labelCtx?.showLabels(engine.value?.options?.labelDistanceThreshold ?? 120)
 }
 
 function focusNode(node: GraphNode) {

@@ -139,15 +139,15 @@ export function getNodeColor(type: string): ColorToken {
 
 /** Chinese category strings from the entity extractor → English type keys */
 export const chineseCategoryMap: Record<string, string> = {
-  '术语': NodeType.Concept,
-  '产品名': NodeType.Brand,
-  '产品': NodeType.Brand,
-  '其他': NodeType.Unknown,
-  '事件': NodeType.Event,
-  '组织': NodeType.Subject,
-  '组织名': NodeType.Subject,
-  '地名': NodeType.Location,
-  '人名': NodeType.Person,
+  '术语': NodeType.Concept,       // 青蓝
+  '产品名': NodeType.Subject,     // 金
+  '产品': NodeType.Subject,       // 金
+  '其他': NodeType.Unknown,       // 灰
+  '事件': NodeType.Event,         // 亮蓝
+  '组织': NodeType.Tag,           // 紫
+  '组织名': NodeType.Tag,         // 紫
+  '地名': NodeType.Location,      // 橙
+  '人名': NodeType.Person,        // 绿
 }
 
 /** Get English type key from Chinese category string */

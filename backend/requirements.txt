@@ -37,3 +37,7 @@ rapidfuzz>=3.14.0
 apscheduler>=3.11.0
 
 ddgs>=9.14.0
+
+# ── Data analysis module ──
+numpy>=1.26.0
+matplotlib>=3.9.0

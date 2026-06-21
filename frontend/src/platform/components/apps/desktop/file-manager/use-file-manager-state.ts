@@ -1,5 +1,4 @@
 import { createFileManagerState } from './fm-state'
-import { createContextMenu } from './fm-context-menu'
 import { createFileOperations } from './fm-file-operations'
 import { usePermission } from '@/shared/composables/use-permission'
 import { computed } from 'vue'
@@ -16,17 +15,12 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
   // Core state + navigation
   const state = createFileManagerState(options)
 
-  // Context menu logic (depends on canWrite)
-  const ctx = createContextMenu({ canWrite })
-
-  // File operations (depends on state + context)
+  // File operations
   const ops = createFileOperations({
     uploadInput: state.uploadInput,
     currentFolderId: state.currentFolderId,
     loadFiles: state.loadFiles,
     displayName: state.displayName,
-    ctxTarget: ctx.ctxTarget,
-    closeContextMenu: ctx.closeContextMenu,
     openItem: state.openItem,
     showProperties: state.showProperties,
     emit: state.emit,
@@ -75,18 +69,10 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
     formatSize: state.formatSize,
     showProperties: state.showProperties,
     closeProperties: state.closeProperties,
-    ctxVisible: ctx.ctxVisible,
-    ctxX: ctx.ctxX,
-    ctxY: ctx.ctxY,
-    ctxItems: ctx.ctxItems,
-    closeContextMenu: ctx.closeContextMenu,
-    handleBlankContextMenu: ctx.handleBlankContextMenu,
-    handleItemMenu: ctx.handleItemMenu,
-    showSelectedMenu: ctx.showSelectedMenu,
+    handleAction: ops.handleAction,
     triggerUpload: ops.triggerUpload,
     onUploadFile: ops.onUploadFile,
     createFolder: ops.createFolder,
-    handleCtxClick: ops.handleCtxClick,
     createFileFromMenuKey: ops.createFileFromMenuKey,
     downloadFile: ops.downloadFile,
     copyPath: ops.copyPath,

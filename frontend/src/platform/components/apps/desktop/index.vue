@@ -1,5 +1,5 @@
 <template>
-  <div class="desktop-file-manager" :data-folder="String(state.currentFolderId.value || 0)" @contextmenu.prevent="state.handleBlankContextMenu" @click="state.closeContextMenu">
+  <div class="desktop-file-manager" :data-folder="String(state.currentFolderId.value || 0)" @contextmenu.prevent="handleBlankContextMenu">
     <FmNavigationBar
       :can-go-back="state.canGoBack.value"
       :can-go-forward="state.canGoForward.value"
@@ -23,7 +23,7 @@
       />
 
       <div class="fm-main" :data-folder="String(state.currentFolderId.value || 0)" :class="{ 'fm-main-drag-over': dragState.dragOverId === String(state.currentFolderId.value) && dragState.isDragging }">
-        <FmRecycleView v-if="state.isRecycleBin.value" />
+        <FmRecycleView v-if="state.isRecycleBin.value" @context-menu-blank="handleRecycleBlankMenu" @context-menu-item="handleRecycleItemMenu" />
         <FmFileList
           v-else
           :items="state.sortedItems.value"
@@ -36,7 +36,7 @@
           :sort-direction="state.sortDirection.value"
           @select="state.selectItem"
           @open="state.openItem"
-          @context-menu="state.handleItemMenu"
+          @context-menu="handleItemContextMenu"
           @sort="handleSort"
         />
       </div>
@@ -65,29 +65,31 @@
 
     <input ref="uploadInputRef" type="file" class="fm-hidden-input" @change="state.onUploadFile" />
 
-    <!-- Right-click menu -->
-    <div v-if="state.ctxVisible.value" class="ctx-overlay" @click.self="state.closeContextMenu">
-      <div class="ctx-menu" :style="{ left: state.ctxX.value + 'px', top: state.ctxY.value + 'px' }">
-        <button
-          v-for="item in state.ctxItems.value"
-          :key="item.key"
-          class="ctx-item"
-          :class="{ 'ctx-danger': item.danger, 'ctx-disabled': item.disabled }"
-          type="button"
-          :disabled="item.disabled"
-          @click="state.handleCtxClick(item.key)"
-        >
-          <span class="ctx-icon">{{ item.icon || '' }}</span>
-          <span class="ctx-label">{{ item.label }}</span>
-        </button>
-      </div>
-    </div>
+    <ContextMenu
+      :visible="contextMenu.visible.value"
+      :x="contextMenu.x.value"
+      :y="contextMenu.y.value"
+      :context-type="contextMenu.context.value?.type"
+      :current-items="contextMenu.currentItems.value"
+      :active-submenu="contextMenu.activeSubmenu.value"
+      :open-submenu="contextMenu.openSubmenu"
+      :close-submenu="contextMenu.closeSubmenu"
+      :keep-submenu-open="contextMenu.keepSubmenuOpen"
+      @select="handleContextMenuSelect"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { dragState } from '@/desktop/drag-drop/drag-state'
+import { useContextMenu } from '@/desktop/context-menu/use-context-menu'
+import ContextMenu from '@/desktop/context-menu/context-menu.vue'
+import { buildFileMenu, buildFolderMenu } from '@/desktop/context-menu/file-context-menu'
+import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
+import { hasContent } from '@/desktop/clipboard/clipboard-state'
+import { restoreRecycleBinEntry, permanentlyDeleteEntry, emptyRecycleBinRequest } from '@/shared/api/desktop'
 import FmNavigationBar from './file-manager/fm-navigation-bar.vue'
 import FmNavPane from './file-manager/fm-nav-pane.vue'
 import FmRecycleView from './file-manager/fm-recycle-view.vue'
@@ -95,6 +97,9 @@ import FmFileList from './file-manager/fm-file-list.vue'
 import FmStatusBar from './file-manager/fm-status-bar.vue'
 import FmPropertiesDialog from './file-manager/fm-properties-dialog.vue'
 import { useFileManagerState } from './file-manager/use-file-manager-state'
+import type { FileEntry, RecycleBinEntry } from '@/shared/api/types'
+import type { MenuItemConfig } from '@/desktop/context-menu/use-context-menu'
+import emitter from '@/desktop/events'
 
 const props = defineProps<{
   folderId?: number
@@ -106,6 +111,10 @@ const state = useFileManagerState({
   folderId: () => props.folderId,
   folderName: () => props.folderName,
 })
+const contextMenu = useContextMenu()
+const { creatableFormats } = useCreatableFormats()
+
+let ctxtFile: FileEntry | null = null
 
 function handleSort(column: string) {
   if (state.sortColumn.value === column) {
@@ -114,6 +123,75 @@ function handleSort(column: string) {
     state.sortColumn.value = column as 'name' | 'date' | 'type' | 'size'
     state.sortDirection.value = 'asc'
   }
+}
+
+function handleBlankContextMenu(e: MouseEvent) {
+  ctxtFile = null
+  const el = e.target as HTMLElement
+  if (el.closest('.fm-entry') || el.closest('.fm-nav-pane')) return
+  const items: MenuItemConfig[] = [
+    { key: 'upload-file', label: '上传文件', icon: '⬆', disabled: !state.canWrite.value },
+    { key: 'create-folder', label: '新建文件夹', icon: '📁', disabled: !state.canWrite.value },
+    { key: 'refresh', label: '刷新', icon: '↻' },
+  ]
+  if (state.canWrite.value && creatableFormats.value.length) {
+    items.splice(2, 0, { key: 'new-file', label: '新建文件', icon: '📄', children: creatableFormats.value.map(f => ({ key: `create-file:${f.extension}`, label: f.label, icon: '' })) })
+  }
+  if (hasContent.value) {
+    items.push({ key: 'paste', label: '粘贴', icon: '📌' })
+  }
+  contextMenu.open(e, items, { type: 'desktop-blank' })
+}
+
+function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
+  ctxtFile = item
+  let items: MenuItemConfig[]
+  if (item.is_folder) {
+    items = buildFolderMenu(state.canWrite.value, () => [])
+    if (state.canWrite.value && creatableFormats.value.length) {
+      items.splice(3, 0, { key: 'new-file', label: '新建文件', icon: '📄', children: creatableFormats.value.map(f => ({ key: `create-file:${f.extension}`, label: f.label, icon: '' })) })
+    }
+  } else {
+    items = buildFileMenu(state.canWrite.value, () => [])
+  }
+  contextMenu.open(e, items, { type: item.is_folder ? 'folder' : 'file', target: { ...item } })
+}
+
+async function handleRecycleAction(key: string) {
+  const item = ctxtFile as RecycleBinEntry | null
+  if (key === 'restore' && item) {
+    try { await restoreRecycleBinEntry(item.item_type as 'file' | 'folder', item.id); ElMessage.success('已还原') }
+    catch { ElMessage.warning('还原失败') }
+  } else if (key === 'delete-permanently' && item) {
+    try { await ElMessageBox.confirm('确定彻底删除？', '确认', { type: 'warning' }) } catch { return }
+    try { await permanentlyDeleteEntry(item.item_type as 'file' | 'folder', item.id); ElMessage.success('已删除') }
+    catch { ElMessage.warning('删除失败') }
+  } else if (key === 'empty-recycle-bin') {
+    try { await ElMessageBox.confirm('确定清空回收站？', '确认', { type: 'warning' }) } catch { return }
+    try { await emptyRecycleBinRequest(); ElMessage.success('已清空') }
+    catch { ElMessage.warning('清空失败') }
+  }
+  emitter.emit('refresh:file-list', { folderId: 0 } as never)
+}
+
+async function handleContextMenuSelect(key: string) {
+  contextMenu.close()
+  const ctxType = contextMenu.context.value?.type
+  if (ctxType === 'recycle-bin' || ctxType === 'recycle-bin-item') {
+    await handleRecycleAction(key)
+    return
+  }
+  await state.handleAction(key, ctxtFile)
+}
+
+function handleRecycleBlankMenu(e: MouseEvent, options: { key: string; label: string; icon?: string; danger?: boolean }[]) {
+  ctxtFile = null
+  contextMenu.open(e, options, { type: 'recycle-bin' })
+}
+
+function handleRecycleItemMenu(e: MouseEvent, item: RecycleBinEntry, options: { key: string; label: string; icon?: string; danger?: boolean }[]) {
+  ctxtFile = item as unknown as FileEntry
+  contextMenu.open(e, options, { type: 'recycle-bin-item' })
 }
 
 onMounted(() => {
@@ -153,56 +231,6 @@ onMounted(() => {
   background: rgba(35, 149, 188, 0.05) !important;
   box-shadow: inset 0 0 0 1.5px #2395bc;
   border-radius: 4px;
-}
-
-.ctx-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-}
-
-.ctx-menu {
-  position: fixed;
-  min-width: 150px;
-  padding: 5px;
-  border: 1px solid #d8dee8;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
-}
-
-.ctx-item {
-  width: 100%;
-  height: 30px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 9px;
-  font-size: 13px;
-  color: #263445;
-  cursor: pointer;
-  text-align: left;
-}
-
-.ctx-item:hover {
-  background: #eaf4ff;
-}
-
-.ctx-disabled {
-  color: #a8b1bf;
-  cursor: not-allowed;
-}
-
-.ctx-danger {
-  color: #dc2626;
-}
-
-.ctx-icon {
-  width: 18px;
-  text-align: center;
 }
 
 @media (max-width: 860px) {

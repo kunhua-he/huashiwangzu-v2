@@ -149,11 +149,7 @@ const emit = defineEmits<{
 .fm-file-list {
   min-height: 0;
   overflow: auto;
-  background:
-    linear-gradient(90deg, rgba(203, 213, 225, 0.2) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(203, 213, 225, 0.2) 1px, transparent 1px),
-    #f8fafc;
-  background-size: 92px 92px;
+  background: #f8fafc;
 }
 
 .fm-view-list {

@@ -13,7 +13,7 @@ export interface MenuItemConfig {
 }
 
 export type MenuContext = {
-  type: 'desktop-blank' | 'file' | 'folder' | 'recycle-bin' | 'multi-select' | 'desktop-shell-blank' | 'desktop-shell-icon'
+  type: 'desktop-blank' | 'file' | 'folder' | 'recycle-bin' | 'recycle-bin-item' | 'multi-select' | 'desktop-shell-blank' | 'desktop-shell-icon'
   target?: Record<string, unknown>
 }
 

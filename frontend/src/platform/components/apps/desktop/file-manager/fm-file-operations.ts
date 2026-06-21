@@ -1,5 +1,6 @@
 import { useFileOperations } from '@/shared/files/use-file-operations'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
+import { copyItems, cutItems, hasContent, currentClipboardType, currentClipboardItems, clearClipboard } from '@/desktop/clipboard/clipboard-state'
 import type { FileEntry } from '@/shared/api/types'
 import type { Ref } from 'vue'
 
@@ -8,8 +9,6 @@ interface FileOperationsDeps {
   currentFolderId: Ref<number>
   loadFiles: () => Promise<void>
   displayName: (file: FileEntry) => string
-  ctxTarget: Ref<FileEntry | null>
-  closeContextMenu: () => void
   openItem: (item: FileEntry) => void
   showProperties: (item: FileEntry) => void
   emit: {
@@ -66,14 +65,21 @@ export function createFileOperations(deps: FileOperationsDeps) {
     await ops.deleteEntry(file)
   }
 
-  async function handleCtxClick(key: string) {
-    deps.closeContextMenu()
-    const file = deps.ctxTarget.value
+  async function handleAction(key: string, file: FileEntry | null) {
     if (key === 'refresh') { await deps.loadFiles(); return }
-    if (key === 'upload-file') { triggerUpload(); return }
-    if (key === 'create-folder') { await createFolder(); return }
+    if (key === 'upload-file' || key === 'upload-here') { triggerUpload(); return }
+    if (key === 'create-folder' || key === 'create-folder-here') { await createFolder(); return }
     if (key.startsWith('create-file:')) {
       await createFileFromMenuKey(key)
+      return
+    }
+    if (key === 'paste' || key === 'paste-here') {
+      if (hasContent.value) {
+        const isCut = currentClipboardType.value === 'cut'
+        const folderId = (file && file.is_folder) ? file.id : deps.currentFolderId.value
+        await ops.pasteToFolder(folderId, currentClipboardItems.value, isCut)
+        if (isCut) clearClipboard()
+      }
       return
     }
     if (key === 'properties' || key === 'details') {
@@ -85,7 +91,9 @@ export function createFileOperations(deps: FileOperationsDeps) {
     if (key === 'download') { await downloadFile(file); return }
     if (key === 'copy-path') { await copyPath(file); return }
     if (key === 'rename') { await renameEntry(file); return }
-    if (key === 'delete') { await deleteEntry(file) }
+    if (key === 'delete') { await deleteEntry(file); return }
+    if (key === 'cut') { cutItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name }]); return }
+    if (key === 'copy') { copyItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name }]); return }
   }
 
   return {
@@ -97,6 +105,6 @@ export function createFileOperations(deps: FileOperationsDeps) {
     copyPath,
     renameEntry,
     deleteEntry,
-    handleCtxClick,
+    handleAction,
   }
 }

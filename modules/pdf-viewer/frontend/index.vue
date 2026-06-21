@@ -97,7 +97,7 @@ async function loadPdf(fid: number) {
     fileBlobUrl.value = URL.createObjectURL(blob)
 
     const pdfjsLib = await import('pdfjs-dist')
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
     pdfDoc = await pdfjsLib.getDocument(fileBlobUrl.value).promise
     pageCount.value = pdfDoc.numPages
     renderedPages.value = Array.from({ length: pageCount.value }, (_, i) => i)

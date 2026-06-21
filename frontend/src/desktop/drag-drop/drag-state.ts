@@ -9,6 +9,8 @@ interface DragState {
   originY: number
   originLeft: number
   originTop: number
+  grabOffsetX: number
+  grabOffsetY: number
   offsetList: { id: string; dx: number; dy: number; baseLeft: number; baseTop: number }[]
 }
 
@@ -18,10 +20,9 @@ const dragState = reactive<DragState>({
   dragOverId: null,
   originX: 0, originY: 0,
   originLeft: 0, originTop: 0,
+  grabOffsetX: 0, grabOffsetY: 0,
   offsetList: [],
 })
-
-let _hoverTimer: ReturnType<typeof setTimeout> | null = null
 
 function getTranslateOffset(el: Element): { x: number; y: number } {
   const transform = window.getComputedStyle(el).transform
@@ -47,6 +48,8 @@ export function startDrag(ids: string[], x: number, y: number): void {
   if (!primaryRect) { endDrag(); return }
   dragState.originLeft = primaryRect.left
   dragState.originTop = primaryRect.top
+  dragState.grabOffsetX = x - primaryRect.left
+  dragState.grabOffsetY = y - primaryRect.top
   dragState.offsetList = ids.map(id => {
     const el = document.querySelector(`[data-selection-key="${id}"]`)
     const r = el?.getBoundingClientRect()
@@ -68,21 +71,19 @@ export function startDrag(ids: string[], x: number, y: number): void {
     el.style.pointerEvents = 'none'
   })
 
-  createDragGhost(ids, x, y)
+  createDragGhost(ids, x, y, dragState.grabOffsetX, dragState.grabOffsetY)
 }
 
 export function updateDragOffset(dx: number, dy: number): void {
   if (!dragState.isDragging) return
-  updateDragGhostPosition(dragState.originX + dx, dragState.originY + dy)
+  updateDragGhostPosition(dragState.originX + dx, dragState.originY + dy, dragState.grabOffsetX, dragState.grabOffsetY)
 }
 
 export function enterFolder(id: string): void {
-  if (_hoverTimer) clearTimeout(_hoverTimer)
-  _hoverTimer = setTimeout(() => { dragState.dragOverId = id }, 150)
+  dragState.dragOverId = id
 }
 
 export function leaveFolder(): void {
-  if (_hoverTimer) clearTimeout(_hoverTimer)
   dragState.dragOverId = null
 }
 
@@ -92,7 +93,6 @@ export function endDrag(options: { keepTransform?: boolean } = {}): void {
   dragState.draggedIds = []
   dragState.dragOverId = null
   dragState.offsetList = []
-  if (_hoverTimer) clearTimeout(_hoverTimer)
   document.body.classList.remove('desktop-dragging')
   removeDragGhost()
   document.querySelectorAll('[data-selection-key]').forEach(el => {

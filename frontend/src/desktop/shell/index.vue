@@ -121,6 +121,8 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
     ? Number(targetFolderId)
     : null
   if (targetId !== null && !Number.isFinite(targetId)) return
+  const affectedFolders = new Set<number>()
+  affectedFolders.add(0)
   let movedCount = 0
   for (const id of ids) {
     const colonIdx = id.indexOf(':')
@@ -134,6 +136,7 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
     try {
       await moveEntryRequest(type, fileId, targetId)
       movedCount += 1
+      if (srcFolderId !== null) affectedFolders.add(srcFolderId)
     } catch (e: any) {
       if (e?.response?.status === 409) {
         ElMessage.warning('目标已有同名文件')
@@ -142,7 +145,9 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
   }
   if (movedCount > 0) {
     ElMessage.success(movedCount > 1 ? `已移动 ${movedCount} 个项目` : '已移动')
-    emit('refresh:file-list', { folderId: 0 })
+    affectedFolders.forEach(folderId => {
+      emit('refresh:file-list', { folderId })
+    })
   }
 })
 

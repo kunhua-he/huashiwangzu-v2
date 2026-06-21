@@ -49,6 +49,17 @@ function isDesktopSource(): boolean {
   })
 }
 
+function getSourceFolderId(key: string): number | null {
+  const el = document.querySelector(`[data-selection-key="${key}"]`)
+  if (!el) return null
+  const fm = el.closest('.desktop-file-manager') as HTMLElement | null
+  if (fm) {
+    const attr = fm.getAttribute('data-folder')
+    return attr !== null ? Number(attr) : 0
+  }
+  return 0
+}
+
 export function useDesktopPointer() {
   const { emit } = useDesktopEventBus()
 
@@ -72,20 +83,22 @@ export function useDesktopPointer() {
 
   function handleDesktopMouseUp(e: MouseEvent) {
     if (dragState.isDragging) {
-      const targetFolder = dragState.dragOverId
-      if (targetFolder) {
-        // Drag ended on a folder target → move into it
-        emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: targetFolder })
-        endDrag({ keepTransform: true })
-      } else {
-        // No folder hit → determine action based on source origin
-        if (isDesktopSource()) {
-          // Desktop icon dragged to blank → free positioning
-          snapDraggedIcons(e)
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const folderEl = el?.closest?.('[data-folder]') as HTMLElement | null
+      if (folderEl) {
+        const targetId = folderEl.getAttribute('data-folder')
+        const srcFolderId = getSourceFolderId(dragState.draggedIds[0])
+        if (srcFolderId !== null && String(srcFolderId) === targetId) {
+          endDrag()
         } else {
-          // File manager item on blank/nav → move to root
-          emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: null })
+          emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: targetId })
+          endDrag({ keepTransform: true })
         }
+      } else if (isDesktopSource()) {
+        snapDraggedIcons(e)
+        endDrag()
+      } else {
+        emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: null })
         endDrag()
       }
       return

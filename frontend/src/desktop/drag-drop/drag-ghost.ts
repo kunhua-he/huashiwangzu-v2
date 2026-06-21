@@ -1,5 +1,4 @@
 let ghostEl: HTMLElement | null = null
-let ghostOffsets = { x: 16, y: 16 }
 
 function getPrimaryEl(key: string): HTMLElement | null {
   return document.querySelector(`[data-selection-key="${key}"]`) as HTMLElement | null
@@ -9,62 +8,46 @@ function buildGhost(ids: string[]): HTMLElement {
   const ghost = document.createElement('div')
   ghost.id = 'drag-ghost-el'
   ghost.style.cssText =
-    'position:fixed;z-index:2147483647;pointer-events:none;opacity:0.92;transition:none;'
-
-  const inner = document.createElement('div')
-  inner.style.cssText =
-    'display:flex;align-items:center;gap:8px;padding:6px 12px;' +
-    'background:rgba(255,255,255,0.96);border-radius:8px;' +
-    'box-shadow:0 4px 20px rgba(15,23,42,0.18);border:1px solid #c8d4e4;'
+    'position:fixed;z-index:2147483647;pointer-events:none;opacity:0.7;transition:none;'
 
   const primaryEl = getPrimaryEl(ids[0])
   if (primaryEl) {
-    const iconEl =
-      primaryEl.querySelector('.desktop-icon-image, .file-visual-icon-wrapper, .file-entry-icon') ||
-      primaryEl.querySelector('svg, img')
-    if (iconEl) {
-      const cloned = iconEl.cloneNode(true) as HTMLElement
-      cloned.style.cssText = 'width:32px;height:32px;flex-shrink:0;'
-      inner.appendChild(cloned)
-    } else {
-      const fb = document.createElement('span')
-      fb.textContent = '📄'
-      fb.style.cssText = 'font-size:24px;line-height:1;'
-      inner.appendChild(fb)
-    }
-
-    const label = document.createElement('span')
-    label.textContent =
-      primaryEl.querySelector('.desktop-icon-label, .fm-entry-name')?.textContent || '项'
-    label.style.cssText =
-      'font-size:13px;color:#1e293b;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;'
-    inner.appendChild(label)
+    const cloned = primaryEl.cloneNode(true) as HTMLElement
+    cloned.style.cssText = 'margin:0;opacity:1;transform:none;width:' + primaryEl.offsetWidth + 'px;'
+    cloned.querySelectorAll('.desktop-icon-item, .fm-entry').forEach(el => {
+      const htmlEl = el as HTMLElement
+      htmlEl.style.opacity = '1'
+      htmlEl.style.pointerEvents = ''
+      htmlEl.style.transform = ''
+    })
+    ghost.appendChild(cloned)
   }
 
   if (ids.length > 1) {
     const badge = document.createElement('span')
     badge.textContent = `${ids.length}项`
     badge.style.cssText =
-      'font-size:11px;color:#475569;background:#f1f5f9;border-radius:10px;padding:1px 7px;flex-shrink:0;'
-    inner.appendChild(badge)
+      'position:absolute;top:-6px;right:-6px;font-size:11px;color:#fff;background:#2395bc;' +
+      'border-radius:10px;padding:1px 7px;line-height:18px;min-width:18px;text-align:center;' +
+      'box-shadow:0 2px 4px rgba(0,0,0,0.2);'
+    ghost.appendChild(badge)
   }
 
-  ghost.appendChild(inner)
   return ghost
 }
 
-export function createDragGhost(ids: string[], x: number, y: number): void {
+export function createDragGhost(ids: string[], x: number, y: number, grabOffsetX = 16, grabOffsetY = 16): void {
   removeDragGhost()
   ghostEl = buildGhost(ids)
-  ghostEl.style.left = `${x + ghostOffsets.x}px`
-  ghostEl.style.top = `${y + ghostOffsets.y}px`
+  ghostEl.style.left = `${x - grabOffsetX}px`
+  ghostEl.style.top = `${y - grabOffsetY}px`
   document.body.appendChild(ghostEl)
 }
 
-export function updateDragGhostPosition(x: number, y: number): void {
+export function updateDragGhostPosition(x: number, y: number, grabOffsetX = 16, grabOffsetY = 16): void {
   if (!ghostEl) return
-  ghostEl.style.left = `${x + ghostOffsets.x}px`
-  ghostEl.style.top = `${y + ghostOffsets.y}px`
+  ghostEl.style.left = `${x - grabOffsetX}px`
+  ghostEl.style.top = `${y - grabOffsetY}px`
 }
 
 export function removeDragGhost(): void {

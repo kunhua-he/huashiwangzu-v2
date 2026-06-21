@@ -87,4 +87,34 @@ class SystemTaskQueue(Base, TimestampMixin):
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Scheduling fields for timed/recurring tasks (2025-06-21)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="当这个时间到了才该跑（可空=即时任务）")
+    recur: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="周期表达: daily/hourly/weekly 或 cron")
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="预计算的下次运行时间")
+
+
+_MIGRATIONS_DONE = False
+
+
+async def ensure_framework_scheduling_columns() -> None:
+    """ALTER ADD COLUMN IF NOT EXISTS for SystemTaskQueue scheduling fields.
+    Idempotent — safe to call multiple times.
+    """
+    global _MIGRATIONS_DONE
+    if _MIGRATIONS_DONE:
+        return
+    from sqlalchemy import text
+    from app.database import engine
+    cols = [
+        ("scheduled_at", "TIMESTAMP WITH TIME ZONE"),
+        ("recur", "VARCHAR(32)"),
+        ("next_run_at", "TIMESTAMP WITH TIME ZONE"),
+    ]
+    async with engine.begin() as conn:
+        for col_name, col_type in cols:
+            await conn.execute(text(
+                f"ALTER TABLE framework_system_task_queues "
+                f"ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            ))
+    _MIGRATIONS_DONE = True
 

@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Awaitable, Callable
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, and_, or_
 
 from app.database import AsyncSessionLocal
 from app.models.system import SystemTaskQueue
@@ -53,10 +53,23 @@ async def _recover_stale_tasks(db) -> None:
 
 
 async def _claim_one_task(db) -> SystemTaskQueue | None:
-    """原子抢占一条 pending 任务（FOR UPDATE SKIP LOCKED 防多 worker 抢同一条）。"""
+    """原子抢占一条 pending 任务（FOR UPDATE SKIP LOCKED 防多 worker 抢同一条）。
+    
+    即时任务(scheduled_at IS NULL)照旧立即执行；
+    定时任务(scheduled_at <= now())到点才被取。
+    """
+    now = datetime.now(timezone.utc)
     row = await db.execute(
         select(SystemTaskQueue)
-        .where(SystemTaskQueue.status == "pending")
+        .where(
+            and_(
+                SystemTaskQueue.status == "pending",
+                or_(
+                    SystemTaskQueue.scheduled_at.is_(None),
+                    SystemTaskQueue.scheduled_at <= now,
+                ),
+            )
+        )
         .order_by(SystemTaskQueue.priority.desc(), SystemTaskQueue.id)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -87,6 +100,27 @@ async def _run_handler(task: SystemTaskQueue) -> tuple[bool, dict | None, str | 
         return False, None, str(exc)
 
 
+def _compute_next_recur(recur: str, ref_time: datetime) -> datetime | None:
+    """根据周期表达计算下一次运行时间。"""
+    ref = ref_time.astimezone(timezone.utc)
+    if recur == "hourly":
+        return ref + timedelta(hours=1)
+    elif recur == "daily":
+        return ref + timedelta(days=1)
+    elif recur == "weekly":
+        return ref + timedelta(weeks=1)
+    elif recur.startswith("cron:"):
+        # Minimal cron: "cron:HH:MM" daily at that UTC time
+        parts = recur.split(":")
+        if len(parts) >= 3:
+            hour, minute = int(parts[1]), int(parts[2])
+            next_time = ref.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if next_time <= ref:
+                next_time += timedelta(days=1)
+            return next_time
+    return None
+
+
 async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: str | None) -> None:
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
@@ -97,6 +131,16 @@ async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: s
         task.result = json.dumps(result, ensure_ascii=False) if result is not None else None
         task.error_message = None
         task.completed_at = now
+        # 周期任务: 完成后自动重排下一次
+        if task.recur:
+            next_time = _compute_next_recur(task.recur, now)
+            if next_time:
+                task.status = "pending"
+                task.scheduled_at = next_time
+                task.next_run_at = next_time
+                task.started_at = None
+                task.retry_count = 0
+                task.completed_at = None
     else:
         task.retry_count = (task.retry_count or 0) + 1
         task.error_message = error

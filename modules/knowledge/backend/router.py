@@ -5,7 +5,7 @@
 import logging
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal, get_db
@@ -448,6 +448,116 @@ async def api_progress_batch(
     return ApiResponse(data=result)
 
 
+@router.get("/dashboard/stats")
+async def api_dashboard_stats(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("editor")),
+):
+    from .models import (
+        KbDocument, KbEntityDictionary, KbGraphNode, KbGraphEdge,
+        KbFileRelation, KbGovernanceCandidate,
+    )
+
+    total = (await db.execute(
+        select(func.count(KbDocument.id)).where(KbDocument.deleted == False, KbDocument.owner_id == user.id)
+    )).scalar() or 0
+
+    completed = (await db.execute(
+        select(func.count(KbDocument.id)).where(
+            KbDocument.deleted == False, KbDocument.owner_id == user.id,
+            KbDocument.raw_status == "done", KbDocument.fusion_status == "done",
+        )
+    )).scalar() or 0
+
+    running = (await db.execute(
+        select(func.count(KbDocument.id)).where(
+            KbDocument.deleted == False, KbDocument.owner_id == user.id,
+            KbDocument.raw_status == "running",
+        )
+    )).scalar() or 0
+
+    failed = (await db.execute(
+        select(func.count(KbDocument.id)).where(
+            KbDocument.deleted == False, KbDocument.owner_id == user.id,
+            and_(KbDocument.raw_status == "failed", KbDocument.fusion_status == "failed"),
+        )
+    )).scalar() or 0
+
+    entity_count = (await db.execute(
+        select(func.count(KbEntityDictionary.id)).where(KbEntityDictionary.owner_id == user.id)
+    )).scalar() or 0
+
+    relation_count = (await db.execute(
+        select(func.count(KbGraphEdge.id)).where(KbGraphEdge.owner_id == user.id)
+    )).scalar() or 0
+
+    file_relation_count = (await db.execute(
+        select(func.count(KbFileRelation.id)).where(KbFileRelation.source_document_id.isnot(None))
+    )).scalar() or 0
+
+    duplicate_entities = 0
+    dup_rows = await db.execute(
+        select(KbEntityDictionary.name, func.count(KbEntityDictionary.id))
+        .where(KbEntityDictionary.owner_id == user.id, KbEntityDictionary.status != "merged")
+        .group_by(KbEntityDictionary.name)
+        .having(func.count(KbEntityDictionary.id) > 1)
+    )
+    dup_groups = dup_rows.all()
+    duplicate_entities = sum(cnt for _, cnt in dup_groups)
+
+    cat_rows = await db.execute(
+        select(KbEntityDictionary.category, func.count(KbEntityDictionary.id))
+        .where(KbEntityDictionary.owner_id == user.id)
+        .group_by(KbEntityDictionary.category)
+        .order_by(func.count(KbEntityDictionary.id).desc())
+    )
+    entity_category_distribution = {cat: cnt for cat, cnt in cat_rows.all()}
+
+    all_docs = await db.execute(
+        select(KbDocument).where(KbDocument.deleted == False, KbDocument.owner_id == user.id)
+        .order_by(KbDocument.id.desc())
+    )
+    doc_progresses = []
+    stuck_docs = []
+    for d in all_docs.scalars().all():
+        entry = {
+            "id": d.id, "filename": d.filename, "total_pages": d.total_pages,
+            "raw_status": d.raw_status, "fusion_status": d.fusion_status,
+            "parse_status": d.parse_status, "created_at": str(d.created_at or ""),
+        }
+        doc_progresses.append(entry)
+        if d.raw_status == "failed" or d.fusion_status == "failed":
+            stuck_docs.append(entry)
+
+    recent = (await db.execute(
+        select(KbDocument).where(
+            KbDocument.deleted == False, KbDocument.owner_id == user.id,
+            KbDocument.raw_status == "done", KbDocument.fusion_status == "done",
+        )
+        .order_by(KbDocument.updated_at.desc().nullslast())
+        .limit(10)
+    )).scalars().all()
+    recent_completions = [
+        {"id": d.id, "filename": d.filename, "completed_at": str(d.updated_at or "")}
+        for d in recent
+    ]
+
+    return ApiResponse(data={
+        "total_documents": total,
+        "completed_documents": completed,
+        "running_documents": running,
+        "failed_documents": failed,
+        "total_entities": entity_count,
+        "total_graph_relations": relation_count,
+        "total_file_relations": file_relation_count,
+        "duplicate_entity_count": duplicate_entities,
+        "duplicate_entity_groups": [{"name": name, "count": cnt} for name, cnt in dup_groups],
+        "entity_category_distribution": entity_category_distribution,
+        "document_progresses": doc_progresses,
+        "stuck_documents": stuck_docs,
+        "recent_completions": recent_completions,
+    })
+
 @router.post("/search")
 async def api_search(
     payload: SearchRequest,
@@ -628,20 +738,27 @@ async def _enqueue_task(db, task_type: str, document_id: int, user_id: int) -> A
 async def _cap_search(params: dict, caller: str) -> dict:
     owner_id = resolve_user_id(caller)
     query = str(params.get("query", "")).strip()
-    top_k = int(params.get("top_k", 5) or 5)
+    top_k = int(params.get("top_k", 10) or 10)
     if not query:
         raise ValueError("query is required")
     async with AsyncSessionLocal() as db:
         results = await hybrid_search(db, query, owner_id, top_k=top_k, use_rerank=False)
-        # 为每个结果补充页级融合内容
+        # 为每个结果补充页级融合内容和文档名称
         from .entity_service import get_page_fusion as _get_page_fusion
+        from .models import KbDocument
         enriched = []
+        doc_cache: dict[int, str] = {}
         for r in results:
             doc_id = r.get("document_id")
             page = r.get("page")
             if doc_id and page:
                 fusion = await _get_page_fusion(db, doc_id, page)
                 r["page_fusion"] = fusion
+            if doc_id and doc_id not in doc_cache:
+                dr = await db.execute(select(KbDocument).where(KbDocument.id == doc_id, KbDocument.owner_id == owner_id))
+                doc = dr.scalar_one_or_none()
+                doc_cache[doc_id] = doc.filename if doc else ""
+            r["document_name"] = doc_cache.get(doc_id, "")
             enriched.append(r)
         return {"query": query, "results": enriched}
 

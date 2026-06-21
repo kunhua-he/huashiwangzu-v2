@@ -5,6 +5,9 @@
       <button class="ws-btn" @click="openWorkspace">
         🏠 工作台
       </button>
+      <button v-if="isAdminOrEditor" class="ws-btn" @click="openDashboard" :class="{ active: showDashboard }">
+        📊 看板
+      </button>
 
       <input v-model="keyword" class="search-mini" placeholder="筛选文件…" />
 
@@ -36,6 +39,11 @@
       <!-- 工作台：3D 深空星图 -->
       <template v-if="showWorkspace && !active">
         <WorkspaceGraph @select="handleGraphSelect" />
+      </template>
+
+      <!-- 看板 -->
+      <template v-else-if="showDashboard && !active">
+        <DashboardView />
       </template>
 
       <!-- 无选中：欢迎 -->
@@ -130,7 +138,8 @@
 
         <section v-if="hasResult && tab === 'search'" class="pane">
           <div class="search-bar"><input v-model="query" class="search-input" placeholder="搜索全库知识内容…" @keyup.enter="runSearch" /><button class="primary-btn" :disabled="searching" @click="runSearch">{{ searching?'搜索中':'搜索' }}</button></div>
-          <article v-for="item in searchResults" :key="item.chunk_id" class="result-card" @click="jumpDoc(item.document_id)"><div class="result-head"><span class="result-doc">{{ docName(item.document_id) }}</span><span class="result-page">第 {{ item.page||'·' }} 页</span></div><p>{{ item.text }}</p></article>
+          <div v-if="searched" class="search-hint">在 {{ analyzedDocCount }} 个已分析文件中检索「{{ query }}」</div>
+          <article v-for="item in searchResults" :key="item.chunk_id" class="result-card" @click="jumpToSearchResult(item)"><div class="result-head"><span class="result-doc">{{ item.document_name || docName(item.document_id) }}</span><span class="result-page">第 {{ item.page||'·' }} 页</span></div><p v-html="highlightText(item.text, query)"></p></article>
           <div v-if="searched && !searchResults.length" class="empty-tip pad">没找到相关内容</div>
         </section>
       </template>
@@ -157,6 +166,7 @@
 import { computed, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { initRuntime, platform } from '../runtime'
 import WorkspaceGraph from './WorkspaceGraph.vue'
+import DashboardView from './DashboardView.vue'
 import {
   apiDelete, apiPost, apiGet,
   startPipeline, getProgress, getProgressBatch, getFusions, getProfile, getRelations, parseJsonField,
@@ -170,6 +180,9 @@ import type { GraphNode } from './graph3d/types'
 const documents = ref<KnowledgeDocument[]>([])
 const active = ref<KnowledgeDocument | null>(null)
 const showWorkspace = ref(false)
+const showDashboard = ref(false)
+const userRole = ref('viewer')
+const isAdminOrEditor = computed(() => userRole.value === 'admin' || userRole.value === 'editor')
 const activeId = computed(() => active.value?.id ?? null)
 const keyword = ref('')
 const tab = ref<'overview' | 'reader' | 'relation' | 'search'>('overview')
@@ -267,7 +280,24 @@ const visibleTree = computed(() => {
 
 function openWorkspace() {
   showWorkspace.value = true
+  showDashboard.value = false
   active.value = null
+}
+
+function openDashboard() {
+  showDashboard.value = true
+  showWorkspace.value = false
+  active.value = null
+}
+
+async function loadUserRole() {
+  try {
+    const token = localStorage.getItem('v2_auth_token')
+    if (!token) return
+    const r = await fetch('/api/auth/current-user', { headers: { Authorization: `Bearer ${token}` } })
+    const body = await r.json()
+    if (body.success && body.data?.role) userRole.value = body.data.role
+  } catch { /* ignore */ }
 }
 
 function jumpToFirstRunning() {
@@ -325,6 +355,34 @@ function statusDotClass(status?: string): string { if (status === 'done') return
 function stepCount(s: ProgressStage): string { if (s.key === 'graph') return s.count ? `${s.count} 个实体` : (s.status === 'done' ? '完成' : '—'); if (s.key === 'relation') return s.count ? `${s.count} 条关联` : (s.status === 'done' ? '完成' : '—'); if (s.total <= 1) return s.status === 'done' ? '完成' : (s.status === 'running' ? '进行中' : '—'); return `${s.done}/${s.total}` }
 function confClass(c?: number): string { const v = c || 0; if (v >= 0.9) return 'high'; if (v >= 0.75) return 'mid'; return 'low' }
 function relPct(r: FileRelation): number { return Math.round((r.similarity_score || 0) * 100) }
+const analyzedDocCount = computed(() => {
+  return documents.value.filter(d => {
+    const lp = liveProgressMap.value[d.id]
+    return lp?.overall_status === 'done' || (!lp && d.parse_status === 'done')
+  }).length
+})
+const pendingPageRef = ref<number | undefined>(undefined)
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+function highlightText(text: string, q: string): string {
+  const safe = escapeHtml(text || '')
+  if (!q.trim()) return safe
+  const terms = q.trim().split(/\s+/).filter(t => t.length >= 1)
+  let result = safe
+  for (const term of terms) {
+    const escaped = escapeHtml(term)
+    const re = new RegExp(`(${escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+    result = result.replace(re, '<mark class="kw-highlight">$1</mark>')
+  }
+  return result
+}
+async function jumpToSearchResult(item: SearchResult) {
+  const doc = documents.value.find(d => d.id === item.document_id)
+  if (!doc) return
+  pendingPageRef.value = item.page ?? undefined
+  await openDocument(doc)
+}
 
 async function loadFileTree() {
   try {
@@ -513,11 +571,18 @@ async function handshakeAll() {
 }
 
 async function openDocument(doc: KnowledgeDocument) {
-  active.value = doc; showWorkspace.value = false; tab.value = 'overview'
+  const pp = pendingPageRef.value
+  pendingPageRef.value = undefined
+  active.value = doc; showWorkspace.value = false; showDashboard.value = false
+  tab.value = pp ? 'reader' : 'overview'
   progress.value = liveProgressMap.value[doc.id] || await getProgress(doc.id)
   fusions.value = []; profile.value = null; relations.value = []; searchResults.value = []; searched.value = false
   if (progress.value.overall_status === 'running') ensurePolling()
   if (hasResult.value) await loadResult(doc.id)
+  if (pp) {
+    await nextTick()
+    setTimeout(() => gotoPage(pp), 300)
+  }
 }
 
 async function loadResult(docId: number) {
@@ -634,7 +699,7 @@ function askAI() {
 
 onMounted(async () => {
   await initRuntime('knowledge')
-  await loadFileTree()
+  await Promise.all([loadFileTree(), loadUserRole()])
 })
 onUnmounted(stopPolling)
 </script>
@@ -647,6 +712,7 @@ onUnmounted(stopPolling)
 
 .ws-btn { width: 100%; padding: 10px 12px; border: 1px solid #e3e9f2; border-radius: 10px; background: #fff; cursor: pointer; font-size: 14px; font-weight: 600; color: #46586b; text-align: left; }
 .ws-btn:hover { border-color: #2395bc; color: #2395bc; background: #f7fbfe; }
+.ws-btn.active { border-color: #2395bc; color: #2395bc; background: #eaf6fb; font-weight: 700; }
 
 .search-mini { height: 34px; padding: 0 12px; border: 1px solid #d5dfeb; border-radius: 8px; background: #fff; color: #1f2a37; outline: none; }
 .search-mini:focus { border-color: #2395bc; }
@@ -757,6 +823,8 @@ onUnmounted(stopPolling)
 .result-head { display: flex; justify-content: space-between; font-size: 12px; color: #7c8da0; margin-bottom: 8px; }
 .result-doc { font-weight: 600; color: #2395bc; }
 .result-card p { margin: 0; line-height: 1.7; color: #2a3a48; }
+.kw-highlight { background: #fef3c7; color: #92400e; padding: 0 2px; border-radius: 2px; }
+.search-hint { font-size: 12px; color: #8aa0b5; margin-bottom: 12px; }
 
 .empty-tip { color: #9aabbd; font-size: 13px; text-align: center; padding: 14px; }
 .empty-tip.pad { padding: 40px; }

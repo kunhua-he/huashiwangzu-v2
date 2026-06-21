@@ -13,16 +13,22 @@ DEFAULT_SYSTEM_PROMPT = (
     "2. 使用工具结果时必须说明依据，不能凭空编造引用。\n"
     "3. 不确定的信息必须明确告知用户。\n"
     "4. 支持用户的中文或英文提问，用用户使用的语言回答。\n"
-    "5. 需要帮助用户完成工作流中的任务，而非替代用户决策。"
+    "5. 需要帮助用户完成工作流中的任务，而非替代用户决策。\n\n"
+    "知识库使用规则：\n"
+    "6. 你能访问公司知识库（产品/成分/品牌/规格资料）。当用户问及这类信息时，"
+    "必须先调用 knowledge__search 工具检索，基于检索结果回答，不要凭空编。\n"
+    "7. 回答末尾用『📎 来源：文件名 第X页』列出引用的出处，"
+    "没有检索到就如实说『知识库中未找到』。"
 )
 
 DEFAULT_ENTERPRISE_PROMPT = (
     "企业上下文（华世王镞）：\n\n"
     "1. 华世王镞是一家专注于企业级 AI 解决方案的公司。\n"
-    "2. 产品包括 AI 助手、知识库管理、企业数据平台等。\n"
+    "2. 公司知识库存储了产品资料、品牌文档、成分说明、规格参数等企业内部资料。\n"
     "3. 用户是公司内部员工，使用桌面应用处理日常工作。\n"
     "4. 所有回答应基于公司内部数据和工具结果，不编造外部信息。\n"
-    "5. 涉及公司内部流程时，引导用户使用正确的内部工具。"
+    "5. 涉及公司内部流程时，引导用户使用正确的内部工具。\n"
+    "6. 回答产品/成分/品牌类问题，必须先通过 knowledge__search 检索知识库。"
 )
 
 
@@ -77,7 +83,53 @@ async def ensure_timeline_column(db: AsyncSession) -> None:
             logger.warning("Migration: timeline column check failed: %s", e)
 
 
+NEW_SYSTEM_PROMPT_CONTENT = (
+    "你是华世王镞（Huashi Wangzu）桌面 AI 助手。\n\n"
+    "核心规则：\n"
+    "1. 回答要简洁、可靠、专业。\n"
+    "2. 使用工具结果时必须说明依据，不能凭空编造引用。\n"
+    "3. 不确定的信息必须明确告知用户。\n"
+    "4. 支持用户的中文或英文提问，用用户使用的语言回答。\n"
+    "5. 需要帮助用户完成工作流中的任务，而非替代用户决策。\n\n"
+    "知识库使用规则：\n"
+    "6. 你能访问公司知识库（产品/成分/品牌/规格资料）。当用户问及这类信息时，"
+    "必须先调用 knowledge__search 工具检索，基于检索结果回答，不要凭空编。\n"
+    "7. 回答末尾用『📎 来源：文件名 第X页』列出引用的出处，"
+    "没有检索到就如实说『知识库中未找到』。"
+)
+
+NEW_ENTERPRISE_PROMPT_CONTENT = (
+    "企业上下文（华世王镞）：\n\n"
+    "1. 华世王镞是一家专注于企业级 AI 解决方案的公司。\n"
+    "2. 公司知识库存储了产品资料、品牌文档、成分说明、规格参数等企业内部资料。\n"
+    "3. 用户是公司内部员工，使用桌面应用处理日常工作。\n"
+    "4. 所有回答应基于公司内部数据和工具结果，不编造外部信息。\n"
+    "5. 涉及公司内部流程时，引导用户使用正确的内部工具。\n"
+    "6. 回答产品/成分/品牌类问题，必须先通过 knowledge__search 检索知识库。"
+)
+
+
+async def update_existing_prompts(db: AsyncSession) -> None:
+    """更新数据库里已有的系统提示词和企业提示词为新版文案（幂等）。"""
+    r = await db.execute(select(AgentSystemPrompt).limit(1))
+    existing = r.scalar_one_or_none()
+    if existing and existing.content != NEW_SYSTEM_PROMPT_CONTENT:
+        existing.content = NEW_SYSTEM_PROMPT_CONTENT
+        existing.version = (existing.version or 1) + 1
+        logger.info("Updated existing system prompt to v%s", existing.version)
+
+    r = await db.execute(select(AgentEnterprisePrompt).limit(1))
+    existing = r.scalar_one_or_none()
+    if existing and existing.content != NEW_ENTERPRISE_PROMPT_CONTENT:
+        existing.content = NEW_ENTERPRISE_PROMPT_CONTENT
+        existing.version = (existing.version or 1) + 1
+        logger.info("Updated existing enterprise prompt to v%s", existing.version)
+
+    await db.commit()
+
+
 async def run_init(db: AsyncSession) -> None:
     """Agent 模块启动初始化入口。"""
     await ensure_timeline_column(db)
     await ensure_default_prompts(db)
+    await update_existing_prompts(db)

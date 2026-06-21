@@ -117,6 +117,7 @@ export interface SearchResult {
   text: string
   score: number
   rrf_score: number
+  document_name?: string
 }
 
 export interface EntityItem {
@@ -255,4 +256,34 @@ export interface RelationGraph {
 
 export function getRelationGraph(): Promise<RelationGraph> {
   return apiGet<RelationGraph>('/knowledge/relation-graph')
+}
+
+export interface DocProgressEntry {
+  id: number
+  filename: string
+  total_pages: number
+  raw_status: string
+  fusion_status: string
+  parse_status: string
+  created_at: string
+}
+
+export interface DashboardStats {
+  total_documents: number
+  completed_documents: number
+  running_documents: number
+  failed_documents: number
+  total_entities: number
+  total_graph_relations: number
+  total_file_relations: number
+  duplicate_entity_count: number
+  duplicate_entity_groups: Array<{ name: string; count: number }>
+  entity_category_distribution: Record<string, number>
+  document_progresses: DocProgressEntry[]
+  stuck_documents: DocProgressEntry[]
+  recent_completions: Array<{ id: number; filename: string; completed_at: string }>
+}
+
+export function getDashboardStats(): Promise<DashboardStats> {
+  return apiGet<DashboardStats>('/knowledge/dashboard/stats')
 }

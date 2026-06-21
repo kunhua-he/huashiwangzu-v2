@@ -1,4 +1,4 @@
-import type { ApiResponse } from '../../_template/runtime/index'
+interface ApiResponse<T = unknown> { success: boolean; data: T; error?: string }
 
 const BASE = '/api/memory'
 

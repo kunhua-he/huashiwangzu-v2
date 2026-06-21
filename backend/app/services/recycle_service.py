@@ -14,7 +14,25 @@ async def get_recycle_list(db: AsyncSession, owner_id: int):
     result = await db.execute(
         select(RecycleItem).where(RecycleItem.owner_id == owner_id).order_by(RecycleItem.deleted_at.desc())
     )
-    return result.scalars().all()
+    items = result.scalars().all()
+
+    file_ids = [item.origin_id for item in items if item.item_type == "file"]
+    file_ext_map: dict[int, str | None] = {}
+    if file_ids:
+        files = await db.execute(
+            select(File).where(File.id.in_(file_ids))
+        )
+        for f in files.scalars():
+            file_ext_map[f.id] = f.extension
+
+    enriched = []
+    for item in items:
+        fmt = None
+        if item.item_type == "file":
+            fmt = file_ext_map.get(item.origin_id)
+        enriched.append((item, fmt))
+
+    return enriched
 
 
 async def restore_item(db: AsyncSession, item_type: str, item_id: int, owner_id: int):

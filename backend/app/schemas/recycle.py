@@ -8,6 +8,7 @@ class RecycleItemResponse(BaseModel):
     item_type: str
     name: str
     deleted_at: datetime
+    format: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -16,8 +16,13 @@ async def list_recycle(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    items = await recycle_service.get_recycle_list(db, user.id)
-    return ApiResponse(data=[RecycleItemResponse.model_validate(i) for i in items])
+    enriched = await recycle_service.get_recycle_list(db, user.id)
+    data = []
+    for item, fmt in enriched:
+        rec = RecycleItemResponse.model_validate(item)
+        rec.format = fmt
+        data.append(rec)
+    return ApiResponse(data=data)
 
 
 @router.post("/restore")

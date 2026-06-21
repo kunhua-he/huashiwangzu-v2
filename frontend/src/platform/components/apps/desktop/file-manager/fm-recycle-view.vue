@@ -76,18 +76,12 @@ onBeforeUnmount(() => {
   emitter.off('refresh:file-list', handleRefresh)
 })
 
-function inferFormat(name: string, itemFormat: string | null | undefined): string | null {
-  if (itemFormat) return itemFormat
-  const idx = name.lastIndexOf('.')
-  return idx > 0 ? name.slice(idx + 1) : null
-}
-
 function mapToFileEntry(item: RecycleBinEntry): FileEntry {
   return {
     id: item.id,
     file_name: item.name,
     is_folder: item.item_type === 'folder',
-    format: item.item_type === 'file' ? (inferFormat(item.name, item.format) ?? 'unknown') : null,
+    format: item.format ?? null,
     created_at: item.deleted_at,
     file_size: item.size ?? 0,
     storage_path: null,

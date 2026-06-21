@@ -5,7 +5,7 @@
 import logging
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal, get_db
@@ -479,7 +479,7 @@ async def api_dashboard_stats(
     failed = (await db.execute(
         select(func.count(KbDocument.id)).where(
             KbDocument.deleted == False, KbDocument.owner_id == user.id,
-            and_(KbDocument.raw_status == "failed", KbDocument.fusion_status == "failed"),
+            or_(KbDocument.raw_status == "failed", KbDocument.fusion_status == "failed"),
         )
     )).scalar() or 0
 
@@ -492,7 +492,7 @@ async def api_dashboard_stats(
     )).scalar() or 0
 
     file_relation_count = (await db.execute(
-        select(func.count(KbFileRelation.id)).where(KbFileRelation.source_document_id.isnot(None))
+        select(func.count(KbFileRelation.id)).where(KbFileRelation.owner_id == user.id)
     )).scalar() or 0
 
     duplicate_entities = 0

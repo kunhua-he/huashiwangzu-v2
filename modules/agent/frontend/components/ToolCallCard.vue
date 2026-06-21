@@ -18,7 +18,19 @@
       </template>
     </button>
     <div v-show="isOpen && message.eventType === 'tool_result'" class="tool-body">
-      <pre>{{ formatResult(message.toolResult) }}</pre>
+      <template v-if="hasImage(message.toolResult)">
+        <div class="tool-images">
+          <img
+            v-for="img in extractImages(message.toolResult)"
+            :key="img.file_id"
+            :src="`/api/files/download/${img.file_id}`"
+            class="tool-image"
+            :alt="img.name || '生成图片'"
+            @click="openImage(img.file_id)"
+          />
+        </div>
+      </template>
+      <pre v-else>{{ formatResult(message.toolResult) }}</pre>
     </div>
   </div>
 </template>
@@ -26,7 +38,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   message: {
     eventType?: string
     toolName?: string
@@ -36,9 +48,41 @@ defineProps<{
 
 const isOpen = ref(false)
 
+interface ImageEntry {
+  type?: string
+  file_id: number
+  name?: string
+  [key: string]: unknown
+}
+
+function hasImage(r: unknown): boolean {
+  if (!r || typeof r !== 'object') return false
+  const obj = r as Record<string, unknown>
+  if (Array.isArray(obj.images) && obj.images.length > 0) return true
+  if (obj.type === 'image' && typeof obj.file_id === 'number') return true
+  return false
+}
+
+function extractImages(r: unknown): ImageEntry[] {
+  if (!r || typeof r !== 'object') return []
+  const obj = r as Record<string, unknown>
+  if (Array.isArray(obj.images)) {
+    return obj.images as ImageEntry[]
+  }
+  if (obj.type === 'image' && typeof obj.file_id === 'number') {
+    return [obj as unknown as ImageEntry]
+  }
+  return []
+}
+
 function formatResult(r: unknown): string {
   if (typeof r === 'string') return r
   try { return JSON.stringify(r, null, 2) } catch { return String(r) }
+}
+
+function openImage(fileId: number) {
+  const url = `/api/files/download/${fileId}`
+  window.open(url, '_blank')
 }
 </script>
 
@@ -129,5 +173,27 @@ function formatResult(r: unknown): string {
   font-family: var(--ag-font-mono);
   color: var(--ag-text-secondary);
   margin: 0;
+}
+
+.tool-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-image {
+  max-width: 320px;
+  max-height: 240px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--ag-border-light, #e5e5e5);
+  transition: transform 0.15s ease;
+  object-fit: contain;
+  background: #f8f8f8;
+}
+
+.tool-image:hover {
+  transform: scale(1.03);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 </style>

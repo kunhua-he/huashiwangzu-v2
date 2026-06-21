@@ -222,6 +222,7 @@ async def _cap_delete(params: dict, caller: str) -> dict:
 register_capability(
     "memory", "save", _cap_save,
     description="保存一段记忆（笔记/事实），后续可检索回忆",
+    brief="记一条备忘",
     parameters={
         "type": "object",
         "properties": {
@@ -236,6 +237,7 @@ register_capability(
 register_capability(
     "memory", "recall", _cap_recall,
     description="按关键词检索自己的记忆",
+    brief="回忆我的备忘",
     parameters={
         "type": "object",
         "properties": {
@@ -250,6 +252,7 @@ register_capability(
 register_capability(
     "memory", "list", _cap_list,
     description="列出自己所有的记忆",
+    brief="列出所有备忘",
     parameters={"type": "object", "properties": {}},
     min_role="viewer",
 )
@@ -257,6 +260,7 @@ register_capability(
 register_capability(
     "memory", "delete", _cap_delete,
     description="删除一条记忆",
+    brief="删除一条备忘",
     parameters={
         "type": "object",
         "properties": {"id": {"type": "integer", "description": "记忆 ID"}},

@@ -660,6 +660,7 @@ async def _cap_list_feedback(params: dict, caller: str) -> dict:
 register_capability(
     "codemap", "get_file", _cap_get_file,
     description="查询文件的代码地图信息：所属层/模块、语言、符号清单、依赖与被依赖、注册/调用的能力、涉及的表",
+    brief="查询文件代码地图",
     parameters={
         "type": "object",
         "properties": {"path": {"type": "string", "description": "文件路径（相对项目根目录）"}},
@@ -671,6 +672,7 @@ register_capability(
 register_capability(
     "codemap", "impact", _cap_impact,
     description="查询影响面：正向+反向传递闭包，返回波及的文件、模块、跨模块能力清单和风险等级(high/medium/low)",
+    brief="查询改动影响面",
     parameters={
         "type": "object",
         "properties": {
@@ -685,6 +687,7 @@ register_capability(
 register_capability(
     "codemap", "check_boundary", _cap_check_boundary,
     description="检查文件或模块的边界合规性，返回违反铁律17-20的引用清单",
+    brief="检查边界合规性",
     parameters={
         "type": "object",
         "properties": {
@@ -698,6 +701,7 @@ register_capability(
 register_capability(
     "codemap", "module_map", _cap_module_map,
     description="查询模块的对外能力、依赖的外部能力、边界健康状态",
+    brief="查询模块地图",
     parameters={
         "type": "object",
         "properties": {"module_key": {"type": "string", "description": "模块 key"}},
@@ -709,6 +713,7 @@ register_capability(
 register_capability(
     "codemap", "search", _cap_search,
     description="按关键词模糊搜索文件和符号",
+    brief="搜索文件和符号",
     parameters={
         "type": "object",
         "properties": {"keyword": {"type": "string", "description": "搜索关键词"}},
@@ -720,6 +725,7 @@ register_capability(
 register_capability(
     "codemap", "stats", _cap_stats,
     description="返回索引规模、构建耗时、最后更新时间、是否就绪、新鲜度与可信度",
+    brief="查看代码地图统计",
     parameters={"type": "object", "properties": {}},
     min_role="viewer",
 )
@@ -727,6 +733,7 @@ register_capability(
 register_capability(
     "codemap", "rebuild", _cap_rebuild,
     description="全量重建代码索引，返回重建后的 stats",
+    brief="重建代码索引",
     parameters={"type": "object", "properties": {}},
     min_role="admin",
 )
@@ -734,6 +741,7 @@ register_capability(
 register_capability(
     "codemap", "acquire_lock", _cap_acquire_lock,
     description="获取文件锁（跨 worker 持久化，租约式 TTL）",
+    brief="获取文件锁",
     parameters={
         "type": "object",
         "properties": {
@@ -749,6 +757,7 @@ register_capability(
 register_capability(
     "codemap", "check_lock", _cap_check_lock,
     description="检查文件锁状态",
+    brief="检查文件锁状态",
     parameters={
         "type": "object",
         "properties": {"path": {"type": "string", "description": "文件或资源路径"}},
@@ -760,6 +769,7 @@ register_capability(
 register_capability(
     "codemap", "release_lock", _cap_release_lock,
     description="释放文件锁",
+    brief="释放文件锁",
     parameters={
         "type": "object",
         "properties": {"path": {"type": "string", "description": "文件或资源路径"}},
@@ -771,6 +781,7 @@ register_capability(
 register_capability(
     "codemap", "list_locks", _cap_list_locks,
     description="列出所有活跃文件锁",
+    brief="列出活跃文件锁",
     parameters={"type": "object", "properties": {}},
     min_role="viewer",
 )
@@ -778,6 +789,7 @@ register_capability(
 register_capability(
     "codemap", "report_inaccuracy", _cap_report_inaccuracy,
     description="报告 codemap 查询结果与实际不符：提交文件路径、codemap 说的、实际情况、原因。Agent 实读验证后发现不准时调用",
+    brief="报告 codemap 不准",
     parameters={
         "type": "object",
         "properties": {
@@ -795,6 +807,7 @@ register_capability(
 register_capability(
     "codemap", "list_feedback", _cap_list_feedback,
     description="列出 codemap 的反馈记录。可按 path 过滤，按投诉频次排序。仅管理员。维修 codemap 前先查此接口定解析缺陷",
+    brief="查看 codemap 反馈",
     parameters={
         "type": "object",
         "properties": {

@@ -121,6 +121,7 @@ async def call_parse(payload: ParseRequest, user: User = Depends(require_permiss
 register_capability(
     "xlsx-parser", "parse", _parse,
     description="Parse XLSX/CSV files into unified content blocks",
+    brief="解析 XLSX 文档",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
 )

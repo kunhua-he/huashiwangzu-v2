@@ -150,6 +150,7 @@ async def call_parse(payload: ParseRequest, user: User = Depends(require_permiss
 register_capability(
     "text-parser", "parse", _parse,
     description="Parse TXT/MD files into unified content blocks",
+    brief="解析文本文件",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
 )

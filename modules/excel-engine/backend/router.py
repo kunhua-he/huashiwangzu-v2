@@ -694,6 +694,7 @@ async def _parse_capability(params: dict, caller: str) -> dict:
 register_capability(
     "excel-engine", "parse", _parse_capability,
     description="Parse XLSX/CSV files into cell data structure",
+    brief="解析 Excel 数据",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
 )

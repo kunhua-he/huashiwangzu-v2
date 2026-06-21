@@ -222,6 +222,7 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
 register_capability(
     "scheduler", "create", _cap_create,
     description="创建定时任务：传入标题、时间/周期、动作描述，到期自动执行并推送结果到本人 IM",
+    brief="创建定时任务",
     parameters={
         "type": "object",
         "properties": {
@@ -238,6 +239,7 @@ register_capability(
 register_capability(
     "scheduler", "list", _cap_list,
     description="列出自己创建的定时任务",
+    brief="列出我的定时任务",
     parameters={"type": "object", "properties": {}},
     min_role="viewer",
 )
@@ -245,6 +247,7 @@ register_capability(
 register_capability(
     "scheduler", "cancel", _cap_cancel,
     description="取消自己创建的定时任务",
+    brief="取消定时任务",
     parameters={
         "type": "object",
         "properties": {"task_id": {"type": "integer", "description": "任务 ID"}},

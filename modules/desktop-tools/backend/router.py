@@ -332,6 +332,7 @@ async def _list_apps(params: dict, caller: str) -> dict:
 register_capability(
     "desktop-tools", "list_files", _list_files,
     description="List files in a folder (or root). Returns file name, type, size, and id.",
+    brief="列出桌面文件",
     parameters={
         "type": "object",
         "properties": {
@@ -346,6 +347,7 @@ register_capability(
 register_capability(
     "desktop-tools", "search_files", _search_files,
     description="Search files by keyword and/or extension. Returns matching file metadata.",
+    brief="搜索桌面文件",
     parameters={
         "type": "object",
         "properties": {
@@ -361,6 +363,7 @@ register_capability(
 register_capability(
     "desktop-tools", "read_file", _read_file,
     description="Read file content by file_id. Automatically routes to the correct parser for PDF, DOCX, XLSX, PPTX, TXT, MD. Returns the file's text content.",
+    brief="读取文件内容",
     parameters={
         "type": "object",
         "properties": {
@@ -374,6 +377,7 @@ register_capability(
 register_capability(
     "desktop-tools", "list_apps", _list_apps,
     description="List desktop applications available to the current user.",
+    brief="列出可用桌面应用",
     parameters={
         "type": "object",
         "properties": {},

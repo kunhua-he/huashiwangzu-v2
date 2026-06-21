@@ -1,65 +1,72 @@
 """把框架开放的跨模块能力（技能）转成大模型 function calling 工具定义。
-Agent 不硬编码任何模块工具——有什么技能就有什么工具。"""
-from app.services.module_registry import list_capabilities  # 调用框架（允许）
+Agent 不硬编码任何模块工具——有什么技能就有什么工具。
+渐进式工具发现：只暴露 3 个元工具（skill_list/skill_describe/skill_use），
+模型需先查再调，默认 token 恒定不随模块膨胀。"""
+from app.services.module_registry import list_capabilities, call_capability
 
 # 工具名用 module__action（function name 不能含冒号）
 SEP = "__"
 
-# JSON Schema 类型归一化映射（模块注册的 capability 可能用非标准类型名）
-_TYPE_NORMALIZE = {"int": "integer", "float": "number", "bool": "boolean", "str": "string", "dict": "object", "list": "array"}
-
-
-def _normalize_schema_types(schema: dict) -> dict:
-    """递归修正 JSON Schema 中的类型名（如 int→integer）。"""
-    if not isinstance(schema, dict):
-        return schema
-    fixed = {}
-    for key, value in schema.items():
-        if key == "type" and isinstance(value, str) and value in _TYPE_NORMALIZE:
-            fixed[key] = _TYPE_NORMALIZE[value]
-        elif key == "properties" and isinstance(value, dict):
-            fixed[key] = {k: _normalize_schema_types(v) for k, v in value.items()}
-        elif key == "items" and isinstance(value, dict):
-            fixed[key] = _normalize_schema_types(value)
-        elif isinstance(value, dict):
-            fixed[key] = _normalize_schema_types(value)
-        elif isinstance(value, list):
-            fixed[key] = [_normalize_schema_types(item) if isinstance(item, dict) else item for item in value]
-        else:
-            fixed[key] = value
-    return fixed
-
-
-def _normalize_parameters(parameters: dict | None) -> dict:
-    """把框架能力参数说明转换为 function calling 可接受的 JSON Schema。"""
-    if not parameters:
-        return {"type": "object", "properties": {}}
-    if parameters.get("type") == "object":
-        return _normalize_schema_types(parameters)
-
-    properties = {}
-    for key, value in parameters.items():
-        if isinstance(value, dict) and value.get("type"):
-            properties[key] = value
-        else:
-            properties[key] = {"type": "string", "description": str(value)}
-    return _normalize_schema_types({"type": "object", "properties": properties})
-
 
 def build_tools(role: str) -> list[dict]:
-    """按当前用户角色，列出可用技能并转成 OpenAI function calling 工具定义。"""
-    tools = []
-    for cap in list_capabilities(role=role):
-        name = f"{cap['module']}{SEP}{cap['action']}"
-        tools.append({
+    """渐进式工具发现：只返回 3 个元工具，各模块能力通过 skill_list 按需查询。"""
+    return [
+        {
             "type": "function",
             "function": {
-                "name": name,
-                "description": cap.get("description") or f"{cap['module']} 的 {cap['action']} 能力",
-                "parameters": _normalize_parameters(cap.get("parameters")),
+                "name": "skill_list",
+                "description": "查看当前角色可用的全部技能（名称+一句话简述）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "description": "可选分类过滤（如 image-gen / office-gen / knowledge / web-tools 等）",
+                            "default": "",
+                        },
+                    },
+                },
             },
-        })
-    return tools
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "skill_describe",
+                "description": "查看某个技能的完整描述和参数",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "技能名称（如 image-gen__generate），见 skill_list 返回的 name",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "skill_use",
+                "description": "调用一个技能执行任务",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "技能名称（如 image-gen__generate）",
+                        },
+                        "args": {
+                            "type": "object",
+                            "description": "技能参数，见 skill_describe 返回的 parameters",
+                        },
+                    },
+                    "required": ["name", "args"],
+                },
+            },
+        },
+    ]
 
 
 def parse_tool_name(name: str) -> tuple[str, str]:
@@ -69,3 +76,50 @@ def parse_tool_name(name: str) -> tuple[str, str]:
     if not sep:
         return name, ""
     return module, action
+
+
+async def handle_skill_list(params: dict, role: str) -> dict:
+    """返回当前角色可用能力的紧凑清单（name + brief）。"""
+    category = (params.get("category") or "").strip().lower()
+    caps = list_capabilities(role=role)
+    items = []
+    for cap in caps:
+        if category and cap["module"].lower() != category and f"{cap['module']}__{cap['action']}" != category:
+            continue
+        name = f"{cap['module']}{SEP}{cap['action']}"
+        brief = cap.get("brief") or cap.get("description", "")[:20]
+        items.append({"name": name, "brief": brief})
+    return {"skills": items, "total": len(items)}
+
+
+async def handle_skill_describe(params: dict, role: str) -> dict:
+    """返回指定能力的完整描述和参数 schema。"""
+    name = params.get("name", "")
+    module, action = parse_tool_name(name)
+    if not module or not action:
+        return {"error": f"Invalid skill name: {name}"}
+    caps = list_capabilities(role=role)
+    for cap in caps:
+        if cap["module"] == module and cap["action"] == action:
+            return {
+                "name": f"{module}{SEP}{action}",
+                "module": module,
+                "action": action,
+                "description": cap.get("description", ""),
+                "parameters": cap.get("parameters", {}),
+                "min_role": cap.get("min_role", "viewer"),
+            }
+    return {"error": f"Skill not found: {name}"}
+
+
+async def handle_skill_use(params: dict, caller: str, caller_role: str) -> dict:
+    """通用调度器：拆 name 为 module/action，走 call_capability。"""
+    name = params.get("name", "")
+    args = params.get("args", {})
+    module, action = parse_tool_name(name)
+    if not module or not action:
+        return {"error": f"Invalid skill name: {name}"}
+    try:
+        return await call_capability(module, action, args, caller=caller, caller_role=caller_role)
+    except Exception as exc:
+        return {"error": str(exc)}

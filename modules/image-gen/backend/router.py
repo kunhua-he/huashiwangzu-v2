@@ -244,6 +244,7 @@ async def _generate(params: dict, caller: str) -> dict:
                 db, file_obj, filename, user_id, folder_id=None,
             )
             entry: dict = {
+                "type": "image",
                 "file_id": upload_result["id"],
                 "name": upload_result["name"],
                 "size": upload_result["size"],
@@ -288,6 +289,7 @@ async def call_generate(
 register_capability(
     "image-gen", "generate", _generate,
     description="生成图片：根据提示词生成产品图、海报、配图等（通过 GPTStore gpt-5.5 真实生成，无 key 时降级占位图）",
+    brief="按提示词生成图片",
     parameters={
         "prompt": {"type": "string", "description": "提示词，描述想要生成的图片内容"},
         "size": {"type": "string", "description": "尺寸，格式如 1024x1024", "default": "1024x1024"},

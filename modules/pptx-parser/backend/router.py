@@ -106,6 +106,7 @@ async def call_parse(payload: ParseRequest, user: User = Depends(require_permiss
 register_capability(
     "pptx-parser", "parse", _parse,
     description="Parse PPTX files into unified content blocks",
+    brief="解析 PPTX 文档",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
 )

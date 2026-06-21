@@ -114,6 +114,7 @@ async def call_parse(payload: ParseRequest, user: User = Depends(require_permiss
 register_capability(
     "docx-parser", "parse", _parse,
     description="Parse DOCX files into unified content blocks",
+    brief="解析 DOCX 文档",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
 )

@@ -835,6 +835,7 @@ async def _cap_get_evidence_detail(params: dict, caller: str) -> dict:
 register_capability(
     "knowledge", "search", _cap_search,
     description="Search enterprise knowledge base and return relevant text chunks with source metadata",
+    brief="检索知识库",
     parameters={
         "query": {"type": "string", "description": "Search query"},
         "top_k": {"type": "integer", "description": "Number of results, default 5"},
@@ -844,12 +845,14 @@ register_capability(
 register_capability(
     "knowledge", "get_block", _cap_get_block,
     description="Get a knowledge base content block by block_id",
+    brief="获取知识块详情",
     parameters={"block_id": {"type": "integer", "description": "Content block ID"}},
     min_role="viewer",
 )
 register_capability(
     "knowledge", "get_page_fusion", _cap_get_page_fusion,
     description="Get fused page-level content for a document page",
+    brief="获取页面融合内容",
     parameters={
         "document_id": {"type": "integer", "description": "Document ID"},
         "page": {"type": "integer", "description": "Page number"},
@@ -859,24 +862,28 @@ register_capability(
 register_capability(
     "knowledge", "get_entity_dictionary", _cap_get_entity_dictionary,
     description="Query the knowledge base entity dictionary",
+    brief="查询实体词典",
     parameters={"keyword": {"type": "string", "description": "Optional keyword"}},
     min_role="viewer",
 )
 register_capability(
     "knowledge", "get_graph_context", _cap_get_graph_context,
     description="Get graph context around an entity",
+    brief="查询实体图谱",
     parameters={"entity_id": {"type": "integer", "description": "Entity ID"}},
     min_role="viewer",
 )
 register_capability(
     "knowledge", "get_pending_count", _cap_get_pending_count,
     description="Get pending governance candidate count",
+    brief="待治理数量",
     parameters={},
     min_role="viewer",
 )
 register_capability(
     "knowledge", "get_evidence_detail", _cap_get_evidence_detail,
     description="Get evidence details for an entity",
+    brief="查看治理证据",
     parameters={"entity_id": {"type": "integer", "description": "Entity ID"}},
     min_role="viewer",
 )
@@ -931,6 +938,7 @@ async def _cap_ingest(params: dict, caller: str) -> dict:
 register_capability(
     "knowledge", "ingest", _cap_ingest,
     description="把已上传文件登记进知识库并触发后台分析（幂等、类型白名单）",
+    brief="文件入库知识库",
     parameters={"file_id": {"type": "integer", "description": "Uploaded file ID"}},
     min_role="editor",
 )

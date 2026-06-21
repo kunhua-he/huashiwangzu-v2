@@ -73,16 +73,16 @@ def _references_from_tool_events(events: list[dict]) -> list[dict]:
             continue
         name = event.get("name", "tool") or ""
         result = event.get("result", {}) or {}
-        # 知识库检索结果：提取文件名和页码作为结构化引用
-        if "knowledge__search" in name:
-            inner = result
-            if isinstance(inner, dict) and "data" in inner:
-                inner = inner["data"]
-            results_list = []
-            if isinstance(inner, dict):
-                results_list = inner.get("results", [])
-            elif isinstance(inner, list):
-                results_list = inner
+        # 知识库检索结果（通过 skill_use 调用或直接调用）：提取文件名和页码
+        inner = result
+        if isinstance(inner, dict) and "data" in inner:
+            inner = inner["data"]
+        results_list = []
+        if isinstance(inner, dict):
+            results_list = inner.get("results", [])
+        elif isinstance(inner, list):
+            results_list = inner
+        if results_list:
             for r_item in results_list:
                 doc_name = r_item.get("document_name") or r_item.get("filename", "")
                 page = r_item.get("page")
@@ -372,19 +372,28 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                             args = json.loads(args)
                     except Exception:
                         args = {}
-                    module_key, action = tool_discovery.parse_tool_name(name)
                     call_event = {"type": "tool_call", "name": name, "arguments": args}
                     tool_events.append(call_event)
                     timeline.append(call_event)
                     yield f"data: {_j(call_event)}\n\n".encode("utf-8")
                     try:
-                        tool_result = await call_capability(
-                            module_key,
-                            action,
-                            args,
-                            caller=f"user:{user.id}",
-                            caller_role=user.role,
-                        )
+                        if name == "skill_list":
+                            tool_result = await tool_discovery.handle_skill_list(args, user.role)
+                        elif name == "skill_describe":
+                            tool_result = await tool_discovery.handle_skill_describe(args, user.role)
+                        elif name == "skill_use":
+                            tool_result = await tool_discovery.handle_skill_use(
+                                args, caller=f"user:{user.id}", caller_role=user.role,
+                            )
+                        else:
+                            module_key, action = tool_discovery.parse_tool_name(name)
+                            tool_result = await call_capability(
+                                module_key,
+                                action,
+                                args,
+                                caller=f"user:{user.id}",
+                                caller_role=user.role,
+                            )
                     except Exception as exc:
                         tool_result = {"error": str(exc)}
                     result_event = {"type": "tool_result", "name": name, "result": tool_result}
@@ -542,12 +551,14 @@ async def _cap_update_my_profile(params: dict, caller: str) -> dict:
 register_capability(
     "agent", "get_system_prompt", _cap_get_system_prompt,
     description="读取当前系统提示词（管理员权限）。系统提示词定义了 Agent 的核心行为、知识库使用规则和联网能力规则。",
+    brief="读取系统提示词",
     parameters={},
     min_role="admin",
 )
 register_capability(
     "agent", "update_system_prompt", _cap_update_system_prompt,
     description="更新系统提示词（管理员权限）。当管理员用户要求修改 Agent 底层行为规则时调用此工具。",
+    brief="更新系统提示词",
     parameters={
         "content": {"type": "string", "description": "新的系统提示词内容"},
     },
@@ -556,12 +567,14 @@ register_capability(
 register_capability(
     "agent", "get_enterprise_prompt", _cap_get_enterprise_prompt,
     description="读取当前企业提示词（管理员权限）。企业提示词包含了公司背景、业务规则等企业上下文信息。",
+    brief="读取企业提示词",
     parameters={},
     min_role="admin",
 )
 register_capability(
     "agent", "update_enterprise_prompt", _cap_update_enterprise_prompt,
     description="更新企业提示词（管理员权限）。当管理员用户要求修改公司/企业背景设定时调用此工具。",
+    brief="更新企业提示词",
     parameters={
         "content": {"type": "string", "description": "新的企业提示词内容"},
     },
@@ -570,12 +583,14 @@ register_capability(
 register_capability(
     "agent", "get_my_profile", _cap_get_my_profile,
     description="读取当前用户的个人画像。个人画像包含用户的语气偏好、禁忌话题、关注领域和习惯，是系统自动学习的个性化配置。",
+    brief="读取我的画像",
     parameters={},
     min_role="viewer",
 )
 register_capability(
     "agent", "update_my_profile", _cap_update_my_profile,
     description="更新当前用户的个人画像（仅能改自己的）。当用户要求修改自己的语气偏好、设定或个性化配置时调用此工具。owner 固定为当前用户，不允许修改他人画像。",
+    brief="更新我的画像",
     parameters={
         "profile_data": {
             "type": "object",

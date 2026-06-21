@@ -334,6 +334,7 @@ async def _cap_send(params: dict, caller: str) -> dict:
 register_capability(
     "im", "notify", _cap_notify,
     description="给指定用户推送一条站内通知/消息",
+    brief="推送站内通知",
     parameters={"user_id": "int", "content": "str", "title": "str?"},
     min_role="editor",
 )
@@ -341,6 +342,7 @@ register_capability(
 register_capability(
     "im", "send", _cap_send,
     description="向指定会话发送消息",
+    brief="发送站内消息",
     parameters={"conversation_id": "int", "content": "str"},
     min_role="viewer",
 )

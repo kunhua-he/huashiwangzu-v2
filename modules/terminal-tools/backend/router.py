@@ -828,6 +828,7 @@ register_capability(
     "exec",
     _exec,
     description="在用户工作区执行 shell 命令。受危险命令拦截、超时(默认60s)、输出1MB上限保护。cwd 锁定在用户工作区。返回 stdout/stderr/return_code。",
+    brief="执行 shell 命令",
     parameters={
         "type": "object",
         "properties": {
@@ -851,6 +852,7 @@ register_capability(
     "write_file",
     _write_file,
     description="写文件到用户工作区。路径自动约束在工作区内，越界路径被拒绝。",
+    brief="写文件到工作区",
     parameters={
         "type": "object",
         "properties": {
@@ -873,6 +875,7 @@ register_capability(
     "read_file",
     _read_file,
     description="读用户工作区内的文件内容。文本文件返回 UTF-8 内容，二进制文件返回大小信息。路径约束在工作区内。",
+    brief="读取工作区文件",
     parameters={
         "type": "object",
         "properties": {
@@ -891,6 +894,7 @@ register_capability(
     "list_workspace",
     _list_workspace,
     description="列出用户工作区内的文件和目录。目录优先，按名称排序。",
+    brief="列出工作区文件",
     parameters={
         "type": "object",
         "properties": {
@@ -909,6 +913,7 @@ register_capability(
     "publish",
     _publish,
     description="将工作区文件显式交付到框架文件系统（桌面可见）。享受框架内容去重。返回框架文件 ID。",
+    brief="文件发布到桌面",
     parameters={
         "type": "object",
         "properties": {
@@ -935,6 +940,7 @@ register_capability(
     "import",
     _import,
     description="将框架文件系统的文件拷入工作区供 CLI 处理。owner 校验：只能 import 自己的文件。",
+    brief="导入文件到工作区",
     parameters={
         "type": "object",
         "properties": {
@@ -956,6 +962,7 @@ register_capability(
     "terminal-tools",
     "run_python",
     _run_python,
+    brief="运行 Python 代码",
     description=(
         "在用户工作区子进程执行 Python 数据分析代码。预置 pandas/numpy/matplotlib（Agg 后端）。"
         "代码用 plt.savefig() 存图、print() 输出文本。自动收集生成的图表文件并存入框架文件系统。"
@@ -979,6 +986,7 @@ register_capability(
     "chart",
     _chart,
     description="傻瓜式出图。传入数据数组和图表类型，后端用 matplotlib 直接出图存文件。支持折线(line)/柱状(bar)/饼图(pie)。",
+    brief="自动生成图表",
     parameters={
         "type": "object",
         "properties": {

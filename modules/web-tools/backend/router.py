@@ -237,6 +237,7 @@ async def http_fetch(
 register_capability(
     "web-tools", "search", _cap_search,
     description="联网搜索网页,返回标题/链接/摘要(无需API key)。基于 DuckDuckGo HTML 端点。",
+    brief="联网搜索信息",
     parameters={
         "type": "object",
         "properties": {
@@ -251,6 +252,7 @@ register_capability(
 register_capability(
     "web-tools", "fetch", _cap_fetch,
     description="抓取指定网址正文文本(无需API key)。自动过滤 script/style/nav/footer。含SSRF防护，拒绝内网地址。",
+    brief="读取网页正文",
     parameters={
         "type": "object",
         "properties": {

@@ -24,13 +24,15 @@ def register_capability(
     description: str = "",
     parameters: dict | None = None,
     min_role: str = "viewer",
+    brief: str = "",
 ) -> None:
-    """模块注册一个对外能力。description/parameters/min_role 供技能发现用。"""
+    """模块注册一个对外能力。description/parameters/min_role 供技能发现用。brief 供 skill_list 紧凑展示（≤20字）。"""
     _CAPABILITIES[_key(module_key, action)] = {
         "handler": handler,
         "description": description,
         "parameters": parameters or {},
         "min_role": min_role,
+        "brief": brief or description[:20],
     }
     logger.info("Registered capability: %s:%s", module_key, action)
 
@@ -71,6 +73,7 @@ def list_capabilities(role: str | None = None) -> list[dict]:
             "description": e["description"],
             "parameters": e["parameters"],
             "min_role": e["min_role"],
+            "brief": e.get("brief", e["description"][:20]),
         })
     return result
 

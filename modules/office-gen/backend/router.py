@@ -219,6 +219,7 @@ async def _cap_convert(params: dict, caller: str) -> dict:
 
 register_capability(
     "office-gen", "docx", _cap_docx,
+    brief="生成 Word 文档",
     description="Generate a Word (.docx) document from structured JSON and save to file system. "
                 "Content blocks: {type: 标题|段落|表格|图片, text, level, bold, align, header, rows}",
     parameters={
@@ -250,6 +251,7 @@ register_capability(
 
 register_capability(
     "office-gen", "xlsx", _cap_xlsx,
+    brief="生成 Excel 表格",
     description="Generate an Excel (.xlsx) spreadsheet from structured JSON and save to file system. "
                 "Sheets: {name, columns, rows}",
     parameters={
@@ -277,6 +279,7 @@ register_capability(
 
 register_capability(
     "office-gen", "pptx", _cap_pptx,
+    brief="生成 PPT 演示文稿",
     description="Generate a PowerPoint (.pptx) presentation from structured JSON and save to file system. "
                 "Slides: {title, bullets, notes}",
     parameters={
@@ -304,6 +307,7 @@ register_capability(
 
 register_capability(
     "office-gen", "pdf", _cap_pdf,
+    brief="生成 PDF 文档",
     description="Generate a PDF document from structured JSON (same schema as docx) and save to file system. "
                 "Alternatively generate docx first then convert via office-gen:convert for better layout.",
     parameters={
@@ -333,6 +337,7 @@ register_capability(
 
 register_capability(
     "office-gen", "convert", _cap_convert,
+    brief="转换办公文档格式",
     description="Convert an existing office file from one format to another using LibreOffice. "
                 "Supports: pdf, docx, pptx, xlsx, odt, html, png, etc. Requires LibreOffice installed.",
     parameters={

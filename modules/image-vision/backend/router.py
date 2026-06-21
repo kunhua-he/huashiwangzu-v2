@@ -111,6 +111,7 @@ async def call_describe(payload: DescribeRequest, user: User = Depends(require_p
 register_capability(
     "image-vision", "describe", _describe,
     description="Generate text description of images via vision model",
+    brief="识别图片内容",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
 )

@@ -121,6 +121,7 @@ async def call_parse(payload: ParseRequest, user: User = Depends(require_permiss
 register_capability(
     "pdf-parser", "parse", _parse,
     description="Parse PDF files into unified content blocks",
+    brief="解析 PDF 文档",
     parameters={"file_id": {"type": "int", "description": "File ID in file storage"}},
     min_role="viewer",
 )

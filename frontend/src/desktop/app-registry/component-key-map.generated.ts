@@ -7,6 +7,7 @@ export const componentKeyMap: Record<string, () => Promise<{ default: Component 
   'agent/index.vue': () => import('@modules/agent/frontend/index.vue'),
   'desktop-tools/index.vue': () => import('@modules/desktop-tools/frontend/index.vue'),
   'doc-viewer/index.vue': () => import('@modules/doc-viewer/frontend/index.vue'),
+  'docs-open/index.vue': () => import('@modules/docs-open/frontend/index.vue'),
   'docx-parser/index.vue': () => import('@modules/docx-parser/frontend/index.vue'),
   'excel-engine/index.vue': () => import('@modules/excel-engine/frontend/index.vue'),
   'hello-world/index.vue': () => import('@modules/hello-world/frontend/index.vue'),

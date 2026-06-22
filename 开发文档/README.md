@@ -27,7 +27,7 @@ modules/    业务模块（sandbox 独立开发 → manifest 接入）
 
 - **核心**：`agent`（AI 助手，对话/SSE/渐进式工具发现/三层提示词；含 `engine/` 上下文装配引擎）、`memory`（事实记忆+经验记忆，引擎后端）、`knowledge`（五层知识库）、`codemap`（代码地图，改代码前查影响面）
 - **工具能力**：`terminal-tools`（sandbox-exec 内核沙盒）、`desktop-tools`、`web-tools`（联网）、`office-gen`（生成 Office）、`image-gen`（生图）、`scheduler`（定时任务）、`im`（站内沟通+通知）
-- **文件查看/编辑**：`excel-engine`、`pdf-viewer`、`doc-viewer`、`ppt-viewer`、`image-viewer`、`text-editor`（统一 WPS 风格壳）
+- **文件查看/编辑**：`excel-engine`、`pdf-viewer`、`doc-viewer`、`ppt-viewer`、`image-viewer`、`text-editor`（统一 WPS 风格壳）、`docs-open`（仿腾讯文档 OpenAPI 的文档开放接口 facade）
 - **格式解析**：`pdf/docx/pptx/xlsx/text-parser` + `image-vision`
 - **样板**：`hello-world`、`_template`
 

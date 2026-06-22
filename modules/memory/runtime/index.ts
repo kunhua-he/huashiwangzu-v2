@@ -8,7 +8,7 @@ function apiBase(): string {
 }
 
 function authHeaders(): HeadersInit {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+  const token = typeof window !== 'undefined' ? localStorage.getItem('v2_auth_token') : null
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 

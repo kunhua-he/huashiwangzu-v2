@@ -28,6 +28,7 @@ from sqlalchemy import select, func, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, AsyncSessionLocal
+from app.middleware.auth import require_permission
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
 
@@ -218,7 +219,7 @@ async def _get_query_count(db: AsyncSession) -> int:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/health")
-async def health():
+async def health(_user=Depends(require_permission("viewer"))):
     graph = get_graph()
     return ApiResponse(data={
         "module": "codemap",
@@ -229,7 +230,7 @@ async def health():
 
 
 @router.get("/stats")
-async def http_stats(db: AsyncSession = Depends(get_db)):
+async def http_stats(db: AsyncSession = Depends(get_db), _user=Depends(require_permission("viewer"))):
     graph = get_graph()
     stats = graph.stats()
     # Enrich with DB feedback data and persisted query count
@@ -261,6 +262,7 @@ async def http_stats(db: AsyncSession = Depends(get_db)):
 async def http_get_file(
     body: GetFileRequest,
     db: AsyncSession = Depends(get_db),
+    _user=Depends(require_permission("viewer")),
 ):
     not_ready = _check_ready()
     if not_ready:
@@ -278,6 +280,7 @@ async def http_get_file(
 async def http_impact(
     body: ImpactRequest,
     db: AsyncSession = Depends(get_db),
+    _user=Depends(require_permission("viewer")),
 ):
     not_ready = _check_ready()
     if not_ready:
@@ -292,6 +295,7 @@ async def http_impact(
 @router.post("/check-boundary")
 async def http_check_boundary(
     body: CheckBoundaryRequest,
+    _user=Depends(require_permission("viewer")),
 ):
     not_ready = _check_ready()
     if not_ready:
@@ -304,6 +308,7 @@ async def http_check_boundary(
 @router.post("/module-map")
 async def http_module_map(
     body: ModuleMapRequest,
+    _user=Depends(require_permission("viewer")),
 ):
     not_ready = _check_ready()
     if not_ready:
@@ -316,6 +321,7 @@ async def http_module_map(
 @router.post("/search")
 async def http_search(
     body: SearchRequest,
+    _user=Depends(require_permission("viewer")),
 ):
     not_ready = _check_ready()
     if not_ready:
@@ -328,7 +334,7 @@ async def http_search(
 # ── Rebuild endpoint ─────────────────────────────────────────────────────────
 
 @router.post("/rebuild")
-async def http_rebuild():
+async def http_rebuild(_user=Depends(require_permission("admin"))):
     graph = get_graph()
     graph.reindex_now()
     return ApiResponse(data=graph.stats())
@@ -349,6 +355,7 @@ class LockPathRequest(BaseModel):
 @router.post("/acquire-lock")
 async def http_acquire_lock(
     body: AcquireLockRequest,
+    _user=Depends(require_permission("viewer")),
 ):
     return ApiResponse(data=file_lock.acquire_lock(body.path, body.agent_id, body.ttl))
 
@@ -356,6 +363,7 @@ async def http_acquire_lock(
 @router.post("/check-lock")
 async def http_check_lock(
     body: LockPathRequest,
+    _user=Depends(require_permission("viewer")),
 ):
     return ApiResponse(data=file_lock.check_lock(body.path))
 
@@ -363,12 +371,13 @@ async def http_check_lock(
 @router.post("/release-lock")
 async def http_release_lock(
     body: LockPathRequest,
+    _user=Depends(require_permission("viewer")),
 ):
     return ApiResponse(data=file_lock.release_lock(body.path))
 
 
 @router.get("/list-locks")
-async def http_list_locks():
+async def http_list_locks(_user=Depends(require_permission("viewer"))):
     return ApiResponse(data=file_lock.list_locks())
 
 
@@ -380,6 +389,7 @@ async def http_list_locks():
 async def http_report_inaccuracy(
     body: ReportInaccuracyRequest,
     db: AsyncSession = Depends(get_db),
+    _user=Depends(require_permission("viewer")),
 ):
     """Agent 实读验证后发现 codemap 不准时，调用此接口记录一条反馈。"""
     feedback = CodemapFeedback(
@@ -402,6 +412,7 @@ async def http_list_feedback(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    _user=Depends(require_permission("admin")),
 ):
     """列出 codemap 反馈记录。仅 admin。可按 path 过滤、按频次排序。"""
     if path:

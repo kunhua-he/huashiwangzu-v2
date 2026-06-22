@@ -20,6 +20,10 @@
   "supported_formats": [],
   "editable_formats": [],
   "creatable_formats": [],
+  "public_actions": [
+    {"action": "notify", "description": "向用户发送站内通知", "parameters": {"user_id": {"type": "integer", "description": "目标用户ID"}, "content": {"type": "string", "description": "通知内容"}}, "min_role": "viewer"},
+    {"action": "send", "description": "向现有 IM 对话发送消息", "parameters": {"conversation_id": {"type": "integer", "description": "对话ID"}, "content": {"type": "string", "description": "消息内容"}}, "min_role": "viewer"}
+  ],
   "module_version": "1.0.0",
   "contract_version": "2.0",
   "backend": { "enabled": true, "router": "backend/router.py" }

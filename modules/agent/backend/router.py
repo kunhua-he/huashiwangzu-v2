@@ -141,7 +141,7 @@ def _tool_calls_for_history(tool_calls: list[dict]) -> list[dict]:
     return normalized
 
 
-async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: list[str], timeline: list[dict], profile_key: str = "deepseek-v4-flash"):
+async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: list[str], timeline: list[dict], profile_key: str = "deepseek-v4-flash", conversation_id: int | None = None):
     """Stream final content while checking for inline XML tool calls.
 
     Buffers token events, checks accumulated content for inline tool calls when
@@ -153,7 +153,7 @@ async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: lis
     logger.info("[DIAG] _yield_final_stream ENTER")
     event_count = 0
     token_buffer: list[tuple[str, str]] = []
-    async for event in chat_stream_with_degradation_chain(kwargs["messages"], profile_key, kwargs.get("tools")):
+    async for event in chat_stream_with_degradation_chain(kwargs["messages"], profile_key, kwargs.get("tools"), conversation_id=conversation_id):
         event_count += 1
         event_type = event.get("type")
         content = str(event.get("content") or "")
@@ -320,6 +320,27 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
         profile_key, user.id,
     )
 
+    # 记录装配诊断事件（批5：用于重放展示装配细节）
+    try:
+        await record_event(
+            db, payload.conversation_id, "assembly_diag",
+            {
+                "total_estimated": engine_diag.get("total_estimated", 0),
+                "budget": engine_diag.get("budget"),
+                "system_tokens": engine_diag.get("system_tokens", 0),
+                "input_tokens": engine_diag.get("input_tokens", 0),
+                "recent_tokens": engine_diag.get("recent_tokens", 0),
+                "experience_injection": engine_diag.get("experience_injection", ""),
+                "experience_injected": engine_diag.get("experience_injected", []),
+                "dropped_recent_count": engine_diag.get("dropped_recent_count", 0),
+                "budget_exceeded": engine_diag.get("budget_exceeded", False),
+                "is_unlimited": engine_diag.get("is_unlimited", False),
+            },
+            llm_response_id=None,
+        )
+    except Exception as diag_exc:
+        logger.warning("记录装配诊断事件失败 (non-fatal): %s", diag_exc)
+
     # ── 记忆召回：自动检索用户相关记忆，注入 system prompt ──────────
     try:
         recall_result = await call_capability(
@@ -366,6 +387,7 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                     messages,
                     payload.profile_key or "deepseek-v4-flash",
                     tools,
+                    conversation_id=payload.conversation_id,
                 )
                 logger.info("[DIAG] event_stream chat returned tool_calls=%s error=%s",
                     bool(result.get("tool_calls")), bool(result.get("error")))
@@ -396,7 +418,7 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                     if payload.profile_key:
                         stream_kwargs["profile_key"] = payload.profile_key
                     inline_from_stream = None
-                    async for chunk in _yield_final_stream(stream_kwargs, full, thinking_parts, timeline, profile_key=payload.profile_key or "deepseek-v4-flash"):
+                    async for chunk in _yield_final_stream(stream_kwargs, full, thinking_parts, timeline, profile_key=payload.profile_key or "deepseek-v4-flash", conversation_id=payload.conversation_id):
                         if isinstance(chunk, dict) and chunk.get("type") == "_inline_tool_calls":
                             inline_from_stream = chunk.get("tool_calls", [])
                         else:
@@ -1116,6 +1138,242 @@ register_capability(
     },
     min_role="viewer",
 )
+
+
+# ── 引擎批5：Admin 只读接口（重放 + 概览） ────────────────────────────
+
+
+@router.get("/admin/replay/{conversation_id}")
+async def admin_replay(
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    """事件重放：读取 agent_events，按轮次重建上下文装配过程。
+    
+    返回每轮的：用户输入、装配诊断、回复、工具调用/结果、压缩、降级。
+    纯读，不改事件。
+    """
+    events = await 事件存储.read_events(db, conversation_id)
+    if not events:
+        return ApiResponse(data={"conversation_id": conversation_id, "rounds": [], "total_events": 0})
+
+    rounds: list[dict] = []
+    current_round: dict | None = None
+
+    for ev in events:
+        ev_dict = {
+            "id": ev.id,
+            "event_type": ev.event_type,
+            "payload": ev.payload,
+            "llm_response_id": ev.llm_response_id,
+            "created_at": ev.created_at.isoformat() if ev.created_at else None,
+        }
+        etype = ev.event_type
+
+        if etype == "user_msg":
+            if current_round:
+                rounds.append(current_round)
+            current_round = {
+                "round_start_id": ev.id,
+                "user_input": ev.payload.get("content", ""),
+                "assembly_diag": None,
+                "assistant_msg": None,
+                "tool_calls": [],
+                "tool_results": [],
+                "compaction": None,
+                "degradation": None,
+                "events": [ev_dict],
+            }
+        elif etype == "assembly_diag" and current_round:
+            current_round["assembly_diag"] = ev.payload
+            current_round["events"].append(ev_dict)
+        elif etype == "assistant_msg" and current_round:
+            current_round["assistant_msg"] = ev.payload.get("content", "")
+            current_round["events"].append(ev_dict)
+        elif etype == "tool_call" and current_round:
+            current_round["tool_calls"].append({
+                "id": ev.payload.get("id", ""),
+                "name": ev.payload.get("name", ""),
+                "arguments": ev.payload.get("arguments", {}),
+            })
+            current_round["events"].append(ev_dict)
+        elif etype == "tool_result" and current_round:
+            current_round["tool_results"].append({
+                "tool_call_id": ev.payload.get("tool_call_id", ""),
+                "name": ev.payload.get("name", ""),
+                "result": ev.payload.get("result", {}),
+            })
+            current_round["events"].append(ev_dict)
+        elif etype == "compaction":
+            # 压缩事件归到最近的 round 或独立
+            if current_round:
+                current_round["compaction"] = {
+                    "folded_count": ev.payload.get("folded_count", 0),
+                    "summary_preview": ev.payload.get("summary", "")[:300],
+                    "compression_ratio": ev.payload.get("compression_ratio"),
+                }
+                current_round["events"].append(ev_dict)
+            else:
+                rounds.append({
+                    "round_start_id": ev.id,
+                    "user_input": "",
+                    "assembly_diag": None,
+                    "assistant_msg": None,
+                    "tool_calls": [],
+                    "tool_results": [],
+                    "compaction": {
+                        "folded_count": ev.payload.get("folded_count", 0),
+                        "summary_preview": ev.payload.get("summary", "")[:300],
+                        "compression_ratio": ev.payload.get("compression_ratio"),
+                    },
+                    "degradation": None,
+                    "events": [ev_dict],
+                })
+                current_round = None
+        elif etype == "degradation" and current_round:
+            current_round["degradation"] = {
+                "from_profile": ev.payload.get("from", ""),
+                "to_profile": ev.payload.get("to", ""),
+                "reason": ev.payload.get("reason", ""),
+            }
+            current_round["events"].append(ev_dict)
+        else:
+            if current_round:
+                current_round["events"].append(ev_dict)
+
+    if current_round:
+        rounds.append(current_round)
+
+    return ApiResponse(data={
+        "conversation_id": conversation_id,
+        "rounds": rounds,
+        "total_events": len(events),
+    })
+
+
+@router.get("/admin/overview")
+async def admin_overview(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    """引擎概览：记忆/经验/预算/压缩/降级/粘滞 各模块聚合统计。
+    
+    所有数字真实来自 DB，非写死假数。
+    """
+    from sqlalchemy import text, func as sa_func
+
+    result: dict = {}
+
+    # 1. 记忆概览（agent_memory 表，跨所有用户）
+    try:
+        mem_count = await db.scalar(text("SELECT COUNT(*) FROM agent_memory"))
+        mem_with_embedding = await db.scalar(text("SELECT COUNT(*) FROM agent_memory WHERE embedding IS NOT NULL"))
+        mem_avg_confidence = await db.scalar(text("SELECT COALESCE(AVG(confidence), 0) FROM agent_memory"))
+        mem_avg_recency = await db.scalar(text("SELECT COALESCE(AVG(recency_score), 0) FROM agent_memory"))
+        mem_link_count = await db.scalar(text("SELECT COUNT(*) FROM memory_links"))
+        mem_owner_count = await db.scalar(text("SELECT COUNT(DISTINCT owner_id) FROM agent_memory"))
+        result["memory"] = {
+            "total_count": mem_count or 0,
+            "with_embedding": mem_with_embedding or 0,
+            "avg_confidence": round(float(mem_avg_confidence or 0), 3),
+            "avg_recency_score": round(float(mem_avg_recency or 0), 3),
+            "link_count": mem_link_count or 0,
+            "owner_count": mem_owner_count or 0,
+        }
+    except Exception as e:
+        logger.warning("Admin overview memory query failed: %s", e)
+        result["memory"] = {"error": str(e)}
+
+    # 2. 经验概览（agent_experiences）
+    try:
+        exp_count = await db.scalar(text("SELECT COUNT(*) FROM agent_experiences"))
+        exp_active = await db.scalar(text("SELECT COUNT(*) FROM agent_experiences WHERE active = true"))
+        exp_inactive = await db.scalar(text("SELECT COUNT(*) FROM agent_experiences WHERE active = false"))
+        exp_avg_weight = await db.scalar(text("SELECT COALESCE(AVG(success_weight), 0) FROM agent_experiences WHERE active = true"))
+        exp_total_fails = await db.scalar(text("SELECT COALESCE(SUM(fail_count), 0) FROM agent_experiences"))
+        result["experience"] = {
+            "total_count": exp_count or 0,
+            "active_count": exp_active or 0,
+            "inactive_count": exp_inactive or 0,
+            "avg_success_weight": round(float(exp_avg_weight or 0), 1),
+            "total_fail_count": exp_total_fails or 0,
+        }
+    except Exception as e:
+        logger.warning("Admin overview experience query failed: %s", e)
+        result["experience"] = {"error": str(e)}
+
+    # 3. 压缩概览（agent_events 中 compaction 事件）
+    try:
+        comp_count = await db.scalar(text("SELECT COUNT(*) FROM agent_events WHERE event_type = 'compaction'"))
+        comp_total_folded = await db.scalar(text(
+            "SELECT COALESCE(SUM((payload->>'folded_count')::int), 0) FROM agent_events WHERE event_type = 'compaction'"
+        ))
+        hard_truncate = await db.scalar(text(
+            "SELECT COUNT(*) FROM agent_events WHERE event_type = 'compaction' AND payload->>'fallback' = 'hard_truncate'"
+        ))
+        result["compression"] = {
+            "compaction_count": comp_count or 0,
+            "total_folded_events": comp_total_folded or 0,
+            "hard_truncate_count": hard_truncate or 0,
+        }
+    except Exception as e:
+        logger.warning("Admin overview compression query failed: %s", e)
+        result["compression"] = {"error": str(e)}
+
+    # 4. 降级概览（agent_events 中 degradation 事件）
+    try:
+        deg_count = await db.scalar(text("SELECT COUNT(*) FROM agent_events WHERE event_type = 'degradation'"))
+        result["degradation"] = {
+            "degradation_count": deg_count or 0,
+        }
+    except Exception as e:
+        logger.warning("Admin overview degradation query failed: %s", e)
+        result["degradation"] = {"error": str(e)}
+
+    # 5. 对话统计（agent_events）
+    try:
+        conv_with_events = await db.scalar(text("SELECT COUNT(DISTINCT conversation_id) FROM agent_events"))
+        total_events = await db.scalar(text("SELECT COUNT(*) FROM agent_events"))
+        user_msg_count = await db.scalar(text("SELECT COUNT(*) FROM agent_events WHERE event_type = 'user_msg'"))
+        tool_call_count = await db.scalar(text("SELECT COUNT(*) FROM agent_events WHERE event_type = 'tool_call'"))
+        avg_events_per_conv = await db.scalar(text(
+            "SELECT COALESCE(ROUND(AVG(cnt)), 0) FROM (SELECT COUNT(*) AS cnt FROM agent_events GROUP BY conversation_id) sub"
+        ))
+        result["conversations"] = {
+            "conversation_count": conv_with_events or 0,
+            "total_events": total_events or 0,
+            "user_msg_count": user_msg_count or 0,
+            "tool_call_count": tool_call_count or 0,
+            "avg_events_per_conversation": avg_events_per_conv or 0,
+        }
+    except Exception as e:
+        logger.warning("Admin overview conversation query failed: %s", e)
+        result["conversations"] = {"error": str(e)}
+
+    # 6. 粘滞统计（日志搜 stuck）
+    try:
+        import glob as _glob
+        import re as _re
+        stuck_count = 0
+        log_dir = Path(__file__).resolve().parent.parent.parent / "backend" / "logs"
+        if log_dir.exists():
+            for log_file in _glob.glob(str(log_dir / "*.log")):
+                try:
+                    with open(log_file, "r", errors="ignore") as f:
+                        for line in f:
+                            if "粘滞检测命中" in line:
+                                stuck_count += 1
+                except Exception:
+                    pass
+        result["sticky"] = {
+            "stuck_detection_count": stuck_count,
+        }
+    except Exception as e:
+        logger.warning("Admin overview sticky query failed: %s", e)
+        result["sticky"] = {"error": str(e)}
+
+    return ApiResponse(data=result)
 
 
 async def _submit_profile_evolve_task(conversation_id: int, owner_id: int) -> None:

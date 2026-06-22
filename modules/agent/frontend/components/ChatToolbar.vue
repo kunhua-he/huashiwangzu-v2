@@ -21,6 +21,12 @@
       </button>
     </div>
     <div class="toolbar-right">
+      <button v-if="isAdmin" class="toolbar-item admin-panel-btn" @click="$emit('toggleAdminPanel')" title="引擎调优面板">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" width="15" height="15">
+          <path d="M2 12l6-10 6 10H2zM8 7v3M8 12v1"/>
+        </svg>
+        <span>引擎面板</span>
+      </button>
       <button class="toolbar-item primary" @click="$emit('newConv')" title="新建对话">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="15" height="15">
           <path d="M8 3v10M3 8h10"/>
@@ -36,12 +42,14 @@ defineProps<{
   profiles: ModelProfile[]
   profileKey: string
   refPanelVisible: boolean
+  isAdmin?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:profileKey': [key: string]
   toggleRef: []
   newConv: []
+  toggleAdminPanel: []
 }>()
 
 interface ModelProfile { key: string; name: string; provider: string; model: string }
@@ -124,4 +132,6 @@ interface ModelProfile { key: string; name: string; provider: string; model: str
   color: var(--ag-text-white);
 }
 .toolbar-item.primary:hover { background: var(--ag-primary-dark); }
+.admin-panel-btn { color: #2395bc; }
+.admin-panel-btn:hover { background: #e8f6fb; }
 </style>

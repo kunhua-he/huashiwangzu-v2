@@ -12,7 +12,20 @@
       @toggle="sidebarCollapsed = !sidebarCollapsed"
     />
 
-    <section class="agent-main">
+    <EnginePanel v-if="showAdminPanel" class="agent-main" />
+
+    <template v-else>
+      <ChatToolbar
+        :profiles="profiles"
+        :profileKey="profileKey"
+        :refPanelVisible="showReferencePanel"
+        :isAdmin="isAdmin"
+        @update:profileKey="profileKey = $event"
+        @toggleRef="showReferencePanel = !showReferencePanel"
+        @newConv="newConversation"
+        @toggleAdminPanel="showAdminPanel = true"
+      />
+      <section class="agent-main">
 	      <!-- 消息区域 -->
       <div class="msg-area" ref="msgArea">
         <div v-if="!activeConvId && !loading" class="msg-empty">
@@ -63,6 +76,7 @@
 
       <p v-if="error" class="error-text">{{ error }}</p>
     </section>
+    </template>
   </div>
 </template>
 
@@ -70,12 +84,14 @@
 import { computed, ref, nextTick, onMounted } from 'vue'
 import { initRuntime, getApiUrl, authHeaders } from '../runtime'
 import ConversationSidebar from './components/ConversationSidebar.vue'
+import ChatToolbar from './components/ChatToolbar.vue'
 
 import InputArea from './components/InputArea.vue'
 import MessageBubble from './components/MessageBubble.vue'
 import ThinkingCard from './components/ThinkingCard.vue'
 import ToolCallCard from './components/ToolCallCard.vue'
 import ReferencePanel from './components/ReferencePanel.vue'
+import EnginePanel from './admin/EnginePanel.vue'
 import './components/style-variables.css'
 
 // ── 类型 ──
@@ -108,6 +124,8 @@ const activeReference = ref<RefItem | null>(null)
 const msgArea = ref<HTMLElement | null>(null)
 const inputAreaRef = ref<InstanceType<typeof InputArea> | null>(null)
 const profileKey = ref('deepseek-v4-flash')
+const showAdminPanel = ref(false)
+const isAdmin = ref(false)
 const allReferences = computed<RefItem[]>(() => {
   const result: RefItem[] = []
   for (const m of messages.value) {
@@ -442,6 +460,12 @@ onMounted(async () => {
   await Promise.all([loadMetadata(), loadConversations()])
   if (conversations.value.length === 0) await newConversation()
   else await selectConversation(conversations.value[0].id)
+
+  // 判断当前用户是否为 admin（用于显示引擎面板按钮）
+  try {
+    const userInfo = await apiFetch<{ role: string }>('/current-user')
+    isAdmin.value = userInfo.role === 'admin'
+  } catch { /* 非 admin 不显示按钮 */ }
 
   // 预填上下文（来自其他模块如知识库的"问 AI"调用）
   if (props.prefill) {

@@ -200,10 +200,11 @@ async def chat_with_degradation_chain(
     messages: list[dict],
     profile_key: str,
     tools: list[dict] | None = None,
+    conversation_id: int | None = None,
 ) -> dict:
     """用降级链包装模型调用。主模型失败 → fallback_chain → 本地兜底。"""
     try:
-        return await _chat_with_fallback(messages, profile_key, tools)
+        return await _chat_with_fallback(messages, profile_key, tools, conversation_id=conversation_id)
     except Exception as e:
         logger.error("降级链chat全部失败: %s", e)
         return {"error": str(e), "content": f"(模型调用失败：{e})"}
@@ -213,10 +214,11 @@ async def chat_stream_with_degradation_chain(
     messages: list[dict],
     profile_key: str,
     tools: list[dict] | None = None,
+    conversation_id: int | None = None,
 ):
     """流式降级链。首包失败可降级；已经开始流式中途断给清晰错误。"""
     try:
-        async for event in _chat_stream_with_fallback(messages, profile_key, tools):
+        async for event in _chat_stream_with_fallback(messages, profile_key, tools, conversation_id=conversation_id):
             yield event
     except Exception as e:
         logger.error("降级链流式chat全部失败: %s", e)

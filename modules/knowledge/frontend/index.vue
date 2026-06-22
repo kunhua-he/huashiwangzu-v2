@@ -233,7 +233,7 @@ async function toggleFolder(node: FileTreeNode) {
   if (!wasOpen && !folderFiles.value[key]) {
     try {
       const data = await getFileList(key)
-      const children: FileTreeNode[] = (data.items || []).map((f: {id:number;name:string;extension?:string|null;is_folder:boolean;created_at?:string}) => {
+      const children: FileTreeNode[] = (data.items || []).map((f) => {
         const doc = kbDocMap.value[f.id]
         const node: FileTreeNode = {
           id: f.id, name: f.name, parent_id: key, is_folder: f.is_folder,
@@ -296,11 +296,8 @@ function openDashboard() {
 
 async function loadUserRole() {
   try {
-    const token = localStorage.getItem('v2_auth_token')
-    if (!token) return
-    const r = await fetch('/api/auth/current-user', { headers: { Authorization: `Bearer ${token}` } })
-    const body = await r.json()
-    if (body.success && body.data?.role) userRole.value = body.data.role
+    const data = await apiGet<{ role: string }>('/auth/current-user')
+    if (data?.role) userRole.value = data.role
   } catch { /* ignore */ }
 }
 

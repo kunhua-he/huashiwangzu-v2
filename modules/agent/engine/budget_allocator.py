@@ -3,7 +3,7 @@ import json
 import logging
 import math
 from app.gateway.router import MODEL_PROFILES
-logger = logging.getLogger("v2.agent.engine.预算分配器")
+logger = logging.getLogger("v2.agent.engine.budget_allocator")
 SAFETY_MAX_TOKENS = 120000
 RESERVED_OUTPUT_TOKENS = 4096
 

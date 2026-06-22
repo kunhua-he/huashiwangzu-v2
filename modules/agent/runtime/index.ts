@@ -249,7 +249,7 @@ export function getRuntimeConfig(): Readonly<RuntimeConfig> {
 
 let __redirecting = false
 
-function _handle401(status: number): boolean {
+export function _handle401(status: number): boolean {
   if (status !== 401) return false
   localStorage.removeItem(TOKEN_KEY)
   if (!__redirecting) {
@@ -264,7 +264,7 @@ export function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string): Promise<T> {
   const url = getApiUrl(path)
   const r = await fetch(url, { headers: authHeaders() })
   if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
@@ -274,7 +274,7 @@ async function apiGet<T>(path: string): Promise<T> {
   return body.data as T
 }
 
-async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
+export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
   const url = getApiUrl(path)
   const r = await fetch(url, {
     method: 'POST',

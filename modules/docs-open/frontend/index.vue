@@ -67,29 +67,18 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import viewerShell from '@/shared/components/viewer-shell.vue'
-
-const TOKEN_KEY = 'v2_auth_token'
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+import { platform } from '../runtime'
 
 const testFileId = ref<number>(0)
-const testResult = ref<any>(null)
+const testResult = ref<unknown>(null)
 
 async function testOpen() {
   if (!testFileId.value) return
   try {
-    const r = await fetch('/api/docs/open', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ file_id: testFileId.value, mode: 'view' }),
-    })
-    const body = await r.json()
-    testResult.value = body
-  } catch (e: any) {
-    testResult.value = { success: false, error: e.message }
+    const result = await platform.docs.open(testFileId.value, 'view')
+    testResult.value = result
+  } catch (e: unknown) {
+    testResult.value = { success: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
 </script>

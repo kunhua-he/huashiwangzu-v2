@@ -20,8 +20,16 @@
 </template>
 
 <script setup lang="ts">
+interface HistoryItem {
+  id: number
+  action: string
+  description?: string
+  cell_addr?: string
+  created_at: string
+}
+
 defineProps<{
-  list: any[]
+  list: HistoryItem[]
 }>()
 
 defineEmits<{

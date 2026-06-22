@@ -46,13 +46,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import viewerShell from '@/shared/components/viewer-shell.vue'
-
-const TOKEN_KEY = 'v2_auth_token'
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+import { downloadBlob } from './api'
 
 const props = defineProps<{ fileId?: number; fileName?: string; format?: string; mode?: string }>()
 
@@ -62,10 +56,6 @@ function getPayload(): { fileId: number; fileName: string } | null {
   const p = window.__MODULE_OPEN_FILE_PAYLOAD__
   if (p?.fileId) return { fileId: p.fileId, fileName: p.fileName || '' }
   return null
-}
-
-function getDownloadUrl(fileId: number): string {
-  return `/api/files/download/${fileId}`
 }
 
 const fileName = ref('')
@@ -86,17 +76,14 @@ const imageStyle = computed(() => ({
 async function loadImage(fileId: number) {
   try {
     loadError.value = ''
-    const url = getDownloadUrl(fileId)
-    const resp = await fetch(url, { headers: authHeaders() })
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    const blob = await resp.blob()
+    const blob = await downloadBlob(fileId)
     if (imageSrc.value) URL.revokeObjectURL(imageSrc.value)
     imageSrc.value = URL.createObjectURL(blob)
     scale.value = 1
     translateX.value = 0
     translateY.value = 0
-  } catch (e: any) {
-    loadError.value = e.message || '图片加载失败'
+  } catch (e: unknown) {
+    loadError.value = e instanceof Error ? e.message : '图片加载失败'
   }
 }
 

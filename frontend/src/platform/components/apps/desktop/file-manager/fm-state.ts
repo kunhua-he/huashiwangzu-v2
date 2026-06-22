@@ -119,12 +119,14 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     loading.value = true
     try {
       if (isRecycleBin.value) {
-        const res = await fetchRecycleBinList()
-        if (res.success) items.value = (res.data || []).map(mapRecycleToFileEntry)
+        const data = await fetchRecycleBinList()
+        items.value = (data || []).map(mapRecycleToFileEntry)
       } else {
-        const res = await fetchFileList(currentFolderId.value)
-        if (res.success) items.value = res.data?.items || []
+        const data = await fetchFileList(currentFolderId.value)
+        items.value = data?.items || []
       }
+    } catch {
+      items.value = []
     } finally {
       loading.value = false
     }

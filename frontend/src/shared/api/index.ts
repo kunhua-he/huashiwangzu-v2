@@ -16,7 +16,6 @@ const api = axios.create({
   },
 })
 
-// 从 localStorage 恢复 Token，启动时设置默认头 + 每次请求自动带上
 const savedToken = localStorage.getItem(TOKEN_KEY)
 if (savedToken) {
   api.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`
@@ -56,20 +55,27 @@ function logErrorWithThrottle(url: string, statusCode: number | undefined, error
 api.interceptors.response.use(
   (response) => {
     const responseData = response.data
-    // 登录响应: V2 返回 {success, data: {access_token, user}, error}
-    // 需要把 user 提到顶层，token 也合并进去
+    if (response.config?.responseType === 'blob') return response
+
     if (responseData?.data?.access_token) {
       const payload = responseData.data
-      // 保存 Token 到 localStorage（页面刷新后恢复）并立即设置默认头
       localStorage.setItem(TOKEN_KEY, payload.access_token)
       api.defaults.headers.common['Authorization'] = `Bearer ${payload.access_token}`
-      return {
-        success: true,
-        data: { user: payload.user || null, access_token: payload.access_token, token_type: payload.token_type },
-        error: null,
-      }
+      return { user: payload.user || null, access_token: payload.access_token, token_type: payload.token_type }
     }
-    // 普通响应: 透传原始数据，不做中文化转换
+
+    if (responseData?.success === true) {
+      return responseData.data as unknown
+    }
+
+    if (responseData?.success === false) {
+      const errMsg = responseData.error || '请求失败'
+      const errInfo = { success: false as const, data: null, error: errMsg, http_status: response.status }
+      ElMessage.error(errMsg)
+      logErrorWithThrottle(response.config?.url || '未知', response.status, errMsg)
+      return Promise.reject(errInfo)
+    }
+
     return responseData
   },
   async (error) => {
@@ -80,6 +86,8 @@ api.interceptors.response.use(
     const alreadyOnLoginPage = currentPath === '/' || currentPath === '/login'
 
     if (statusCode === 401 && !isLoginRequest && !alreadyOnLoginPage) {
+      localStorage.removeItem(TOKEN_KEY)
+      delete api.defaults.headers.common['Authorization']
       if (!retriedRequests.has(requestUrl)) {
         retriedRequests.add(requestUrl)
         await new Promise(r => setTimeout(r, 500))
@@ -108,6 +116,17 @@ api.interceptors.response.use(
     return Promise.reject(errorInfo)
   }
 )
+
+export function keepaliveFetch(url: string, body: unknown): void {
+  const token = localStorage.getItem(TOKEN_KEY)
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  void fetch(`${API_BASE_URL}${url}`, {
+    method: 'POST', credentials: 'include', keepalive: true,
+    headers,
+    body: JSON.stringify(body),
+  })
+}
 
 export default api
 export type { ApiResponse } from './types'

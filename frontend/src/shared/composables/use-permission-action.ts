@@ -35,8 +35,8 @@ async function loadAllPermissionsFromBackend(): Promise<void> {
   loading = true
   loadPromise = (async () => {
     try {
-      const response: Record<string, unknown> = await api.get('/roles/matrix')
-      const matrix = ((response?.data as Record<string, unknown>)?.matrix || []) as Record<string, unknown>[]
+      const response = await api.get<unknown, { matrix: Record<string, unknown>[] }>('/roles/matrix')
+      const matrix = (response?.matrix || []) as Record<string, unknown>[]
       const list: PermissionMatrixItem[] = matrix.flatMap((role: Record<string, unknown>) =>
         Object.entries((role as Record<string, unknown>).permissions || {})
           .filter(([, enabled]) => enabled)

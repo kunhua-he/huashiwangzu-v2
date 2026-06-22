@@ -1,5 +1,5 @@
-"""Tests for 粘滞检测.py — stuck detection."""
-from 粘滞检测 import 检测粘滞, 重置
+"""Tests for stuck_detector.py — stuck detection."""
+from stuck_detector import 检测粘滞, 重置
 
 
 class TestStuckDetection:

@@ -75,7 +75,8 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, onMounted } from 'vue'
-import { initRuntime, getApiUrl, authHeaders } from '../runtime'
+import { initRuntime } from '../runtime'
+import { apiFetch, apiFetchRaw } from './api'
 import ConversationSidebar from './components/ConversationSidebar.vue'
 
 import InputArea from './components/InputArea.vue'
@@ -131,38 +132,6 @@ const allReferences = computed<RefItem[]>(() => {
   }
   return result
 })
-
-// ── 401 auto-heal ──
-let _redirecting = false
-
-function handleUnauthorized(status: number): boolean {
-  if (status !== 401) return false
-  localStorage.removeItem('v2_auth_token')
-  if (!_redirecting) {
-    _redirecting = true
-    window.location.replace('/')
-  }
-  return true
-}
-
-// ── API helper ──
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = getApiUrl(path)
-  const { headers: initHeaders, ...restInit } = init || {}
-  const r = await fetch(url, { headers: { ...initHeaders as Record<string, string> || {}, ...authHeaders() }, ...restInit })
-  if (handleUnauthorized(r.status)) throw new Error('登录已失效，请重新登录')
-  const body: ApiBody<T> = await r.json()
-  if (!body.success) throw new Error(body.error || '请求失败')
-  return body.data as T
-}
-
-async function apiFetchRaw(path: string, init?: RequestInit): Promise<Response> {
-  const url = getApiUrl(path)
-  const { headers: initHeaders, ...restInit } = init || {}
-  const resp = await fetch(url, { headers: { ...initHeaders as Record<string, string> || {}, ...authHeaders() }, ...restInit })
-  if (handleUnauthorized(resp.status)) throw new Error('登录已失效，请重新登录')
-  return resp
-}
 
 // ── Conv operations ──
 async function loadConversations() {

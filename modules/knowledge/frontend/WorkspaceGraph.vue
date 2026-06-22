@@ -155,7 +155,7 @@ import { GraphEngine } from './graph3d/GraphEngine'
 import { computeLayout } from './graph3d/layout3d'
 import { theme, resolveNodeColor, getNodeColor, getNodeRadius, nodeTypeVisualMap, typeDisplayLabels, mapChineseCategory } from './graph3d/theme'
 import { NodeType, type GraphNode, type GraphEdge } from './graph3d/types'
-import { getApiUrl } from '../runtime'
+import { getEntityGraph, getRelationGraph, type EntityGraphNode, type EntityGraphEdge, type RelationGraphNode, type RelationGraphEdge } from './api'
 
 const emit = defineEmits<{
   select: [node: GraphNode]
@@ -294,20 +294,16 @@ async function loadData() {
   loading.value = true
   try {
     // Try entity-graph first, fall back to relation-graph
-    const res = await fetch(getApiUrl('/knowledge/entity-graph'), {
-      headers: authHeaders(),
-    })
-    const body = await res.json()
-    if (body.success && body.data?.nodes?.length) {
-      const data = body.data
+    const data = await getEntityGraph()
+    if (data.nodes?.length) {
       // Keep the original category for correct color resolution, but also set type
-      const graphNodes: GraphNode[] = (data.nodes || []).map((n: any) => ({
+      const graphNodes: GraphNode[] = (data.nodes || []).map((n: EntityGraphNode) => ({
         id: n.id,
         label: n.label,
         type: n.category || n.type || 'unknown',
         weight: n.weight ?? 0,
       }))
-      const graphEdges: GraphEdge[] = (data.edges || []).map((e: any) => ({
+      const graphEdges: GraphEdge[] = (data.edges || []).map((e: EntityGraphEdge) => ({
         source: e.source,
         target: e.target,
         weight: e.weight ?? e.similarity_score ?? 0.5,
@@ -325,19 +321,15 @@ async function loadData() {
     }
 
     // Fallback: relation-graph
-    const res2 = await fetch(getApiUrl('/knowledge/relation-graph'), {
-      headers: authHeaders(),
-    })
-    const body2 = await res2.json()
-    if (body2.success && body2.data?.nodes?.length) {
-      const data = body2.data
-      const graphNodes: GraphNode[] = (data.nodes || []).map((n: any) => ({
+    const data2 = await getRelationGraph()
+    if (data2.nodes?.length) {
+      const graphNodes: GraphNode[] = (data2.nodes || []).map((n: RelationGraphNode) => ({
         id: n.id,
         label: n.label,
         type: n.type || NodeType.Document,
         weight: 0,
       }))
-      const graphEdges: GraphEdge[] = (data.edges || []).map((e: any) => ({
+      const graphEdges: GraphEdge[] = (data2.edges || []).map((e: RelationGraphEdge) => ({
         source: e.source,
         target: e.target,
         weight: e.weight ?? e.similarity_score ?? 0.5,
@@ -372,11 +364,6 @@ function applyData() {
     console.error('[WorkspaceGraph] applyData error:', e)
     loading.value = false
   }
-}
-
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem('v2_auth_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 // ── Search handlers ──
@@ -485,23 +472,23 @@ onMounted(async () => {
   })
 
   // Listen for events
-  g.on('select', (event: any) => {
-    if (event?.node) {
-      tooltipNode.value = event.node
-      selectedNode.value = event.node
-      // Also highlight and fly
+  g.on('select', (event: unknown) => {
+    const ev = event as { node?: GraphNode } | null
+    if (ev?.node) {
+      tooltipNode.value = ev.node
+      selectedNode.value = ev.node
       if (g.interactionCtx) {
-        g.interactionCtx.highlightNode(event.node.id)
+        g.interactionCtx.highlightNode(ev.node.id)
       }
-      emit('select', event.node)
+      emit('select', ev.node)
     } else {
       selectedNode.value = null
     }
   })
-  g.on('hover', (event: any) => {
-    tooltipNode.value = event?.node ?? null
-    // Also check for edge hover when no node is hovered
-    if (!event?.node && g.interactionCtx) {
+  g.on('hover', (event: unknown) => {
+    const ev = event as { node?: GraphNode } | null
+    tooltipNode.value = ev?.node ?? null
+    if (!ev?.node && g.interactionCtx) {
       const edgeInfo = g.interactionCtx.getHoveredEdge()
       if (edgeInfo?.edge.relation) {
         hoveredEdgeRelation.value = { relation: edgeInfo.edge.relation }

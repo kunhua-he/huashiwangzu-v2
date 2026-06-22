@@ -1,7 +1,7 @@
 /**
  * Global window extensions shared across modules.
  * Declared here so all modules can access these properties
- * without `window as any` casts.
+ * without unsafe window casts.
  */
 
 export {}

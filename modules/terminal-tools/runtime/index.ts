@@ -246,7 +246,19 @@ export function getRuntimeConfig(): Readonly<RuntimeConfig> {
 
 // ── Internal HTTP helper ────────────────────────────────────────────
 
-function authHeaders(): HeadersInit {
+let __redirecting = false
+
+function _handle401(status: number): boolean {
+  if (status !== 401) return false
+  localStorage.removeItem(TOKEN_KEY)
+  if (!__redirecting) {
+    __redirecting = true
+    window.location.replace('/')
+  }
+  return true
+}
+
+export function authHeaders(): HeadersInit {
   const token = localStorage.getItem(TOKEN_KEY)
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
@@ -254,6 +266,7 @@ function authHeaders(): HeadersInit {
 async function apiGet<T>(path: string): Promise<T> {
   const url = getApiUrl(path)
   const r = await fetch(url, { headers: authHeaders() })
+  if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
   if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
   const body = await r.json()
   if (!body.success) throw new Error(body.error ?? 'API error')
@@ -267,6 +280,7 @@ async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: payload ? JSON.stringify(payload) : undefined,
   })
+  if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
   if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
   const body = await r.json()
   if (!body.success) throw new Error(body.error ?? 'API error')
@@ -309,6 +323,7 @@ export const files = {
     if (options?.folder_id) form.append('folder_id', String(options.folder_id))
     const url = getApiUrl('/files/upload')
     const r = await fetch(url, { method: 'POST', headers: authHeaders(), body: form })
+    if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
     if (!r.ok) throw new Error(`Upload returned ${r.status}`)
     const body = await r.json()
     if (!body.success) throw new Error(body.error ?? 'Upload error')
@@ -375,6 +390,7 @@ export const gateway = {
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(payload),
     })
+    if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
     if (!r.ok) throw new Error(`Chat stream returned ${r.status}`)
     if (!r.body) throw new Error('No response body for stream')
     return r.body

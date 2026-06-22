@@ -1,15 +1,15 @@
-"""压缩器：滑窗保头尾 + 中间摘要（便宜模型）。
+"""compressor：滑窗保头尾 + 中间摘要（便宜模型）。
 与批1事件溯源对接：压缩 = 插入 compaction 事件，不删原始事件。
-触发：预算分配器装配时仍超预算 → 调压缩器。
+触发：budget_allocator装配时仍超预算 → 调compressor。
 降级：便宜模型失败 → 退"只保尾部 M 条"硬截断，不报错。"""
 import json
 import logging
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-from 事件存储 import record_event
+from event_store import record_event
 
-logger = logging.getLogger("v2.agent.engine.压缩器")
+logger = logging.getLogger("v2.agent.engine.compressor")
 
 HEAD_COUNT = 10
 TAIL_COUNT = 20

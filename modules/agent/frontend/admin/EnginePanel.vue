@@ -188,10 +188,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { getApiUrl, authHeaders } from '../../runtime'
+import { apiGet } from '../../runtime'
 import ReplayViewer from './ReplayViewer.vue'
-
-interface ApiBody<T> { success: boolean; data: T; error?: string | null }
 
 interface OverviewMemory { total_count: number; with_embedding: number; avg_confidence: number; avg_recency_score: number; link_count: number; owner_count: number }
 interface OverviewExperience { total_count: number; active_count: number; inactive_count: number; avg_success_weight: number; total_fail_count: number }
@@ -228,7 +226,12 @@ interface ReplayRound {
 const loading = ref(true)
 const error = ref('')
 const data = ref<OverviewData>({})
-const costData = computed(() => data.value.cost ?? { today_total: 0, by_model: [], by_module: [], last_7_days: [] })
+const emptyCostData: OverviewCost = { today_total: 0, by_model: [], by_module: [], last_7_days: [] }
+const costData = computed<OverviewCost>(() => {
+  const cost = data.value.cost
+  if (!cost || 'error' in cost) return emptyCostData
+  return cost
+})
 const costError = computed(() => { const c = data.value.cost; return c && 'error' in c ? (c as { error: string }).error : '' })
 
 const replayConvId = ref('')
@@ -236,19 +239,10 @@ const replayData = ref<{ rounds: ReplayRound[] } | null>(null)
 const replayLoading = ref(false)
 const replayError = ref('')
 
-async function apiFetch<T>(path: string): Promise<T> {
-  const url = getApiUrl(path)
-  const r = await fetch(url, { headers: authHeaders() })
-  if (r.status === 401) { window.location.replace('/'); throw new Error('未登录') }
-  const body: ApiBody<T> = await r.json()
-  if (!body.success) throw new Error(body.error || '请求失败')
-  return body.data as T
-}
-
 async function loadOverview() {
   loading.value = true; error.value = ''
   try {
-    data.value = await apiFetch<OverviewData>('/agent/admin/overview')
+    data.value = await apiGet<OverviewData>('/agent/admin/overview')
   } catch (e: unknown) {
     error.value = String((e as Error).message || e)
   } finally {
@@ -261,7 +255,7 @@ async function loadReplay() {
   if (!id) return
   replayLoading.value = true; replayError.value = ''
   try {
-    replayData.value = await apiFetch<{ rounds: ReplayRound[] }>(`/agent/admin/replay/${id}`)
+    replayData.value = await apiGet<{ rounds: ReplayRound[] }>(`/agent/admin/replay/${id}`)
   } catch (e: unknown) {
     replayError.value = String((e as Error).message || e)
   } finally {

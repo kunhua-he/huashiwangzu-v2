@@ -86,6 +86,7 @@ import ExcelToolbar from './components/ExcelToolbar.vue'
 import ContextMenu from './components/ContextMenu.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 import * as api from './components/api-service'
+import type { EditResult, SheetData, HistoryItem } from './components/api-service'
 
 // ── Global declaration for desktop shell file-open payload ──
 declare global {
@@ -100,7 +101,7 @@ const errorMsg = ref('')
 const retryable = ref(false)
 const stateKey = ref('')
 const cells = ref<Record<string, string>>({})
-const cellStyles = ref<Record<string, Record<string, any>>>({})
+const cellStyles = ref<Record<string, Record<string, unknown>>>({})
 const merges = ref<Record<string, { topLeft: string; rows: number; cols: number }>>({})
 const colWidths = ref<Record<string, number>>({})
 const rowHeights = ref<Record<string, number>>({})
@@ -108,7 +109,7 @@ const totalRows = ref(40)
 const totalCols = ref(10)
 const allSheets = ref<string[]>(['Sheet1'])
 const currentSheetIndex = ref(0)
-const sheetSet = ref<Record<string, any>>({})
+const sheetSet = ref<Record<string, unknown>>({})
 
 // Selection & editing
 const selectedAddr = ref('')
@@ -121,14 +122,14 @@ const showFormulaBar = ref(true)
 
 // History
 const showHistory = ref(false)
-const historyList = ref<any[]>([])
+const historyList = ref<HistoryItem[]>([])
 
 // Context menu
 const contextMenu = ref({ visible: false, x: 0, y: 0, addr: '' })
 const showSubMenu = ref('')
 
 // Clipboard tracking
-const clipboardData = ref<Record<string, { text: string; style: any }>>({})
+const clipboardData = ref<Record<string, { text: string; style: Record<string, unknown> }>>({})
 const clipboardRange = ref<string[]>([])
 
 // Grid ref
@@ -178,8 +179,8 @@ async function init() {
         loading.value = false
       }
     }
-  } catch (e: any) {
-    errorMsg.value = e.message || '加载失败'
+  } catch (e: unknown) {
+    errorMsg.value = e instanceof Error ? e.message : String(e)
     retryable.value = true
   } finally {
     loading.value = false
@@ -198,48 +199,30 @@ async function tryGetFilePayload(): Promise<{ fileId: number; fileName: string }
 
 async function openFile(fileId: number, fileName: string) {
   stateKey.value = `knowledge_${fileId}`
-  // Try loading via API
   try {
-    const response = await fetch(getApiUrl('/excel-engine/open'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ file_id: fileId }),
-    })
-    const json = await response.json()
-    if (json.success && json.data) {
-      applyState(json.data)
-      return
-    }
+    const json = await api.openFile(fileId)
+    applyState(json)
+    return
   } catch {}
-  // If API fails, try parse
   try {
-    const response = await fetch(getApiUrl('/excel-engine/parse'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ file_id: fileId }),
-    })
-    const json = await response.json()
-    if (json.success && json.data && json.data.code === 0) {
-      applyParseResult(json.data)
-    }
+    const data = await api.parseFile(fileId)
+    applyParseResult(data)
   } catch {}
 }
 
-function applyState(data: any) {
+function applyState(data: EditResult & { all_sheets?: string[]; sheet_set?: Record<string, unknown>; state_key?: string }) {
   cells.value = data.cells || {}
   cellStyles.value = data.styles || {}
   merges.value = data.merges || {}
-  colWidths.value = data.col_widths || {}
-  rowHeights.value = data.row_heights || {}
+  colWidths.value = (data as Record<string, unknown>).col_widths as Record<string, number> || {}
+  rowHeights.value = (data as Record<string, unknown>).row_heights as Record<string, number> || {}
   totalRows.value = data.total_rows || 40
   totalCols.value = data.total_cols || 10
   allSheets.value = data.all_sheets || ['Sheet1']
-  sheetSet.value = data.sheet_set || {}
+  sheetSet.value = (data as Record<string, unknown>).sheet_set as Record<string, unknown> || {}
 }
 
-function applyParseResult(data: any) {
+function applyParseResult(data: EditResult & { sheet_set?: Record<string, SheetData>; all_sheets?: string[] }) {
   if (data.sheet_set) {
     const firstSheet = Object.keys(data.sheet_set)[0] || 'Sheet1'
     const sheetData = data.sheet_set[firstSheet]
@@ -251,13 +234,13 @@ function applyParseResult(data: any) {
     totalRows.value = sheetData.total_rows || 40
     totalCols.value = sheetData.total_cols || 10
     allSheets.value = data.all_sheets || [firstSheet]
-    sheetSet.value = data.sheet_set
+    sheetSet.value = data.sheet_set as unknown as Record<string, unknown>
   } else {
     cells.value = data.cells || {}
     cellStyles.value = data.styles || {}
     merges.value = data.merges || {}
-    colWidths.value = data.col_widths || {}
-    rowHeights.value = data.row_heights || {}
+    colWidths.value = (data as Record<string, unknown>).col_widths as Record<string, number> || {}
+    rowHeights.value = (data as Record<string, unknown>).row_heights as Record<string, number> || {}
     totalRows.value = data.total_rows || 40
     totalCols.value = data.total_cols || 10
   }
@@ -267,8 +250,8 @@ function applyParseResult(data: any) {
 function switchSheet(idx: number) {
   currentSheetIndex.value = idx
   const name = allSheets.value[idx]
-  if (sheetSet.value[name]) {
-    const sd = sheetSet.value[name]
+  const sd = sheetSet.value[name] as SheetData | undefined
+  if (sd) {
     cells.value = sd.cells || {}
     cellStyles.value = sd.styles || {}
     merges.value = sd.merges || {}
@@ -379,79 +362,32 @@ async function onToolbarAction(action: string) {
   }
 }
 
-async function onStyleChange(method: string, params: Record<string, any>) {
+async function onStyleChange(method: string, params: Record<string, unknown>) {
   if (selectedRange.value.length === 0) return
-  await fetch(getApiUrl('/excel-engine/style'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({
-      state_key: stateKey.value,
-      sheet: currentSheetName.value,
-      address_list: selectedRange.value,
-      method: method,
-      params: params,
-    }),
-  })
+  await api.editStyle({ state_key: stateKey.value, sheet: currentSheetName.value, address_list: selectedRange.value, method, params })
 }
 
 // ── API calls ──
 async function sendEdit(method: string, addr: string, value: string) {
   if (!stateKey.value) return
   try {
-    await fetch(getApiUrl('/excel-engine/edit'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        state_key: stateKey.value,
-        sheet: currentSheetName.value,
-        address: addr,
-        method: method,
-        value: value,
-      }),
-    })
+    await api.editCell({ state_key: stateKey.value, sheet: currentSheetName.value, address: addr, method, value })
   } catch {}
 }
 
 async function sendStyleAction(method: string) {
   if (!stateKey.value || selectedRange.value.length === 0) return
   try {
-    await fetch(getApiUrl('/excel-engine/style'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        state_key: stateKey.value,
-        sheet: currentSheetName.value,
-        address_list: selectedRange.value,
-        method: method,
-        params: {},
-      }),
-    })
+    await api.editStyle({ state_key: stateKey.value, sheet: currentSheetName.value, address_list: selectedRange.value, method, params: {} })
   } catch {}
 }
 
 async function sendStateOp(method: string) {
   if (!stateKey.value) return
   try {
-    const res = await fetch(getApiUrl('/excel-engine/state'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        module: 'state',
-        method: method,
-        params: {},
-        state_key: stateKey.value,
-        sheet: currentSheetName.value,
-      }),
-    })
-    const json = await res.json()
-    if (json.success && json.data) {
-      if (json.data.cells) cells.value = json.data.cells
-      if (json.data.styles) cellStyles.value = json.data.styles
-    }
+    const data = await api.stateOp({ module: 'state', method, params: {}, state_key: stateKey.value, sheet: currentSheetName.value })
+    if (data.cells) cells.value = data.cells
+    if (data.styles) cellStyles.value = data.styles
   } catch {}
 }
 
@@ -506,19 +442,7 @@ async function execContextAction(action: string) {
           pasteData[0].push(clipboardData.value[key].text)
         }
       }
-      await fetch(getApiUrl('/excel-engine/clipboard'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          state_key: stateKey.value,
-          sheet: currentSheetName.value,
-          address: contextMenu.value.addr || addrs[0],
-          address_list: [contextMenu.value.addr || addrs[0]],
-          method: 'paste',
-          params: { data: pasteData },
-        }),
-      })
+      await api.clipboardOp({ state_key: stateKey.value, sheet: currentSheetName.value, address: contextMenu.value.addr || addrs[0], address_list: [contextMenu.value.addr || addrs[0]], method: 'paste', params: { data: pasteData } })
       break
     case 'clear_all':
       for (const addr of addrs) {
@@ -609,48 +533,20 @@ function toggleHistory() {
 async function loadHistory() {
   if (!stateKey.value) return
   try {
-    const res = await fetch(getApiUrl('/excel-engine/state'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        module: 'state',
-        method: 'history_list',
-        params: {},
-        state_key: stateKey.value,
-        sheet: currentSheetName.value,
-      }),
-    })
-    const json = await res.json()
-    if (json.success && json.data) {
-      historyList.value = json.data.history || []
-    }
+    const data = await api.stateOp({ module: 'state', method: 'history_list', params: {}, state_key: stateKey.value, sheet: currentSheetName.value })
+    historyList.value = data.history || []
   } catch {}
 }
 
 async function previewHistory(historyId: number) {
   if (!stateKey.value) return
   try {
-    const res = await fetch(getApiUrl('/excel-engine/state'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        module: 'state',
-        method: 'history_preview',
-        params: { history_id: historyId },
-        state_key: stateKey.value,
-        sheet: currentSheetName.value,
-      }),
-    })
-    const json = await res.json()
-    if (json.success && json.data) {
-      if (json.data.cells) cells.value = json.data.cells
-      if (json.data.styles) cellStyles.value = json.data.styles
-      if (json.data.merges) merges.value = json.data.merges
-      if (json.data.total_rows) totalRows.value = json.data.total_rows
-      if (json.data.total_cols) totalCols.value = json.data.total_cols
-    }
+    const data = await api.stateOp({ module: 'state', method: 'history_preview', params: { history_id: historyId }, state_key: stateKey.value, sheet: currentSheetName.value })
+    if (data.cells) cells.value = data.cells
+    if (data.styles) cellStyles.value = data.styles
+    if (data.merges) merges.value = data.merges
+    if (data.total_rows) totalRows.value = data.total_rows
+    if (data.total_cols) totalCols.value = data.total_cols
   } catch {}
 }
 

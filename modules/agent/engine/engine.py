@@ -1,18 +1,18 @@
-"""引擎编排壳：暴露装配上下文()等给 router。批4：压缩器、降级链接入。"""
+"""engine编排壳：暴露装配上下文()等给 router。批4：compressor、fallback_chain接入。"""
 import asyncio
 import json
 import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import conversation_service as conv_svc
-from 事件存储 import read_events, project_to_messages, record_event
-from 预算分配器 import assemble_context, estimate_tokens, get_context_budget
-from 分层记忆 import 记一笔 as _分层记忆_记一笔, 召回记忆 as _分层记忆_召回记忆, 即时融合 as _分层记忆_即时融合
-from 经验记忆 import 匹配经验 as _经验_匹配, 保存经验 as _经验_保存, 经验反馈 as _经验_反馈, 格式化注入段 as _经验_格式化
-from 压缩器 import 压缩中间 as _压缩中间, 硬截断尾部 as _硬截断尾部
-from 降级链 import chat_with_fallback as _chat_with_fallback, chat_stream_with_fallback as _chat_stream_with_fallback
+from event_store import read_events, project_to_messages, record_event
+from budget_allocator import assemble_context, estimate_tokens, get_context_budget
+from layered_memory import 记一笔 as _layered_memory_记一笔, 召回记忆 as _layered_memory_召回记忆, 即时融合 as _layered_memory_即时融合
+from experience_memory import 匹配经验 as _经验_匹配, 保存经验 as _经验_保存, 经验反馈 as _经验_反馈, 格式化注入段 as _经验_格式化
+from compressor import 压缩中间 as _压缩中间, 硬截断尾部 as _硬截断尾部
+from fallback_chain import chat_with_fallback as _chat_with_fallback, chat_stream_with_fallback as _chat_stream_with_fallback
 
-logger = logging.getLogger("v2.agent.engine.引擎")
+logger = logging.getLogger("v2.agent.engine.engine")
 
 # dream 触发节流：每 N 轮对话触发一次
 _DREAM_INTERVAL = 5
@@ -47,7 +47,7 @@ async def 装配上下文(
         projected = []
         all_events = []
 
-    # ── 批4：预算超限时调压缩器 ──────────────────────────────────────────
+    # ── 批4：预算超限时调compressor ──────────────────────────────────────────
     try:
         system_content = await _build_system_content(db, owner_id, agent_code)
     except Exception as e:
@@ -190,8 +190,8 @@ async def 记一笔(db: AsyncSession, conversation_id: int, owner_id: int, messa
             return {"status": "skipped", "note": "无可提取的记忆内容"}
 
         combined = "\n\n".join(memory_texts)
-        # 用分层记忆客户端保存
-        result = await _分层记忆_记一笔(
+        # 用layered_memory客户端保存
+        result = await _layered_memory_记一笔(
             text=combined[:2000],
             owner_id=owner_id,
             source="auto-distill",
@@ -204,7 +204,7 @@ async def 记一笔(db: AsyncSession, conversation_id: int, owner_id: int, messa
 
 
 async def 压缩(db: AsyncSession, conversation_id: int, profile_key: str = "gemma-4") -> dict:
-    """批4：事件压缩。调压缩器插入 compaction 事件，不删原始事件。"""
+    """批4：事件压缩。调compressor插入 compaction 事件，不删原始事件。"""
     logger.info("压缩 (conv=%s)", conversation_id)
     try:
         all_events = await read_events(db, conversation_id)
@@ -224,7 +224,7 @@ async def 压缩(db: AsyncSession, conversation_id: int, profile_key: str = "gem
 async def 召回记忆(db: AsyncSession, owner_id: int, query: str) -> list[dict]:
     """批2：语义召回记忆。调用 memory 模块 recall 能力，含顺链扩展。"""
     try:
-        results = await _分层记忆_召回记忆(
+        results = await _layered_memory_召回记忆(
             owner_id=owner_id,
             query=query,
             limit=5,
@@ -245,7 +245,7 @@ async def 即时融合注入(owner_id: int, query: str, memory_ids: list[int], b
         return None
     if budget_remaining is not None and budget_remaining < 2000:
         # 预算紧：融合压缩
-        return await _分层记忆_即时融合(owner_id, query, memory_ids)
+        return await _layered_memory_即时融合(owner_id, query, memory_ids)
     return None
 
 
@@ -277,7 +277,7 @@ async def 触发定期dream(owner_id: int) -> None:
             logger.warning("dream enqueue failed (non-fatal): %s", e)
 
 
-# ── 批4 韧性：降级链聊天（供 router 替换裸 gateway_router.chat） ──────
+# ── 批4 韧性：fallback_chain聊天（供 router 替换裸 gateway_router.chat） ──────
 
 async def chat_with_degradation_chain(
     messages: list[dict],
@@ -285,11 +285,11 @@ async def chat_with_degradation_chain(
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
 ) -> dict:
-    """用降级链包装模型调用。主模型失败 → fallback_chain → 本地兜底。"""
+    """用fallback_chain包装模型调用。主模型失败 → fallback_chain → 本地兜底。"""
     try:
         return await _chat_with_fallback(messages, profile_key, tools, conversation_id=conversation_id)
     except Exception as e:
-        logger.error("降级链chat全部失败: %s", e)
+        logger.error("fallback_chainchat全部失败: %s", e)
         return {"error": str(e), "content": f"(模型调用失败：{e})"}
 
 
@@ -299,12 +299,12 @@ async def chat_stream_with_degradation_chain(
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
 ):
-    """流式降级链。首包失败可降级；已经开始流式中途断给清晰错误。"""
+    """流式fallback_chain。首包失败可降级；已经开始流式中途断给清晰错误。"""
     try:
         async for event in _chat_stream_with_fallback(messages, profile_key, tools, conversation_id=conversation_id):
             yield event
     except Exception as e:
-        logger.error("降级链流式chat全部失败: %s", e)
+        logger.error("fallback_chain流式chat全部失败: %s", e)
         yield {"type": "error", "content": f"(流式模型调用失败：{e})"}
     yield {"type": "done"}
 

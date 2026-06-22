@@ -18,7 +18,7 @@ import { buildNodes, type NodeRenderContext } from './nodes'
 import { buildEdges, type EdgeRenderContext } from './edges'
 import { setupInteraction, type InteractionContext } from './interaction'
 
-type EventCallback = (event: any) => void
+type EventCallback = (event: unknown) => void
 
 export class GraphEngine {
   readonly canvas: HTMLCanvasElement
@@ -168,7 +168,7 @@ export class GraphEngine {
 
   // ── Private ──
 
-  private emit(event: GraphEngineEvent, payload: any): void {
+  private emit(event: GraphEngineEvent, payload: unknown): void {
     const cbs = this.listeners.get(event)
     if (cbs) cbs.forEach(cb => cb(payload))
   }

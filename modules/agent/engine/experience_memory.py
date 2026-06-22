@@ -1,10 +1,10 @@
-"""引擎与 memory 模块之间的成功经验薄客户端。
+"""engine与 memory 模块之间的成功经验薄客户端。
 走框架跨模块通路，不直读 memory 表。"""
 import json
 import logging
 from app.services.module_registry import call_capability
 
-logger = logging.getLogger("v2.agent.engine.经验记忆")
+logger = logging.getLogger("v2.agent.engine.experience_memory")
 
 EXPERIENCE_INJECTION_TEMPLATE = (
     "\n\n💡已知成功路径：当前请求与以下成功经验相似——"

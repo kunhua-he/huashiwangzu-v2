@@ -2,7 +2,7 @@
 
 > 实测时间：2025-06-22
 > 探针：`modules/agent/tools/probe_toolcall_format.py`
-> 落盘：`modules/agent/调研/工具调用格式探针_原始返回.jsonl`
+> 落盘：`modules/agent/research/tool_call_format_probe_raw.jsonl`
 
 ## 一句话结论
 

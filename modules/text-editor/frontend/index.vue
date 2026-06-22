@@ -37,13 +37,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
 import viewerShell from '@/shared/components/viewer-shell.vue'
-
-const TOKEN_KEY = 'v2_auth_token'
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+import { apiPost, downloadText } from './api'
 
 const props = defineProps<{ fileId?: number; fileName?: string; format?: string; mode?: string }>()
 
@@ -100,14 +94,11 @@ const statusText = computed(() => {
 async function loadText(fid: number) {
   try {
     loadError.value = ''
-    const url = `/api/files/download/${fid}`
-    const resp = await fetch(url, { headers: authHeaders() })
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    const text = await resp.text()
+    const text = await downloadText(fid)
     content.value = text
     originalContent.value = text
-  } catch (e: any) {
-    loadError.value = e.message || '加载失败'
+  } catch (e: unknown) {
+    loadError.value = e instanceof Error ? e.message : '加载失败'
   }
 }
 
@@ -120,16 +111,11 @@ async function handleSave() {
   if (!fileId.value) return
   saveError.value = ''
   try {
-    const resp = await fetch(`/api/editors/text/${fileId.value}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ content: content.value }),
-    })
-    const json = await resp.json()
-    if (!json.success) throw new Error(json.error || '保存失败')
+    interface SaveResponse { success?: boolean }
+    const result = await apiPost<SaveResponse>(`/editors/text/${fileId.value}`, { content: content.value })
     originalContent.value = content.value
-  } catch (e: any) {
-    saveError.value = e.message || '保存失败'
+  } catch (e: unknown) {
+    saveError.value = e instanceof Error ? e.message : '保存失败'
   }
 }
 

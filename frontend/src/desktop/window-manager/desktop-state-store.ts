@@ -1,5 +1,5 @@
 import { reactive, ref } from 'vue'
-import { API_BASE_URL } from '@/shared/api'
+import { keepaliveFetch } from '@/shared/api'
 import { readDesktopStateRequest, saveDesktopStateRequest } from '@/shared/api/desktop'
 import { deduplicateSnapshots, type DesktopWindowSnapshot } from './desktop-session-storage'
 
@@ -15,11 +15,13 @@ const loaded = ref(false)
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export async function loadDesktopState() {
-  const response = await readDesktopStateRequest()
-  if (response.success && response.data) {
-    state.windows = Array.isArray(response.data.windows) ? response.data.windows : []
-    state.appState = response.data.appState || {}
-    state.iconPositions = response.data.iconPositions || {}
+  try {
+    const data = await readDesktopStateRequest()
+    state.windows = Array.isArray(data.windows) ? data.windows : []
+    state.appState = data.appState || {}
+    state.iconPositions = data.iconPositions || {}
+  } catch {
+    // desktop state load failed, start with defaults
   }
   loaded.value = true
   return state
@@ -46,20 +48,20 @@ export function scheduleDesktopStateSave() {
   saveTimer = setTimeout(saveDesktopStateNow, 180)
 }
 
-export function saveDesktopStateNow() {
-  if (!loaded.value) return Promise.resolve()
+export async function saveDesktopStateNow() {
+  if (!loaded.value) return
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = null
-  return saveDesktopStateRequest(JSON.parse(JSON.stringify(state))).then(() => undefined)
+  try {
+    await saveDesktopStateRequest(JSON.parse(JSON.stringify(state)))
+  } catch {
+    // desktop state save failed silently
+  }
 }
 
 export function saveDesktopStateWithKeepalive() {
   if (!loaded.value) return
-  void fetch(`${API_BASE_URL}/desktop/state`, {
-    method: 'POST', credentials: 'include', keepalive: true,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ state_json: state }),
-  })
+  keepaliveFetch('/desktop/state', { state_json: state })
 }
 
 export const desktopStateStore = { state, loaded }

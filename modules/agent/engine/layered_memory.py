@@ -1,9 +1,9 @@
-"""引擎与 memory 模块之间的薄客户端层。
+"""engine与 memory 模块之间的薄客户端层。
 通过框架跨模块通路调 memory 能力，不直读 memory 表。"""
 import logging
 from app.services.module_registry import call_capability
 
-logger = logging.getLogger("v2.agent.engine.分层记忆")
+logger = logging.getLogger("v2.agent.engine.layered_memory")
 
 MEMORY_FUSE_BUDGET_THRESHOLD = 2000  # token, 召回多条且预算紧时触发融合
 MEMORY_RECALL_DEFAULT_LIMIT = 5

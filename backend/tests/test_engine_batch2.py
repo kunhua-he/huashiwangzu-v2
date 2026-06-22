@@ -279,45 +279,45 @@ class TestEngineIntegration:
 
     def test_layered_memory_file_exists(self):
         engine_dir = Path(__file__).resolve().parent.parent.parent / "modules" / "agent" / "engine"
-        file_path = engine_dir / "分层记忆.py"
+        file_path = engine_dir / "layered_memory.py"
         assert file_path.exists(), f"{file_path} should exist"
 
-    def test_分层记忆_source_has_expected_functions(self):
+    def test_layered_memory_source_has_expected_functions(self):
         engine_dir = Path(__file__).resolve().parent.parent.parent / "modules" / "agent" / "engine"
-        source = (engine_dir / "分层记忆.py").read_text("utf-8")
+        source = (engine_dir / "layered_memory.py").read_text("utf-8")
         assert "async def 记一笔" in source
         assert "async def 召回记忆" in source
         assert "async def 即时融合" in source
         assert "async def 触发dream" in source
 
-    def test_引擎_source_has_expected_functions(self):
+    def test_engine_source_has_expected_functions(self):
         engine_dir = Path(__file__).resolve().parent.parent.parent / "modules" / "agent" / "engine"
-        source = (engine_dir / "引擎.py").read_text("utf-8")
+        source = (engine_dir / "engine.py").read_text("utf-8")
         assert "async def 记一笔" in source
         assert "async def 召回记忆" in source
         assert "async def 即时融合注入" in source
         assert "async def 触发定期dream" in source
 
-    def test_分层记忆_imports_from_module_registry(self):
+    def test_layered_memory_imports_from_module_registry(self):
         source = (Path(__file__).resolve().parent.parent.parent / "modules" / "agent" / "engine"
-                  / "分层记忆.py").read_text("utf-8")
+                  / "layered_memory.py").read_text("utf-8")
         assert "call_capability" in source
 
-    def test_engine_imports_from_分层记忆(self):
+    def test_engine_imports_from_layered_memory(self):
         source = (Path(__file__).resolve().parent.parent.parent / "modules" / "agent" / "engine"
-                  / "引擎.py").read_text("utf-8")
-        assert "分层记忆" in source
+                  / "engine.py").read_text("utf-8")
+        assert "layered_memory" in source
 
-    def test_分层记忆_syntax_is_valid(self):
+    def test_layered_memory_syntax_is_valid(self):
         """Verify the Python file parses without syntax errors."""
         engine_dir = Path(__file__).resolve().parent.parent.parent / "modules" / "agent" / "engine"
-        source = (engine_dir / "分层记忆.py").read_text("utf-8")
-        compile(source, "分层记忆.py", "exec")
+        source = (engine_dir / "layered_memory.py").read_text("utf-8")
+        compile(source, "layered_memory.py", "exec")
 
-    def test_引擎_syntax_is_valid(self):
+    def test_engine_syntax_is_valid(self):
         engine_dir = Path(__file__).resolve().parent.parent.parent / "modules" / "agent" / "engine"
-        source = (engine_dir / "引擎.py").read_text("utf-8")
-        compile(source, "引擎.py", "exec")
+        source = (engine_dir / "engine.py").read_text("utf-8")
+        compile(source, "engine.py", "exec")
 
 
 class TestCapabilityRegistration:

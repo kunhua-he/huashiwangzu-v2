@@ -62,9 +62,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { initRuntime, getApiUrl, platform } from '../runtime'
-
-const TOKEN_KEY = 'v2_auth_token'
+import { initRuntime, getApiUrl, platform, authHeaders, apiGet, apiPost } from '../runtime'
 
 interface Conversation {
   id: number; conv_type: string; creator_id: number; member_ids: number[]
@@ -91,33 +89,6 @@ const messagesRef = ref<HTMLElement | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let msgPollTimer: ReturnType<typeof setInterval> | null = null
 let lastMsgId = ref(0)
-
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
-async function apiGet<T>(path: string): Promise<T> {
-  const url = getApiUrl(path)
-  const r = await fetch(url, { headers: authHeaders() })
-  if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
-  const body = await r.json()
-  if (!body.success) throw new Error(body.error ?? 'API error')
-  return body.data as T
-}
-
-async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
-  const url = getApiUrl(path)
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: payload ? JSON.stringify(payload) : undefined,
-  })
-  if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
-  const body = await r.json()
-  if (!body.success) throw new Error(body.error ?? 'API error')
-  return body.data as T
-}
 
 async function loadConversations() {
   try {

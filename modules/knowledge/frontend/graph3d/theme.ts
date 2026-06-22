@@ -165,7 +165,7 @@ function hashCode(s: string): number {
   return Math.abs(hash)
 }
 
-/** Assign a stable distinct color for any arbitrary category name (hash-based HSL).
+/** Assign a stable distinct color for each arbitrary category name (hash-based HSL).
  *  Produces distinct hues for different category names, with consistent saturation/lightness. */
 export function hashCategoryColorToken(category: string): ColorToken {
   const h = hashCode(category) % 360
@@ -196,7 +196,7 @@ function hslToHex(h: number, s: number, l: number): string {
 }
 
 /** Resolve color for a node type string — supports English keys, Chinese categories,
- *  and hash fallback for any unrecognized string. */
+ *  and hash fallback for unrecognized strings. */
 export function resolveNodeColor(categoryOrType: string): ColorToken {
   // Direct match in visual map (English key)
   if (nodeTypeVisualMap[categoryOrType]) {

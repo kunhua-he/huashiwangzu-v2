@@ -14,12 +14,10 @@ export const useUserStore = defineStore('user', () => {
     hasChecked.value = true
     isLoading.value = true
     try {
-      const res = await fetchCurrentUser()
+      const user = await fetchCurrentUser()
       if (isLoggedIn.value) return
-      if (res.success) {
-        if (res.data != null) userInfo.value = res.data
-        isLoggedIn.value = true
-      }
+      if (user != null) userInfo.value = user
+      isLoggedIn.value = true
     } catch {
       userInfo.value = null
       isLoggedIn.value = false
@@ -36,13 +34,10 @@ export const useUserStore = defineStore('user', () => {
 
   async function login(username: string, password: string): Promise<ApiResponse<Record<string, unknown>>> {
     try {
-      const res = await loginRequest({ username, password })
-      if (res.success) {
-        const loginData = res.data
-        if (loginData?.user) userInfo.value = loginData.user
-        isLoggedIn.value = true
-      }
-      return res
+      const loginData = await loginRequest({ username, password })
+      if (loginData?.user) userInfo.value = loginData.user
+      isLoggedIn.value = true
+      return { success: true, data: loginData as unknown as Record<string, unknown>, error: null }
     } catch (e: unknown) {
       return { success: false, data: null, error: (e as {error?: string})?.error || '登录失败' }
     }

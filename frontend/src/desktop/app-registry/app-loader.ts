@@ -70,9 +70,9 @@ function transformApiToEntry(app: DesktopAppItem): AppRegistryEntry {
 }
 
 export async function loadAppRegistry(role: string): Promise<AppRegistryEntry[]> {
-  const response = await fetchDesktopApps()
-  if (response.success && Array.isArray(response.data) && response.data.length > 0) {
-    const appList = response.data.map(transformApiToEntry)
+  const data = await fetchDesktopApps()
+  if (Array.isArray(data) && data.length > 0) {
+    const appList = data.map(transformApiToEntry)
     setAppRegistry(appList)
     return appList
   }

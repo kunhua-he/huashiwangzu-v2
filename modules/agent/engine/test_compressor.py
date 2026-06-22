@@ -1,7 +1,7 @@
-"""Tests for 压缩器.py — slide window compression + cheap model summarization."""
+"""Tests for compressor.py — slide window compression + cheap model summarization."""
 import pytest
 from unittest.mock import AsyncMock, patch
-from 压缩器 import _find_tool_pairs
+from compressor import _find_tool_pairs
 
 
 class MockEvent:

@@ -11,10 +11,12 @@ declare module 'three' {
   export class Vector3 {
     constructor(x?: number, y?: number, z?: number)
     x: number; y: number; z: number
+    lerp(v: Vector3, alpha: number): this
     lerpVectors(v1: Vector3, v2: Vector3, t: number): this
     clone(): Vector3
     add(v: Vector3): this
     set(x: number, y: number, z: number): this
+    dot(v: Vector3): number
   }
   export class Color {
     constructor(color?: string | number)
@@ -27,7 +29,9 @@ declare module 'three' {
     add(child: Object3D): void
     remove(child: Object3D): void
     updateMatrix(): void
-    matrix: any
+    matrix: unknown
+    userData: Record<string, unknown>
+    lookAt(v: Vector3): void
     getWorldPosition(target: Vector3): Vector3
   }
   export class Scene extends Object3D {
@@ -51,27 +55,41 @@ declare module 'three' {
     dispose(): void
   }
   export class MeshStandardMaterial {
-    constructor(params?: { color?: string | number; emissive?: string | number; emissiveIntensity?: number; metalness?: number; roughness?: number; transparent?: boolean; opacity?: number })
+    constructor(params?: { color?: string | number; emissive?: string | number; emissiveIntensity?: number; metalness?: number; roughness?: number; transparent?: boolean; opacity?: number; map?: CanvasTexture })
     color: Color
+    opacity: number
+    transparent: boolean
+    map: CanvasTexture | null
     dispose(): void
   }
   export class MeshBasicMaterial {
-    constructor(params?: { color?: string | number })
+    constructor(params?: { color?: string | number; map?: CanvasTexture; transparent?: boolean; depthWrite?: boolean; side?: number })
+    map: CanvasTexture | null
+    opacity: number
+    transparent: boolean
     dispose(): void
   }
   export class SphereGeometry {
     constructor(radius?: number, widthSegments?: number, heightSegments?: number)
     dispose(): void
   }
+  export class PlaneGeometry extends BufferGeometry {
+    constructor(width?: number, height?: number, widthSegments?: number, heightSegments?: number)
+  }
+  export class Mesh extends Object3D {
+    constructor(geometry?: BufferGeometry, material?: Material)
+    geometry: BufferGeometry
+    material: Material
+  }
   export class InstancedMesh extends Object3D {
     constructor(geometry: SphereGeometry, material: MeshStandardMaterial, count: number)
     instanceMatrix: { needsUpdate: boolean }
     instanceColor: { needsUpdate: boolean } | null
-    setMatrixAt(index: number, matrix: any): void
+    setMatrixAt(index: number, matrix: unknown): void
     setColorAt(index: number, color: Color): void
     count: number
-    geometry: any
-    material: any
+    geometry: unknown
+    material: unknown
     getColorAt(index: number, color: Color): void
     castShadow: boolean
     receiveShadow: boolean
@@ -85,6 +103,8 @@ declare module 'three' {
     constructor(params?: { color?: string; transparent?: boolean; opacity?: number; depthWrite?: boolean; linewidth?: number })
     dispose(): void
     color: Color
+    opacity: number
+    map: CanvasTexture | null
   }
   export class BufferGeometry {
     setAttribute(name: string, attr: BufferAttribute): this
@@ -105,6 +125,8 @@ declare module 'three' {
   }
   export class PointsMaterial {
     constructor(params?: { color?: number; size?: number; transparent?: boolean; opacity?: number; sizeAttenuation?: boolean })
+    opacity: number
+    map: CanvasTexture | null
     dispose(): void
   }
   export class Sprite extends Object3D {
@@ -114,6 +136,8 @@ declare module 'three' {
   export class SpriteMaterial {
     constructor(params?: { map?: CanvasTexture; blending?: number; depthWrite?: boolean; transparent?: boolean; opacity?: number })
     map: CanvasTexture | null
+    opacity: number
+    transparent: boolean
     dispose(): void
     clone(): SpriteMaterial
   }
@@ -133,7 +157,12 @@ declare module 'three' {
     constructor(size?: number, divisions?: number, colorCenterLine?: number, colorGrid?: number)
     material: { transparent: boolean; opacity: number }
   }
+  export class Ray {
+    origin: Vector3
+    direction: Vector3
+  }
   export class Raycaster {
+    ray: Ray
     setFromCamera(coords: Vector2, camera: PerspectiveCamera): void
     intersectObjects(objects: Object3D[]): Intersection[]
   }
@@ -145,58 +174,6 @@ declare module 'three' {
   }
   export const AdditiveBlending: number
   export const ACESFilmicToneMapping: number
+  export const DoubleSide: number
   export type Material = MeshStandardMaterial | MeshBasicMaterial | LineBasicMaterial | PointsMaterial | SpriteMaterial
-}
-
-declare module './three-addons' {
-  import { Object3D, PerspectiveCamera, WebGLRenderer, Scene, Vector2 } from 'three'
-  import * as THREE_NS from 'three'
-
-  /** THREE namespace (re-exported) */
-  export { THREE_NS as THREE }
-
-  export class OrbitControls {
-    constructor(camera: PerspectiveCamera, domElement: HTMLElement)
-    enableDamping: boolean
-    dampingFactor: number
-    rotateSpeed: number
-    zoomSpeed: number
-    panSpeed: number
-    minDistance: number
-    maxDistance: number
-    target: { x: number; y: number; z: number; set(x: number, y: number, z: number): void; lerp(target: any, alpha: number): void }
-    update(): void
-    dispose(): void
-  }
-
-  export class EffectComposer {
-    constructor(renderer: WebGLRenderer)
-    addPass(pass: any): void
-    render(): void
-    setSize(width: number, height: number): void
-    dispose(): void
-  }
-
-  export class RenderPass {
-    constructor(scene: Scene, camera: PerspectiveCamera)
-  }
-
-  export class UnrealBloomPass {
-    constructor(resolution: Vector2, strength: number, radius: number, threshold: number)
-    enabled: boolean
-  }
-
-  export class CSS2DRenderer {
-    constructor()
-    domElement: HTMLElement
-    setSize(width: number, height: number): void
-    render(scene: any, camera: any): void
-    dispose(): void
-  }
-
-  export class CSS2DObject extends Object3D {
-    constructor(element: HTMLElement)
-    element: HTMLElement
-    removeFromParent(): void
-  }
 }

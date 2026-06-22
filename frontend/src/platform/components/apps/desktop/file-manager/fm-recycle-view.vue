@@ -125,7 +125,8 @@ function formatSize(bytes: number): string {
 
 async function loadList() {
   loading.value = true
-  try { const res = await fetchRecycleBinList(); if (res.success) items.value = res.data || [] }
+  try { items.value = await fetchRecycleBinList() || [] }
+  catch { items.value = [] }
   finally { loading.value = false; selectedId.value = null }
 }
 

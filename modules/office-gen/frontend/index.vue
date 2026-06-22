@@ -22,6 +22,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { checkHealth } from './api'
 
 const formats = [
   { key: 'docx', name: 'Word (.docx)', icon: '📄', desc: 'Generate Word documents with headings, paragraphs, tables and images' },
@@ -38,11 +39,8 @@ async function generateFormat(_fmt: string) {
 
 onMounted(async () => {
   try {
-    const resp = await fetch('/api/office-gen/health', { headers: { Authorization: `Bearer ${localStorage.getItem('v2_auth_token')}` } })
-    const json = await resp.json()
-    if (json.success && json.data) {
-      libreofficeOk.value = !!json.data.libreoffice
-    }
+    const data = await checkHealth()
+    libreofficeOk.value = !!data.libreoffice
   } catch {
     // offline
   }

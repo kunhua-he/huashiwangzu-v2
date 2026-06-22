@@ -51,14 +51,14 @@ export function buildMergeMap(
 }
 
 /** Limit display value length */
-export function truncateValue(value: any, maxLen = 100): string {
+export function truncateValue(value: unknown, maxLen = 100): string {
   if (value === null || value === undefined) return ''
   const str = String(value)
   return str.length <= maxLen ? str : str.slice(0, maxLen) + '…'
 }
 
 /** Estimate JSON data size in MB */
-export function estimateDataSizeMB(obj: any): number {
+export function estimateDataSizeMB(obj: unknown): number {
   try {
     return JSON.stringify(obj).length / (1024 * 1024)
   } catch {

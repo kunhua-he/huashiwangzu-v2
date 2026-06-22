@@ -1,5 +1,5 @@
 import api, { API_BASE_URL } from './index'
-import type { ApiResponse, FolderEntry, FileEntry, RecycleBinEntry, FileDetail } from './types'
+import type { FolderEntry, FileEntry, RecycleBinEntry, FileDetail } from './types'
 export type { FileOpenPayload as FilePreviewPayload } from '@/desktop/window-manager/window-types'
 import type { DesktopPersistentState } from '@/desktop/window-manager/desktop-state-store'
 
@@ -84,57 +84,45 @@ function toDesktopPersistentState(response: BackendDesktopStateResponse): Deskto
   }
 }
 
-function toFileItemType(itemType: FileItemType): 'file' | 'folder' {
-  return itemType
+export async function readDesktopStateRequest(): Promise<DesktopPersistentState> {
+  const data = await api.get<unknown, BackendDesktopStateResponse>('/desktop/state')
+  return toDesktopPersistentState(data)
 }
 
-export function readDesktopStateRequest() {
-  return api.get<unknown, ApiResponse<BackendDesktopStateResponse>>('/desktop/state')
-    .then((response): ApiResponse<DesktopPersistentState> => ({
-      ...response,
-      data: response.data ? toDesktopPersistentState(response.data) : null,
-    }))
+export async function saveDesktopStateRequest(state: DesktopPersistentState): Promise<DesktopPersistentState> {
+  const data = await api.post<unknown, BackendDesktopStateResponse>('/desktop/state', { state_json: state })
+  return toDesktopPersistentState(data)
 }
 
-export function saveDesktopStateRequest(state: DesktopPersistentState) {
-  return api.post<unknown, ApiResponse<BackendDesktopStateResponse>>('/desktop/state', { state_json: state })
-    .then((response): ApiResponse<DesktopPersistentState> => ({
-      ...response,
-      data: response.data ? toDesktopPersistentState(response.data) : null,
-    }))
+export async function fetchFolderTree(): Promise<FolderEntry[]> {
+  return await api.get<unknown, FolderEntry[]>('/files/tree')
 }
 
-export function fetchFolderTree() {
-  return api.get<unknown, ApiResponse<FolderEntry[]>>('/files/tree')
-}
-
-export function fetchFileList(folderId: number, page = 1, pageSize = 50) {
-  return api.get<unknown, ApiResponse<BackendFileListResponse>>('/files/list', {
+export async function fetchFileList(folderId: number, page = 1, pageSize = 50): Promise<FileListPageResponse> {
+  const data = await api.get<unknown, BackendFileListResponse>('/files/list', {
     params: { folder_id: folderId, page, page_size: pageSize },
-  }).then((response): ApiResponse<FileListPageResponse> => ({
-    ...response,
-    data: response.data ? toFileListPage(response.data) : null,
-  }))
+  })
+  return toFileListPage(data)
 }
 
-export function createFolderRequest(name: string, parentFolderId?: number | null) {
-  return api.post<unknown, ApiResponse<FolderEntry>>('/files/folder', { name, parent_id: parentFolderId })
+export async function createFolderRequest(name: string, parentFolderId?: number | null): Promise<FolderEntry> {
+  return await api.post<unknown, FolderEntry>('/files/folder', { name, parent_id: parentFolderId })
 }
 
-export function renameEntryRequest(itemType: FileItemType, id: number, newName: string) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/rename', { type: toFileItemType(itemType), id, new_name: newName })
+export async function renameEntryRequest(itemType: FileItemType, id: number, newName: string): Promise<Record<string, unknown>> {
+  return await api.post<unknown, Record<string, unknown>>('/files/rename', { type: itemType, id, new_name: newName })
 }
 
-export function moveEntryRequest(itemType: FileItemType, id: number, targetFolderId?: number | null) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/move', { type: toFileItemType(itemType), id, target_folder_id: targetFolderId })
+export async function moveEntryRequest(itemType: FileItemType, id: number, targetFolderId?: number | null): Promise<Record<string, unknown>> {
+  return await api.post<unknown, Record<string, unknown>>('/files/move', { type: itemType, id, target_folder_id: targetFolderId })
 }
 
-export function copyEntryRequest(itemType: FileItemType, id: number, targetFolderId?: number | null) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/copy', { type: toFileItemType(itemType), id, target_folder_id: targetFolderId })
+export async function copyEntryRequest(itemType: FileItemType, id: number, targetFolderId?: number | null): Promise<Record<string, unknown>> {
+  return await api.post<unknown, Record<string, unknown>>('/files/copy', { type: itemType, id, target_folder_id: targetFolderId })
 }
 
-export function moveToRecycleBinRequest(itemType: FileItemType, id: number) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/files/delete', { type: toFileItemType(itemType), id })
+export async function moveToRecycleBinRequest(itemType: FileItemType, id: number): Promise<Record<string, unknown>> {
+  return await api.post<unknown, Record<string, unknown>>('/files/delete', { type: itemType, id })
 }
 
 export function downloadFileRequest(fileId: number) {
@@ -150,19 +138,19 @@ interface CreateFileResponse {
   deduplicated: boolean
 }
 
-export function createFileRequest(name: string, extension: string, folderId?: number | null) {
-  return api.post<unknown, ApiResponse<CreateFileResponse>>('/files/create-file', {
+export async function createFileRequest(name: string, extension: string, folderId?: number | null): Promise<CreateFileResponse> {
+  return await api.post<unknown, CreateFileResponse>('/files/create-file', {
     name, extension, folder_id: folderId || null,
   })
 }
 
-export function uploadFileRequest(file: File, folderId?: number, onProgress?: (pct: number) => void) {
+export async function uploadFileRequest(file: File, folderId?: number, onProgress?: (pct: number) => void): Promise<UploadFileResponse> {
   const formData = new FormData()
   formData.append('file', file)
   if (folderId !== undefined) {
     formData.append('folder_id', String(folderId))
   }
-  return api.post<unknown, ApiResponse<UploadFileResponse>>('/files/upload', formData, {
+  return await api.post<unknown, UploadFileResponse>('/files/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress
       ? (e) => {
@@ -174,20 +162,20 @@ export function uploadFileRequest(file: File, folderId?: number, onProgress?: (p
   })
 }
 
-export function fetchRecycleBinList() {
-  return api.get<unknown, ApiResponse<RecycleBinEntry[]>>('/recycle/list')
+export async function fetchRecycleBinList(): Promise<RecycleBinEntry[]> {
+  return await api.get<unknown, RecycleBinEntry[]>('/recycle/list')
 }
 
-export function restoreRecycleBinEntry(itemType: FileItemType, id: number) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/recycle/restore', { item_type: itemType, id })
+export async function restoreRecycleBinEntry(itemType: FileItemType, id: number): Promise<Record<string, unknown>> {
+  return await api.post<unknown, Record<string, unknown>>('/recycle/restore', { item_type: itemType, id })
 }
 
-export function permanentlyDeleteEntry(itemType: FileItemType, id: number) {
-  return api.post<unknown, ApiResponse<Record<string, unknown>>>('/recycle/delete-permanently', { item_type: itemType, id })
+export async function permanentlyDeleteEntry(itemType: FileItemType, id: number): Promise<Record<string, unknown>> {
+  return await api.post<unknown, Record<string, unknown>>('/recycle/delete-permanently', { item_type: itemType, id })
 }
 
-export function emptyRecycleBinRequest() {
-  return api.post<unknown, ApiResponse<{ message: string }>>('/recycle/empty')
+export async function emptyRecycleBinRequest(): Promise<{ message: string }> {
+  return await api.post<unknown, { message: string }>('/recycle/empty')
 }
 
 export interface FileSearchPageResponse {
@@ -197,21 +185,19 @@ export interface FileSearchPageResponse {
   page_size: number
 }
 
-export function searchFilesRequest(keyword: string, extension?: string, page = 1, pageSize = 50) {
-  return api.get<unknown, ApiResponse<BackendFileListResponse>>('/files/search', {
+export async function searchFilesRequest(keyword: string, extension?: string, page = 1, pageSize = 50): Promise<FileSearchPageResponse> {
+  const data = await api.get<unknown, BackendFileListResponse>('/files/search', {
     params: { keyword, extension, page, page_size: pageSize }
-  }).then((response): ApiResponse<FileSearchPageResponse> => ({
-    ...response,
-    data: response.data ? toFileListPage(response.data) : null,
-  }))
+  })
+  return toFileListPage(data)
 }
 
-export function fetchFileDetail(fileId: number) {
-  return api.get<unknown, ApiResponse<FileDetail>>(`/files/detail/${fileId}`)
+export async function fetchFileDetail(fileId: number): Promise<FileDetail> {
+  return await api.get<unknown, FileDetail>(`/files/detail/${fileId}`)
 }
 
-export function fetchFilePreview(fileId: number) {
-  return api.get<unknown, ApiResponse<Record<string, unknown>>>(`/files/preview/${fileId}`)
+export async function fetchFilePreview(fileId: number): Promise<Record<string, unknown>> {
+  return await api.get<unknown, Record<string, unknown>>(`/files/preview/${fileId}`)
 }
 
 export function getFilePreviewUrl(fileId: number): string {

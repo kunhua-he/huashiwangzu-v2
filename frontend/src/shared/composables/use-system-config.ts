@@ -8,13 +8,14 @@ export function useSystemConfig() {
   const configForm = ref<SystemConfig>({ project_name: '', system_version: '', login_page_title: '', default_role: 'viewer' })
 
   async function loadSystemConfig() {
-    try { const res = await fetchSystemConfig(); if (res.success) configForm.value = res.data }
+    try { configForm.value = await fetchSystemConfig() }
     catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load system config') }
   }
 
   async function systemConfigSave() {
     configSaving.value = true
-    try { const res = await saveSystemConfig(configForm.value); if (res.success) ElMessage.success('System config saved'); else ElMessage.error(res.error || 'Save failed') }
+    try { await saveSystemConfig(configForm.value); ElMessage.success('System config saved') }
+    catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Save failed') }
     finally { configSaving.value = false }
   }
 

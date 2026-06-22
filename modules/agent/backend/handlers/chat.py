@@ -25,11 +25,11 @@ from ..init_db import (
     ensure_event_table,
     ensure_processing_column,
 )
-from 事件存储 import record_event
+from event_store import record_event
 from .. import conversation_service as conv_svc
 from .. import tool_discovery
-from 引擎 import 装配上下文, chat_with_degradation_chain, chat_stream_with_degradation_chain
-from 粘滞检测 import 检测粘滞, 重置 as 重置粘滞
+from engine import 装配上下文, chat_with_degradation_chain, chat_stream_with_degradation_chain
+from stuck_detector import 检测粘滞, 重置 as 重置粘滞
 from ..model_client import recover_tool_calls, parse_inline_tool_calls, final_clean_content
 from ..action_policy import check_action_allowed, resolve_approval, list_pending_approvals
 
@@ -161,7 +161,7 @@ async def handle_chat(payload, db: AsyncSession, user: User):
     """Handle POST /api/agent/chat — the complete chat flow with tool loop."""
     from ..models import AgentConversation
 
-    # 确保默认数据、画像、表结构迁移和引擎事件表存在
+    # 确保默认数据、画像、表结构迁移和engine事件表存在
     await ensure_timeline_column(db)
     await ensure_processing_column(db)
     await ensure_default_prompts(db)
@@ -175,7 +175,7 @@ async def handle_chat(payload, db: AsyncSession, user: User):
     # 记录用户消息事件
     await record_event(db, payload.conversation_id, "user_msg", {"content": payload.content})
 
-    # 引擎装配上下文（事件投影 + 三层提示词 + 动态预算 + Agent 配置）
+    # engine装配上下文（事件投影 + 三层提示词 + 动态预算 + Agent 配置）
     profile_key = payload.profile_key or "deepseek-v4-flash"
     agent_code = "erp_chat"
     messages, engine_diag = await 装配上下文(
@@ -473,7 +473,7 @@ async def handle_chat(payload, db: AsyncSession, user: User):
                             "llm_response_id": None,
                         })
 
-                # ── 粘滞检测 ────────────────
+                # ── stuck_detector ────────────────
                 _stuck_check = {"stuck": False}
                 if tool_calls:
                     for tc in tool_calls:
@@ -496,7 +496,7 @@ async def handle_chat(payload, db: AsyncSession, user: User):
                         session_key=_session_key,
                     )
                 if _stuck_check.get("stuck"):
-                    logger.warning("粘滞检测打断工具循环: %s", _stuck_check["reason"])
+                    logger.warning("stuck_detector打断工具循环: %s", _stuck_check["reason"])
                     yield f"data: {json.dumps({'type': 'error', 'content': _stuck_check['reason']}, ensure_ascii=False)}\n\n".encode("utf-8")
                     break
         except Exception as exc:

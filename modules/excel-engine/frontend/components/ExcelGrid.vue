@@ -63,7 +63,7 @@ import { colLetter, parseCellAddr, buildMergeMap, truncateValue, decodeAsciiEsca
 
 const props = defineProps<{
   cells: Record<string, string>
-  styles: Record<string, Record<string, any>>
+  styles: Record<string, Record<string, unknown>>
   merges: Record<string, { topLeft: string; rows: number; cols: number }>
   colWidths: Record<string, number>
   rowHeights: Record<string, number>
@@ -129,10 +129,24 @@ function displayValue(r: number, c: number): string {
   return truncateValue(decodeAsciiEscape(val))
 }
 
+interface CellStyle {
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  strikethrough?: boolean
+  fontSize?: number
+  fontName?: string
+  color?: string
+  align?: string
+  fillColor?: string
+  wrapText?: boolean
+}
+
 function cellTextStyle(r: number, c: number): Record<string, string> {
   const addr = `${colLetter(c - 1)}${r}`
-  const s = props.styles[addr]
-  if (!s) return {}
+  const raw = props.styles[addr]
+  if (!raw) return {}
+  const s = raw as CellStyle
   const style: Record<string, string> = {}
   if (s.bold) style.fontWeight = 'bold'
   if (s.italic) style.fontStyle = 'italic'
@@ -152,7 +166,7 @@ function cellTextStyle(r: number, c: number): Record<string, string> {
 
 function cellClasses(r: number, c: number): Record<string, boolean> {
   const addr = `${colLetter(c - 1)}${r}`
-  const s = props.styles[addr]
+  const s = props.styles[addr] as CellStyle | undefined
   return {
     'cell-bold': s?.bold || false,
     'cell-formula': isFormula(r, c),

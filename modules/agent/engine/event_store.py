@@ -4,7 +4,7 @@ import logging
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import AgentEvent
-logger = logging.getLogger("v2.agent.engine.事件存储")
+logger = logging.getLogger("v2.agent.engine.event_store")
 MAX_PAYLOAD_CONTENT_LENGTH = 50000
 
 

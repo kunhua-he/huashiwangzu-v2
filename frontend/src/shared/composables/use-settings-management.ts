@@ -25,7 +25,7 @@ export function useSettings() {
 
   async function loadUsers() {
     isLoading.value = true
-    try { const res = await fetchUserList(); if (res.success) userList.value = res.data.userList }
+    try { userList.value = (await fetchUserList()).userList }
     catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load user list') }
     finally { isLoading.value = false }
   }
@@ -33,7 +33,7 @@ export function useSettings() {
   async function executeSearch() {
     if (!searchQuery.value.trim()) { loadUsers(); return }
     isLoading.value = true
-    try { const res = await searchUsers(searchQuery.value.trim()); if (res.success) userList.value = res.data.userList }
+    try { userList.value = (await searchUsers(searchQuery.value.trim())).userList }
     catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Search failed') }
     finally { isLoading.value = false }
   }
@@ -51,12 +51,12 @@ export function useSettings() {
     if (dialogMode.value === 'new') {
       if (!form.value.username || !form.value.password) { ElMessage.warning('Username and password are required'); return }
       isSubmitting.value = true
-      try { const res = await createUser(form.value); if (res.success) { ElMessage.success('Created successfully'); dialogVisible.value = false; loadUsers() } else ElMessage.error(res.error || 'Creation failed') }
+      try { await createUser(form.value); ElMessage.success('Created successfully'); dialogVisible.value = false; loadUsers() }
       catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Creation failed') }
       finally { isSubmitting.value = false }
     } else {
       isSubmitting.value = true
-      try { const res = await editUser({ userId: editingTarget.value!.id, displayName: form.value.displayName, email: form.value.email, role: form.value.role, password: form.value.password || undefined }); if (res.success) { ElMessage.success(form.value.password ? 'Password has been reset. Please inform the user.' : 'Updated successfully'); dialogVisible.value = false; loadUsers() } else ElMessage.error(res.error || 'Update failed') }
+      try { await editUser({ userId: editingTarget.value!.id, displayName: form.value.displayName, email: form.value.email, role: form.value.role, password: form.value.password || undefined }); ElMessage.success(form.value.password ? 'Password has been reset. Please inform the user.' : 'Updated successfully'); dialogVisible.value = false; loadUsers() }
       catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Update failed') }
       finally { isSubmitting.value = false }
     }
@@ -66,35 +66,34 @@ export function useSettings() {
     const action = user.status === 1 ? 'disable' : 'enable'
     try { await ElMessageBox.confirm(`Confirm ${action} user "${user.username}"?`, 'Confirm') } catch { return }
     try {
-      const res = await toggleUserEnabled(user.id)
-      if (res.success) { ElMessage.success(`${action} successful`); loadUsers() }
-      else ElMessage.error(res.error || `${action} failed`)
+      await toggleUserEnabled(user.id)
+      ElMessage.success(`${action} successful`); loadUsers()
     } catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || `${action} failed`) }
   }
 
   async function loadSystemConfig() {
     try {
-      const res = await fetchSystemConfig()
-      if (res.success) configForm.value = res.data
+      configForm.value = await fetchSystemConfig()
     } catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load system config') }
   }
 
   async function systemConfigSave() {
     configSaving.value = true
-    try { const res = await saveSystemConfig(configForm.value); if (res.success) ElMessage.success('System config saved'); else ElMessage.error(res.error || 'Save failed') }
+    try { await saveSystemConfig(configForm.value); ElMessage.success('System config saved') }
+    catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Save failed') }
     finally { configSaving.value = false }
   }
 
   async function loadRoleMatrix() {
     try {
-      const res = await fetchRoleMatrix()
-      if (res.success) roleMatrix.value = res.data.matrix
+      roleMatrix.value = (await fetchRoleMatrix()).matrix
     } catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load role matrix') }
   }
 
   async function roleMatrixSave() {
     matrixSaving.value = true
-    try { const res = await saveRoleMatrix(roleMatrix.value); if (res.success) ElMessage.success('Role matrix saved'); else ElMessage.error(res.error || 'Save failed') }
+    try { await saveRoleMatrix(roleMatrix.value); ElMessage.success('Role matrix saved') }
+    catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Save failed') }
     finally { matrixSaving.value = false }
   }
 

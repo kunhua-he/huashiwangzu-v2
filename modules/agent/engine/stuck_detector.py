@@ -1,4 +1,4 @@
-"""粘滞检测：检测重复工具调用、重复报错、空响应，打断循环。
+"""stuck_detector：检测重复工具调用、重复报错、空响应，打断循环。
 
 抄 OpenHands stuck detector。维护最近若干轮的
 (工具名+规范化参数指纹)和(报错指纹)。"""
@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 
-logger = logging.getLogger("v2.agent.engine.粘滞检测")
+logger = logging.getLogger("v2.agent.engine.stuck_detector")
 
 STUCK_WINDOW_SIZE = 5
 STUCK_THRESHOLD = 3
@@ -52,7 +52,7 @@ def 检测粘滞(
         for e in recent
     )
     if all_same_tool:
-        logger.warning("粘滞检测命中: 连续 %d 次相同工具调用 %s", STUCK_THRESHOLD, recent[0]["tool_name"])
+        logger.warning("stuck_detector命中: 连续 %d 次相同工具调用 %s", STUCK_THRESHOLD, recent[0]["tool_name"])
         _round_history[session_key] = []
         return {
             "stuck": True,
@@ -64,7 +64,7 @@ def 检测粘滞(
         for e in recent
     )
     if all_same_error:
-        logger.warning("粘滞检测命中: 连续 %d 次相同错误 %s", STUCK_THRESHOLD, recent[0]["error_text"])
+        logger.warning("stuck_detector命中: 连续 %d 次相同错误 %s", STUCK_THRESHOLD, recent[0]["error_text"])
         _round_history[session_key] = []
         return {
             "stuck": True,
@@ -73,7 +73,7 @@ def 检测粘滞(
 
     all_empty = all(e["is_empty"] for e in recent)
     if all_empty:
-        logger.warning("粘滞检测命中: 连续 %d 次空响应", STUCK_THRESHOLD)
+        logger.warning("stuck_detector命中: 连续 %d 次空响应", STUCK_THRESHOLD)
         _round_history[session_key] = []
         return {
             "stuck": True,

@@ -1,11 +1,13 @@
 import { friendlyErrorMessage } from '@/shared/composables/use-friendly-error'
 
-export function getErrorInfo(error: unknown) {
+export type ApiErrorInfo = { success: false; data: null; error: string; http_status?: number }
+
+export function getErrorInfo(error: unknown): ApiErrorInfo {
   const responseError = error as { config?: { url?: string }; response?: { status?: number; data?: Record<string, unknown> } }
   const statusCode = responseError.response?.status
   const responseData = responseError.response?.data
   const isLoginRequest = responseError.config?.url?.endsWith('/login') === true
-  if (!responseError.response) return { success: false, data: null, error: '网络连接异常，请检查公司网络' }
+  if (!responseError.response) return { success: false, data: null, error: '网络连接异常，请检查公司网络', http_status: 0 }
 
   let errorMessage = ''
   if (statusCode === 401 && isLoginRequest) {
@@ -23,5 +25,5 @@ export function getErrorInfo(error: unknown) {
   } else {
     errorMessage = friendlyErrorMessage((responseData?.error as string) || '请求失败，请稍后重试')
   }
-  return { success: false, data: responseData?.data ?? null, error: errorMessage }
+  return { success: false, data: null, error: errorMessage, http_status: statusCode }
 }

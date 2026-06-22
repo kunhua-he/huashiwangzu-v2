@@ -1,7 +1,5 @@
 import api from './index'
-import type { ApiResponse, SystemConfig, RoleMatrixItem } from './types'
-
-type ApiResponseWithData<T> = Omit<ApiResponse<T>, 'data'> & { data: T }
+import type { SystemConfig, RoleMatrixItem } from './types'
 
 interface BackendUser {
   id: number
@@ -63,14 +61,6 @@ function toUserEntry(user: BackendUser): UserEntry {
   }
 }
 
-function toUserListResponse(users: BackendUser[], total = users.length): ApiResponseWithData<UserListResponse> {
-  return {
-    success: true,
-    data: { userList: users.map(toUserEntry), total },
-    error: null,
-  }
-}
-
 function toRoleMatrixItem(item: BackendRoleMatrixItem): RoleMatrixItem {
   return {
     role: item.role_key,
@@ -95,108 +85,72 @@ function toRoleMatrixOutput(matrix: RoleMatrixItem[]): BackendRoleMatrixResponse
   }
 }
 
-export function fetchUserList() {
-  return api.get<unknown, ApiResponse<BackendUser[]>>('/users/').then(response =>
-    toUserListResponse(response.data ?? []),
-  )
+export async function fetchUserList(): Promise<UserListResponse> {
+  const users = await api.get<unknown, BackendUser[]>('/users/')
+  return { userList: users.map(toUserEntry), total: users.length }
 }
 
-export function searchUsers(keyword: string) {
-  return api.get<unknown, ApiResponse<BackendUserSearchResponse>>('/users/search', {
+export async function searchUsers(keyword: string): Promise<UserListResponse> {
+  const data = await api.get<unknown, BackendUserSearchResponse>('/users/search', {
     params: { keyword },
-  }).then(response => {
-    const data = response.data
-    return toUserListResponse(data?.users ?? [], data?.total ?? 0)
   })
+  return { userList: (data?.users ?? []).map(toUserEntry), total: data?.total ?? 0 }
 }
 
-export function createUser(params: {
+export async function createUser(params: {
   username: string
   password: string
   displayName?: string
   email?: string
   role?: string
 }) {
-  return api.post<unknown, ApiResponse<BackendUser>>('/users/', {
+  const user = await api.post<unknown, BackendUser>('/users/', {
     username: params.username,
     password: params.password,
     display_name: params.displayName || params.username,
     email: params.email || '',
     role: params.role || 'viewer',
-  }).then((response): ApiResponseWithData<{ message: string; newId?: number }> => ({
-    success: response.success,
-    data: { message: 'User created successfully', newId: response.data?.id },
-    error: response.error,
-  }))
+  })
+  return { message: 'User created successfully' as string, newId: user?.id as number | undefined }
 }
 
-export function editUser(params: {
+export async function editUser(params: {
   userId: number
   displayName?: string
   email?: string
   role?: string
   password?: string
 }) {
-  return api.put<unknown, ApiResponse<BackendUser>>(`/users/${params.userId}`, {
+  await api.put<unknown, BackendUser>(`/users/${params.userId}`, {
     display_name: params.displayName,
     email: params.email,
     role: params.role,
     password: params.password,
-  }).then((response): ApiResponseWithData<{ message: string }> => ({
-    success: response.success,
-    data: { message: 'User edited successfully' },
-    error: response.error,
-  }))
+  })
+  return { message: 'User edited successfully' as string }
 }
 
-export function toggleUserEnabled(userId: number) {
-  return api.post<unknown, ApiResponse<{ message: string; enabled: boolean }>>(`/users/${userId}/toggle-enabled`)
-    .then((response): ApiResponseWithData<{ message: string }> => ({
-      success: response.success,
-      data: { message: response.data?.message || 'Status updated' },
-      error: response.error,
-    }))
+export async function toggleUserEnabled(userId: number) {
+  const data = await api.post<unknown, { message: string; enabled: boolean }>(`/users/${userId}/toggle-enabled`)
+  return { message: data?.message || 'Status updated' as string }
 }
 
-export function fetchSystemConfig() {
-  return api.get<unknown, ApiResponse<SystemConfig>>('/settings/system-config')
-    .then((response): ApiResponseWithData<SystemConfig> => ({
-      ...response,
-      data: response.data ?? {
-        project_name: '',
-        system_version: '',
-        login_page_title: '',
-        default_role: 'viewer',
-      },
-    }))
+export async function fetchSystemConfig(): Promise<SystemConfig> {
+  const data = await api.get<unknown, SystemConfig | null>('/settings/system-config')
+  return data ?? { project_name: '', system_version: '', login_page_title: '', default_role: 'viewer' }
 }
 
-export function saveSystemConfig(params: SystemConfig) {
-  return api.put<unknown, ApiResponse<SystemConfig>>('/settings/system-config', params)
-    .then((response): ApiResponseWithData<{ message: string; config: SystemConfig }> => ({
-      success: response.success,
-      data: { message: 'System config saved', config: response.data ?? params },
-      error: response.error,
-    }))
+export async function saveSystemConfig(params: SystemConfig) {
+  const data = await api.put<unknown, SystemConfig>('/settings/system-config', params)
+  return { message: 'System config saved' as string, config: data ?? params }
 }
 
-export function fetchRoleMatrix() {
-  return api.get<unknown, ApiResponse<BackendRoleMatrixResponse>>('/roles/matrix')
-    .then((response): ApiResponseWithData<{ matrix: RoleMatrixItem[] }> => ({
-      success: response.success,
-      data: { matrix: (response.data?.matrix ?? []).map(toRoleMatrixItem) },
-      error: response.error,
-    }))
+export async function fetchRoleMatrix(): Promise<{ matrix: RoleMatrixItem[] }> {
+  const data = await api.get<unknown, BackendRoleMatrixResponse>('/roles/matrix')
+  return { matrix: (data?.matrix ?? []).map(toRoleMatrixItem) }
 }
 
-export function saveRoleMatrix(matrix: RoleMatrixItem[]) {
-  return api.put<unknown, ApiResponse<BackendRoleMatrixResponse>>('/roles/matrix', toRoleMatrixOutput(matrix))
-    .then((response): ApiResponseWithData<{ message: string; matrix: RoleMatrixItem[] }> => ({
-      success: response.success,
-      data: {
-        message: 'Role matrix saved',
-        matrix: (response.data?.matrix ?? []).map(toRoleMatrixItem),
-      },
-      error: response.error,
-    }))
+export async function saveRoleMatrix(matrix: RoleMatrixItem[]) {
+  const data = await api.put<unknown, BackendRoleMatrixResponse>('/roles/matrix', toRoleMatrixOutput(matrix))
+  return { message: 'Role matrix saved' as string, matrix: (data?.matrix ?? []).map(toRoleMatrixItem) }
 }

@@ -58,13 +58,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
 import viewerShell from '@/shared/components/viewer-shell.vue'
-
-const TOKEN_KEY = 'v2_auth_token'
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+import { apiPost, downloadBlob } from './api'
 
 const props = defineProps<{ fileId?: number; fileName?: string; format?: string; mode?: string }>()
 
@@ -90,23 +84,38 @@ const searchIndex = ref(0)
 const viewportRef = ref<HTMLElement | null>(null)
 const renderedPages = ref<number[]>([])
 
-let pdfDoc: any = null
+interface PdfPage {
+  getViewport(params: { scale: number }): { width: number; height: number; scale: number }
+  render(params: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number; scale: number } }): { promise: Promise<void> }
+  getTextContent(): Promise<{ items: Array<{ str: string }> }>
+}
+
+interface PdfDoc {
+  numPages: number
+  getPage(pageNum: number): Promise<PdfPage>
+}
+
+interface TextLayerInst {
+  textDivs: HTMLElement[]
+}
+
+let pdfDoc: PdfDoc | null = null
 let canvasRefs: Record<number, HTMLCanvasElement | null> = {}
 let textLayerRefs: Record<number, HTMLDivElement | null> = {}
 let pageRefs: Record<number, HTMLDivElement | null> = {}
-let pageTextLayers: Record<number, any> = {}
+let pageTextLayers: Record<number, TextLayerInst> = {}
 let pageTextItems: Array<{ page: number; itemIdx: number; str: string }> = []
-let ocrWordsCache: Record<string, any> = {}
+let ocrWordsCache: Record<string, OcrData | null> = {}
 
-function setCanvasRef(idx: number, el: any) {
+function setCanvasRef(idx: number, el: unknown) {
   canvasRefs[idx] = el as HTMLCanvasElement | null
 }
 
-function setTextLayerRef(idx: number, el: any) {
+function setTextLayerRef(idx: number, el: unknown) {
   textLayerRefs[idx] = el as HTMLDivElement | null
 }
 
-function setPageRef(idx: number, el: any) {
+function setPageRef(idx: number, el: unknown) {
   pageRefs[idx] = el as HTMLDivElement | null
 }
 
@@ -114,15 +123,12 @@ async function loadPdf(fid: number) {
   try {
     loadError.value = ''
     fileId.value = fid
-    const url = `/api/files/download/${fid}`
-    const resp = await fetch(url, { headers: authHeaders() })
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    const blob = await resp.blob()
+    const blob = await downloadBlob(fid)
     fileBlobUrl.value = URL.createObjectURL(blob)
 
     const pdfjsLib = await import('pdfjs-dist')
     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
-    pdfDoc = await pdfjsLib.getDocument(fileBlobUrl.value).promise
+    pdfDoc = await pdfjsLib.getDocument(fileBlobUrl.value).promise as unknown as PdfDoc
     pageCount.value = pdfDoc.numPages
     renderedPages.value = Array.from({ length: pdfDoc.numPages }, (_, i) => i)
     pageTextItems = []
@@ -131,8 +137,8 @@ async function loadPdf(fid: number) {
     await nextTick()
     await renderAllPages()
     await buildTextIndex()
-  } catch (e: any) {
-    loadError.value = e.message || 'PDF 加载失败'
+  } catch (e: unknown) {
+    loadError.value = e instanceof Error ? e.message : 'PDF 加载失败'
   }
 }
 
@@ -166,13 +172,13 @@ async function renderPage(pageNum: number, scale: number) {
   textLayerDiv.style.setProperty('--scale-factor', String(viewport.scale))
 
   const tc = await page.getTextContent()
-  const totalChars = tc.items.reduce((sum: number, item: any) => sum + item.str.length, 0)
+  const totalChars = tc.items.reduce((sum: number, item: { str: string }) => sum + item.str.length, 0)
 
   if (totalChars < 20) {
     await renderOcrTextLayer(textLayerDiv, pageNum, viewport)
   } else {
     const { TextLayer } = await import('pdfjs-dist')
-    const textLayer = new TextLayer({
+    const textLayer = new (TextLayer as unknown as new (args: Record<string, unknown>) => { render: () => Promise<void>; textDivs: HTMLElement[] })({
       textContentSource: tc,
       container: textLayerDiv,
       viewport: viewport,
@@ -182,7 +188,10 @@ async function renderPage(pageNum: number, scale: number) {
   }
 }
 
-async function renderOcrTextLayer(container: HTMLDivElement, pageNum: number, viewport: any) {
+interface OcrWord { t: string; x: number; y: number; w: number; h: number }
+interface OcrData { words: OcrWord[]; img_w?: number; img_h?: number }
+
+async function renderOcrTextLayer(container: HTMLDivElement, pageNum: number, viewport: { width: number; height: number; scale: number }) {
   let ocrData = ocrWordsCache[pageNum]
   if (!ocrData) {
     ocrData = await fetchOcrWords(pageNum)
@@ -215,21 +224,14 @@ async function renderOcrTextLayer(container: HTMLDivElement, pageNum: number, vi
   }
 }
 
-async function fetchOcrWords(pageNum: number): Promise<any> {
+async function fetchOcrWords(pageNum: number): Promise<OcrData | null> {
   try {
-    const resp = await fetch('/api/modules/call', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({
-        target_module: 'knowledge',
-        action: 'get_ocr_words',
-        parameters: { file_id: fileId.value, page: pageNum },
-      }),
+    const data = await apiPost<OcrData>('/modules/call', {
+      target_module: 'knowledge',
+      action: 'get_ocr_words',
+      parameters: { file_id: fileId.value, page: pageNum },
     })
-    const body = await resp.json()
-    if (body.success && body.data) {
-      return body.data
-    }
+    if (data) return data
   } catch (e) {
     console.warn('Failed to fetch OCR words for page', pageNum, e)
   }

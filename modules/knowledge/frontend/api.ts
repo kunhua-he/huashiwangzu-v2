@@ -30,6 +30,7 @@ export interface FrameworkFile {
   size: number
   parent_id?: number | null
   is_folder: boolean
+  created_at?: string | null
 }
 
 export interface FileTreeNode {
@@ -138,6 +139,17 @@ export interface GovernanceCandidate {
   audit_status: string
 }
 
+let __redirecting = false
+function _handle401(status: number): boolean {
+  if (status !== 401) return false
+  localStorage.removeItem('v2_auth_token')
+  if (!__redirecting) {
+    __redirecting = true
+    window.location.replace('/')
+  }
+  return true
+}
+
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem('v2_auth_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
@@ -145,6 +157,7 @@ function authHeaders(): HeadersInit {
 
 export async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(getApiUrl(path), { headers: authHeaders() })
+  if (_handle401(response.status)) throw new Error('登录已失效，请重新登录')
   const body = await response.json()
   if (!response.ok || !body.success) throw new Error(body.error || `HTTP ${response.status}`)
   return body.data as T
@@ -156,6 +169,7 @@ export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: payload ? JSON.stringify(payload) : undefined,
   })
+  if (_handle401(response.status)) throw new Error('登录已失效，请重新登录')
   const body = await response.json()
   if (!response.ok || !body.success) throw new Error(body.error || `HTTP ${response.status}`)
   return body.data as T
@@ -163,6 +177,7 @@ export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
 
 export async function apiDelete<T>(path: string): Promise<T> {
   const response = await fetch(getApiUrl(path), { method: 'DELETE', headers: authHeaders() })
+  if (_handle401(response.status)) throw new Error('登录已失效，请重新登录')
   const body = await response.json()
   if (!response.ok || !body.success) throw new Error(body.error || `HTTP ${response.status}`)
   return body.data as T
@@ -247,6 +262,7 @@ export interface RelationGraphEdge {
   relation_type: string
   similarity_score: number
   shared_entities?: string[]
+  weight?: number
 }
 
 export interface RelationGraph {
@@ -256,6 +272,31 @@ export interface RelationGraph {
 
 export function getRelationGraph(): Promise<RelationGraph> {
   return apiGet<RelationGraph>('/knowledge/relation-graph')
+}
+
+export interface EntityGraphNode {
+  id: number
+  label: string
+  category?: string
+  type?: string
+  weight?: number
+}
+
+export interface EntityGraphEdge {
+  source: number
+  target: number
+  weight?: number
+  similarity_score?: number
+  relation?: string
+}
+
+export interface EntityGraph {
+  nodes: EntityGraphNode[]
+  edges: EntityGraphEdge[]
+}
+
+export async function getEntityGraph(): Promise<EntityGraph> {
+  return apiGet<EntityGraph>('/knowledge/entity-graph')
 }
 
 export interface DocProgressEntry {

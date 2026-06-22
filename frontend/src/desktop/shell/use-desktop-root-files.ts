@@ -15,8 +15,12 @@ export function useDesktopRootFiles() {
   const { on, off } = useDesktopEventBus()
 
   async function loadDesktopFiles() {
-    const response = await fetchFileList(0)
-    if (response.success) desktopFileList.value = response.data?.items || []
+    try {
+      const data = await fetchFileList(0)
+      desktopFileList.value = data?.items || []
+    } catch {
+      desktopFileList.value = []
+    }
   }
 
   function onFileRefresh(d?: unknown) {

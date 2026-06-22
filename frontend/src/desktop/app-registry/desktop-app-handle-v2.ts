@@ -1,5 +1,5 @@
 import { ElMessage } from 'element-plus'
-import { API_BASE_URL } from '@/shared/api'
+import api from '@/shared/api'
 import { windowManager } from '@/desktop/window-manager/window-manager'
 import { getApp } from '@/desktop/app-registry/app-registry'
 import { getAppByFileFormat } from '@/desktop/app-registry/file-association-registry'
@@ -29,11 +29,7 @@ export function useDesktopAppHandleV2() {
     const def = standardActionDef[action as keyof typeof standardActionDef]
     if (def && (def.auditLevel === 'medium' || def.auditLevel === 'high')) {
       try {
-        await fetch(`${API_BASE_URL}/desktop/audit-log`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action, params, target_app: target }),
-        })
+        await api.post('/desktop/audit-log', { action, params, target_app: target })
       } catch {
         console.warn('Failed to write audit log, continuing')
       }

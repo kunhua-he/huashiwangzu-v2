@@ -40,12 +40,12 @@
 import { computed } from 'vue'
 
 const props = defineProps<{
-  activeStyles: Record<string, any>
+  activeStyles: Record<string, unknown>
 }>()
 
 const emit = defineEmits<{
   action: [action: string]
-  'style-change': [method: string, params: Record<string, any>]
+  'style-change': [method: string, params: Record<string, unknown>]
 }>()
 
 const fonts = ['宋体', '微软雅黑', 'Arial', 'Times New Roman', 'Courier New', 'Verdana', 'Georgia']

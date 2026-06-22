@@ -236,7 +236,7 @@ async def main():
         print(f"Stream probe failed: {e}", file=sys.stderr)
 
     # Save results
-    out_path = Path(__file__).resolve().parent.parent / "调研" / "工具调用格式探针_原始返回.jsonl"
+    out_path = Path(__file__).resolve().parent.parent / "research" / "tool_call_format_probe_raw.jsonl"
     with open(out_path, "w", encoding="utf-8") as f:
         for entry in RESULTS:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")

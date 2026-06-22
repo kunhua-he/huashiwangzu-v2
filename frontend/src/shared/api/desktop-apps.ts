@@ -1,5 +1,4 @@
 import api from './index'
-import type { ApiResponse } from './types'
 
 /** Desktop app item type used by frontend components */
 export interface DesktopAppItem {
@@ -40,9 +39,9 @@ export interface DesktopAppItem {
 }
 
 export function fetchDesktopApps() {
-  return api.get<unknown, ApiResponse<DesktopAppItem[]>>('/desktop/apps')
+  return api.get<unknown, DesktopAppItem[]>('/desktop/apps')
 }
 
 export function getDesktopAppDetail(appKey: string) {
-  return api.get<unknown, ApiResponse<DesktopAppItem>>(`/desktop/apps/${appKey}`)
+  return api.get<unknown, DesktopAppItem>(`/desktop/apps/${appKey}`)
 }

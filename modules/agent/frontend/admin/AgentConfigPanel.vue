@@ -159,8 +159,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { getApiUrl, authHeaders } from '../../runtime'
+import { ref, onMounted } from 'vue'
+import { apiGet, apiPost, apiPut, apiDelete } from '../api'
 
 interface AgentConfigItem {
   id: number
@@ -192,8 +192,6 @@ interface AgentConfigItem {
   updated_at: string | null
 }
 
-interface ApiBody<T> { success: boolean; data: T; error?: string | null }
-
 const loading = ref(true)
 const error = ref('')
 const configs = ref<AgentConfigItem[]>([])
@@ -202,13 +200,42 @@ const showCreateForm = ref(false)
 const editing = ref<AgentConfigItem | null>(null)
 const deleting = ref<string | null>(null)
 const todayCalls = ref<Record<string, number>>({})
-const costData = ref<any>(null)
+interface CostData {
+  today_total?: number
+  [key: string]: unknown
+}
+
+const costData = ref<CostData | null>(null)
 
 const form = ref({
   agent_code: '', agent_name: '', provider: '', model: '',
   system_prompt: '', purpose: '', sensitive_action_policy: 'confirm',
 })
-const editForm = ref<Record<string, any>>({})
+interface EditForm {
+  enabled: boolean
+  model: string
+  provider: string
+  temperature: number | null
+  top_p: number | null
+  max_tokens: number | null
+  timeout_ms: number | null
+  fallback_model: string | null
+  fallback_enabled: boolean
+  max_concurrency: number | null
+  cooldown_seconds: number | null
+  retry_count: number
+  daily_call_limit: number | null
+  daily_budget: number | null
+  monthly_budget: number | null
+  response_format: string
+  log_prompt_enabled: boolean
+  log_response_enabled: boolean
+  sensitive_action_policy: string
+  system_prompt: string
+  [key: string]: unknown
+}
+
+const editForm = ref<EditForm>({} as EditForm)
 
 function resetForm() {
   form.value = { agent_code: '', agent_name: '', provider: '', model: '', system_prompt: '', purpose: '', sensitive_action_policy: 'confirm' }
@@ -226,24 +253,22 @@ function policyBadgeClass(p: string): string {
   return 'acp-badge-red'
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = getApiUrl(path)
-  const { headers: initHeaders, ...restInit } = init || {}
-  const r = await fetch(url, { headers: { ...initHeaders as Record<string, string> || {}, ...authHeaders() }, ...restInit })
-  if (r.status === 401) { window.location.replace('/'); throw new Error('未登录') }
-  const body: ApiBody<T> = await r.json()
-  if (!body.success) throw new Error(body.error || '请求失败')
-  return body.data as T
+async function httpJson<T>(path: string, method: string = 'GET', body?: unknown): Promise<T> {
+  if (method === 'GET') return apiGet<T>(path)
+  if (method === 'POST' && body) return apiPost<T>(path, body as Record<string, unknown>)
+  if (method === 'PUT') return apiPut<T>(path, body as Record<string, unknown>)
+  if (method === 'DELETE') return apiDelete<T>(path)
+  throw new Error(`Unsupported method: ${method}`)
 }
 
 async function loadConfigs() {
   loading.value = true
   error.value = ''
   try {
-    configs.value = await apiFetch<AgentConfigItem[]>('/agent-configs/')
-    // Load today calls from admin overview
+    configs.value = await httpJson<AgentConfigItem[]>('/agent-configs/')
     try {
-      const overview = await apiFetch<any>('/agent/admin/overview')
+      interface AdminOverview { cost?: CostData }
+      const overview = await httpJson<AdminOverview>('/agent/admin/overview')
       if (overview.cost) {
         costData.value = overview.cost
       }
@@ -262,11 +287,7 @@ async function createConfig() {
   }
   saving.value = true
   try {
-    const newConfig = await apiFetch<AgentConfigItem>('/agent-configs/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value),
-    })
+    const newConfig = await httpJson<AgentConfigItem>('/agent-configs/', 'POST', form.value)
     configs.value.push(newConfig)
     showCreateForm.value = false
     resetForm()
@@ -308,11 +329,7 @@ async function saveEdit() {
   if (!editing.value) return
   saving.value = true
   try {
-    const updated = await apiFetch<AgentConfigItem>(`/agent-configs/${editing.value.agent_code}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editForm.value),
-    })
+    const updated = await httpJson<AgentConfigItem>(`/agent-configs/${editing.value.agent_code}`, 'PUT', editForm.value)
     const idx = configs.value.findIndex(c => c.agent_code === editing.value!.agent_code)
     if (idx >= 0) configs.value[idx] = updated
     editing.value = null
@@ -328,7 +345,7 @@ async function deleteConfig(c: AgentConfigItem) {
   if (!confirm(`确定删除 "${c.agent_code}" 的配置？`)) { return }
   deleting.value = c.agent_code
   try {
-    await apiFetch(`/agent-configs/${c.agent_code}`, { method: 'DELETE' })
+    await httpJson(`/agent-configs/${c.agent_code}`, 'DELETE')
     configs.value = configs.value.filter(x => x.agent_code !== c.agent_code)
     alert('已删除')
   } catch (e: unknown) {

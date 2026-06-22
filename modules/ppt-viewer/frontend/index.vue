@@ -52,13 +52,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import viewerShell from '@/shared/components/viewer-shell.vue'
-
-const TOKEN_KEY = 'v2_auth_token'
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+import { apiPost, downloadBlob } from './api'
 
 const props = defineProps<{ fileId?: number; fileName?: string; format?: string; mode?: string }>()
 
@@ -70,40 +64,43 @@ function getPayload(): { fileId: number; fileName: string } | null {
   return null
 }
 
-function apiPost<T>(path: string, payload?: unknown): Promise<T> {
-  return fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: payload ? JSON.stringify(payload) : undefined,
-  }).then(r => r.json()).then(j => { if (!j.success) throw new Error(j.error || 'API error'); return j.data as T })
-}
-
 const fileName = ref('')
 const loading = ref(true)
 const loadError = ref('')
-const slides = ref<any[]>([])
+interface SlideElement {
+  type: string
+  content?: string
+}
+
+interface Slide {
+  index: number
+  elements: SlideElement[]
+}
+
+const slides = ref<Slide[]>([])
 const currentSlide = ref(0)
 const fileBlobUrl = ref('')
 
 const currentSlideData = computed(() => slides.value[currentSlide.value] || null)
 
-function slideTitle(slide: any): string {
-  const textbox = (slide.elements || []).find((e: any) => e.type === 'textbox')
-  return textbox ? textbox.content.slice(0, 40) : `幻灯片 ${slide.index + 1}`
+function slideTitle(slide: Slide): string {
+  const textbox = (slide.elements || []).find((e: SlideElement) => e.type === 'textbox')
+  return textbox ? textbox.content?.slice(0, 40) || '' : `幻灯片 ${slide.index + 1}`
 }
 
 async function loadPpt(fid: number) {
   try {
     loadError.value = ''
     loading.value = true
-    const data = await apiPost<any>('/api/modules/call', {
+    interface ParseResponse { content?: Slide[] }
+    const data = await apiPost<ParseResponse>('/modules/call', {
       target_module: 'pptx-parser',
       action: 'parse',
       parameters: { file_id: fid },
     })
     slides.value = data?.content || []
-  } catch (e: any) {
-    loadError.value = e.message || '演示文稿解析失败'
+  } catch (e: unknown) {
+    loadError.value = e instanceof Error ? e.message : '演示文稿解析失败'
   } finally {
     loading.value = false
   }
@@ -126,11 +123,10 @@ onMounted(async () => {
   const payload = getPayload()
   if (payload && payload.fileId) {
     fileName.value = payload.fileName || 'presentation.pptx'
-    const resp = await fetch(`/api/files/download/${payload.fileId}`, { headers: authHeaders() })
-    if (resp.ok) {
-      const blob = await resp.blob()
+    try {
+      const blob = await downloadBlob(payload.fileId)
       fileBlobUrl.value = URL.createObjectURL(blob)
-    }
+    } catch { /* download not available */ }
     loadPpt(payload.fileId)
   }
 })

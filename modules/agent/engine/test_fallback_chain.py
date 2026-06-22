@@ -1,7 +1,7 @@
-"""Tests for 降级链.py — model fallback chain."""
+"""Tests for fallback_chain.py — model fallback chain."""
 from unittest.mock import AsyncMock, patch
 import pytest
-from 降级链 import _extract_reason
+from fallback_chain import _extract_reason
 
 
 class TestExtractReason:

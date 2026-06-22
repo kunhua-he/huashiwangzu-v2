@@ -28,7 +28,19 @@ export function getMode(): 'sandbox' | 'framework' {
   return _config?.mode ?? 'sandbox'
 }
 
-function authHeaders(): HeadersInit {
+let __redirecting = false
+
+function _handle401(status: number): boolean {
+  if (status !== 401) return false
+  localStorage.removeItem(TOKEN_KEY)
+  if (!__redirecting) {
+    __redirecting = true
+    window.location.replace('/')
+  }
+  return true
+}
+
+export function authHeaders(): HeadersInit {
   const token = localStorage.getItem(TOKEN_KEY)
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
@@ -40,6 +52,7 @@ async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: payload ? JSON.stringify(payload) : undefined,
   })
+  if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
   if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
   const body = await r.json()
   if (!body.success) throw new Error(body.error ?? 'API error')
@@ -47,20 +60,20 @@ async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
 }
 
 export const files = {
-  async generateDocx(params: { filename: string; content: any[]; folder_id?: number }): Promise<any> {
-    return apiPost<any>('/office-gen/docx', params)
+  async generateDocx(params: { filename: string; content: unknown[]; folder_id?: number }): Promise<unknown> {
+    return apiPost<unknown>('/office-gen/docx', params)
   },
-  async generateXlsx(params: { filename: string; sheets: any[]; folder_id?: number }): Promise<any> {
-    return apiPost<any>('/office-gen/xlsx', params)
+  async generateXlsx(params: { filename: string; sheets: unknown[]; folder_id?: number }): Promise<unknown> {
+    return apiPost<unknown>('/office-gen/xlsx', params)
   },
-  async generatePptx(params: { filename: string; slides: any[]; folder_id?: number }): Promise<any> {
-    return apiPost<any>('/office-gen/pptx', params)
+  async generatePptx(params: { filename: string; slides: unknown[]; folder_id?: number }): Promise<unknown> {
+    return apiPost<unknown>('/office-gen/pptx', params)
   },
-  async generatePdf(params: { filename: string; content: any[]; folder_id?: number }): Promise<any> {
-    return apiPost<any>('/office-gen/pdf', params)
+  async generatePdf(params: { filename: string; content: unknown[]; folder_id?: number }): Promise<unknown> {
+    return apiPost<unknown>('/office-gen/pdf', params)
   },
-  async convert(params: { file_id: number; target_format?: string }): Promise<any> {
-    return apiPost<any>('/office-gen/convert', params)
+  async convert(params: { file_id: number; target_format?: string }): Promise<unknown> {
+    return apiPost<unknown>('/office-gen/convert', params)
   },
 }
 

@@ -30,11 +30,11 @@ from profile_evolve import handle_profile_evolve
 ENGINE_DIR = (MODULE_BACKEND_DIR / ".." / "engine").resolve()
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
-import 事件存储
-from 事件存储 import record_event
-import 引擎
-from 引擎 import 装配上下文, chat_with_degradation_chain, chat_stream_with_degradation_chain
-from 粘滞检测 import 检测粘滞, 重置 as 重置粘滞
+import event_store
+from event_store import record_event
+import engine
+from engine import 装配上下文, chat_with_degradation_chain, chat_stream_with_degradation_chain
+from stuck_detector import 检测粘滞, 重置 as 重置粘滞
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -191,7 +191,7 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
     return await handle_chat(payload, db, user)
 
 
-# ── 引擎批5：Admin 只读接口（重放 + 概览） ──
+# ── engine批5：Admin 只读接口（重放 + 概览） ──
 
 @router.get("/admin/replay/{conversation_id}")
 async def admin_replay(

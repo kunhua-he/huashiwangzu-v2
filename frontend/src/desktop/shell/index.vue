@@ -137,8 +137,9 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
       await moveEntryRequest(type, fileId, targetId)
       movedCount += 1
       if (srcFolderId !== null) affectedFolders.add(srcFolderId)
-    } catch (e: any) {
-      if (e?.response?.status === 409) {
+    } catch (e: unknown) {
+	      const err = e as { http_status?: number; response?: { status?: number } } | null
+	      if (err?.http_status === 409 || err?.response?.status === 409) {
         ElMessage.warning('目标已有同名文件')
       }
     }

@@ -32,13 +32,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import viewerShell from '@/shared/components/viewer-shell.vue'
-
-const TOKEN_KEY = 'v2_auth_token'
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem(TOKEN_KEY)
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+import { apiPost, downloadBlob } from './api'
 
 const props = defineProps<{ fileId?: number; fileName?: string; format?: string; mode?: string }>()
 
@@ -50,33 +44,32 @@ function getPayload(): { fileId: number; fileName: string } | null {
   return null
 }
 
-function apiPost<T>(path: string, payload?: unknown): Promise<T> {
-  return fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: payload ? JSON.stringify(payload) : undefined,
-  }).then(r => r.json()).then(j => { if (!j.success) throw new Error(j.error || 'API error'); return j.data as T })
-}
-
 const fileName = ref('')
 const loading = ref(true)
 const loadError = ref('')
-const contentBlocks = ref<any[]>([])
+interface DocBlock {
+  type: string
+  content?: string
+  rows?: Array<{ cells: string[] }>
+}
+
+const contentBlocks = ref<DocBlock[]>([])
 const fileBlobUrl = ref('')
 
 async function loadDoc(fid: number) {
   try {
     loadError.value = ''
     loading.value = true
-    const data = await apiPost<any>('/api/modules/call', {
+    interface ParseResponse { content?: DocBlock[] }
+    const data = await apiPost<ParseResponse>('/modules/call', {
       target_module: 'docx-parser',
       action: 'parse',
       parameters: { file_id: fid },
     })
     const content = data?.content || []
     contentBlocks.value = content
-  } catch (e: any) {
-    loadError.value = e.message || '文档解析失败'
+  } catch (e: unknown) {
+    loadError.value = e instanceof Error ? e.message : '文档解析失败'
   } finally {
     loading.value = false
   }
@@ -94,11 +87,10 @@ onMounted(async () => {
   const payload = getPayload()
   if (payload && payload.fileId) {
     fileName.value = payload.fileName || 'document.docx'
-    const resp = await fetch(`/api/files/download/${payload.fileId}`, { headers: authHeaders() })
-    if (resp.ok) {
-      const blob = await resp.blob()
+    try {
+      const blob = await downloadBlob(payload.fileId)
       fileBlobUrl.value = URL.createObjectURL(blob)
-    }
+    } catch { /* download not available */ }
     loadDoc(payload.fileId)
   }
 })

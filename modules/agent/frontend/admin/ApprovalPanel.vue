@@ -47,7 +47,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { getApiUrl, authHeaders } from '../../runtime'
+import { apiGet, apiPost } from '../../runtime'
 
 interface ApprovalItem {
   id: number
@@ -60,7 +60,6 @@ interface ApprovalItem {
   created_at: string | null
 }
 
-interface ApiBody<T> { success: boolean; data: T; error?: string | null }
 
 const loading = ref(true)
 const error = ref('')
@@ -71,20 +70,10 @@ const rejectReason = ref('')
 
 const currentApproval = computed(() => approvals.value.find(a => a.id === rejectId.value))
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = getApiUrl(path)
-  const { headers: initHeaders, ...restInit } = init || {}
-  const r = await fetch(url, { headers: { ...initHeaders as Record<string, string> || {}, ...authHeaders() }, ...restInit })
-  if (r.status === 401) { window.location.replace('/'); throw new Error('未登录') }
-  const body: ApiBody<T> = await r.json()
-  if (!body.success) throw new Error(body.error || '请求失败')
-  return body.data as T
-}
-
 async function loadApprovals() {
   loading.value = true; error.value = ''
   try {
-    approvals.value = await apiFetch<ApprovalItem[]>('/agent/admin/approvals/pending')
+    approvals.value = await apiGet<ApprovalItem[]>('/agent/admin/approvals/pending')
   } catch (e: unknown) {
     error.value = String((e as Error).message || e)
   } finally {
@@ -95,11 +84,7 @@ async function loadApprovals() {
 async function resolve(approvalId: number, decision: string) {
   resolving.value = approvalId
   try {
-    await apiFetch(`/agent/admin/approvals/${approvalId}/resolve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision }),
-    })
+    await apiPost(`/agent/admin/approvals/${approvalId}/resolve`, { decision })
     approvals.value = approvals.value.filter(a => a.id !== approvalId)
     alert(decision === 'approved' ? '已同意' : '已拒绝')
   } catch (e: unknown) {
@@ -118,11 +103,7 @@ async function doReject() {
   if (!rejectId.value) return
   resolving.value = rejectId.value
   try {
-    await apiFetch(`/agent/admin/approvals/${rejectId.value}/resolve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision: 'rejected', reason: rejectReason.value || null }),
-    })
+    await apiPost(`/agent/admin/approvals/${rejectId.value}/resolve`, { decision: 'rejected', reason: rejectReason.value || null })
     approvals.value = approvals.value.filter(a => a.id !== rejectId.value)
     rejectId.value = null
     alert('已拒绝')

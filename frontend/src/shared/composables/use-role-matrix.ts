@@ -8,13 +8,14 @@ export function useRoleMatrix() {
   const roleMatrix = ref<RoleMatrixItem[]>([])
 
   async function loadRoleMatrix() {
-    try { const res = await fetchRoleMatrix(); if (res.success) roleMatrix.value = res.data.matrix }
+    try { roleMatrix.value = (await fetchRoleMatrix()).matrix }
     catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Failed to load role matrix') }
   }
 
   async function roleMatrixSave() {
     matrixSaving.value = true
-    try { const res = await saveRoleMatrix(roleMatrix.value); if (res.success) ElMessage.success('Role matrix saved'); else ElMessage.error(res.error || 'Save failed') }
+    try { await saveRoleMatrix(roleMatrix.value); ElMessage.success('Role matrix saved') }
+    catch (e: unknown) { ElMessage.error((e as {error?: string})?.error || 'Save failed') }
     finally { matrixSaving.value = false }
   }
 

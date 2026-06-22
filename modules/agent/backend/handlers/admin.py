@@ -2,7 +2,7 @@
 
 Contains handler functions for:
   - GET /admin/replay/{conversation_id} — 事件重放
-  - GET /admin/overview               — 引擎概览
+  - GET /admin/overview               — engine概览
   - GET /admin/approvals/pending       — 待审批列表
   - POST /admin/approvals/{id}/resolve — 审批决策
 """
@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.common import ApiResponse
 
-from 事件存储 import read_events
+from event_store import read_events
 from ..action_policy import resolve_approval, list_pending_approvals
 
 logger = logging.getLogger("v2.agent.router")
@@ -127,7 +127,7 @@ async def handle_admin_replay(
 
 
 async def handle_admin_overview(db: AsyncSession, user) -> ApiResponse:
-    """引擎概览：记忆/经验/预算/压缩/降级/粘滞 各模块聚合统计。"""
+    """engine概览：记忆/经验/预算/压缩/降级/粘滞 各模块聚合统计。"""
     result: dict = {}
 
     # 1. 记忆概览
@@ -223,7 +223,7 @@ async def handle_admin_overview(db: AsyncSession, user) -> ApiResponse:
                 try:
                     with open(log_file, "r", errors="ignore") as f:
                         for line in f:
-                            if "粘滞检测命中" in line:
+                            if "stuck_detector命中" in line:
                                 stuck_count += 1
                 except Exception:
                     pass

@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -285,6 +286,6 @@ def _resolve_storage_path(file: File):
     if not file.storage_path:
         return None
     full_path = (upload_root / file.storage_path).resolve()
-    if not str(full_path).startswith(str(upload_root)):
+    if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
         return None
     return full_path

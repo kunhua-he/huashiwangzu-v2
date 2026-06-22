@@ -20,7 +20,7 @@ class CsvEditorService:
 
         storage_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (storage_root / file.storage_path).resolve()
-        if not str(full_path).startswith(str(storage_root)):
+        if os.path.commonpath([str(storage_root), str(full_path)]) != str(storage_root):
             raise NotFound("文件物理路径不存在")
 
         if not full_path.exists():
@@ -46,7 +46,7 @@ class CsvEditorService:
 
         storage_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (storage_root / file.storage_path).resolve()
-        if not str(full_path).startswith(str(storage_root)):
+        if os.path.commonpath([str(storage_root), str(full_path)]) != str(storage_root):
             raise NotFound("文件物理路径不存在")
 
         if client_mtime and full_path.exists():

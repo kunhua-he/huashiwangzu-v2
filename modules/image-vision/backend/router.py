@@ -2,6 +2,7 @@
 
 Registers the describe capability with the framework's cross-module registry.
 """
+import os
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,7 +56,7 @@ async def _describe(params: dict, caller: str) -> dict:
             raise NotFound("File storage path is empty")
         upload_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (upload_root / file.storage_path).resolve()
-        if not str(full_path).startswith(str(upload_root)):
+        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
             raise AppException("Unsafe file storage path", status_code=400)
         if not full_path.exists() or not full_path.is_file():
             raise NotFound("File on disk not found")

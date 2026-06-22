@@ -48,13 +48,13 @@ V2_SEED_DEFAULT_PASSWORD='replace-with-a-strong-password' python -m app.seed
 ## Run
 
 ```bash
-uvicorn app.main:app --host 127.0.0.1 --port 30004 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 33000 --reload
 ```
 
 Open API docs:
 
 ```text
-http://127.0.0.1:30004/docs
+http://127.0.0.1:33000/docs
 ```
 
 ## Test

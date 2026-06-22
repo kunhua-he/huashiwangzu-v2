@@ -233,12 +233,12 @@ async function toggleFolder(node: FileTreeNode) {
   if (!wasOpen && !folderFiles.value[key]) {
     try {
       const data = await getFileList(key)
-      const children: FileTreeNode[] = (data.items || []).map((f: {id:number;name:string;extension?:string|null;is_folder:boolean}) => {
+      const children: FileTreeNode[] = (data.items || []).map((f: {id:number;name:string;extension?:string|null;is_folder:boolean;created_at?:string}) => {
         const doc = kbDocMap.value[f.id]
         const node: FileTreeNode = {
           id: f.id, name: f.name, parent_id: key, is_folder: f.is_folder,
           children: [], _depth: 0, _open: false, _ext: f.extension || '',
-          _pct: null, _created_at: (f as any).created_at || '',
+          _pct: null, _created_at: f.created_at || '',
         }
         if (doc) {
           node.kb_doc_id = doc.id
@@ -431,7 +431,7 @@ async function loadFileTree() {
         const fn: FileTreeNode = {
           id: f.id, name: f.name, parent_id: null, is_folder: false,
           children: [], _depth: 0, _open: false, _ext: f.extension || '', _pct: null,
-          _created_at: (f as any).created_at || '',
+          _created_at: f.created_at || '',
         }
         if (doc) {
           fn.kb_doc_id = doc.id
@@ -607,7 +607,7 @@ async function startAnalyze() {
 
   if (isRedo) {
     showRedoDialog.value = true
-    redoResolve = null as any
+    redoResolve = null
     const choice = await new Promise<boolean>(r => { redoResolve = r })
     showRedoDialog.value = false
     forceRaw = choice; forceFusion = choice

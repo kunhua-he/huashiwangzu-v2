@@ -203,6 +203,8 @@ interface CostModelItem { model_key: string; calls: number; prompt_tokens: numbe
 interface CostModuleItem { module: string; calls: number; cost: number }
 interface Cost7DayItem { date: string; cost: number }
 interface OverviewCost { today_total: number; by_model: CostModelItem[]; by_module: CostModuleItem[]; last_7_days: Cost7DayItem[] }
+/** Runtime union: the cost endpoint may return either cost data or an error object */
+type OverviewCostResult = OverviewCost | { error: string }
 interface OverviewData {
   memory?: OverviewMemory
   experience?: OverviewExperience
@@ -210,7 +212,7 @@ interface OverviewData {
   compression?: OverviewCompression
   degradation?: OverviewDegradation
   sticky?: OverviewSticky
-  cost?: OverviewCost
+  cost?: OverviewCostResult
 }
 
 interface ReplayRound {
@@ -227,7 +229,7 @@ const loading = ref(true)
 const error = ref('')
 const data = ref<OverviewData>({})
 const costData = computed(() => data.value.cost ?? { today_total: 0, by_model: [], by_module: [], last_7_days: [] })
-const costError = computed(() => { const c = data.value.cost; return c && 'error' in c ? (c as any).error : '' })
+const costError = computed(() => { const c = data.value.cost; return c && 'error' in c ? (c as { error: string }).error : '' })
 
 const replayConvId = ref('')
 const replayData = ref<{ rounds: ReplayRound[] } | null>(null)

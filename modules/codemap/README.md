@@ -32,22 +32,24 @@ modules/codemap/
 
 ## API 端点
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/codemap/health` | 健康检查 |
-| GET | `/api/codemap/stats` | 索引统计（含 confidence/解析失败/新鲜度/实战信任分） |
-| POST | `/api/codemap/get-file` | 文件级代码地图（含 stale 标记 + reliability_note） |
-| POST | `/api/codemap/impact` | 影响面分析（传递闭包，含 stale 标记 + reliability_note） |
-| POST | `/api/codemap/check-boundary` | 边界合规检查 |
-| POST | `/api/codemap/module-map` | 模块总览 |
-| POST | `/api/codemap/search` | 关键词搜索 |
-| POST | `/api/codemap/rebuild` | 全量重建索引（admin） |
-| POST | `/api/codemap/acquire-lock` | 获取文件锁（跨 worker） |
-| POST | `/api/codemap/check-lock` | 检查文件锁 |
-| POST | `/api/codemap/release-lock` | 释放文件锁 |
-| GET | `/api/codemap/list-locks` | 列出所有活跃锁 |
-| **POST** | **`/api/codemap/report-inaccuracy`** | **反馈 codemap 查询不准（Agent 实读验证后调用）** |
-| **GET** | **`/api/codemap/list-feedback`** | **查看反馈记录（仅 admin，按投诉频次排序）** |
+所有端点均需 Bearer token 认证，仅 `/api/codemap/health` 当前需要 `viewer` 权限（实质要求有效登录）。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| GET | `/api/codemap/health` | viewer | 健康检查 |
+| GET | `/api/codemap/stats` | viewer | 索引统计（含 confidence/解析失败/新鲜度/实战信任分） |
+| POST | `/api/codemap/get-file` | viewer | 文件级代码地图（含 stale 标记 + reliability_note） |
+| POST | `/api/codemap/impact` | viewer | 影响面分析（传递闭包，含 stale 标记 + reliability_note） |
+| POST | `/api/codemap/check-boundary` | viewer | 边界合规检查 |
+| POST | `/api/codemap/module-map` | viewer | 模块总览 |
+| POST | `/api/codemap/search` | viewer | 关键词搜索 |
+| POST | `/api/codemap/rebuild` | admin | 全量重建索引 |
+| POST | `/api/codemap/acquire-lock` | viewer | 获取文件锁（跨 worker） |
+| POST | `/api/codemap/check-lock` | viewer | 检查文件锁 |
+| POST | `/api/codemap/release-lock` | viewer | 释放文件锁 |
+| GET | `/api/codemap/list-locks` | viewer | 列出所有活跃锁 |
+| **POST** | **`/api/codemap/report-inaccuracy`** | viewer | **反馈 codemap 查询不准（Agent 实读验证后调用）** |
+| **GET** | **`/api/codemap/list-feedback`** | admin | **查看反馈记录（按投诉频次排序）** |
 
 ## 跨模块能力（供 Agent 技能发现器使用）
 
@@ -70,19 +72,25 @@ modules/codemap/
 ## 查询示例
 
 ```bash
-# 文件信息
+# 健康检查（无需 token）
+curl http://127.0.0.1:33000/api/codemap/health
+
+# 文件信息（需 token）
 curl -X POST http://127.0.0.1:33000/api/codemap/get-file \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
   -d '{"path": "modules/agent/backend/router.py"}'
 
-# 影响面分析
+# 影响面分析（需 token）
 curl -X POST http://127.0.0.1:33000/api/codemap/impact \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
   -d '{"path": "backend/app/database.py"}'
 
-# 边界检查
+# 边界检查（需 token）
 curl -X POST http://127.0.0.1:33000/api/codemap/check-boundary \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
   -d '{"module_key": "agent"}'
 ```
 

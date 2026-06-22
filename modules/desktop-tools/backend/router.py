@@ -4,6 +4,7 @@ Exposes 4 cross-module capabilities (desktop:list_files, desktop:search_files,
 desktop:read_file, desktop:list_apps) that bridge framework file/app capabilities
 to the Agent's tool discovery system. All queries are owner-isolated.
 """
+import os
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -247,7 +248,7 @@ async def _read_file(params: dict, caller: str) -> dict:
 
         upload_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (upload_root / file.storage_path).resolve()
-        if not str(full_path).startswith(str(upload_root)):
+        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
             return {"success": False, "error": "Invalid file path", "file": file_info}
         if not full_path.exists() or not full_path.is_file():
             return {"success": False, "error": "File on disk not found", "file": file_info}

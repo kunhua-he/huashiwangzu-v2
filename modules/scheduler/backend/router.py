@@ -11,6 +11,7 @@ from app.database import get_db, AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.core.exceptions import NotFound, PermissionDenied, ValidationError, ConflictError
 from app.services.module_registry import register_capability
 from app.models.system import SystemTaskQueue
 
@@ -49,11 +50,11 @@ async def http_create(
             if scheduled_dt.tzinfo is None:
                 scheduled_dt = scheduled_dt.replace(tzinfo=timezone.utc)
         except ValueError:
-            return ApiResponse(success=False, error="scheduled_at 格式无效，请使用 ISO 8601")
+            raise ValidationError("scheduled_at 格式无效，请使用 ISO 8601")
 
     if req.recur and req.recur not in ("hourly", "daily", "weekly"):
         if not req.recur.startswith("cron:"):
-            return ApiResponse(success=False, error="recur 仅支持 hourly/daily/weekly 或 cron:HH:MM")
+            raise ValidationError("recur 仅支持 hourly/daily/weekly 或 cron:HH:MM")
 
     task = SystemTaskQueue(
         task_type="scheduled_agent_job",
@@ -110,11 +111,11 @@ async def http_cancel(
 ):
     task = await db.get(SystemTaskQueue, req.task_id)
     if not task or task.module != "scheduler":
-        return ApiResponse(success=False, error="任务不存在")
+        raise NotFound("任务不存在")
     if task.creator_id != current_user.id:
-        return ApiResponse(success=False, error="只能取消自己的任务")
+        raise PermissionDenied("只能取消自己的任务")
     if task.status in ("completed", "failed"):
-        return ApiResponse(success=False, error="任务已结束，无法取消")
+        raise ConflictError("任务已结束，无法取消")
     task.status = "cancelled"
     await db.commit()
     return ApiResponse(data={"id": task.id, "status": "cancelled"})

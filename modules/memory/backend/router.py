@@ -12,6 +12,7 @@ from app.database import get_db, AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.services.module_registry import register_capability
 from app.services.task_worker import register_task_handler
 
@@ -309,7 +310,7 @@ async def http_save(
 ):
     await _ensure_init()
     if not req.text.strip():
-        return ApiResponse(success=False, error="内容不能为空")
+        raise ValidationError("内容不能为空")
     # Save raw text (原始层)
     memory = AgentMemory(
         owner_id=current_user.id,
@@ -420,9 +421,9 @@ async def http_delete(
     await _ensure_init()
     memory = await db.get(AgentMemory, req.id)
     if not memory:
-        return ApiResponse(success=False, error="记忆不存在")
+        raise NotFound("记忆不存在")
     if memory.owner_id != current_user.id:
-        return ApiResponse(success=False, error="只能删除自己的记忆")
+        raise PermissionDenied("只能删除自己的记忆")
     # Cascade delete links
     await db.execute(
         text("DELETE FROM memory_links WHERE from_id = :id OR to_id = :id"),
@@ -441,7 +442,7 @@ async def http_fuse(
 ):
     await _ensure_init()
     if not req.ids:
-        return ApiResponse(success=False, error="ids 不能为空")
+        raise ValidationError("ids 不能为空")
     result = await _do_fuse(db, current_user.id, req.query, req.ids)
     return ApiResponse(data=result)
 
@@ -455,9 +456,9 @@ async def http_rethink(
     await _ensure_init()
     memory = await db.get(AgentMemory, req.id)
     if not memory:
-        return ApiResponse(success=False, error="记忆不存在")
+        raise NotFound("记忆不存在")
     if memory.owner_id != current_user.id:
-        return ApiResponse(success=False, error="只能编辑自己的记忆")
+        raise PermissionDenied("只能编辑自己的记忆")
     old_text = memory.text
     memory.text = req.text
     if req.tags is not None:
@@ -478,11 +479,11 @@ async def http_replace(
     await _ensure_init()
     memory = await db.get(AgentMemory, req.id)
     if not memory:
-        return ApiResponse(success=False, error="记忆不存在")
+        raise NotFound("记忆不存在")
     if memory.owner_id != current_user.id:
-        return ApiResponse(success=False, error="只能编辑自己的记忆")
+        raise PermissionDenied("只能编辑自己的记忆")
     if req.old_text not in memory.text:
-        return ApiResponse(success=False, error="未找到要替换的文本")
+        raise ValidationError("未找到要替换的文本")
     memory.text = memory.text.replace(req.old_text, req.new_text, 1)
     memory.source = "edit"
     await db.commit()
@@ -499,9 +500,9 @@ async def http_insert(
     await _ensure_init()
     memory = await db.get(AgentMemory, req.id)
     if not memory:
-        return ApiResponse(success=False, error="记忆不存在")
+        raise NotFound("记忆不存在")
     if memory.owner_id != current_user.id:
-        return ApiResponse(success=False, error="只能编辑自己的记忆")
+        raise PermissionDenied("只能编辑自己的记忆")
     memory.text += "\n" + req.text
     memory.source = "edit"
     await db.commit()

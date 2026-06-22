@@ -1,0 +1,76 @@
+"""Authentication and authorization for docs-open module."""
+
+from __future__ import annotations
+
+from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models.user import User
+from app.core.exceptions import AuthError, PermissionDenied
+
+from .embed import _get_doc_type
+
+
+async def get_authenticated_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Authenticate via token triple (X- headers) or JWT bearer.
+
+    Token triple (仿腾讯文档三件套) takes precedence when all three
+    X-Client-Id, X-Open-Id, X-Access-Token are present.
+    Falls back to standard JWT Bearer token (Authorization header).
+    """
+    from ..token_service import validate_token
+
+    x_client_id = request.headers.get("X-Client-Id")
+    x_open_id = request.headers.get("X-Open-Id")
+    x_access_token = request.headers.get("X-Access-Token")
+
+    if x_client_id and x_open_id and x_access_token:
+        token_record = await validate_token(db, x_access_token, x_client_id, x_open_id)
+        user = await db.get(User, int(x_open_id))
+        if not user or not user.enabled:
+            raise PermissionDenied("User not found or disabled")
+        return user
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        jwt_token = auth_header[7:]
+        from app.services.auth import decode_access_token, get_user_by_id as auth_get_user
+        payload = decode_access_token(jwt_token)
+        user_id = int(payload.get("sub", 0))
+        token_sv = payload.get("sv", 0)
+        user = await auth_get_user(db, user_id)
+        if not user or not user.enabled:
+            raise PermissionDenied("User not found or disabled")
+        if token_sv != user.session_version:
+            raise PermissionDenied("Session expired, please login again")
+        return user
+
+    raise AuthError("Authentication required")
+
+
+def require_docs_permission(min_role: str = "viewer"):
+    """Dependency factory: auth + role check for docs-open endpoints."""
+    role_level = {"admin": 3, "editor": 2, "viewer": 1}
+
+    async def _check(user: User = Depends(get_authenticated_user)) -> User:
+        if role_level.get(user.role, 0) < role_level.get(min_role, 0):
+            raise PermissionDenied(
+                f"Requires at least '{min_role}' role, got '{user.role}'"
+            )
+        return user
+
+    return _check
+
+
+def _get_base_url(request: Request) -> str:
+    """Build the base URL from the request."""
+    forwarded = request.headers.get("X-Forwarded-Proto", "http")
+    host = request.headers.get("X-Forwarded-Host", request.url.hostname)
+    port = request.url.port
+    if port and port not in (80, 443):
+        return f"{forwarded}://{host}:{port}"
+    return f"{forwarded}://{host}"

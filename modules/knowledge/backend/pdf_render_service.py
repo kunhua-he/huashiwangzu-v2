@@ -3,6 +3,7 @@
 依赖 pymupdf (fitz)，V1 原用 pdftoppm，V2 用 fitz 纯 Python 实现，无外部二进制依赖。
 """
 import logging
+import os
 from pathlib import Path
 
 from app.config import get_settings
@@ -38,7 +39,7 @@ async def render_page_to_image(
         file = await check_file_access(db, file_id, user_id)
         upload_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (upload_root / file.storage_path).resolve()
-        if not str(full_path).startswith(str(upload_root)):
+        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
             raise ValueError("Unsafe file storage path")
         if not full_path.exists():
             raise FileNotFoundError(f"File not found: {full_path}")

@@ -431,7 +431,7 @@ async def parse_xlsx_file(payload: OpenRequest, db: AsyncSession = Depends(get_d
 
     upload_root = Path(get_settings().UPLOAD_DIR).resolve()
     full_path = (upload_root / file.storage_path).resolve()
-    if not str(full_path).startswith(str(upload_root)) or not full_path.exists():
+    if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root) or not full_path.exists():
         raise NotFound("File on disk not found")
 
     if ext in ("xlsx", "xls"):
@@ -439,7 +439,7 @@ async def parse_xlsx_file(payload: OpenRequest, db: AsyncSession = Depends(get_d
     elif ext == "csv":
         result = parse_csv(str(full_path), file.name)
     else:
-        return ApiResponse(success=False, error=f"Unsupported format '{ext}'")
+        raise ValidationError(f"Unsupported format '{ext}'")
 
     return ApiResponse(data=result)
 
@@ -449,7 +449,7 @@ async def open_xlsx(payload: OpenRequest, db: AsyncSession = Depends(get_db),
                     user: User = Depends(require_permission("viewer"))):
     """Open XLSX file - loads into DB state and returns initialized state"""
     from app.config import get_settings
-    from app.core.exceptions import NotFound
+    from app.core.exceptions import NotFound, ValidationError, AppException
     from pathlib import Path
 
     file = await check_file_access(db, payload.file_id, user.id)
@@ -482,10 +482,10 @@ async def open_xlsx(payload: OpenRequest, db: AsyncSession = Depends(get_db),
     elif ext == "csv":
         result = parse_csv(str(full_path), file.name)
     else:
-        return ApiResponse(success=False, error=f"Unsupported format")
+        raise ValidationError(f"Unsupported format")
 
     if result.get('code') != 0:
-        return ApiResponse(success=False, error=result.get('msg', 'Parse failed'))
+        raise AppException(result.get('msg', 'Parse failed'))
 
     wb = await find_or_create_workbook(db, state_key, owner_id=user.id)
     sheet_name = payload.target_sheet or (result.get('all_sheets', ['Sheet1'])[0])
@@ -658,7 +658,7 @@ async def _parse_capability(params: dict, caller: str) -> dict:
 
         upload_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (upload_root / file.storage_path).resolve()
-        if not str(full_path).startswith(str(upload_root)) or not full_path.exists():
+        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root) or not full_path.exists():
             raise NotFound("File on disk not found")
 
         if ext in ("xlsx", "xls"):

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.file import File
@@ -90,7 +91,7 @@ def _resolve_storage_path(file: File) -> Path | None:
     upload_dir = Path(settings.UPLOAD_DIR).resolve()
     full_path = (upload_dir / file.storage_path).resolve()
     # Prevent path traversal attacks
-    if not str(full_path).startswith(str(upload_dir)):
+    if os.path.commonpath([str(upload_dir), str(full_path)]) != str(upload_dir):
         return None
     return full_path if full_path.exists() else None
 

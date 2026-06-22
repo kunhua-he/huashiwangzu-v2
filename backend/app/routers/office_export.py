@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +20,7 @@ def _resolve_safe_path(storage_path: str) -> Path:
     from app.config import get_settings
     upload_dir = Path(get_settings().UPLOAD_DIR).resolve()
     full_path = (upload_dir / storage_path).resolve()
-    if not str(full_path).startswith(str(upload_dir)):
+    if os.path.commonpath([str(upload_dir), str(full_path)]) != str(upload_dir):
         raise PermissionDenied("Invalid file path")
     return full_path
 

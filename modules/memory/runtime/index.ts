@@ -3,7 +3,7 @@ interface ApiResponse<T = unknown> { success: boolean; data: T; error?: string }
 const BASE = '/api/memory'
 
 function apiBase(): string {
-  const base = (typeof window !== 'undefined' && (window as any).__HSWZ_CONFIG__?.api_base_url) || ''
+  const base = (typeof window !== 'undefined' && window.__HSWZ_CONFIG__?.api_base_url) || ''
   return `${base}${BASE}`
 }
 

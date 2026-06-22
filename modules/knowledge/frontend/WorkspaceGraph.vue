@@ -457,7 +457,7 @@ function closeDetail() {
 function askAI(node: GraphNode) {
   // Use the platform module call to open agent with prefill
   try {
-    const platform = (window as any).platform
+    const platform = window.platform
     if (platform?.modules?.openApp) {
       platform.modules.openApp('agent', { prefill: { entity: node.label } })
     } else {

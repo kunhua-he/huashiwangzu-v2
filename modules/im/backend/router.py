@@ -10,6 +10,7 @@ from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.services.module_registry import register_capability
 
 logger = logging.getLogger("v2.im.router")
@@ -124,10 +125,10 @@ async def get_messages(
     await run_init(db)
     conv = await db.get(ImConversation, conv_id)
     if not conv:
-        return ApiResponse(success=False, error="会话不存在")
+        raise NotFound("会话不存在")
     members = conv.member_ids if isinstance(conv.member_ids, list) else []
     if current_user.id not in members:
-        return ApiResponse(success=False, error="无权访问该会话")
+        raise PermissionDenied("无权访问该会话")
     offset = max(0, (page - 1) * page_size)
     stmt = select(ImMessage).where(
         ImMessage.conversation_id == conv_id,
@@ -154,17 +155,17 @@ async def send_message(
     conv_id = req.conversation_id
     if not conv_id and req.target_user_id:
         if req.target_user_id == current_user.id:
-            return ApiResponse(success=False, error="不能给自己发消息")
+            raise ValidationError("不能给自己发消息")
         conv = await _get_or_create_conversation(db, current_user.id, req.target_user_id)
         conv_id = conv.id
     if not conv_id:
-        return ApiResponse(success=False, error="需要 conversation_id 或 target_user_id")
+        raise ValidationError("需要 conversation_id 或 target_user_id")
     conv = await db.get(ImConversation, conv_id)
     if not conv:
-        return ApiResponse(success=False, error="会话不存在")
+        raise NotFound("会话不存在")
     members = conv.member_ids if isinstance(conv.member_ids, list) else []
     if current_user.id not in members:
-        return ApiResponse(success=False, error="无权向该会话发消息")
+        raise PermissionDenied("无权向该会话发消息")
     msg = ImMessage(
         conversation_id=conv_id,
         sender_id=current_user.id,
@@ -199,10 +200,10 @@ async def mark_read(
     await run_init(db)
     conv = await db.get(ImConversation, conv_id)
     if not conv:
-        return ApiResponse(success=False, error="会话不存在")
+        raise NotFound("会话不存在")
     members = conv.member_ids if isinstance(conv.member_ids, list) else []
     if current_user.id not in members:
-        return ApiResponse(success=False, error="无权操作")
+        raise PermissionDenied("无权操作")
     stmt = select(ImReadState).where(
         ImReadState.user_id == current_user.id,
         ImReadState.conversation_id == conv_id,

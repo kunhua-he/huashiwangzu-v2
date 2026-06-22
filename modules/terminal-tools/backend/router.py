@@ -198,6 +198,10 @@ def _check_path_escape(command: str, workspace_real: str) -> str | None:
 
 # ── macOS sandbox-exec profile ────────────────────────────────────────
 
+_PY_PREFIX = os.path.realpath(sys.prefix)
+_PY_BASE_PREFIX = os.path.realpath(sys.base_prefix)
+
+
 def _build_sandbox_profile(workspace_real: str) -> str:
     """Return a sandbox-exec profile string that locks the child process to
     read-only system + full read/write of the workspace.
@@ -221,6 +225,9 @@ def _build_sandbox_profile(workspace_real: str) -> str:
   (subpath "/private/var/db/dyld") (subpath "/private/var/folders")
   (subpath "/private/var/select") (subpath "/dev")
   (subpath "/private/etc/ssl")
+  ; Python 解释器自身的 prefix（venv + base），run_python 需读 site-packages 才能启动；
+  ; 只读、限定到解释器目录，不放开整个 /Users
+  (subpath "{_PY_PREFIX}") (subpath "{_PY_BASE_PREFIX}")
   (literal "/private/etc/hosts") (literal "/private/etc/resolv.conf"))
 ; workspace — kernel-gated: nothing outside this subpath can be read or written
 (allow file-read* file-write* (subpath "{workspace_real}"))

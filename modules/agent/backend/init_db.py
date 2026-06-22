@@ -176,9 +176,35 @@ async def ensure_processing_column(db: AsyncSession) -> None:
         logger.warning("Migration: processing column check failed: %s", e)
 
 
+async def ensure_event_table(db: AsyncSession) -> None:
+    """引擎事件表迁移：create_all 兜 ALTER ADD COLUMN IF NOT EXISTS。"""
+    from sqlalchemy import text
+    try:
+        await db.execute(text(
+            "CREATE TABLE IF NOT EXISTS agent_events ("
+            "  id BIGSERIAL PRIMARY KEY,"
+            "  conversation_id BIGINT NOT NULL,"
+            "  event_type VARCHAR(32) NOT NULL,"
+            "  payload JSONB DEFAULT '{}'::jsonb,"
+            "  llm_response_id VARCHAR(64),"
+            "  created_at TIMESTAMPTZ DEFAULT NOW(),"
+            "  updated_at TIMESTAMPTZ DEFAULT NOW()"
+            ")"
+        ))
+        await db.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_agent_events_conversation_id ON agent_events(conversation_id)"
+        ))
+        await db.commit()
+        logger.info("Migration: ensured agent_events table")
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Migration: agent_events table check failed: %s", e)
+
+
 async def run_init(db: AsyncSession) -> None:
     """Agent 模块启动初始化入口。"""
     await ensure_timeline_column(db)
     await ensure_processing_column(db)
+    await ensure_event_table(db)
     await ensure_default_prompts(db)
     await update_existing_prompts(db)

@@ -5,6 +5,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin
 
 
+class AgentEvent(Base, TimestampMixin):
+    __tablename__ = "agent_events"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    llm_response_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class AgentConversation(Base, TimestampMixin):
     __tablename__ = "agent_conversations"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

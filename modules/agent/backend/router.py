@@ -25,10 +25,17 @@ if str(MODULE_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_BACKEND_DIR))
 
 import conversation_service as conv_svc
-from init_db import ensure_default_prompts, ensure_timeline_column, ensure_user_profile, update_existing_prompts
+from init_db import ensure_default_prompts, ensure_timeline_column, ensure_user_profile, update_existing_prompts, ensure_event_table, ensure_processing_column
 from model_client import recover_tool_calls, parse_inline_tool_calls, final_clean_content
 import tool_discovery
 from profile_evolve import handle_profile_evolve
+ENGINE_DIR = (MODULE_BACKEND_DIR / ".." / "engine").resolve()
+if str(ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(ENGINE_DIR))
+import 事件存储
+from 事件存储 import record_event
+import 引擎
+from 引擎 import 装配上下文
 
 # 注册后台任务处理器（框架 worker 自动消费）
 register_task_handler("profile_evolve", handle_profile_evolve)
@@ -260,6 +267,8 @@ async def list_conversations(db: AsyncSession = Depends(get_db), user: User = De
 
 @router.post("/conversations")
 async def create_conversation(payload: CreateConvRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
+    await ensure_processing_column(db)
+    await ensure_event_table(db)
     item = await conv_svc.create_conversation(db, user.id, payload.title)
     return ApiResponse(data=_conversation_payload(item))
 
@@ -289,18 +298,26 @@ async def get_messages(conversation_id: int, db: AsyncSession = Depends(get_db),
 
 @router.post("/chat")
 async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
-    # 确保默认数据、画像和表结构迁移存在
+    # 确保默认数据、画像、表结构迁移和引擎事件表存在
     await ensure_timeline_column(db)
+    await ensure_processing_column(db)
     await ensure_default_prompts(db)
     await update_existing_prompts(db)
     await ensure_user_profile(db, user.id)
+    await ensure_event_table(db)
 
     # 持久化用户消息
     await conv_svc.add_message(db, user.id, payload.conversation_id, "user", payload.content)
 
-    # 加载历史 + 用 3 层构建 context
-    history = await conv_svc.get_messages(db, user.id, payload.conversation_id)
-    messages = await conv_svc.build_context_messages(db, user.id, history)
+    # 记录用户消息事件
+    await record_event(db, payload.conversation_id, "user_msg", {"content": payload.content})
+
+    # 引擎装配上下文（事件投影 + 三层提示词 + 动态预算）
+    profile_key = payload.profile_key or "deepseek-v4-flash"
+    messages, engine_diag = await 装配上下文(
+        db, payload.conversation_id, payload.content,
+        profile_key, user.id,
+    )
 
     # ── 记忆召回：自动检索用户相关记忆，注入 system prompt ──────────
     try:
@@ -336,6 +353,8 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
         thinking_parts: list[str] = []
         tool_events: list[dict] = []
         timeline: list[dict] = []
+        _pending_events: list[dict] = []
+        _event_round = 0
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 logger.info("[DIAG] event_stream tool_round %d/%d", _round + 1, MAX_TOOL_ROUNDS)
@@ -395,6 +414,24 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                     "content": content_source,
                     "tool_calls": _tool_calls_for_history(tool_calls),
                 })
+                # 记录引擎事件
+                _event_round_id = f"round_{_event_round}"
+                _event_round += 1
+                _pending_events.append({
+                    "event_type": "assistant_msg", "payload": {"content": content_source},
+                    "llm_response_id": _event_round_id,
+                })
+                for tc in tool_calls:
+                    fn = tc.get("function", tc)
+                    _pending_events.append({
+                        "event_type": "tool_call",
+                        "payload": {
+                            "id": tc.get("id") or fn.get("id") or "",
+                            "name": fn.get("name", ""),
+                            "arguments": fn.get("arguments", {}),
+                        },
+                        "llm_response_id": _event_round_id,
+                    })
 
                 # ── Phase 1: parse + detect slow tools + yield all tool_call events ──
                 parsed_tools: list[dict] = []
@@ -457,6 +494,15 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                     if tool["tool_call_id"]:
                         tool_message["tool_call_id"] = tool["tool_call_id"]
                     messages.append(tool_message)
+                    _pending_events.append({
+                        "event_type": "tool_result",
+                        "payload": {
+                            "tool_call_id": tool["tool_call_id"],
+                            "name": tool["name"],
+                            "result": tool_result,
+                        },
+                        "llm_response_id": None,
+                    })
                 if has_slow:
                     # 标记对话有后台任务（多 worker 守护）
                     from models import AgentConversation
@@ -516,6 +562,15 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                         if outcome["tool_call_id"]:
                             tool_message["tool_call_id"] = outcome["tool_call_id"]
                         messages.append(tool_message)
+                        _pending_events.append({
+                            "event_type": "tool_result",
+                            "payload": {
+                                "tool_call_id": outcome["tool_call_id"],
+                                "name": outcome["name"],
+                                "result": outcome["result"],
+                            },
+                            "llm_response_id": None,
+                        })
         except Exception as exc:
             logger.info("[DIAG] event_stream EXCEPTION %s: %s", type(exc).__name__, str(exc)[:300])
             yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n".encode("utf-8")
@@ -551,7 +606,26 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                         asyncio.create_task(_submit_memory_distill_task(
                             payload.conversation_id, user.id, payload.content, clean_assistant_content,
                         ))
-                logger.info("[DIAG] event_stream DB persist done")
+                # 记录引擎事件：如果 streaming 阶段产生了全量内容且未被 tool 循环记录，在此记录
+                if full and not any(e["event_type"] == "assistant_msg" and e["payload"].get("content", "") == clean_assistant_content[:200] for e in _pending_events):
+                    _final_rid = f"round_{_event_round}"
+                    _event_round += 1
+                    _pending_events.append({
+                        "event_type": "assistant_msg",
+                        "payload": {"content": clean_assistant_content},
+                        "llm_response_id": _final_rid,
+                    })
+                # 统一持久化所有待处理引擎事件
+                for pe in _pending_events:
+                    try:
+                        await record_event(
+                            s2, payload.conversation_id,
+                            pe["event_type"], pe["payload"],
+                            pe.get("llm_response_id"),
+                        )
+                    except Exception as pe_exc:
+                        logger.warning("record_event failed (non-fatal): %s", pe_exc)
+                logger.info("[DIAG] event_stream DB persist done (events=%d)", len(_pending_events))
             except Exception as exc:
                 logger.warning("event_stream persist/evolve failed (non-fatal): %s", exc)
             # ★ 无论正常结束/异常/持久化失败，永远发 [DONE]

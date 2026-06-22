@@ -41,6 +41,42 @@ from 粘滞检测 import 检测粘滞, 重置 as 重置粘滞
 # 注册后台任务处理器（框架 worker 自动消费）
 register_task_handler("profile_evolve", handle_profile_evolve)
 
+
+async def _handle_memory_dream(params: dict) -> dict:
+    """Handle memory_dream task from queue. Calls dream on memory module."""
+    owner_id = params.get("owner_id")
+    if not owner_id:
+        return {"error": "Missing owner_id"}
+    try:
+        from 分层记忆 import 触发dream
+        await 触发dream(owner_id)
+        return {"status": "ok", "owner_id": owner_id}
+    except Exception as e:
+        logger.warning("Memory dream handler failed (non-fatal): %s", e)
+        return {"error": str(e)}
+
+
+register_task_handler("memory_dream", _handle_memory_dream)
+
+
+async def _handle_memory_distill(params: dict) -> dict:
+    """Handle memory_distill task from queue."""
+    conversation_id = params.get("conversation_id")
+    owner_id = params.get("owner_id")
+    user_content = params.get("user_content", "")
+    assistant_content = params.get("assistant_content", "")
+    if not conversation_id or not owner_id:
+        return {"error": "Missing required params"}
+    try:
+        await _submit_memory_distill_task(conversation_id, owner_id, user_content, assistant_content)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.warning("Memory distill handler failed: %s", e)
+        return {"error": str(e)}
+
+
+register_task_handler("memory_distill", _handle_memory_distill)
+
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 MAX_TOOL_ROUNDS = 5
@@ -653,10 +689,26 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                             logger.info("[DIAG] event_stream submitting profile_evolve task (fire-and-forget)")
                             asyncio.create_task(_submit_profile_evolve_task(payload.conversation_id, user.id))
                             logger.info("[DIAG] event_stream profile_evolve task submitted")
-                        # 记忆蒸馏：每轮对话后异步提取关键事实并落库（fire-and-forget）
-                        asyncio.create_task(_submit_memory_distill_task(
-                            payload.conversation_id, user.id, payload.content, clean_assistant_content,
-                        ))
+                        # 记忆蒸馏：每轮对话后异步提取关键事实并落库（经 SystemTaskQueue）
+                        try:
+                            from app.models.system import SystemTaskQueue
+                            task = SystemTaskQueue(
+                                task_type="memory_distill",
+                                parameters=json.dumps({
+                                    "conversation_id": payload.conversation_id,
+                                    "owner_id": user.id,
+                                    "user_content": payload.content,
+                                    "assistant_content": clean_assistant_content,
+                                }),
+                                status="pending",
+                                priority=0,
+                                module="agent",
+                                creator_id=user.id,
+                            )
+                            s2.add(task)
+                            await s2.commit()
+                        except Exception as e:
+                            logger.warning("Memory distill enqueue failed (non-fatal): %s", e)
                 # 记录引擎事件：如果 streaming 阶段产生了全量内容且未被 tool 循环记录，在此记录
                 if full and not any(e["event_type"] == "assistant_msg" and e["payload"].get("content", "") == clean_assistant_content[:200] for e in _pending_events):
                     _final_rid = f"round_{_event_round}"
@@ -1372,6 +1424,49 @@ async def admin_overview(
     except Exception as e:
         logger.warning("Admin overview sticky query failed: %s", e)
         result["sticky"] = {"error": str(e)}
+
+    # 7. 成本概览（framework_agent_usage_daily）
+    try:
+        total_today_cost = await db.scalar(text(
+            "SELECT COALESCE(SUM(cost), 0) FROM framework_agent_usage_daily WHERE usage_date = CURRENT_DATE"
+        ))
+        model_costs = await db.execute(text("""
+            SELECT model_key, SUM(call_count) AS calls, SUM(prompt_tokens) AS prompt_tokens,
+                   SUM(completion_tokens) AS completion_tokens, SUM(cost) AS cost
+            FROM framework_agent_usage_daily
+            WHERE usage_date = CURRENT_DATE
+            GROUP BY model_key ORDER BY cost DESC
+        """))
+        module_calls = await db.execute(text("""
+            SELECT module, SUM(call_count) AS calls, SUM(cost) AS cost
+            FROM framework_agent_usage_daily
+            WHERE usage_date = CURRENT_DATE
+            GROUP BY module ORDER BY cost DESC
+        """))
+        last_7_days = await db.execute(text("""
+            SELECT usage_date, SUM(cost) AS cost
+            FROM framework_agent_usage_daily
+            WHERE usage_date >= CURRENT_DATE - 7
+            GROUP BY usage_date ORDER BY usage_date
+        """))
+        result["cost"] = {
+            "today_total": round(float(total_today_cost or 0), 4),
+            "by_model": [
+                {"model_key": r[0], "calls": r[1], "prompt_tokens": r[2], "completion_tokens": r[3], "cost": round(float(r[4] or 0), 4)}
+                for r in model_costs.fetchall()
+            ],
+            "by_module": [
+                {"module": r[0], "calls": r[1], "cost": round(float(r[2] or 0), 4)}
+                for r in module_calls.fetchall()
+            ],
+            "last_7_days": [
+                {"date": str(r[0]), "cost": round(float(r[1] or 0), 4)}
+                for r in last_7_days.fetchall()
+            ],
+        }
+    except Exception as e:
+        logger.warning("Admin overview cost query failed: %s", e)
+        result["cost"] = {"error": str(e)}
 
     return ApiResponse(data=result)
 

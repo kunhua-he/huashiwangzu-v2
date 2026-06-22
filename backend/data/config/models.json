@@ -53,7 +53,9 @@
           "max_tokens": 8192,
           "system_prompt": "You are a helpful AI assistant.",
           "response_adapter": "deepseek",
-          "context_budget": null
+          "context_budget": null,
+          "price_input": 2.0,
+          "price_output": 8.0
         },
         "deepseek-v4-pro": {
           "provider": "opencode",
@@ -62,7 +64,9 @@
           "max_tokens": 8192,
           "system_prompt": "You are a helpful AI assistant.",
           "response_adapter": "deepseek",
-          "context_budget": null
+          "context_budget": null,
+          "price_input": 8.0,
+          "price_output": 24.0
         },
         "gemma-4": {
           "provider": "llama",
@@ -72,7 +76,9 @@
           "system_prompt": "You are a helpful AI assistant.",
           "watchdog": "gemma-4",
           "response_adapter": "gemma",
-          "context_budget": null
+          "context_budget": null,
+          "price_input": 0,
+          "price_output": 0
         },
         "local-test": {
           "provider": "local",
@@ -81,7 +87,9 @@
           "max_tokens": 2048,
           "system_prompt": "This is a test assistant.",
           "response_adapter": "openai_compat",
-          "context_budget": null
+          "context_budget": null,
+          "price_input": 0,
+          "price_output": 0
         },
         "ollama-local": {
           "provider": "ollama",
@@ -90,7 +98,9 @@
           "max_tokens": 4096,
           "system_prompt": "You are a helpful AI assistant.",
           "response_adapter": "openai_compat",
-          "context_budget": 32000
+          "context_budget": 32000,
+          "price_input": 0,
+          "price_output": 0
         }
       }
     },
@@ -117,6 +127,19 @@
           "server_url": "http://127.0.0.1:30001",
           "watchdog": "bge-reranker",
           "response_adapter": "openai_compat"
+        }
+      }
+    },
+    "image_gen": {
+      "primary": "gptstore",
+      "fallback_chain": [],
+      "profiles": {
+        "gptstore": {
+          "provider": "opencode",
+          "model": "gpt-5.5",
+          "response_adapter": "openai_compat",
+          "price_input": 10.0,
+          "price_output": 30.0
         }
       }
     },

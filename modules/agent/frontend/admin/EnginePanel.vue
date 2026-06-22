@@ -102,6 +102,52 @@
         <p class="ep-hint">异常：压缩频繁 / 硬截断多 → 调优手册第1条调大 budget 或第7条调保留头尾轮数</p>
       </section>
 
+      <!-- 成本 / 用量 概览 -->
+      <section class="ep-section">
+        <h3 class="ep-section-title">
+          模型成本 &amp; 用量
+          <span class="ep-manual-ref">今日</span>
+        </h3>
+        <div v-if="costError" class="ep-error">{{ costError }}</div>
+        <div v-else class="ep-card-grid">
+          <div class="ep-card" style="border-left: 3px solid #f0b240;">
+            <div class="ep-card-value">{{ costData.today_total ?? '-' }}</div>
+            <div class="ep-card-label">今日总花费 (¥)</div>
+          </div>
+        </div>
+        <div v-if="costData.by_model?.length" style="margin-top:12px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;">按模型：</div>
+          <table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead><tr style="background:#e8f6fb;"><th style="padding:4px 8px;text-align:left;">模型</th><th style="padding:4px 8px;text-align:right;">调用</th><th style="padding:4px 8px;text-align:right;">输入tok</th><th style="padding:4px 8px;text-align:right;">输出tok</th><th style="padding:4px 8px;text-align:right;">花费 ¥</th></tr></thead>
+            <tbody>
+              <tr v-for="m in costData.by_model" :key="m.model_key" style="border-bottom:1px solid #eee;">
+                <td style="padding:3px 8px;">{{ m.model_key }}</td>
+                <td style="padding:3px 8px;text-align:right;">{{ m.calls }}</td>
+                <td style="padding:3px 8px;text-align:right;">{{ m.prompt_tokens }}</td>
+                <td style="padding:3px 8px;text-align:right;">{{ m.completion_tokens }}</td>
+                <td style="padding:3px 8px;text-align:right;">{{ m.cost }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="costData.by_module?.length" style="margin-top:8px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;">按模块：</div>
+          <table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead><tr style="background:#e8f6fb;"><th style="padding:4px 8px;text-align:left;">模块</th><th style="padding:4px 8px;text-align:right;">调用</th><th style="padding:4px 8px;text-align:right;">花费 ¥</th></tr></thead>
+            <tbody>
+              <tr v-for="m in costData.by_module" :key="m.module" style="border-bottom:1px solid #eee;">
+                <td style="padding:3px 8px;">{{ m.module }}</td>
+                <td style="padding:3px 8px;text-align:right;">{{ m.calls }}</td>
+                <td style="padding:3px 8px;text-align:right;">{{ m.cost }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-if="costData.last_7_days?.length" class="ep-hint" style="margin-top:8px;">
+          近7天趋势：{{ costData.last_7_days.map(d => d.date + ' ¥' + d.cost).join(' → ') }}
+        </p>
+      </section>
+
       <!-- 降级 / 粘滞 概览 -->
       <section class="ep-section">
         <h3 class="ep-section-title">
@@ -141,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { getApiUrl, authHeaders } from '../../runtime'
 import ReplayViewer from './ReplayViewer.vue'
 
@@ -153,6 +199,10 @@ interface OverviewConversations { conversation_count: number; total_events: numb
 interface OverviewCompression { compaction_count: number; total_folded_events: number; hard_truncate_count: number }
 interface OverviewDegradation { degradation_count: number }
 interface OverviewSticky { stuck_detection_count: number }
+interface CostModelItem { model_key: string; calls: number; prompt_tokens: number; completion_tokens: number; cost: number }
+interface CostModuleItem { module: string; calls: number; cost: number }
+interface Cost7DayItem { date: string; cost: number }
+interface OverviewCost { today_total: number; by_model: CostModelItem[]; by_module: CostModuleItem[]; last_7_days: Cost7DayItem[] }
 interface OverviewData {
   memory?: OverviewMemory
   experience?: OverviewExperience
@@ -160,6 +210,7 @@ interface OverviewData {
   compression?: OverviewCompression
   degradation?: OverviewDegradation
   sticky?: OverviewSticky
+  cost?: OverviewCost
 }
 
 interface ReplayRound {
@@ -175,6 +226,8 @@ interface ReplayRound {
 const loading = ref(true)
 const error = ref('')
 const data = ref<OverviewData>({})
+const costData = computed(() => data.value.cost ?? { today_total: 0, by_model: [], by_module: [], last_7_days: [] })
+const costError = computed(() => { const c = data.value.cost; return c && 'error' in c ? (c as any).error : '' })
 
 const replayConvId = ref('')
 const replayData = ref<{ rounds: ReplayRound[] } | null>(null)

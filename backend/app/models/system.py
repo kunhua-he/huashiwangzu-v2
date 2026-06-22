@@ -1,6 +1,6 @@
-from sqlalchemy import String, Integer, Text, JSON, DateTime, ForeignKey, BigInteger
+from sqlalchemy import String, Integer, Text, JSON, DateTime, ForeignKey, BigInteger, Float, Date
 from sqlalchemy.orm import Mapped, mapped_column
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from app.models.base import Base, TimestampMixin
 
 
@@ -93,7 +93,48 @@ class SystemTaskQueue(Base, TimestampMixin):
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="预计算的下次运行时间")
 
 
+class AgentUsageDaily(Base, TimestampMixin):
+    """Daily aggregated model usage costs. Framework-level tracking."""
+    __tablename__ = "framework_agent_usage_daily"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    usage_date: Mapped[date] = mapped_column(Date, nullable=False)
+    model_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), default="")
+    module: Mapped[str] = mapped_column(String(64), default="")
+    call_count: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    completion_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cost: Mapped[float] = mapped_column(Float, default=0.0)
+
+
 _MIGRATIONS_DONE = False
+
+
+async def ensure_usage_daily_table() -> None:
+    """Create framework_agent_usage_daily if not exists. Idempotent."""
+    from sqlalchemy import text, exc as sa_exc
+    from app.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS framework_agent_usage_daily (
+                id BIGSERIAL PRIMARY KEY,
+                usage_date DATE NOT NULL,
+                model_key VARCHAR(64) NOT NULL,
+                provider VARCHAR(32) DEFAULT '',
+                module VARCHAR(64) DEFAULT '',
+                call_count INTEGER DEFAULT 0,
+                prompt_tokens BIGINT DEFAULT 0,
+                completion_tokens BIGINT DEFAULT 0,
+                cost DOUBLE PRECISION DEFAULT 0.0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """))
+        # Ensure unique constraint (PG: CREATE UNIQUE INDEX IF NOT EXISTS)
+        await conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_usage_daily
+            ON framework_agent_usage_daily (usage_date, model_key, provider, module)
+        """))
 
 
 async def ensure_framework_scheduling_columns() -> None:

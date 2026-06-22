@@ -15,6 +15,59 @@ RETRY_MAX_ATTEMPTS = 3
 RETRY_BASE_DELAY_SECONDS = 1.0
 RETRYABLE_STATUSES = {429, 502, 503, 504}
 
+# ── Cost logging helper ───────────────────────────────────────────────
+
+
+async def _log_model_usage(
+    model_key: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    provider_name: str = "",
+    caller_module: str = "gateway",
+) -> None:
+    """Log model usage costs to framework_agent_usage_daily.
+
+    Non-fatal: failures only logged, never raised.
+    """
+    try:
+        profile = MODEL_PROFILES.get(model_key)
+        if not profile:
+            return
+        price_input = profile.get("price_input") or 0
+        price_output = profile.get("price_output") or 0
+        if not price_input and not price_output:
+            return
+        cost = (prompt_tokens * price_input + completion_tokens * price_output) / 1_000_000
+
+        from datetime import date
+        from app.database import AsyncSessionLocal
+        from sqlalchemy import text
+
+        today = date.today()
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("""
+                INSERT INTO framework_agent_usage_daily
+                (usage_date, model_key, provider, module, call_count, prompt_tokens, completion_tokens, cost)
+                VALUES (:date, :model, :provider, :module, 1, :prompt_tokens, :completion_tokens, :cost)
+                ON CONFLICT (usage_date, model_key, provider, module)
+                DO UPDATE SET
+                    call_count = framework_agent_usage_daily.call_count + 1,
+                    prompt_tokens = framework_agent_usage_daily.prompt_tokens + :prompt_tokens,
+                    completion_tokens = framework_agent_usage_daily.completion_tokens + :completion_tokens,
+                    cost = framework_agent_usage_daily.cost + :cost
+            """), {
+                "date": today,
+                "model": model_key,
+                "provider": provider_name,
+                "module": caller_module,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost": cost,
+            })
+            await db.commit()
+    except Exception as e:
+        logger.warning("Usage logging failed (non-fatal): %s", e)
+
 # ── Load model configuration from models.json ──────────────────────────
 _MODELS_CONFIG_PATH = (
     Path(__file__).resolve().parents[2]
@@ -170,7 +223,6 @@ class ModelGatewayRouter:
             )
         except Exception as exc:
             detail = str(exc)
-            # 尝试从 httpx.HTTPStatusError 中提取响应体
             if hasattr(exc, "response"):
                 try:
                     body = exc.response.text
@@ -182,6 +234,18 @@ class ModelGatewayRouter:
             return {"error": str(exc), "content": f"(Model error: {detail})"}
         if "error" in raw:
             return raw
+        # Log usage cost
+        if "usage" in raw:
+            pt = raw["usage"].get("prompt_tokens", 0) or 0
+            ct = raw["usage"].get("completion_tokens", 0) or 0
+            if pt > 0 or ct > 0:
+                asyncio.create_task(_log_model_usage(
+                    model_key=profile_key,
+                    prompt_tokens=pt,
+                    completion_tokens=ct,
+                    provider_name=profile.get("provider", ""),
+                    caller_module="gateway.chat",
+                ))
         if profile["provider"] in ("local",):
             return raw
         adapter = get_adapter(profile["model"])
@@ -262,17 +326,147 @@ class ModelGatewayRouter:
                 if "error" in raw:
                     raise RuntimeError(raw.get("content") or raw.get("error"))
                 if profile.get("provider") in ("local",):
-                    return raw.get("content", "")
+                    content = raw.get("content", "")
+                    if content:
+                        return content
                 adapter = get_adapter(profile.get("model", key))
                 result = adapter.adapt_response(raw, provider=profile.get("provider", ""))
                 content = (result.get("content") or "").strip()
                 if content:
+                    # Log vision model usage cost
+                    if "usage" in raw:
+                        pt = raw["usage"].get("prompt_tokens", 0) or 0
+                        ct = raw["usage"].get("completion_tokens", 0) or 0
+                        if pt > 0 or ct > 0:
+                            asyncio.create_task(_log_model_usage(
+                                model_key=key,
+                                prompt_tokens=pt,
+                                completion_tokens=ct,
+                                provider_name=profile.get("provider", ""),
+                                caller_module="gateway.describe_image",
+                            ))
                     return content
             except Exception as exc:
                 logger.warning("Vision model %s failed (attempt %d/%d): %s", key, idx + 1, len(candidate_keys), exc)
                 last_error = exc
                 continue
         raise RuntimeError(f"All vision models failed. Last error: {last_error}")
+
+    async def generate_image(
+        self,
+        prompt: str,
+        size: str = "1024x1024",
+        count: int = 1,
+    ) -> dict:
+        """Generate images using configured image generation provider.
+
+        Returns dict with "images" list (each item has "b64" base64 content)
+        and "placeholder" bool.
+        Falls back from primary to fallback chain on failure.
+        """
+        img_cfg = _config.get("model_types", {}).get("image_gen", {})
+        primary = img_cfg.get("primary", "")
+        fallback_chain = img_cfg.get("fallback_chain", [])
+        profiles = img_cfg.get("profiles", {})
+
+        candidate_keys = [primary] + fallback_chain if primary else fallback_chain
+        last_error = None
+
+        for idx, key in enumerate(candidate_keys):
+            profile = profiles.get(key)
+            if not profile:
+                continue
+            provider_name = profile.get("provider", "")
+            provider = self._providers.get(provider_name)
+            if not provider:
+                continue
+            try:
+                from app.config import get_settings
+                cfg = get_settings()
+                api_key = cfg.GPTSTORE_API_KEY
+                base_url = cfg.GPTSTORE_BASE_URL.rstrip("/")
+                proxy_url = cfg.GPTSTORE_PROXY
+
+                if not api_key:
+                    raise NotImplementedError("GPTSTORE_API_KEY not configured")
+
+                import re
+                tool_config: dict = {"type": "image_generation"}
+                m = re.match(r"^(\d+)\s*[xX]\s*(\d+)$", size.strip())
+                if m:
+                    tool_config["dimensions"] = f"{m.group(1)}x{m.group(2)}"
+
+                import httpx
+                import base64 as b64
+                import random
+
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        client_kw: dict = {
+                            "timeout": httpx.Timeout(180.0),
+                            "follow_redirects": True,
+                        }
+                        if proxy_url:
+                            client_kw["proxy"] = httpx.Proxy(url=proxy_url)
+
+                        async with httpx.AsyncClient(**client_kw) as client:
+                            body = {
+                                "model": profile.get("model", "gpt-5.5"),
+                                "input": prompt,
+                                "tools": [tool_config],
+                                "store": False,
+                            }
+                            resp = await client.post(
+                                f"{base_url}/responses",
+                                json=body,
+                                headers={"Authorization": f"Bearer {api_key}"},
+                            )
+                            resp.raise_for_status()
+                            data = resp.json()
+
+                            images: list[dict] = []
+                            for item in data.get("output", []):
+                                if item.get("type") == "image_generation_call":
+                                    raw = item.get("result") or item.get("b64_json")
+                                    if raw:
+                                        images.append({"b64": raw, "index": len(images)})
+
+                            if images:
+                                # Log usage (estimate tokens based on image count)
+                                asyncio.create_task(_log_model_usage(
+                                    model_key=key,
+                                    prompt_tokens=len(prompt),
+                                    completion_tokens=len(images) * 1000,
+                                    provider_name=provider_name,
+                                    caller_module="gateway.generate_image",
+                                ))
+                                return {"images": images, "placeholder": False}
+                            raise ValueError("No image returned (retryable)")
+                    except Exception as e:
+                        last_error = str(e)
+                        el = str(e).lower()
+                        retryable = any(kw in el for kw in [
+                            "not enabled", "no available", "upstream",
+                            "403", "forbidden", "429", "rate limit",
+                            "no image returned", "bad gateway",
+                            "500", "502", "503", "timeout", "connection",
+                        ])
+                        if retryable and attempt < max_retries - 1:
+                            await asyncio.sleep(1.0 + random.random())
+                            continue
+                        elif retryable:
+                            raise RuntimeError(f"Image gen exhausted: {e}")
+                        else:
+                            raise
+            except NotImplementedError:
+                raise
+            except Exception as exc:
+                logger.warning("Image gen provider '%s' failed: %s", key, exc)
+                last_error = exc
+                continue
+
+        raise RuntimeError(f"All image gen providers failed. Last error: {last_error}")
 
     async def check_all_health(self) -> dict[str, bool]:
         result = {}

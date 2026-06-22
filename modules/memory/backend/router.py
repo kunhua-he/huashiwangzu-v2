@@ -13,6 +13,7 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
+from app.services.task_worker import register_task_handler
 
 logger = logging.getLogger("v2.memory.router")
 
@@ -323,7 +324,7 @@ async def http_save(
     # Embedding synchronously (fast)
     await _update_embedding(memory.id, req.text)
     # Distillation async (cheap LLM may take time)
-    asyncio_create_task_safe(_post_save_process(memory.id, req.text, req.source))
+    await _enqueue_post_save(memory.id, req.text, req.source)
     return ApiResponse(data={"id": memory.id, "status": "saved"})
 
 
@@ -464,7 +465,7 @@ async def http_rethink(
     memory.source = "rethink"
     await db.commit()
     # Recompute embedding + summary
-    asyncio_create_task_safe(_post_save_process(memory.id, req.text, "rethink"))
+    await _enqueue_post_save(memory.id, req.text, "rethink")
     return ApiResponse(data={"id": memory.id, "status": "rethought", "old_text": old_text})
 
 
@@ -485,7 +486,7 @@ async def http_replace(
     memory.text = memory.text.replace(req.old_text, req.new_text, 1)
     memory.source = "edit"
     await db.commit()
-    asyncio_create_task_safe(_post_save_process(memory.id, memory.text, "edit"))
+    await _enqueue_post_save(memory.id, memory.text, "edit")
     return ApiResponse(data={"id": memory.id, "status": "replaced"})
 
 
@@ -504,7 +505,7 @@ async def http_insert(
     memory.text += "\n" + req.text
     memory.source = "edit"
     await db.commit()
-    asyncio_create_task_safe(_post_save_process(memory.id, memory.text, "edit"))
+    await _enqueue_post_save(memory.id, memory.text, "edit")
     return ApiResponse(data={"id": memory.id, "status": "inserted"})
 
 
@@ -889,17 +890,29 @@ async def _do_experience_dream(db: AsyncSession) -> dict:
     return report
 
 
-# ── Async fire-and-forget helper ───────────────────────────────
+# ── SystemTaskQueue helper for post-save ─────────────────────────────
 
-def asyncio_create_task_safe(coro):
-    """Safely create an asyncio task, even outside of running loop."""
-    import asyncio
+async def _enqueue_post_save(memory_id: int, content: str, source: str | None) -> None:
+    """Enqueue post-save processing to SystemTaskQueue (non-blocking)."""
     try:
-        loop = asyncio.get_running_loop()
-        if loop.is_running():
-            asyncio.create_task(coro)
-    except RuntimeError:
-        pass
+        from app.models.system import SystemTaskQueue
+        import json
+        async with AsyncSessionLocal() as eq_db:
+            task = SystemTaskQueue(
+                task_type="memory_post_save",
+                parameters=json.dumps({
+                    "memory_id": memory_id,
+                    "content": content,
+                    "source": source,
+                }),
+                status="pending",
+                priority=0,
+                module="memory",
+            )
+            eq_db.add(task)
+            await eq_db.commit()
+    except Exception as e:
+        logger.warning("Post-save enqueue failed (non-fatal): %s", e)
 
 
 # ── Cross-module Capabilities ───────────────────────────────────
@@ -928,9 +941,7 @@ async def _cap_save(params: dict, caller: str) -> dict:
         await db.refresh(memory)
     # Embedding synchronous, distillation async
     await _update_embedding(memory.id, text)
-    asyncio_create_task_safe(
-        _post_save_process(memory.id, text, source)
-    )
+    await _enqueue_post_save(memory.id, text, source)
     return {"success": True, "data": {"id": memory.id}}
 
 
@@ -990,7 +1001,7 @@ async def _cap_rethink(params: dict, caller: str) -> dict:
         memory.source = "rethink"
         await db.commit()
     await _update_embedding(mem_id, text)
-    asyncio_create_task_safe(_post_save_process(mem_id, text, "rethink"))
+    await _enqueue_post_save(mem_id, text, "rethink")
     return {"success": True, "data": {"id": mem_id, "status": "rethought"}}
 
 
@@ -1014,7 +1025,7 @@ async def _cap_replace(params: dict, caller: str) -> dict:
         memory.source = "edit"
         await db.commit()
     await _update_embedding(mem_id, memory.text)
-    asyncio_create_task_safe(_post_save_process(mem_id, memory.text, "edit"))
+    await _enqueue_post_save(mem_id, memory.text, "edit")
     return {"success": True, "data": {"id": mem_id, "status": "replaced"}}
 
 
@@ -1035,7 +1046,7 @@ async def _cap_insert(params: dict, caller: str) -> dict:
         memory.source = "edit"
         await db.commit()
     await _update_embedding(mem_id, memory.text)
-    asyncio_create_task_safe(_post_save_process(mem_id, memory.text, "edit"))
+    await _enqueue_post_save(mem_id, memory.text, "edit")
     return {"success": True, "data": {"id": mem_id, "status": "inserted"}}
 
 
@@ -1078,6 +1089,23 @@ async def _cap_delete(params: dict, caller: str) -> dict:
         await db.delete(memory)
         await db.commit()
     return {"success": True, "data": {"id": mem_id, "status": "deleted"}}
+
+
+# ── Task Handler Registration ──────────────────────────────────
+
+
+async def _handle_post_save(params: dict) -> dict:
+    """Handle memory_post_save task from queue."""
+    memory_id = params.get("memory_id")
+    content = params.get("content", "")
+    source = params.get("source")
+    if not memory_id or not content:
+        return {"error": "Missing required params"}
+    await _post_save_process(memory_id, content, source)
+    return {"status": "ok"}
+
+
+register_task_handler("memory_post_save", _handle_post_save)
 
 
 # ── Capability Registration ─────────────────────────────────────

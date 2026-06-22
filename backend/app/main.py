@@ -26,8 +26,9 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     # Idempotent migration: add scheduling columns to SystemTaskQueue
-    from app.models.system import ensure_framework_scheduling_columns
+    from app.models.system import ensure_framework_scheduling_columns, ensure_usage_daily_table
     await ensure_framework_scheduling_columns()
+    await ensure_usage_daily_table()
 
     # Set up module-specific log files
     from app.services.module_logger import setup_module_logging

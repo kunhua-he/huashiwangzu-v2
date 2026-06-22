@@ -186,12 +186,27 @@ _dream_counter: int = 0
 
 
 async def 触发定期dream(owner_id: int) -> None:
-    """每 DREAM_INTERVAL 次调用触发一次 dream（fire-and-forget）。"""
+    """每 DREAM_INTERVAL 次调用触发一次 dream（通过 SystemTaskQueue）。"""
     global _dream_counter
     _dream_counter += 1
     if _dream_counter % _DREAM_INTERVAL == 0:
-        from 分层记忆 import 触发dream
-        asyncio.create_task(触发dream(owner_id))
+        try:
+            from app.database import AsyncSessionLocal
+            from app.models.system import SystemTaskQueue
+            import json
+            async with AsyncSessionLocal() as db:
+                task = SystemTaskQueue(
+                    task_type="memory_dream",
+                    parameters=json.dumps({"owner_id": owner_id}),
+                    status="pending",
+                    priority=0,
+                    module="agent",
+                    creator_id=owner_id,
+                )
+                db.add(task)
+                await db.commit()
+        except Exception as e:
+            logger.warning("dream enqueue failed (non-fatal): %s", e)
 
 
 # ── 批4 韧性：降级链聊天（供 router 替换裸 gateway_router.chat） ──────

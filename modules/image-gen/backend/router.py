@@ -1,22 +1,18 @@
 """FastAPI router for image-gen module.
 
-Real image generation via GPTStore /v1/responses (gpt-5.5 + image_generation).
-Falls back to PIL placeholder when GPTSTORE_API_KEY is not configured.
+Image generation via framework gateway (centralized). Falls back to PIL
+placeholder when the gateway's image gen provider is not configured.
 """
-import asyncio
 import base64
 import io
 import logging
-import random
 import re
 import time
 
-import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
@@ -38,103 +34,32 @@ async def _call_image_model(
     style: str = "",
     count: int = 1,
 ) -> list[bytes]:
-    """Call GPTStore Responses API to generate images.
+    """Call image generation through framework gateway instead of direct httpx.
 
-    Reads GPTSTORE_API_KEY / GPTSTORE_BASE_URL / GPTSTORE_PROXY from Settings.
     Returns list of decoded PNG bytes.
 
     Raises:
-        NotImplementedError — GPTSTORE_API_KEY not set (caller falls back to placeholder).
+        NotImplementedError — gateway image gen not configured.
         RuntimeError — all retries exhausted on transient errors.
     """
-    cfg = get_settings()
-    api_key = cfg.GPTSTORE_API_KEY
-    base_url = cfg.GPTSTORE_BASE_URL.rstrip("/")
-    proxy_url = cfg.GPTSTORE_PROXY
+    from app.gateway.router import gateway_router
 
-    if not api_key:
-        raise NotImplementedError("GPTSTORE_API_KEY not configured")
+    result = await gateway_router.generate_image(
+        prompt=prompt, size=size, count=count,
+    )
 
-    tool_config: dict = {"type": "image_generation"}
-    try:
-        m = re.match(r"^(\d+)\s*[xX]\s*(\d+)$", size.strip())
-        if m:
-            tool_config["dimensions"] = f"{m.group(1)}x{m.group(2)}"
-    except (ValueError, AttributeError):
-        pass
+    images: list[bytes] = []
+    for img_data in result.get("images", []):
+        b64_str = img_data.get("b64", "")
+        if b64_str:
+            images.append(base64.b64decode(b64_str))
 
-    max_retries = 8
-    last_error = ""
+    if not images:
+        if "error" in result:
+            raise RuntimeError(result["error"])
+        raise RuntimeError("No images returned from gateway")
 
-    for attempt in range(max_retries):
-        try:
-            client_kw: dict = {
-                "timeout": httpx.Timeout(180.0),
-                "follow_redirects": True,
-            }
-            if proxy_url:
-                client_kw["proxy"] = httpx.Proxy(url=proxy_url)
-
-            async with httpx.AsyncClient(**client_kw) as client:
-                body = {
-                    "model": "gpt-5.5",
-                    "input": prompt,
-                    "tools": [tool_config],
-                    "store": False,
-                }
-                resp = await client.post(
-                    f"{base_url}/responses",
-                    json=body,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-                images: list[bytes] = []
-                for item in data.get("output", []):
-                    if item.get("type") == "image_generation_call":
-                        raw = item.get("result") or item.get("b64_json")
-                        if raw:
-                            images.append(base64.b64decode(raw))
-
-                if not images:
-                    # 外层 200 但内层没出图(常见:image_generation_call 里塞了 502/错误)→ 当可重试
-                    raise ValueError("no image returned (retryable upstream)")
-
-                return images
-
-        except Exception as e:
-            last_error = str(e)
-            el = last_error.lower()
-            retryable = any(kw in el for kw in [
-                "not enabled for this group",
-                "no available compatible accounts",
-                "upstream access",
-                "403", "forbidden",          # 中转站轮到没图权限的号,换一发可能就中
-                "429", "rate limit",         # 限流
-                "no image returned",         # 外层200内层没出图(内层502/错误),换一发
-                "bad gateway",               # 502 网关错(代理/上游)
-                "500", "502", "503",
-                "timeout",
-                "connection error",
-                "connection refused",
-            ])
-            if retryable and attempt < max_retries - 1:
-                wait = 1.0 + random.random()
-                logger.warning(
-                    "Image gen attempt %d/%d failed (retryable): %s, retry in %.1fs",
-                    attempt + 1, max_retries, last_error[:120], wait,
-                )
-                await asyncio.sleep(wait)
-            elif retryable:
-                logger.error(
-                    "Image gen all %d attempts exhausted: %s",
-                    max_retries, last_error[:200],
-                )
-                raise RuntimeError("中转站图号暂不可用,请稍后重试")
-            else:
-                logger.error("Image gen non-retryable error: %s", last_error[:200])
-                raise
+    return images
 
 
 # ---------------------------------------------------------------------------

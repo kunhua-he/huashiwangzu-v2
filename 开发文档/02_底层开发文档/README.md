@@ -9,12 +9,12 @@
 | 项 | 状态 |
 |----|------|
 | 后端框架 | FastAPI，入口 `backend/app/main.py` |
-| 平台 router | 22 个（auth/desktop/files/file_shares/recycle/users/roles/system/logs/dashboard/settings/backup/tasks/notifications/feedback/office/editors/app_manager/menu 等） |
-| 数据库 | PostgreSQL + SQLAlchemy async + Alembic，21 张 `framework_*` 表 |
-| 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容协议，指数退避重试。配置：模型档案/provider 在 `backend/data/config/models.json`；API key 在 `backend/.env`（opencode go 用 `DEEPSEEK_API_KEY`）|
+| 平台 router | 22 个（auth/desktop/files/file_shares/recycle/users/roles/system/logs/dashboard/settings/backup/tasks/notifications/feedback/office/editors/app_manager/menu/gateway 等） |
+| 数据库 | PostgreSQL + SQLAlchemy async + Alembic，21 张 `framework_*` 表 + pgvector 扩展 |
+| 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容协议，含降级链（primary → backup → cheap → echo）和视觉描述（MiMo VLM）。配置：模型档案/provider 在 `backend/data/config/models.json`；API key 在 `backend/.env`（opencode go 用 `DEEPSEEK_API_KEY`）|
 | 模型看门狗 | `backend/app/services/model_watchdog/` |
 | 模块代码 | 平台层已清空（AI 助手/知识库服务及 router 已删除） |
-| pytest | 72 通过（含 G9–G12：任务队列 worker / 上传上限 / 去重收口 / 网关 HTTP / 跨模块注册表 修复后）|
+| pytest | 以 `cd backend && .venv/bin/python -m pytest` 当前结果为准 |
 | 异常处理 | 统一 `{success, data, error}` + HTTP 状态码 |
 
 ## 职责清单

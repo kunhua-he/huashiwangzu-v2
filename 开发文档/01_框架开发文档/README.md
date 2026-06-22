@@ -18,11 +18,11 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 | 桌面壳 | 窗口系统、任务栏、启动器、托盘、右键菜单、应用注册表、文件关联调度器 |
 | 后端入口 | `backend/app/main.py`，22 个平台 router，统一响应 `{success, data, error}` |
 | 数据库 | 21 张 `framework_*` 表，干净基线迁移 `v2_clean_framework_baseline` |
-| 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容（含 MiMo VLM 云视觉），指数退避重试 |
+| 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容（含 MiMo VLM 云视觉），指数退避重试 + 降级链 |
 | 模块模板 | `modules/_template/`，含 sandbox 开发环境 + runtime SDK 壳 |
-| 业务模块 | 已接入 12 个：agent（AI助手，含三层提示词/桌面感知/终端工具）、codemap（代码地图）、desktop-tools、terminal-tools、excel-engine、6 个格式解析（pdf/docx/pptx/xlsx/text/image-vision）、hello-world 样板（另含模板 1 个 `_template`）。知识库待迁 |
+| 业务模块 | 25 个业务模块（详见总索引模块地图），不逐一列出——框架接口不随模块膨胀 |
 | 前端构建 | `vue-tsc -b` 0 错误，Element Plus 最大 chunk ~475 kB |
-| 后端测试 | pytest 72 通过（G9–G12 修复后）|
+| 后端测试 | pytest 通过（当前数字以 `cd backend && .venv/bin/python -m pytest` 为准）|
 
 ## 本地运行入口与端口(分清主框架 vs 模块沙盒)
 
@@ -31,7 +31,7 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 | 跑什么 | 谁 | 地址/端口 | 怎么起 | 常驻? |
 |--------|----|-----------|--------|-------|
 | **主框架·前端** | 桌面壳(加载所有模块,框架统一登录发 token) | `http://127.0.0.1:5173` | `cd frontend && npm run dev` | 否(开发服务器,关终端就没) |
-| **主框架·后端** | 平台服务层 FastAPI | `127.0.0.1:33000` | `scripts/start_backend.sh`(watchdog 守护) | ✅ 是(崩了自动拉起) |
+| **主框架·后端** | 平台服务层 FastAPI（workers 3） | `127.0.0.1:33000` | `scripts/start_backend.sh`(watchdog 守护) | ✅ 是(崩了自动拉起) |
 | 模块沙盒·agent | Agent 模块单独调试壳(**自己的登录表单**,非框架登录态) | 前端 `127.0.0.1:5180` / 后端 `38010` | `cd modules/agent/sandbox && bash run.sh` | 否 |
 
 **关键区别**：

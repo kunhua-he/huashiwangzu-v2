@@ -35,7 +35,8 @@ if str(ENGINE_DIR) not in sys.path:
 import 事件存储
 from 事件存储 import record_event
 import 引擎
-from 引擎 import 装配上下文
+from 引擎 import 装配上下文, chat_with_degradation_chain, chat_stream_with_degradation_chain
+from 粘滞检测 import 检测粘滞, 重置 as 重置粘滞
 
 # 注册后台任务处理器（框架 worker 自动消费）
 register_task_handler("profile_evolve", handle_profile_evolve)
@@ -140,7 +141,7 @@ def _tool_calls_for_history(tool_calls: list[dict]) -> list[dict]:
     return normalized
 
 
-async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: list[str], timeline: list[dict]):
+async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: list[str], timeline: list[dict], profile_key: str = "deepseek-v4-flash"):
     """Stream final content while checking for inline XML tool calls.
 
     Buffers token events, checks accumulated content for inline tool calls when
@@ -152,7 +153,7 @@ async def _yield_final_stream(kwargs: dict, full: list[str], thinking_parts: lis
     logger.info("[DIAG] _yield_final_stream ENTER")
     event_count = 0
     token_buffer: list[tuple[str, str]] = []
-    async for event in gateway_router.chat_stream(**kwargs):
+    async for event in chat_stream_with_degradation_chain(kwargs["messages"], profile_key, kwargs.get("tools")):
         event_count += 1
         event_type = event.get("type")
         content = str(event.get("content") or "")
@@ -356,15 +357,16 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
         _pending_events: list[dict] = []
         _event_round = 0
         try:
+            _session_key = f"conv_{payload.conversation_id}"
+            重置粘滞(_session_key)
             for _round in range(MAX_TOOL_ROUNDS):
                 logger.info("[DIAG] event_stream tool_round %d/%d", _round + 1, MAX_TOOL_ROUNDS)
-                kwargs: dict = {"messages": messages}
-                if payload.profile_key:
-                    kwargs["profile_key"] = payload.profile_key
-                if tools:
-                    kwargs["tools"] = tools
-                logger.info("[DIAG] event_stream calling gateway_router.chat")
-                result = await gateway_router.chat(**kwargs)
+                logger.info("[DIAG] event_stream calling chat_with_degradation_chain")
+                result = await chat_with_degradation_chain(
+                    messages,
+                    payload.profile_key or "deepseek-v4-flash",
+                    tools,
+                )
                 logger.info("[DIAG] event_stream chat returned tool_calls=%s error=%s",
                     bool(result.get("tool_calls")), bool(result.get("error")))
                 if result.get("error"):
@@ -394,7 +396,7 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                     if payload.profile_key:
                         stream_kwargs["profile_key"] = payload.profile_key
                     inline_from_stream = None
-                    async for chunk in _yield_final_stream(stream_kwargs, full, thinking_parts, timeline):
+                    async for chunk in _yield_final_stream(stream_kwargs, full, thinking_parts, timeline, profile_key=payload.profile_key or "deepseek-v4-flash"):
                         if isinstance(chunk, dict) and chunk.get("type") == "_inline_tool_calls":
                             inline_from_stream = chunk.get("tool_calls", [])
                         else:
@@ -571,6 +573,33 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db), user: U
                             },
                             "llm_response_id": None,
                         })
+
+                # ── 批4：粘滞检测 —— 每轮工具执行完后检查 ────────────────
+                _stuck_check = {"stuck": False}
+                if tool_calls:
+                    for tc in tool_calls:
+                        fn = tc.get("function", tc)
+                        _stuck_check = 检测粘滞(
+                            tool_name=fn.get("name", ""),
+                            tool_args=fn.get("arguments", {}),
+                            error_text=None, is_empty_response=False,
+                            session_key=_session_key,
+                        )
+                        if _stuck_check.get("stuck"):
+                            break
+                else:
+                    has_error = bool(result.get("error"))
+                    is_empty = not result.get("content") and not result.get("tool_calls")
+                    _stuck_check = 检测粘滞(
+                        tool_name=None, tool_args=None,
+                        error_text=str(result.get("error"))[:100] if has_error else None,
+                        is_empty_response=is_empty,
+                        session_key=_session_key,
+                    )
+                if _stuck_check.get("stuck"):
+                    logger.warning("粘滞检测打断工具循环: %s", _stuck_check["reason"])
+                    yield f"data: {json.dumps({'type': 'error', 'content': _stuck_check['reason']}, ensure_ascii=False)}\n\n".encode("utf-8")
+                    break
         except Exception as exc:
             logger.info("[DIAG] event_stream EXCEPTION %s: %s", type(exc).__name__, str(exc)[:300])
             yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n".encode("utf-8")

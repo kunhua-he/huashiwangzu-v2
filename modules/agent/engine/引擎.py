@@ -1,18 +1,21 @@
-"""引擎编排壳：暴露装配上下文()等给 router，预留压缩接口。"""
+"""引擎编排壳：暴露装配上下文()等给 router。批4：压缩器、降级链接入。"""
 import asyncio
 import json
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 import conversation_service as conv_svc
 from 事件存储 import read_events, project_to_messages, record_event
-from 预算分配器 import assemble_context, estimate_tokens
+from 预算分配器 import assemble_context, estimate_tokens, get_context_budget
 from 分层记忆 import 记一笔 as _分层记忆_记一笔, 召回记忆 as _分层记忆_召回记忆, 即时融合 as _分层记忆_即时融合
 from 经验记忆 import 匹配经验 as _经验_匹配, 保存经验 as _经验_保存, 经验反馈 as _经验_反馈, 格式化注入段 as _经验_格式化
+from 压缩器 import 压缩中间 as _压缩中间, 硬截断尾部 as _硬截断尾部
+from 降级链 import chat_with_fallback as _chat_with_fallback, chat_stream_with_fallback as _chat_stream_with_fallback
 
 logger = logging.getLogger("v2.agent.engine.引擎")
 
 # dream 触发节流：每 N 轮对话触发一次
 _DREAM_INTERVAL = 5
+_COMPRESSION_TOKEN_HEADROOM = 5000
 
 
 async def 装配上下文(
@@ -24,14 +27,42 @@ async def 装配上下文(
 ) -> tuple[list[dict], dict]:
     try:
         projected = await project_to_messages(db, conversation_id)
+        all_events = await read_events(db, conversation_id) if projected else []
     except Exception as e:
         logger.warning("投影事件失败，回退空投影: %s", e)
         projected = []
+        all_events = []
+
+    # ── 批4：预算超限时调压缩器 ──────────────────────────────────────────
     try:
         system_content = await _build_system_content(db, owner_id)
     except Exception as e:
         logger.warning("构建系统提示词失败: %s", e)
         system_content = "You are a helpful AI assistant."
+
+    budget = get_context_budget(profile_key)
+    projected_tokens = sum(
+        max(estimate_tokens([m]), 0) for m in projected[-100:]
+    ) if projected else 0
+    system_tokens = max(len(system_content) // 2, 0)
+    input_tokens = max(len(current_user_input) // 2, 0)
+    estimated_total = system_tokens + input_tokens + projected_tokens + 4096
+
+    if budget is not None and estimated_total > budget + _COMPRESSION_TOKEN_HEADROOM and len(all_events) > 30:
+        try:
+            logger.info("预算超限(est=%d > budget=%d), 触发压缩", estimated_total, budget)
+            result = await _压缩中间(db, conversation_id, all_events, profile_key)
+            if result.get("status") == "compressed":
+                projected = await project_to_messages(db, conversation_id)
+                logger.info("压缩后投影完毕, 事件数=%d", len(projected))
+        except Exception as e:
+            logger.warning("压缩失败（降级到硬截断）: %s", e)
+            try:
+                await _硬截断尾部(db, conversation_id, all_events)
+                projected = await project_to_messages(db, conversation_id)
+            except Exception as e2:
+                logger.warning("硬截断也失败: %s", e2)
+
     try:
         messages, diagnosis = assemble_context(projected, system_content, current_user_input, profile_key)
     except Exception as e:
@@ -104,10 +135,22 @@ async def 记一笔(db: AsyncSession, conversation_id: int, owner_id: int, messa
         return {"status": "fallback", "error": str(e)}
 
 
-async def 压缩(db: AsyncSession, conversation_id: int) -> dict:
-    """批3：事件压缩。当前占位，返回空。"""
-    logger.info("压缩 [批3预留接口] (conv=%s)", conversation_id)
-    return {"status": "placeholder", "note": "【批3实现】"}
+async def 压缩(db: AsyncSession, conversation_id: int, profile_key: str = "gemma-4") -> dict:
+    """批4：事件压缩。调压缩器插入 compaction 事件，不删原始事件。"""
+    logger.info("压缩 (conv=%s)", conversation_id)
+    try:
+        all_events = await read_events(db, conversation_id)
+        if len(all_events) <= 30:
+            return {"status": "skipped", "reason": "事件数不足"}
+        result = await _压缩中间(db, conversation_id, all_events, profile_key)
+        return result
+    except Exception as e:
+        logger.warning("压缩失败: %s", e)
+        try:
+            all_events = await read_events(db, conversation_id)
+            return await _硬截断尾部(db, conversation_id, all_events)
+        except Exception as e2:
+            return {"status": "error", "error": str(e2)}
 
 
 async def 召回记忆(db: AsyncSession, owner_id: int, query: str) -> list[dict]:
@@ -149,6 +192,36 @@ async def 触发定期dream(owner_id: int) -> None:
     if _dream_counter % _DREAM_INTERVAL == 0:
         from 分层记忆 import 触发dream
         asyncio.create_task(触发dream(owner_id))
+
+
+# ── 批4 韧性：降级链聊天（供 router 替换裸 gateway_router.chat） ──────
+
+async def chat_with_degradation_chain(
+    messages: list[dict],
+    profile_key: str,
+    tools: list[dict] | None = None,
+) -> dict:
+    """用降级链包装模型调用。主模型失败 → fallback_chain → 本地兜底。"""
+    try:
+        return await _chat_with_fallback(messages, profile_key, tools)
+    except Exception as e:
+        logger.error("降级链chat全部失败: %s", e)
+        return {"error": str(e), "content": f"(模型调用失败：{e})"}
+
+
+async def chat_stream_with_degradation_chain(
+    messages: list[dict],
+    profile_key: str,
+    tools: list[dict] | None = None,
+):
+    """流式降级链。首包失败可降级；已经开始流式中途断给清晰错误。"""
+    try:
+        async for event in _chat_stream_with_fallback(messages, profile_key, tools):
+            yield event
+    except Exception as e:
+        logger.error("降级链流式chat全部失败: %s", e)
+        yield {"type": "error", "content": f"(流式模型调用失败：{e})"}
+    yield {"type": "done"}
 
 
 # ── 批3 成功经验：蒸馏 + 结算 ──────────────────────────────

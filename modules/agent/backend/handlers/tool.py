@@ -16,9 +16,9 @@ from app.core.exceptions import PermissionDenied
 from app.gateway.router import gateway_router
 from app.services.module_registry import register_capability
 
-from .. import conversation_service as conv_svc
-from .. import tool_discovery
-from ..model_client import parse_inline_tool_calls, final_clean_content
+from ..services import conversation_service as conv_svc
+from ..services import tool_discovery
+from ..services.model_client import parse_inline_tool_calls, final_clean_content
 
 logger = logging.getLogger("v2.agent").getChild("handlers.tool")
 

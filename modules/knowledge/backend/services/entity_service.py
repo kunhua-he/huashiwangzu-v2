@@ -113,7 +113,7 @@ async def process_document_entities(
 
     返回统计：{"entities_found": int, "relationships_found": int, "errors": [...]}
     """
-    from .models import (
+    from ..models import (
         KbEntityDictionary, KbEntityAlias, KbGraphNode, KbGraphEdge,
         KbChunkEntity, KbEvidence, KbGovernanceCandidate,
     )
@@ -311,7 +311,7 @@ async def process_document_entities_from_fusions(
     从 kb_page_fusions 读取各页融合正文 → LLM 抽取 → 去重 → 写入图谱表。
     幂等：每次重跑先清该文档的旧实体/图谱数据（kb_entity_dictionary 保留已有条目供其他文档引用）。
     """
-    from .models import (
+    from ..models import (
         KbEntityDictionary, KbEntityAlias, KbGraphNode, KbGraphEdge,
         KbChunkEntity, KbEvidence, KbGovernanceCandidate,
         KbPageFusion,
@@ -522,7 +522,7 @@ async def process_document_entities_from_fusions(
 
 async def get_entity_dictionary(db: AsyncSession, owner_id: int, keyword: str = "") -> list[dict]:
     """查询实体词典。"""
-    from .models import KbEntityDictionary
+    from ..models import KbEntityDictionary
 
     stmt = select(KbEntityDictionary).where(KbEntityDictionary.owner_id == owner_id)
     if keyword:
@@ -545,7 +545,7 @@ async def get_entity_dictionary(db: AsyncSession, owner_id: int, keyword: str = 
 
 async def get_graph_context(db: AsyncSession, owner_id: int, entity_id: int) -> dict:
     """查询实体在图谱中的上下文（关联节点 + 边）。"""
-    from .models import KbGraphNode, KbGraphEdge
+    from ..models import KbGraphNode, KbGraphEdge
 
     # 查当前节点
     node_r = await db.execute(
@@ -591,7 +591,7 @@ async def get_graph_context(db: AsyncSession, owner_id: int, entity_id: int) -> 
 
 async def get_page_fusion(db: AsyncSession, document_id: int, page: int) -> dict | None:
     """获取页级融合内容。"""
-    from .models import KbPageFusion
+    from ..models import KbPageFusion
 
     r = await db.execute(
         select(KbPageFusion).where(
@@ -614,7 +614,7 @@ async def get_page_fusion(db: AsyncSession, document_id: int, page: int) -> dict
 # ── 框架任务 handler:第6层图谱重建(后台,防同步超时) ────────────────
 async def _graph_handler(params: dict) -> dict:
     """框架后台任务 handler:处理 kb_graph 任务(从融合层重建实体/图谱)。"""
-    from .models import KbDocument
+    from ..models import KbDocument
 
     document_id = int(params.get("document_id", 0))
     if document_id <= 0:

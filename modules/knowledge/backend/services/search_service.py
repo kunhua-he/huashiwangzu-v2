@@ -28,7 +28,7 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 
 async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int = 20) -> list[dict]:
     """关键词全文检索（ILIKE on text + keywords）。"""
-    from .models import KbChunk
+    from ..models import KbChunk
 
     if not query.strip():
         return []
@@ -97,7 +97,7 @@ async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int
 
 async def vector_search(db: AsyncSession, query: str, owner_id: int, top_k: int = 20) -> list[dict]:
     """向量检索：用 query embedding 与已存储 chunk embedding 计算余弦相似度。"""
-    from .models import KbChunk
+    from ..models import KbChunk
 
     # 获取 query 向量
     try:
@@ -234,7 +234,7 @@ async def hybrid_search(
 
 async def get_document_chunks(db: AsyncSession, document_id: int) -> list[dict]:
     """获取某文档的所有内容块（按页和块索引排序）。"""
-    from .models import KbChunk
+    from ..models import KbChunk
 
     stmt = (
         select(KbChunk)

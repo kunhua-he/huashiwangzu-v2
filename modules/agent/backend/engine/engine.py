@@ -4,7 +4,7 @@ import json
 import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from .. import conversation_service as conv_svc
+from ..services import conversation_service as conv_svc
 from .event_store import read_events, project_to_messages, record_event
 from .budget_allocator import assemble_context as _budget_assemble_context, estimate_tokens, get_context_budget
 from .layered_memory import record as _layered_memory_record, recall as _layered_memory_recall, fuse as _layered_memory_fuse

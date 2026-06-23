@@ -14,28 +14,28 @@ from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
 
-from .document_service import (
+from .services.document_service import (
     register_document, list_documents, get_document, soft_delete_document,
     parse_and_index_document, resolve_user_id,
 )
-from .embedding_service import get_chunk_by_id
-from .search_service import hybrid_search, get_document_chunks
-from .entity_service import get_entity_dictionary, get_graph_context, get_page_fusion, process_document_entities_from_fusions
-from .governance_service import (
+from .services.embedding_service import get_chunk_by_id
+from .services.search_service import hybrid_search, get_document_chunks
+from .services.entity_service import get_entity_dictionary, get_graph_context, get_page_fusion, process_document_entities_from_fusions
+from .services.governance_service import (
     list_governance_candidates, approve_candidate, reject_candidate,
     merge_entities, get_pending_count, get_evidence_detail, calibrate_extraction,
 )
-from .raw_collection_service import (
+from .services.raw_collection_service import (
     get_raw_data,
     get_ocr_words,
 )
-from .fusion_service import (
+from .services.fusion_service import (
     get_page_fusion_detail,
 )
 from .init_db import _run_startup_init
-from .profile_service import get_document_profile
-from .relation_service import get_file_relations, get_relation_graph
-from .progress_service import get_document_progress, list_documents_progress
+from .services.profile_service import get_document_profile
+from .services.relation_service import get_file_relations, get_relation_graph
+from .services.progress_service import get_document_progress, list_documents_progress
 from . import pipeline_service  # noqa: F401 注册 kb_pipeline handler
 
 logger = logging.getLogger("v2.knowledge").getChild("router")
@@ -587,7 +587,7 @@ async def _cap_search(params: dict, caller: str) -> dict:
     async with AsyncSessionLocal() as db:
         results = await hybrid_search(db, query, owner_id, top_k=top_k, use_rerank=False)
         # 为每个结果补充页级融合内容和文档名称
-        from .entity_service import get_page_fusion as _get_page_fusion
+        from .services.entity_service import get_page_fusion as _get_page_fusion
         from .models import KbDocument
         enriched = []
         doc_cache: dict[int, str] = {}
@@ -741,7 +741,7 @@ INGEST_EXTENSIONS = {
 
 async def _cap_ingest(params: dict, caller: str) -> dict:
     """把已上传文件登记进知识库并触发后台分析（幂等、类型白名单）。"""
-    from .document_service import register_document
+    from .services.document_service import register_document
     from .models import KbDocument
     from app.models.file import File
 

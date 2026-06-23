@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.services.task_worker import register_task_handler
 
-from .models import KbDocument, KbRawData
+from ..models import KbDocument, KbRawData
 from .parsing_service import parse_document, IMAGE_FORMATS
 from .pdf_render_service import render_page_to_image, get_pdf_page_count
 

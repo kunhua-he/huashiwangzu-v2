@@ -14,7 +14,7 @@ from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
 from app.services.task_worker import register_task_handler
 
-from .models import KbDocument, KbPageFusion, KbRawData
+from ..models import KbDocument, KbPageFusion, KbRawData
 
 logger = logging.getLogger("v2.knowledge").getChild("fusion")
 
@@ -302,7 +302,7 @@ async def index_fusions_to_chunks(db: AsyncSession, document_id: int, owner_id: 
     重建式:先清掉该文档旧 chunk(无论来自老解析还是上轮融合),再按融合层重灌。
     """
     from sqlalchemy import delete as sa_delete
-    from .models import KbChunk
+    from ..models import KbChunk
     from .embedding_service import chunk_and_embed, store_chunks
 
     # 读各页融合正文

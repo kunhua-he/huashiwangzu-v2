@@ -6,7 +6,7 @@ import logging
 from sqlalchemy import select, func, or_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import (
+from ..models import (
     KbDocument, KbEntityDictionary, KbGraphEdge,
     KbFileRelation, KbGovernanceCandidate, KbDocumentProfile,
 )
@@ -18,7 +18,7 @@ async def get_dashboard_stats(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("editor")),
 ):
-    from .models import (
+    from ..models import (
         KbDocument, KbEntityDictionary, KbGraphNode, KbGraphEdge,
         KbFileRelation, KbGovernanceCandidate, KbDocumentProfile,
     )

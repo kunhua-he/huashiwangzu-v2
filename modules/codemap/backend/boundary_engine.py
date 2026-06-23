@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .graph import CodeGraph, get_graph
+from .graph.graph import CodeGraph, get_graph
 
 logger = logging.getLogger("v2.codemap").getChild("boundary")
 

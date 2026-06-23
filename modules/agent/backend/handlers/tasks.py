@@ -15,9 +15,9 @@ import logging
 from app.services.module_registry import call_capability
 from app.services.task_worker import register_task_handler
 
-from ..profile_evolve import handle_profile_evolve
-from .. import tool_discovery
-from .. import conversation_service as conv_svc
+from ..services.profile_evolve import handle_profile_evolve
+from ..services import tool_discovery
+from ..services import conversation_service as conv_svc
 
 logger = logging.getLogger("v2.agent").getChild("handlers.tasks")
 
@@ -149,7 +149,7 @@ async def _handle_slow_tool(params: dict) -> dict:
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         try:
-            from .. import conversation_service as conv_svc2
+            from ..services import conversation_service as conv_svc2
             result_text = json.dumps(tool_result, ensure_ascii=False, default=str)
             if isinstance(tool_result, dict) and tool_result.get("error"):
                 await conv_svc2.add_message(

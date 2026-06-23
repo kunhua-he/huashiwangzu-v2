@@ -41,7 +41,7 @@ async def register_document(
     catalog_id: int | None = None,
 ) -> dict:
     """将框架文件登记为知识库文档。"""
-    from .models import KbDocument
+    from ..models import KbDocument
 
     file = await check_file_access(db, file_id, owner_id)
     ext = (file.extension or "").lower().strip(".")
@@ -132,7 +132,7 @@ async def list_documents(
     page_size: int = 20,
 ) -> dict:
     """列出知识库文档。"""
-    from .models import KbDocument
+    from ..models import KbDocument
 
     stmt = select(KbDocument).where(KbDocument.owner_id == owner_id, KbDocument.deleted == False)
     count_stmt = select(func.count(KbDocument.id)).where(KbDocument.owner_id == owner_id, KbDocument.deleted == False)
@@ -157,7 +157,7 @@ async def list_documents(
 
 async def get_document(db: AsyncSession, document_id: int, owner_id: int) -> dict:
     """获取文档详情。"""
-    from .models import KbDocument
+    from ..models import KbDocument
 
     r = await db.execute(
         select(KbDocument).where(
@@ -174,7 +174,7 @@ async def get_document(db: AsyncSession, document_id: int, owner_id: int) -> dic
 
 async def soft_delete_document(db: AsyncSession, document_id: int, owner_id: int) -> bool:
     """软删除知识库文档。"""
-    from .models import KbDocument
+    from ..models import KbDocument
 
     r = await db.execute(
         select(KbDocument).where(
@@ -193,7 +193,7 @@ async def soft_delete_document(db: AsyncSession, document_id: int, owner_id: int
 
 async def create_page_fusions(db: AsyncSession, document_id: int, owner_id: int, blocks: list[dict]) -> int:
     """按页聚合内容并写入 kb_page_fusions。"""
-    from .models import KbPageFusion
+    from ..models import KbPageFusion
 
     page_texts: dict[int, list[str]] = {}
     for block in blocks:
@@ -232,7 +232,7 @@ async def parse_and_index_document(
     注意：实体/图谱抽取建议通过后台任务 kb_pipeline 完成（process_document_entities_from_fusions），
     本方法仅提供基础的解析/分块/向量化能力。extract_graph 默认为 False。
     """
-    from .models import KbDocument, KbChunk, KbPageFusion
+    from ..models import KbDocument, KbChunk, KbPageFusion
 
     # 查询文档并抢占任务状态，防多 worker 重复处理
     r = await db.execute(

@@ -14,7 +14,7 @@ from app.gateway.router import gateway_router
 from app.services.model_services import get_embedding
 from app.services.task_worker import register_task_handler
 
-from .models import KbDocument, KbPageFusion, KbDocumentProfile
+from ..models import KbDocument, KbPageFusion, KbDocumentProfile
 
 logger = logging.getLogger("v2.knowledge").getChild("profile")
 

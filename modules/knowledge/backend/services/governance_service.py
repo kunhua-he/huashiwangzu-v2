@@ -19,7 +19,7 @@ async def list_governance_candidates(
     page_size: int = 20,
 ) -> dict:
     """列出治理候选条目，支持按状态筛选。"""
-    from .models import KbGovernanceCandidate
+    from ..models import KbGovernanceCandidate
 
     stmt = select(KbGovernanceCandidate).where(KbGovernanceCandidate.audit_status == audit_status)
     total_stmt = select(func.count(KbGovernanceCandidate.id)).where(KbGovernanceCandidate.audit_status == audit_status)
@@ -56,7 +56,7 @@ async def list_governance_candidates(
 
 async def approve_candidate(db: AsyncSession, candidate_id: int, user_id: int) -> bool:
     """审批通过治理候选 → 标记 confirmed。"""
-    from .models import KbGovernanceCandidate, KbEntityDictionary
+    from ..models import KbGovernanceCandidate, KbEntityDictionary
 
     c_r = await db.execute(
         select(KbGovernanceCandidate).where(KbGovernanceCandidate.id == candidate_id)
@@ -87,7 +87,7 @@ async def approve_candidate(db: AsyncSession, candidate_id: int, user_id: int) -
 
 async def reject_candidate(db: AsyncSession, candidate_id: int, user_id: int) -> bool:
     """驳回治理候选 → 标记 rejected。"""
-    from .models import KbGovernanceCandidate, KbEntityDictionary
+    from ..models import KbGovernanceCandidate, KbEntityDictionary
 
     c_r = await db.execute(
         select(KbGovernanceCandidate).where(KbGovernanceCandidate.id == candidate_id)
@@ -124,7 +124,7 @@ async def merge_entities(
     reason: str = "",
 ) -> bool:
     """合并实体：源实体 → 目标实体。"""
-    from .models import (
+    from ..models import (
         KbEntityDictionary, KbEntityAlias, KbChunkEntity,
         KbEvidence, KbGraphNode, KbEntityMergeLog,
     )
@@ -197,7 +197,7 @@ async def merge_entities(
 
 async def get_pending_count(db: AsyncSession, owner_id: int | None = None) -> int:
     """获取待确认的治理候选数量。"""
-    from .models import KbGovernanceCandidate
+    from ..models import KbGovernanceCandidate
 
     stmt = select(func.count(KbGovernanceCandidate.id)).where(KbGovernanceCandidate.audit_status == "pending")
     if owner_id is not None:
@@ -208,7 +208,7 @@ async def get_pending_count(db: AsyncSession, owner_id: int | None = None) -> in
 
 async def get_evidence_detail(db: AsyncSession, owner_id: int, entity_id: int) -> list[dict]:
     """查询某实体的证据详情。"""
-    from .models import KbEvidence
+    from ..models import KbEvidence
 
     r = await db.execute(
         select(KbEvidence)
@@ -239,7 +239,7 @@ async def calibrate_extraction(
     user_id: int | None = None,
 ) -> bool:
     """校准抽取结果：修改实体名或类别。"""
-    from .models import KbGovernanceCandidate, KbEntityDictionary
+    from ..models import KbGovernanceCandidate, KbEntityDictionary
 
     c_r = await db.execute(
         select(KbGovernanceCandidate).where(KbGovernanceCandidate.id == candidate_id)

@@ -16,9 +16,9 @@ from app.models.user import User
 from app.schemas.common import ApiResponse
 
 from .init_db import ensure_default_prompts, ensure_timeline_column, ensure_user_profile, update_existing_prompts, ensure_event_table, ensure_processing_column, run_init
-from . import conversation_service as conv_svc
-from . import agent_config_service
-from . import tool_discovery
+from .services import conversation_service as conv_svc
+from .services import agent_config_service
+from .services import tool_discovery
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 

@@ -21,7 +21,7 @@ from app.core.exceptions import ValidationError
 from app.schemas.common import ApiResponse
 
 from ..engine.event_store import read_events
-from ..action_policy import resolve_approval, list_pending_approvals
+from ..services.action_policy import resolve_approval, list_pending_approvals
 
 logger = logging.getLogger("v2.agent").getChild("handlers.admin")
 

@@ -180,7 +180,7 @@ async def chunk_and_embed(
 
 async def store_chunks(db: AsyncSession, chunks: list[dict]) -> int:
     """批量写入 kb_chunks。返回写入条数。"""
-    from .models import KbChunk
+    from ..models import KbChunk
 
     stored = 0
     for ch in chunks:
@@ -206,7 +206,7 @@ async def store_chunks(db: AsyncSession, chunks: list[dict]) -> int:
 
 async def get_chunk_by_id(db: AsyncSession, chunk_id: int) -> dict | None:
     """按 chunk_id 获取内容块详情。"""
-    from .models import KbChunk
+    from ..models import KbChunk
 
     r = await db.execute(select(KbChunk).where(KbChunk.id == chunk_id))
     chunk = r.scalar_one_or_none()

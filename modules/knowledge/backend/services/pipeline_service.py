@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.services.task_worker import register_task_handler
 
-from .models import KbDocument
+from ..models import KbDocument
 from .raw_collection_service import collect_raw_data
 from .fusion_service import fuse_all_pages
 from .profile_service import generate_document_profile

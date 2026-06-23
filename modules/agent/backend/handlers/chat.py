@@ -27,12 +27,12 @@ from ..init_db import (
     ensure_processing_column,
 )
 from ..engine.event_store import record_event
-from .. import conversation_service as conv_svc
-from .. import tool_discovery
+from ..services import conversation_service as conv_svc
+from ..services import tool_discovery
 from ..engine.engine import assemble_context, chat_with_degradation_chain, chat_stream_with_degradation_chain
 from ..engine.stuck_detector import detect_stuck, reset as reset_stuck
-from ..model_client import recover_tool_calls, parse_inline_tool_calls, final_clean_content
-from ..action_policy import check_action_allowed, resolve_approval, list_pending_approvals
+from ..services.model_client import recover_tool_calls, parse_inline_tool_calls, final_clean_content
+from ..services.action_policy import check_action_allowed, resolve_approval, list_pending_approvals
 
 logger = logging.getLogger("v2.agent").getChild("handlers.chat")
 

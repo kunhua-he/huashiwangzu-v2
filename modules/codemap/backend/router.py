@@ -33,8 +33,8 @@ from app.schemas.common import ApiResponse
 from app.core.exceptions import NotFound
 from app.services.module_registry import register_capability
 
-from . import file_lock
-from .graph import get_graph
+from .locks import file_lock
+from .graph.graph import get_graph
 from .indexer import get_indexer
 from .watcher import get_watcher
 from .models import CodemapFeedback
@@ -478,4 +478,4 @@ register_capability(
 
 
 # Import lock/fdb endpoints to register routes
-from . import lock_router  # noqa: F401
+from .locks import lock_router  # noqa: F401

@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import select, func, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import (
+from ..models import (
     KbDocument, KbRawData, KbPageFusion, KbDocumentProfile,
     KbGovernanceCandidate, KbFileRelation,
 )

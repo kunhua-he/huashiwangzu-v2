@@ -19,7 +19,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .graph import (CallEdge, CapabilityEdge, CodeGraph, DbTableEdge,
+from .graph.graph import (CallEdge, CapabilityEdge, CodeGraph, DbTableEdge,
                        ImportEdge, get_graph)
 
 logger = logging.getLogger("v2.codemap").getChild("indexer")

@@ -159,8 +159,16 @@ async def _generate(params: dict, caller: str) -> dict:
             prompt[:80],
         )
     except RuntimeError as e:
-        logger.error("Image generation failed: %s", str(e))
-        return {"images": [], "placeholder": False, "error": str(e)}
+        error_msg = str(e)
+        logger.error("Image generation failed: %s", error_msg)
+        friendly = "生图失败，请稍后重试"
+        if any(kw in error_msg.lower() for kw in ("timeout", "timed out", "time out")):
+            friendly = "生图超时，请稍后重试"
+        elif any(kw in error_msg.lower() for kw in ("rate limit", "rate_limit", "too many")):
+            friendly = "生图请求过于频繁，请稍后重试"
+        elif any(kw in error_msg.lower() for kw in ("auth", "key", "credential", "unauthorized")):
+            friendly = "生图服务认证失败，请联系管理员"
+        return {"images": [], "placeholder": False, "error": friendly, "detail": error_msg}
 
     from app.services.file_upload_service import upload_file
 

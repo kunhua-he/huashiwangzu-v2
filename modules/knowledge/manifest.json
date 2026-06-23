@@ -50,7 +50,9 @@
     {"module": "text-parser", "optional": false},
     {"module": "image-vision", "optional": true}
   ],
-  "event_handler_declaration": [],
+  "event_handler_declaration": [
+    {"event": "file.uploaded", "handler": "on_file_uploaded", "description": "文件上传后自动登记到知识库并触发分析"}
+  ],
   "db_migration_declaration": [],
   "backend": {"enabled": true, "router": "backend/router.py"}
 }

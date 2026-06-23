@@ -968,3 +968,19 @@ register_capability(
     parameters={"file_id": {"type": "integer", "description": "Uploaded file ID"}},
     min_role="editor",
 )
+
+
+# ── Event handler: file.uploaded ──────────────────────────────────
+
+
+async def _on_file_uploaded(payload: dict, caller: str, caller_role: str) -> dict:
+    """Handle file.uploaded event: register file into knowledge base.
+
+    Reuses _cap_ingest logic (type whitelist, idempotent, permission check).
+    This is best-effort: failures are logged but do not block the upload flow.
+    """
+    return await _cap_ingest(payload, caller)
+
+
+from app.services.module_events import register_module_event_handler
+register_module_event_handler("file.uploaded", _on_file_uploaded, "knowledge")

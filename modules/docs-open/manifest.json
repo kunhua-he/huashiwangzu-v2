@@ -5,7 +5,7 @@
   "icon_asset": "",
   "category": "tools",
   "component_key": "index.vue",
-  "route_prefix": null,
+  "route_prefix": "/api/docs",
   "permissions": ["viewer", "editor", "admin"],
   "sort_order": 180,
   "default_width": 800,

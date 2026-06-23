@@ -63,17 +63,17 @@ async def upload(file: UploadFile = FastAPIFile(...), folder_id: int = Form(0), 
         tmp_file_path.unlink(missing_ok=True)
     except Exception:
         pass
-    # ── 上传完成，尽力而为通知知识库登记分析（不阻塞上传） ──
+    # ── 上传完成，尽力而为通知各模块（不阻塞上传） ──
     try:
-        from app.services.module_registry import call_capability
-        await call_capability(
-            "knowledge", "ingest",
+        from app.services.module_events import emit_module_event
+        await emit_module_event(
+            "file.uploaded",
             {"file_id": result["id"]},
             caller=f"user:{user.id}",
             caller_role=user.role,
         )
     except Exception as exc:
-        logger.warning("Knowledge ingest skipped for file_id=%d: %s", result["id"], exc)
+        logger.warning("File.uploaded event emission failed for file_id=%d: %s", result["id"], exc)
     return ApiResponse(data=UploadResponse(**result))
 
 

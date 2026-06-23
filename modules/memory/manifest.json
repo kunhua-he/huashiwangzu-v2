@@ -32,7 +32,8 @@
     {"action": "dream", "description": "触发记忆自优化（去重合并＋建链＋衰减）", "parameters": {}, "min_role": "editor"},
     {"action": "save_experience", "description": "保存经验", "parameters": {}, "min_role": "viewer"},
     {"action": "match_experience", "description": "匹配经验", "parameters": {"trigger_condition": {"type": "string", "description": "触发条件"}}, "min_role": "viewer"},
-    {"action": "experience_feedback", "description": "经验反馈", "parameters": {"experience_id": {"type": "integer", "description": "经验ID"}, "successful": {"type": "boolean", "description": "是否成功"}}, "min_role": "viewer"}
+    {"action": "experience_feedback", "description": "经验反馈", "parameters": {"experience_id": {"type": "integer", "description": "经验ID"}, "successful": {"type": "boolean", "description": "是否成功"}}, "min_role": "viewer"},
+    {"action": "overview_stats", "description": "管理概览：记忆和经验的全量聚合统计", "parameters": {}, "min_role": "admin"}
   ],
   "module_version": "1.0.0",
   "contract_version": "2.0",

@@ -131,42 +131,19 @@ async def handle_admin_overview(db: AsyncSession, user) -> ApiResponse:
     """engine概览：记忆/经验/预算/压缩/降级/粘滞 各模块聚合统计。"""
     result: dict = {}
 
-    # 1. 记忆概览
+    # 1. 记忆 + 经验概览（跨模块走框架能力注册表，不直读 memory 的表）
     try:
-        mem_count = await db.scalar(text("SELECT COUNT(*) FROM agent_memory"))
-        mem_with_embedding = await db.scalar(text("SELECT COUNT(*) FROM agent_memory WHERE embedding IS NOT NULL"))
-        mem_avg_confidence = await db.scalar(text("SELECT COALESCE(AVG(confidence), 0) FROM agent_memory"))
-        mem_avg_recency = await db.scalar(text("SELECT COALESCE(AVG(recency_score), 0) FROM agent_memory"))
-        mem_link_count = await db.scalar(text("SELECT COUNT(*) FROM memory_links"))
-        mem_owner_count = await db.scalar(text("SELECT COUNT(DISTINCT owner_id) FROM agent_memory"))
-        result["memory"] = {
-            "total_count": mem_count or 0,
-            "with_embedding": mem_with_embedding or 0,
-            "avg_confidence": round(float(mem_avg_confidence or 0), 3),
-            "avg_recency_score": round(float(mem_avg_recency or 0), 3),
-            "link_count": mem_link_count or 0,
-            "owner_count": mem_owner_count or 0,
-        }
+        from app.services.module_registry import call_capability
+        overview = await call_capability(
+            "memory", "overview_stats", {},
+            caller="system:agent-engine",
+            caller_role="admin",
+        )
+        result["memory"] = overview.get("memory", {})
+        result["experience"] = overview.get("experience", {})
     except Exception as e:
-        logger.warning("Admin overview memory query failed: %s", e)
+        logger.warning("Admin overview memory/experience query via capability failed: %s", e)
         result["memory"] = {"error": str(e)}
-
-    # 2. 经验概览
-    try:
-        exp_count = await db.scalar(text("SELECT COUNT(*) FROM agent_experiences"))
-        exp_active = await db.scalar(text("SELECT COUNT(*) FROM agent_experiences WHERE active = true"))
-        exp_inactive = await db.scalar(text("SELECT COUNT(*) FROM agent_experiences WHERE active = false"))
-        exp_avg_weight = await db.scalar(text("SELECT COALESCE(AVG(success_weight), 0) FROM agent_experiences WHERE active = true"))
-        exp_total_fails = await db.scalar(text("SELECT COALESCE(SUM(fail_count), 0) FROM agent_experiences"))
-        result["experience"] = {
-            "total_count": exp_count or 0,
-            "active_count": exp_active or 0,
-            "inactive_count": exp_inactive or 0,
-            "avg_success_weight": round(float(exp_avg_weight or 0), 1),
-            "total_fail_count": exp_total_fails or 0,
-        }
-    except Exception as e:
-        logger.warning("Admin overview experience query failed: %s", e)
         result["experience"] = {"error": str(e)}
 
     # 3. 压缩概览

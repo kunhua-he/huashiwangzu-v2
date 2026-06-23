@@ -75,16 +75,21 @@ def _read_platform_app_manifests() -> list[dict]:
 
 
 def _module_manifest_to_app_payload(module_dir: Path, manifest: dict) -> dict:
-    component_key = str(manifest.get("component_key") or "index.vue")
     module_key = str(manifest.get("key") or module_dir.name)
     backend_config = manifest.get("backend") if isinstance(manifest.get("backend"), dict) else {}
     route_prefix = manifest.get("route_prefix") or backend_config.get("route_prefix") or ""
+    raw_component_key = str(manifest.get("component_key") or "index.vue")
+    window_type = manifest.get("window_type") or "normal"
+    if window_type == "background-service" or not (module_dir / "frontend" / raw_component_key).exists():
+        component_key = ""
+    else:
+        component_key = f"{module_dir.name}/{raw_component_key}"
     return {
         "key": module_key,
         "name": manifest.get("name") or module_key,
         "icon": manifest.get("icon") or "Collection",
         "category": manifest.get("category") or "",
-        "component_key": f"{module_dir.name}/{component_key}",
+        "component_key": component_key,
         "route_prefix": route_prefix,
         "permissions": manifest.get("permissions") or [],
         "sort_order": manifest.get("sort_order") or 200,

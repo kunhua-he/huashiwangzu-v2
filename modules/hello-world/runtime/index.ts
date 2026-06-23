@@ -484,6 +484,17 @@ export const settings = {
   },
 }
 
+export const modules = {
+  /** 调用另一个模块对外公开的能力（经框架统一通路 + 权限 + 审计） */
+  async call(targetModule: string, action: string, parameters: Record<string, unknown> = {}): Promise<unknown> {
+    return apiPost<unknown>('/modules/call', { target_module: targetModule, action, parameters })
+  },
+  /** 列出当前已注册的跨模块能力（module:action 列表） */
+  async capabilities(): Promise<string[]> {
+    return apiGet<string[]>('/modules/capabilities')
+  },
+}
+
 // ── Unified platform export ─────────────────────────────────────────
 
 export const platform = {

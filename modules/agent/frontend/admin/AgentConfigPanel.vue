@@ -329,7 +329,7 @@ async function saveEdit() {
   if (!editing.value) return
   saving.value = true
   try {
-    const updated = await httpJson<AgentConfigItem>(`/agent-configs/${editing.value.agent_code}`, 'PUT', editForm.value)
+    const updated = await httpJson<AgentConfigItem>(`/agent/configs/${editing.value.agent_code}`, 'PUT', editForm.value)
     const idx = configs.value.findIndex(c => c.agent_code === editing.value!.agent_code)
     if (idx >= 0) configs.value[idx] = updated
     editing.value = null
@@ -345,7 +345,7 @@ async function deleteConfig(c: AgentConfigItem) {
   if (!confirm(`确定删除 "${c.agent_code}" 的配置？`)) { return }
   deleting.value = c.agent_code
   try {
-    await httpJson(`/agent-configs/${c.agent_code}`, 'DELETE')
+    await httpJson(`/agent/configs/${c.agent_code}`, 'DELETE')
     configs.value = configs.value.filter(x => x.agent_code !== c.agent_code)
     alert('已删除')
   } catch (e: unknown) {

@@ -88,13 +88,6 @@ import HistoryPanel from './components/HistoryPanel.vue'
 import * as api from './components/api-service'
 import type { EditResult, SheetData, HistoryItem } from './components/api-service'
 
-// ── Global declaration for desktop shell file-open payload ──
-declare global {
-  interface Window {
-    __MODULE_OPEN_FILE_PAYLOAD__?: { fileId: number; fileName: string }
-  }
-}
-
 // ── State ──
 const loading = ref(true)
 const errorMsg = ref('')
@@ -189,7 +182,7 @@ async function init() {
 
 async function tryGetFilePayload(): Promise<{ fileId: number; fileName: string } | null> {
   try {
-    const payload = window.__MODULE_OPEN_FILE_PAYLOAD__
+    const payload = (window as any).__MODULE_OPEN_FILE_PAYLOAD__
     if (payload?.fileId) {
       return { fileId: payload.fileId, fileName: payload.fileName || '' }
     }
@@ -570,7 +563,7 @@ function formatTime(isoStr: string): string {
 }
 
 // Watch for file open payload
-watch(() => window.__MODULE_OPEN_FILE_PAYLOAD__, (payload) => {
+watch(() => (window as any).__MODULE_OPEN_FILE_PAYLOAD__, (payload) => {
   if (payload?.fileId) {
     openFile(payload.fileId, payload.fileName || '')
   }

@@ -39,6 +39,7 @@ export default defineConfig({
       'dompurify': path.resolve(__dirname, 'node_modules/dompurify'),
       'highlight.js': path.resolve(__dirname, 'node_modules/highlight.js'),
       'pdfjs-dist': path.resolve(__dirname, 'node_modules/pdfjs-dist'),
+      'three/addons': path.resolve(__dirname, 'node_modules/three/examples/jsm'),
     },
     dedupe: ['three'],
   },

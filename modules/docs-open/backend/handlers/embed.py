@@ -79,7 +79,7 @@ def _generate_embed_html(
 
 
 def _spreadsheet_embed_html(file_id: int, name: str, base: str, token: str, cid: str, oid: str, editable: bool) -> str:
-    return f"""<!DOCTYPE html>
+    return rf"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>{__import__("html").escape(name)} - 文档</title>

@@ -29,28 +29,44 @@
   "public_actions": [
     {
       "action": "generate",
-      "description": "Generate image from prompt — real generation via GPTStore API (gpt-5.5)",
+      "description": "生成图片：多服务商模板生图，支持LiblibAI星流/GPTStore/占位图降级",
       "parameters": {
         "prompt": {
           "type": "string",
-          "description": "Text description of the desired image"
+          "description": "提示词，支持中文（自动翻成英文绘画提示词）"
         },
         "size": {
           "type": "string",
-          "description": "Image dimensions (e.g. 1024x1024)",
+          "description": "尺寸，格式如 1024x1024",
           "default": "1024x1024"
         },
-        "style": {
+        "aspect_ratio": {
           "type": "string",
-          "description": "Style hint",
+          "description": "宽高比，可选 square/portrait/landscape 或 16:9",
           "default": ""
         },
         "count": {
           "type": "integer",
-          "description": "Number of images to generate",
+          "description": "生成数量",
           "default": 1
+        },
+        "steps": {
+          "type": "integer",
+          "description": "采样步数",
+          "default": 30
+        },
+        "template": {
+          "type": "string",
+          "description": "模板key，可选值由list_templates给出，缺省用默认模板",
+          "default": ""
         }
       }
+    },
+    {
+      "action": "list_templates",
+      "description": "列出可用生图模板",
+      "parameters": {},
+      "min_role": "viewer"
     }
   ],
   "permission_declaration": {

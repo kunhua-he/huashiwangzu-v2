@@ -296,7 +296,7 @@ function openDashboard() {
 
 async function loadUserRole() {
   try {
-    const data = await apiGet<{ role: string }>('/auth/current-user')
+    const data = await apiGet<{ role: string }>('/current-user')
     if (data?.role) userRole.value = data.role
   } catch { /* ignore */ }
 }

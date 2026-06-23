@@ -1,0 +1,33 @@
+{
+  "_notes": [
+    "生图服务商模板配置。新增服务商=加一个适配器文件+这里加一个模板。key在.env,地址/模板id在此。"
+  ],
+  "default_template": "liblib-star3",
+  "templates": {
+    "liblib-star3": {
+      "provider": "liblib",
+      "label": "LiblibAI 星流Star-3(电商/写实)",
+      "api_base": "https://openapi.liblibai.cloud",
+      "text2img_path": "/api/generate/webui/text2img/ultra",
+      "status_path": "/api/generate/webui/status",
+      "template_uuid": "5d7e67009b344550bc1aa6ccbfa1d7f4",
+      "access_key_env": "LIBLIB_ACCESS_KEY",
+      "secret_key_env": "LIBLIB_SECRET_KEY",
+      "default_steps": 30,
+      "prompt_language": "en",
+      "poll_max": 60,
+      "poll_interval_sec": 5,
+      "url_ttl_days": 7
+    },
+    "gptstore-gpt5.5": {
+      "provider": "gptstore",
+      "label": "GPTStore gpt-5.5(通用)",
+      "prompt_language": "any"
+    },
+    "placeholder": {
+      "provider": "placeholder",
+      "label": "占位图(无凭据降级)",
+      "prompt_language": "any"
+    }
+  }
+}

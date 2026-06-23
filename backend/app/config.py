@@ -51,7 +51,11 @@ class Settings(BaseSettings):
     GPTSTORE_BASE_URL: str = "https://pool.gptstore.club/v1"
     GPTSTORE_PROXY: str = ""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # LiblibAI（生图模块）
+    LIBLIB_ACCESS_KEY: str = ""
+    LIBLIB_SECRET_KEY: str = ""
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @model_validator(mode="after")
     def _validate_secrets(self):

@@ -9,7 +9,9 @@
 | 项 | 状态 |
 |----|------|
 | 后端框架 | FastAPI，入口 `backend/app/main.py` |
-| 平台 router | 22 个（auth/desktop/files/file_shares/recycle/users/roles/system/logs/dashboard/settings/backup/tasks/notifications/feedback/office/editors/app_manager/menu/gateway 等） |
+| 平台 router | 25 个（auth/desktop/files/file_shares/recycle/users/roles/system/logs/dashboard/settings/backup/tasks/notifications/feedback/office/editors/app_manager/menu/gateway/modules 等） |
+| 模块事件总线 | `backend/app/services/module_events.py`：`register_module_event_handler(event, handler, module_key)` + `emit_module_event(event, payload, caller)`。框架不硬编码业务模块——如上传成功发 `file.uploaded`，knowledge 订阅入库（替代原硬编码 call knowledge:ingest）。单 handler 失败不阻塞其他 |
+| 成本治理 | 网关每次调用按 token×单价记 `agent_usage_daily`（逐 agent 日用量）|
 | 数据库 | PostgreSQL + SQLAlchemy async + Alembic，21 张 `framework_*` 表 + pgvector 扩展 |
 | 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容协议，含降级链（primary → backup → cheap → echo）和视觉描述（MiMo VLM）。配置：模型档案/provider 在 `backend/data/config/models.json`；API key 在 `backend/.env`（opencode go 用 `DEEPSEEK_API_KEY`）|
 | 模型看门狗 | `backend/app/services/model_watchdog/` |

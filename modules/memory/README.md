@@ -46,9 +46,9 @@ All `agent_*` prefix (shared with agent's `agent_*` convention):
 
 | Table | Purpose |
 |---|---|
-| `agent_memory` | Memory entries with text, summary, tags, confidence, recency_score, embedding (Vector(1024)) |
+| `memory_records` | Memory entries with text, summary, tags, confidence, recency_score, embedding (Vector(1024)) |
 | `memory_links` | Directed weighted links between memories (from_id, to_id, relation, weight) |
-| `agent_experiences` | Success experiences with trigger_condition, steps, tools_used, success_weight, fail_count, trigger_embedding (Vector(1024)) |
+| `memory_experiences` | Success experiences with trigger_condition, steps, tools_used, success_weight, fail_count, trigger_embedding (Vector(1024)) |
 
 ## How to query/use
 Agent engine calls memory capabilities during conversations: `save` for facts, `recall`/`match_experience` for retrieval, `fuse` for summarization, `dream` for periodic optimization. All calls go through framework `call_capability("memory", "...", {...})`.
@@ -62,4 +62,4 @@ Agent engine calls memory capabilities during conversations: `save` for facts, `
 - Experience dream also merges near-duplicates and deactivates low-quality (net ≤ 0, fail ≥ 3).
 - Post-save processing (embedding + LLM distillation) is offloaded via `SystemTaskQueue` (`memory_post_save` handler).
 - All queries scoped by `owner_id` — users only see their own memories.
-- `agent_memory` and `memory_links` tables are shared memory infrastructure; `agent_experiences` is the experience learning subsystem.
+- `memory_records` and `memory_links` tables are shared memory infrastructure; `memory_experiences` is the experience learning subsystem.

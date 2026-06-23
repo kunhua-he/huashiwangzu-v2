@@ -42,10 +42,11 @@
 | `memory_write(type, title, body, tags, agent)` | 写入项目记忆, agent 字段用于归因 |
 | `memory_recent(n)` | 最近 N 条记忆 |
 
-### 测试
+### 测试 / 回归
 | 工具 | 说明 |
 |------|------|
 | `run_test(target)` | 跑单个测试(文件/用例)不跑全局 |
+| `smoke_all()` | 一键全模块回归红绿矩阵(也可 `python3.14 dev_toolkit/smoke.py`)。**注:当前断言偏浅有假绿/假红,待"修smoke可信度"批修准** |
 
 ## 开发铁律
 

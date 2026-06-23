@@ -13,7 +13,7 @@ from .parsing_service import parse_document
 from .embedding_service import chunk_and_embed, store_chunks
 from .entity_service import process_document_entities, fuse_page_text
 
-logger = logging.getLogger("v2.knowledge.document")
+logger = logging.getLogger("v2.knowledge").getChild("document")
 
 SUPPORTED_EXTENSIONS = {
     "pdf", "docx", "pptx", "xlsx", "csv", "txt", "md",

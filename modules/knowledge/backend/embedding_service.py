@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.services.model_services import get_embedding
 
-logger = logging.getLogger("v2.knowledge.embedding")
+logger = logging.getLogger("v2.knowledge").getChild("embedding")
 
 # 分块参数
 MAX_CHUNK_CHARS = 512       # 每块最大字符数

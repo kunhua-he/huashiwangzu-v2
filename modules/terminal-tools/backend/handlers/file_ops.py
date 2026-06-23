@@ -14,6 +14,8 @@ import io
 import logging
 import os
 
+from app.core.exceptions import NotFound, PermissionDenied
+
 from .sandbox import (
     _resolve_user_id,
     _user_workspace,
@@ -210,11 +212,10 @@ async def _import(params: dict, caller: str) -> dict:
 
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
-        file_record = await file_service.get_file_record(db, file_id)
-        if not file_record:
-            return {"success": False, "error": f"File not found: {file_id}"}
-        if file_record.owner_id != user_id:
-            return {"success": False, "error": "Access denied: file does not belong to current user"}
+        try:
+            file_record = await file_service.check_file_access(db, file_id, user_id)
+        except (NotFound, PermissionDenied):
+            return {"success": False, "error": "File not found or access denied"}
 
         storage_path = file_preview_service._resolve_storage_path(file_record)
         if not storage_path:

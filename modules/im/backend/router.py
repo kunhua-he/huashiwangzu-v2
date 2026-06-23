@@ -13,7 +13,7 @@ from app.schemas.common import ApiResponse
 from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.services.module_registry import register_capability
 
-logger = logging.getLogger("v2.im.router")
+logger = logging.getLogger("v2.im").getChild("router")
 
 from huashiwangzu_modules.im.models import ImConversation, ImMessage, ImReadState
 from huashiwangzu_modules.im.init_db import run_init

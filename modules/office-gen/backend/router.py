@@ -30,7 +30,7 @@ from app.services.file_upload_service import upload_file
 from . import converter
 from . import generator
 
-logger = logging.getLogger("v2.office_gen.router")
+logger = logging.getLogger("v2.office-gen").getChild("router")
 
 router = APIRouter(prefix="/api/office-gen", tags=["office-gen"])
 

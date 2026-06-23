@@ -13,7 +13,7 @@ from app.gateway.router import gateway_router
 from app.database import AsyncSessionLocal
 from app.services.task_worker import register_task_handler
 
-logger = logging.getLogger("v2.knowledge.entity")
+logger = logging.getLogger("v2.knowledge").getChild("entity")
 
 # 实体抽取提示词
 ENTITY_EXTRACTION_PROMPT = """你是一个企业知识图谱实体抽取专家。请从以下文档内容中提取实体和关系。

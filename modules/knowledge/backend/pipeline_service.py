@@ -17,7 +17,7 @@ from .profile_service import generate_document_profile
 from .entity_service import process_document_entities_from_fusions
 from .relation_service import compute_file_relations
 
-logger = logging.getLogger("v2.knowledge.pipeline")
+logger = logging.getLogger("v2.knowledge").getChild("pipeline")
 
 
 async def _run_pipeline(

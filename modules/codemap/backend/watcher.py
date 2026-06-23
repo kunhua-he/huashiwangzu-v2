@@ -15,7 +15,7 @@ from pathlib import Path
 from .graph import get_graph
 from .indexer import PROJECT_ROOT, SCAN_ROOTS, get_indexer
 
-logger = logging.getLogger("v2.codemap.watcher")
+logger = logging.getLogger("v2.codemap").getChild("watcher")
 
 _DEBOUNCE_SECONDS = 0.5
 

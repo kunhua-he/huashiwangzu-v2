@@ -304,11 +304,7 @@ async def embed_document(
     if not check_doc_access(token_record, file_id):
         raise PermissionDenied("Token does not have access to this document")
 
-    file = await db.get(File, file_id)
-    if not file or file.deleted:
-        raise NotFound("File not found")
-
-    await framework_check_file_access(db, file_id, int(open_id))
+    file = await framework_check_file_access(db, file_id, int(open_id))
 
     ext = (file.extension or "").lower().lstrip(".")
     doc_info = _get_doc_type(ext)

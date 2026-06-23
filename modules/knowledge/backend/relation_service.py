@@ -13,7 +13,7 @@ from app.services.task_worker import register_task_handler
 
 from .models import KbDocument, KbDocumentProfile, KbFileRelation, KbEntityDictionary, KbChunkEntity, KbGraphEdge
 
-logger = logging.getLogger("v2.knowledge.relation")
+logger = logging.getLogger("v2.knowledge").getChild("relation")
 
 
 def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:

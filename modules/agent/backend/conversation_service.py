@@ -14,7 +14,7 @@ from models import (
     AgentSystemPrompt, AgentEnterprisePrompt, AgentUserProfile,
 )
 
-logger = logging.getLogger("v2.agent.conversation_service")
+logger = logging.getLogger("v2.agent").getChild("conversation_service")
 
 MAX_CONTEXT_MESSAGES = 24
 

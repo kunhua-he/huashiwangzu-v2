@@ -17,12 +17,13 @@ from pathlib import Path
 from sqlalchemy import text, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import ValidationError
 from app.schemas.common import ApiResponse
 
 from event_store import read_events
 from ..action_policy import resolve_approval, list_pending_approvals
 
-logger = logging.getLogger("v2.agent.router")
+logger = logging.getLogger("v2.agent").getChild("router")
 
 
 async def handle_admin_replay(
@@ -235,24 +236,24 @@ async def handle_admin_overview(db: AsyncSession, user) -> ApiResponse:
     # 7. 成本概览
     try:
         total_today_cost = await db.scalar(text(
-            "SELECT COALESCE(SUM(cost), 0) FROM framework_agent_usage_daily WHERE usage_date = CURRENT_DATE"
+            "SELECT COALESCE(SUM(cost), 0) FROM agent_usage_daily WHERE usage_date = CURRENT_DATE"
         ))
         model_costs = await db.execute(text("""
             SELECT model_key, SUM(call_count) AS calls, SUM(prompt_tokens) AS prompt_tokens,
                    SUM(completion_tokens) AS completion_tokens, SUM(cost) AS cost
-            FROM framework_agent_usage_daily
+            FROM agent_usage_daily
             WHERE usage_date = CURRENT_DATE
             GROUP BY model_key ORDER BY cost DESC
         """))
         module_calls = await db.execute(text("""
             SELECT module, SUM(call_count) AS calls, SUM(cost) AS cost
-            FROM framework_agent_usage_daily
+            FROM agent_usage_daily
             WHERE usage_date = CURRENT_DATE
             GROUP BY module ORDER BY cost DESC
         """))
         last_7_days = await db.execute(text("""
             SELECT usage_date, SUM(cost) AS cost
-            FROM framework_agent_usage_daily
+            FROM agent_usage_daily
             WHERE usage_date >= CURRENT_DATE - 7
             GROUP BY usage_date ORDER BY usage_date
         """))
@@ -290,6 +291,6 @@ async def handle_resolve_approval(
 ) -> ApiResponse:
     """审批（同意/拒绝）一个等待确认的敏感操作。"""
     if decision not in ("approved", "rejected"):
-        return ApiResponse(success=False, error="decision must be 'approved' or 'rejected'")
+        raise ValidationError("decision must be 'approved' or 'rejected'")
     result = await resolve_approval(db, approval_id, decision, user.id, reason)
     return ApiResponse(data=result)

@@ -2,7 +2,7 @@
   <div class="agent-config-panel">
     <header class="acp-header">
       <h2 class="acp-title">Agent 配置管理</h2>
-      <span class="acp-subtitle">仅管理员 · 框架表 framework_agent_configs</span>
+      <span class="acp-subtitle">仅管理员 · 模块表 agent_configs</span>
     </header>
 
     <div v-if="loading" class="acp-loading">加载中...</div>
@@ -265,7 +265,7 @@ async function loadConfigs() {
   loading.value = true
   error.value = ''
   try {
-    configs.value = await httpJson<AgentConfigItem[]>('/agent-configs/')
+    configs.value = await httpJson<AgentConfigItem[]>('/agent/configs')
     try {
       interface AdminOverview { cost?: CostData }
       const overview = await httpJson<AdminOverview>('/agent/admin/overview')
@@ -287,7 +287,7 @@ async function createConfig() {
   }
   saving.value = true
   try {
-    const newConfig = await httpJson<AgentConfigItem>('/agent-configs/', 'POST', form.value)
+    const newConfig = await httpJson<AgentConfigItem>('/agent/configs', 'POST', form.value)
     configs.value.push(newConfig)
     showCreateForm.value = false
     resetForm()

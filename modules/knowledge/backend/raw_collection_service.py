@@ -25,7 +25,7 @@ from .models import KbDocument, KbRawData
 from .parsing_service import parse_document, IMAGE_FORMATS
 from .pdf_render_service import render_page_to_image, get_pdf_page_count
 
-logger = logging.getLogger("v2.knowledge.raw_collection")
+logger = logging.getLogger("v2.knowledge").getChild("raw_collection")
 
 # tesseract 可用性检测
 TESSERACT_AVAILABLE = False

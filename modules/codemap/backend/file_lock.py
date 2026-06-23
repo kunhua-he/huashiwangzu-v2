@@ -20,7 +20,7 @@ import threading
 import time
 from pathlib import Path
 
-logger = logging.getLogger("v2.codemap.file_lock")
+logger = logging.getLogger("v2.codemap").getChild("file_lock")
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 LOCK_FILE = DATA_DIR / "locks.json"

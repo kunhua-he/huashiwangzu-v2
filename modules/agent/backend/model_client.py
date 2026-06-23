@@ -13,7 +13,7 @@ import uuid
 
 from app.gateway.router import gateway_router
 
-logger = logging.getLogger("v2.agent.model_client")
+logger = logging.getLogger("v2.agent").getChild("model_client")
 
 
 def parse_inline_tool_calls(content: str) -> tuple[str, list[dict]]:

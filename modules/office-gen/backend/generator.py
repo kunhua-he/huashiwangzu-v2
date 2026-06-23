@@ -5,7 +5,7 @@ Each function takes a validated JSON dict and returns (bytes, mime_type).
 import io
 import logging
 
-logger = logging.getLogger("v2.office_gen.generator")
+logger = logging.getLogger("v2.office-gen").getChild("generator")
 
 
 # ── DOCX generator ──────────────────────────────────────────────────────

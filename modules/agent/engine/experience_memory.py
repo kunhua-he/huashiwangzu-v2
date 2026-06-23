@@ -4,7 +4,7 @@ import json
 import logging
 from app.services.module_registry import call_capability
 
-logger = logging.getLogger("v2.agent.engine.experience_memory")
+logger = logging.getLogger("v2.agent").getChild("engine.experience_memory")
 
 EXPERIENCE_INJECTION_TEMPLATE = (
     "\n\n💡已知成功路径：当前请求与以下成功经验相似——"

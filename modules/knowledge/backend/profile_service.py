@@ -16,7 +16,7 @@ from app.services.task_worker import register_task_handler
 
 from .models import KbDocument, KbPageFusion, KbDocumentProfile
 
-logger = logging.getLogger("v2.knowledge.profile")
+logger = logging.getLogger("v2.knowledge").getChild("profile")
 
 PROFILE_SYSTEM_PROMPT = """你是企业文档分析专家。请根据以下各页的融合内容，生成文件级画像。
 

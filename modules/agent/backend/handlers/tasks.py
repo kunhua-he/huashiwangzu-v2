@@ -19,7 +19,7 @@ from ..profile_evolve import handle_profile_evolve
 from .. import tool_discovery
 from .. import conversation_service as conv_svc
 
-logger = logging.getLogger("v2.agent.router")
+logger = logging.getLogger("v2.agent").getChild("router")
 
 MEMORY_DISTILL_MODEL_KEY = "deepseek-v4-flash"
 

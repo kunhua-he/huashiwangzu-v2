@@ -17,7 +17,7 @@ from typing import Any
 
 from .graph import CodeGraph, get_graph
 
-logger = logging.getLogger("v2.codemap.boundary")
+logger = logging.getLogger("v2.codemap").getChild("boundary")
 
 # ── Framework-internal paths that modules must not import ────────────────────
 _FRAMEWORK_INTERNAL_PREFIXES = (

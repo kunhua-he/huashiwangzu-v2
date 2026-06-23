@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.services.file_service import check_file_access
 from app.database import AsyncSessionLocal
 
-logger = logging.getLogger("v2.knowledge.pdf_render")
+logger = logging.getLogger("v2.knowledge").getChild("pdf_render")
 
 
 async def render_page_to_image(

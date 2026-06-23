@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger("v2.codemap.init_db")
+logger = logging.getLogger("v2.codemap").getChild("init_db")
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS codemap_feedback (

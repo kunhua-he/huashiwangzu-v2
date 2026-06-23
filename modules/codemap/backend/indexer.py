@@ -22,7 +22,7 @@ from typing import Any
 from .graph import (CallEdge, CapabilityEdge, CodeGraph, DbTableEdge,
                        ImportEdge, get_graph)
 
-logger = logging.getLogger("v2.codemap.indexer")
+logger = logging.getLogger("v2.codemap").getChild("indexer")
 
 # ── Project root detection ─────────────────────────────────────────────────
 # This file lives in modules/codemap/backend/indexer.py

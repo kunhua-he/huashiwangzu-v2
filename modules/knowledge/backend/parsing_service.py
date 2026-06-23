@@ -3,7 +3,7 @@ import logging
 
 from app.services.module_registry import call_capability
 
-logger = logging.getLogger("v2.knowledge.parsing")
+logger = logging.getLogger("v2.knowledge").getChild("parsing")
 
 # 格式 → (模块名, 动作) 映射
 FORMAT_PARSER_MAP: dict[str, tuple[str, str]] = {

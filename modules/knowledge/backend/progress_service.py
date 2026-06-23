@@ -14,7 +14,7 @@ from .models import (
     KbGovernanceCandidate, KbFileRelation,
 )
 
-logger = logging.getLogger("v2.knowledge.progress")
+logger = logging.getLogger("v2.knowledge").getChild("progress")
 
 
 def _stage(key: str, label: str, done: int, total: int, count: int | None = None) -> dict:

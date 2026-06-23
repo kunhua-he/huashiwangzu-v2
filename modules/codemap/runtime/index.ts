@@ -288,33 +288,6 @@ export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
   return body.data as T
 }
 
-export async function apiPut<T>(path: string, payload?: unknown): Promise<T> {
-  const url = getApiUrl(path)
-  const r = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: payload ? JSON.stringify(payload) : undefined,
-  })
-  if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
-  if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
-  const body = await r.json()
-  if (!body.success) throw new Error(body.error ?? 'API error')
-  return body.data as T
-}
-
-export async function apiDelete<T>(path: string): Promise<T> {
-  const url = getApiUrl(path)
-  const r = await fetch(url, {
-    method: 'DELETE',
-    headers: authHeaders(),
-  })
-  if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
-  if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
-  const body = await r.json()
-  if (!body.success) throw new Error(body.error ?? 'API error')
-  return body.data as T
-}
-
 // ── Platform SDK namespaces ─────────────────────────────────────────
 
 export const auth = {
@@ -522,19 +495,6 @@ export const modules = {
   },
 }
 
-// ── docs-open module-specific SDK ────────────────────────────────────
-
-export const docs = {
-  /** Open a document for viewing or editing */
-  async open(fileId: number, mode: string = 'view'): Promise<unknown> {
-    return apiPost<unknown>('/docs/open', { file_id: fileId, mode })
-  },
-  /** Get document content by file ID */
-  async getContent(fileId: number): Promise<unknown> {
-    return apiGet<unknown>(`/docs/${fileId}/content`)
-  },
-}
-
 // ── Unified platform export ─────────────────────────────────────────
 
 export const platform = {
@@ -547,5 +507,4 @@ export const platform = {
   logs,
   settings,
   modules,
-  docs,
 }

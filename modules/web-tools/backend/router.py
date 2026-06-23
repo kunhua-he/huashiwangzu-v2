@@ -11,6 +11,8 @@ import urllib.parse
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from app.core.url_safety import validate_safe_url
+from app.core.exceptions import ValidationError
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
@@ -116,10 +118,11 @@ async def _cap_fetch(params: dict, caller: str) -> dict:
     if not url:
         return {"url": url, "title": "", "text": "", "truncated": False, "error": "url is required"}
 
-    # SSRF check
-    ssrf_error = _check_ssrf(url)
-    if ssrf_error:
-        return {"url": url, "title": "", "text": "", "truncated": False, "error": ssrf_error}
+    # SSRF check via public helper
+    try:
+        url = validate_safe_url(url)
+    except ValidationError as exc:
+        return {"url": url, "title": "", "text": "", "truncated": False, "error": exc.message}
 
     import httpx
     from lxml import html as lxml_html

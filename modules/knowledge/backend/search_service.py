@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.services.model_services import get_embedding, rerank
 
-logger = logging.getLogger("v2.knowledge.search")
+logger = logging.getLogger("v2.knowledge").getChild("search")
 
 # RRF 常数
 RRF_K = 60

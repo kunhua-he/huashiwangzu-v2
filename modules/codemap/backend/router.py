@@ -40,7 +40,7 @@ from .watcher import get_watcher
 from .models import CodemapFeedback
 from .init_db import ensure_codemap_tables
 
-logger = logging.getLogger("v2.codemap.router")
+logger = logging.getLogger("v2.codemap").getChild("router")
 
 router = APIRouter(prefix="/api/codemap", tags=["codemap"])
 

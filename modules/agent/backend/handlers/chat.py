@@ -18,6 +18,7 @@ from app.models.user import User
 from app.services.module_registry import call_capability
 
 from ..init_db import (
+    run_init,
     ensure_default_prompts,
     ensure_timeline_column,
     ensure_user_profile,
@@ -33,7 +34,7 @@ from stuck_detector import 检测粘滞, 重置 as 重置粘滞
 from ..model_client import recover_tool_calls, parse_inline_tool_calls, final_clean_content
 from ..action_policy import check_action_allowed, resolve_approval, list_pending_approvals
 
-logger = logging.getLogger("v2.agent.router")
+logger = logging.getLogger("v2.agent").getChild("router")
 
 MAX_TOOL_ROUNDS = 5
 EVOLVE_EVERY_N_MESSAGES = 3
@@ -162,12 +163,8 @@ async def handle_chat(payload, db: AsyncSession, user: User):
     from models import AgentConversation
 
     # 确保默认数据、画像、表结构迁移和engine事件表存在
-    await ensure_timeline_column(db)
-    await ensure_processing_column(db)
-    await ensure_default_prompts(db)
-    await update_existing_prompts(db)
+    await run_init(db)
     await ensure_user_profile(db, user.id)
-    await ensure_event_table(db)
 
     # 持久化用户消息
     await conv_svc.add_message(db, user.id, payload.conversation_id, "user", payload.content)

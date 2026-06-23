@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 
-logger = logging.getLogger("v2.knowledge.governance")
+logger = logging.getLogger("v2.knowledge").getChild("governance")
 
 
 async def list_governance_candidates(

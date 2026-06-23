@@ -932,11 +932,13 @@ async def _cap_ingest(params: dict, caller: str) -> dict:
         return {"skipped": True, "reason": "invalid file_id"}
 
     async with AsyncSessionLocal() as db:
-        # 类型白名单判断：先查文件扩展名
-        fr = await db.execute(select(File).where(File.id == file_id))
-        file = fr.scalar_one_or_none()
-        if not file:
-            return {"skipped": True, "reason": "file not found"}
+        # 权限校验：验证当前用户有该文件的访问权限
+        from app.services.file_service import check_file_access
+        from app.core.exceptions import NotFound, PermissionDenied
+        try:
+            file = await check_file_access(db, file_id, owner_id)
+        except (NotFound, PermissionDenied):
+            return {"skipped": True, "reason": "file not found or access denied"}
         ext = (file.extension or "").lower().strip(".")
         if ext not in INGEST_EXTENSIONS:
             logger.info("ingest skipped: unsupported extension '%s' for file_id=%d", ext, file_id)

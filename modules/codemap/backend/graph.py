@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("v2.codemap.graph")
+logger = logging.getLogger("v2.codemap").getChild("graph")
 
 # Project root — graph.py lives in modules/codemap/backend/graph.py
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]

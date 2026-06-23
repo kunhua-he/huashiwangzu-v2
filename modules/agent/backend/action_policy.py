@@ -5,7 +5,7 @@
 2. Agent 配置的 sensitive_action_policy（allow/confirm/block）
 3. 能力是否在硬编码的敏感名单中
 
-确认流：confirm 策略下，工具不直接执行 → 插入 framework_approval_queue →
+确认流：confirm 策略下，工具不直接执行 → 插入 agent_approval_queue →
 返回等待确认 → admin 同意/拒绝后继续/取消。
 """
 import json
@@ -13,7 +13,7 @@ import logging
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger("v2.agent.action_policy")
+logger = logging.getLogger("v2.agent").getChild("action_policy")
 
 # Sensitive tool name patterns (module__action or prefix match)
 # module__action exact match, or module__* wildcard
@@ -81,8 +81,8 @@ async def check_action_allowed(
     if not is_sensitive:
         return {"allowed": True}
 
-    # 3. Read the agent's sensitive_action_policy from framework_agent_configs
-    from app.models.system import AgentConfig
+    # 3. Read the agent's sensitive_action_policy from agent_configs
+    from models import AgentConfig
     r = await db.execute(
         select(AgentConfig).where(AgentConfig.agent_code == agent_code)
     )
@@ -104,7 +104,7 @@ async def check_action_allowed(
         }
     elif policy == "confirm":
         # Insert into approval queue
-        from app.models.system import ApprovalQueue
+        from models import ApprovalQueue
         approval = ApprovalQueue(
             agent_code=agent_code,
             tool_name=tool_name,
@@ -145,7 +145,7 @@ async def resolve_approval(
     Returns the updated approval record.
     """
     from datetime import datetime, timezone
-    from app.models.system import ApprovalQueue
+    from models import ApprovalQueue
     r = await db.execute(
         select(ApprovalQueue).where(ApprovalQueue.id == approval_id)
     )
@@ -175,7 +175,7 @@ async def resolve_approval(
 
 async def list_pending_approvals(db: AsyncSession) -> list[dict]:
     """List all pending approvals for admin review."""
-    from app.models.system import ApprovalQueue
+    from models import ApprovalQueue
     r = await db.execute(
         select(ApprovalQueue)
         .where(ApprovalQueue.status == "pending")

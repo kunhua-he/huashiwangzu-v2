@@ -16,7 +16,7 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 |------|------|
 | 前端入口 | `frontend/src/main.ts`，Vue 3 + Vite + Pinia + Element Plus（按需导入，chunk 拆分） |
 | 桌面壳 | 窗口系统、任务栏、启动器、托盘、右键菜单、应用注册表、文件关联调度器 |
-| 后端入口 | `backend/app/main.py`，22 个平台 router，统一响应 `{success, data, error}` |
+| 后端入口 | `backend/app/main.py`，25 个平台 router，统一响应 `{success, data, error}` |
 | 数据库 | 21 张 `framework_*` 表，干净基线迁移 `v2_clean_framework_baseline` |
 | 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容（含 MiMo VLM 云视觉），指数退避重试 + 降级链 |
 | 模块模板 | `modules/_template/`，含 sandbox 开发环境 + runtime SDK 壳 |

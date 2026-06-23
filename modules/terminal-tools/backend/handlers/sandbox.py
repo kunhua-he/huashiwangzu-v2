@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import shutil
 import sys
 from pathlib import Path
 
 from app.config import get_settings
+from app.core.command_safety import check_dangerous_command as _check_dangerous_command
+from app.core.workspace_security import (
+    resolve_workspace_path as _resolve_workspace_path,
+    ensure_user_workspace as _user_workspace,
+)
 
 logger = logging.getLogger("v2.terminal-tools")
 
@@ -43,61 +47,8 @@ def _resolve_user_id(caller: str) -> int:
     raise ValueError(f"Unknown caller format: {caller}")
 
 
-def _user_workspace(user_id: int) -> Path:
-    """Return and ensure the workspace directory for a given user."""
-    ws = _get_workspace_base() / str(user_id)
-    ws.mkdir(parents=True, exist_ok=True)
-    return ws
-
-
-def _resolve_workspace_path(user_id: int, relative_path: str) -> Path:
-    """Normalise a relative path and verify it stays inside the user workspace.
-
-    Raises ValueError if the path escapes the workspace boundary.
-    """
-    workspace_root = _user_workspace(user_id)
-    cleaned = relative_path.strip()
-    if not cleaned or cleaned == ".":
-        return workspace_root
-    target = (workspace_root / cleaned).resolve()
-    if os.path.commonpath([str(workspace_root), str(target)]) != str(workspace_root):
-        raise ValueError(
-            f"Path escapes workspace boundary: {relative_path!r}"
-        )
-    return target
-
-
-# ── Dangerous command detection ─────────────────────────────────────────
-
-_DANGEROUS_PATTERNS = [
-    r'\bsudo\b',
-    r'\bsu\s',
-    r'\b(shutdown|reboot|halt|poweroff|init\s+[06])\b',
-    r'\bmkfs\b',
-    r'\bdd\s+if=',
-    r'\bfdisk\b',
-    r'\bparted\b',
-    r'\bmount\b',
-    r'\bumount\b',
-    r'\brm\s+.*-rf\s+/',
-    r'\brm\s+-rf\s+/',
-    r'>\s*/dev/(sd|hd|nvme|mmcblk)',
-    r'\bpasswd\b',
-    r'\bvisudo\b',
-    r'\bchown\s+.*\s+/',
-    r'\bchmod\s+777\s+/',
-    r':\(\)\s*\{',
-    r'fork\s+bomb',
-]
-
-
-def _check_dangerous_command(command: str) -> str | None:
-    """Return an error message if the command is dangerous, else None."""
-    cmd_lower = command.lower().strip()
-    for pattern in _DANGEROUS_PATTERNS:
-        if re.search(pattern, cmd_lower):
-            return f"Dangerous command blocked: matched pattern '{pattern}'"
-    return None
+# _user_workspace and _resolve_workspace_path are imported from app.core.workspace_security
+# _check_dangerous_command is imported from app.core.command_safety
 
 
 def _check_path_escape(command: str, workspace_real: str) -> str | None:

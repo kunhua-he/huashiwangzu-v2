@@ -32,13 +32,14 @@ CLI 的 cwd 永远锁死在该用户工作区，它眼里的"文件/当前目录
 ## 安全边界
 
 ### 1. 路径约束（核心安全机制）
-- 所有文件操作（write/read/list/publish/import）的文件路径参数，必须先经过 `_resolve_workspace_path()` 规范化+resolve，再检查 resolve 后的绝对路径是否以工作区根目录开头。
-- 越界路径（绝对路径如 `/Users/...`、`~`、`../` 逃逸、symlink 逃逸）一律拒绝，返回错误信息。
+- 所有文件操作（write/read/list/publish/import）的文件路径参数，必须先经过 `_resolve_workspace_path()` 规范化+resolve（基于 `app.core.workspace_security.resolve_workspace_path` + `app.core.path_security.validate_within_dir`），再检查 resolve 后的绝对路径是否在用户工作区内。
+- 越界路径（绝对路径如 `/Users/...`、`~`、`../` 逃逸、symlink 逃逸）一律拒绝，返回简洁错误信息（不泄漏宿主机敏感路径）。
 - 工作区根: `backend/data/workspaces/{user_id}/`，按 `user_id` 隔离，用户间互不可见。
 
 ### 2. 危险命令拦截（exec 前置检查）
-- 黑名单匹配: `sudo`、`su`、`shutdown`、`reboot`、`halt`、`poweroff`、`mkfs`、`dd if=`、`fdisk`、`parted`、`mount`、`umount`、`rm -rf /`、`passwd`、`visudo`、`chown ... /`、`chmod 777 /`、fork 炸弹模式。
-- 匹配即拦截，返回错误信息，不创建子进程。
+- 黑名单匹配基于 `app.core.command_safety.check_dangerous_command`（从 terminal-tools 本地模式迁移至框架公共 helper，并参考 Hermes 扩充了更多模式）。
+- 覆盖: `sudo`、`su`、`shutdown/reboot/halt/poweroff`、`mkfs`、`dd if=`、`fdisk/parted`、`mount/umount`、`rm -rf /`、`passwd`、`visudo`、`chown ... /`、`chmod 777 /`、fork 炸弹、`curl/wget | sh`（pipe to shell）、写 `/etc/` 等。
+- 匹配即拦截，返回错误信息，不创建子进程。不做审批/allowlist/YOLO 模式（统一拒绝）。
 
 ### 3. 资源限制
 - 超时: 默认 60s，最大 600s。`subprocess.run(timeout=...)` 硬超时。

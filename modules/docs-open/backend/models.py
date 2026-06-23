@@ -5,7 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, JSON
 from sqlalchemy import create_engine
 from app.models.base import Base
 
-logger = logging.getLogger("v2.docs_open.models")
+logger = logging.getLogger("v2.docs-open").getChild("models")
 
 
 class DocsOpenToken(Base):

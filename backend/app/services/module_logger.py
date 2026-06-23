@@ -22,7 +22,7 @@ BACKUP_COUNT = 3
 
 _initialized = False
 _loggers: dict[str, logging.Logger] = {}
-_LOGGER_NAME_RE = re.compile(r"^v2\.([a-z][a-z0-9_-]*)$")
+_LOGGER_NAME_RE = re.compile(r"^v2\.([a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*)$")
 
 
 class _SafeModuleFormatter(logging.Formatter):
@@ -121,5 +121,5 @@ def setup_v2_loggers_for_modules() -> None:
     for name in list(logging.Logger.manager.loggerDict.keys()):
         match = _LOGGER_NAME_RE.match(name)
         if match:
-            module_key = match.group(1)
+            module_key = name.split(".")[1]
             get_module_logger(module_key)

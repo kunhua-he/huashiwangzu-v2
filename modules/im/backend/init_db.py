@@ -5,7 +5,7 @@ from app.database import engine
 from .models import ImConversation, ImMessage, ImReadState
 from app.models.base import Base
 
-logger = logging.getLogger("v2.im.init_db")
+logger = logging.getLogger("v2.im").getChild("init_db")
 
 TABLES = [ImConversation.__table__, ImMessage.__table__, ImReadState.__table__]
 

@@ -2,9 +2,9 @@
 import logging
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from models import AgentSystemPrompt, AgentEnterprisePrompt, AgentUserProfile
+from models import AgentSystemPrompt, AgentEnterprisePrompt, AgentUserProfile, AgentConfig, ApprovalQueue, AgentUsageDaily
 
-logger = logging.getLogger("v2.agent.init_db")
+logger = logging.getLogger("v2.agent").getChild("init_db")
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是华世王镞（Huashi Wangzu）桌面 AI 助手。\n\n"
@@ -201,8 +201,66 @@ async def ensure_event_table(db: AsyncSession) -> None:
         logger.warning("Migration: agent_events table check failed: %s", e)
 
 
+async def ensure_migrated_tables(db: AsyncSession) -> None:
+    """Ensure 3 tables migrated from framework exist (idempotent)."""
+    try:
+        from sqlalchemy import text as _text
+        agent_config_sql = """
+            CREATE TABLE IF NOT EXISTS agent_configs (
+                id BIGSERIAL PRIMARY KEY, agent_code VARCHAR(64) NOT NULL UNIQUE,
+                agent_name VARCHAR(128) DEFAULT '', provider VARCHAR(64) DEFAULT '',
+                model VARCHAR(64) DEFAULT '', system_prompt TEXT DEFAULT '',
+                purpose VARCHAR(256) DEFAULT '', enabled BOOLEAN DEFAULT TRUE,
+                temperature DOUBLE PRECISION, top_p DOUBLE PRECISION,
+                max_tokens INTEGER, timeout_ms INTEGER,
+                fallback_model VARCHAR(64), fallback_enabled BOOLEAN DEFAULT FALSE,
+                max_concurrency INTEGER, cooldown_seconds INTEGER,
+                retry_count INTEGER DEFAULT 3, daily_call_limit INTEGER,
+                daily_budget DOUBLE PRECISION, monthly_budget DOUBLE PRECISION,
+                response_format VARCHAR(16) DEFAULT 'text',
+                log_prompt_enabled BOOLEAN DEFAULT TRUE,
+                log_response_enabled BOOLEAN DEFAULT TRUE,
+                sensitive_action_policy VARCHAR(16) DEFAULT 'confirm',
+                updated_by INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """
+        approval_queue_sql = """
+            CREATE TABLE IF NOT EXISTS agent_approval_queue (
+                id BIGSERIAL PRIMARY KEY, agent_code VARCHAR(64) DEFAULT '',
+                tool_name VARCHAR(128) NOT NULL, tool_args TEXT,
+                status VARCHAR(16) DEFAULT 'pending', requested_by INTEGER NOT NULL,
+                decided_by INTEGER, conversation_id BIGINT, reason TEXT,
+                decided_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """
+        usage_daily_sql = """
+            CREATE TABLE IF NOT EXISTS agent_usage_daily (
+                id BIGSERIAL PRIMARY KEY, usage_date DATE NOT NULL,
+                model_key VARCHAR(64) NOT NULL, provider VARCHAR(32) DEFAULT '',
+                module VARCHAR(64) DEFAULT '', call_count INTEGER DEFAULT 0,
+                prompt_tokens BIGINT DEFAULT 0, completion_tokens BIGINT DEFAULT 0,
+                cost DOUBLE PRECISION DEFAULT 0.0,
+                created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """
+        for sql in [agent_config_sql, approval_queue_sql, usage_daily_sql]:
+            await db.execute(_text(sql))
+        await db.execute(_text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_usage_daily "
+            "ON agent_usage_daily (usage_date, model_key, provider, module)"
+        ))
+        await db.commit()
+        logger.info("Migration: ensured all 3 migrated agent tables")
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Migration: migrated tables check failed: %s", e)
+
+
 async def run_init(db: AsyncSession) -> None:
     """Agent 模块启动初始化入口。"""
+    await ensure_migrated_tables(db)
     await ensure_timeline_column(db)
     await ensure_processing_column(db)
     await ensure_event_table(db)

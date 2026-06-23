@@ -495,4 +495,5 @@ export const platform = {
   notifications,
   logs,
   settings,
+  modules,
 }

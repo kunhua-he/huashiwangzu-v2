@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 
-logger = logging.getLogger("v2.agent.engine.stuck_detector")
+logger = logging.getLogger("v2.agent").getChild("engine.stuck_detector")
 
 STUCK_WINDOW_SIZE = 5
 STUCK_THRESHOLD = 3

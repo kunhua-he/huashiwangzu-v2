@@ -15,7 +15,7 @@ from app.core.exceptions import NotFound, PermissionDenied, ValidationError, Con
 from app.services.module_registry import register_capability
 from app.models.system import SystemTaskQueue
 
-logger = logging.getLogger("v2.scheduler.router")
+logger = logging.getLogger("v2.scheduler").getChild("router")
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
 

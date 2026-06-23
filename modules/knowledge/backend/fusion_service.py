@@ -16,7 +16,7 @@ from app.services.task_worker import register_task_handler
 
 from .models import KbDocument, KbPageFusion, KbRawData
 
-logger = logging.getLogger("v2.knowledge.fusion")
+logger = logging.getLogger("v2.knowledge").getChild("fusion")
 
 FUSION_SYSTEM_PROMPT = """你是企业文档内容融合专家。以下是对同一文档页的三轮独立采集结果，请交叉印证后输出融合内容。
 

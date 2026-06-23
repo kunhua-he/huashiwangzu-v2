@@ -9,7 +9,7 @@ import logging
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
 
-logger = logging.getLogger("v2.agent.profile_evolve")
+logger = logging.getLogger("v2.agent").getChild("profile_evolve")
 
 # 用于分析画像的 system prompt
 ANALYSIS_SYSTEM_PROMPT = (

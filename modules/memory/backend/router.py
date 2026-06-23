@@ -16,7 +16,7 @@ from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.services.module_registry import register_capability
 from app.services.task_worker import register_task_handler
 
-logger = logging.getLogger("v2.memory.router")
+logger = logging.getLogger("v2.memory").getChild("router")
 
 from huashiwangzu_modules.memory.models import AgentMemory, MemoryLink, AgentExperience
 from huashiwangzu_modules.memory.init_db import run_init

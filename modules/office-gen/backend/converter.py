@@ -9,7 +9,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-logger = logging.getLogger("v2.office_gen.converter")
+logger = logging.getLogger("v2.office-gen").getChild("converter")
 
 SUPPORTED_FORMATS = {
     "pdf", "docx", "pptx", "xlsx", "odt", "ods", "odp",

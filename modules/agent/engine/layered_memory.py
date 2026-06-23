@@ -3,7 +3,7 @@
 import logging
 from app.services.module_registry import call_capability
 
-logger = logging.getLogger("v2.agent.engine.layered_memory")
+logger = logging.getLogger("v2.agent").getChild("engine.layered_memory")
 
 MEMORY_FUSE_BUDGET_THRESHOLD = 2000  # token, 召回多条且预算紧时触发融合
 MEMORY_RECALL_DEFAULT_LIMIT = 5

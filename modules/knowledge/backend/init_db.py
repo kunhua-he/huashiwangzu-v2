@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.base import Base
 
-logger = logging.getLogger("v2.knowledge.init_db")
+logger = logging.getLogger("v2.knowledge").getChild("init_db")
 
 # 知识库模块的所有表名
 KB_TABLES = [

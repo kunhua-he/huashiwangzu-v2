@@ -5,7 +5,7 @@ from app.database import engine
 from .models import AgentMemory, MemoryLink, AgentExperience
 from app.models.base import Base
 
-logger = logging.getLogger("v2.memory.init_db")
+logger = logging.getLogger("v2.memory").getChild("init_db")
 
 TABLES = [AgentMemory.__table__, MemoryLink.__table__, AgentExperience.__table__]
 

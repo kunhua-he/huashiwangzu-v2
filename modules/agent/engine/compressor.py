@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 from event_store import record_event
 
-logger = logging.getLogger("v2.agent.engine.compressor")
+logger = logging.getLogger("v2.agent").getChild("engine.compressor")
 
 HEAD_COUNT = 10
 TAIL_COUNT = 20

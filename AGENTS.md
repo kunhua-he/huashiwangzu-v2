@@ -67,6 +67,16 @@ backend/    Desktop shell backend / platform service layer
 15. **前端代码访问 API 响应的字段名必须与后端实际返回一致。** 后端返回 `entry_component_key` 则前端也读 `entry_component_key`，不依赖 `转中文()` 转换后的中文名或未定义的 camelCase 别名。若需要映射，在消费侧显式转换，类型定义与运行时必须对齐。
 16. **`转中文()` 是 UI 展示层的纯字符串映射工具（下拉文本、toast、按钮文案），不可用于改变字段名或跳过类型检查。** 需访问的数据字段，代码直接读英文名。
 
+## 开工铁律(项目工具台 MCP)
+
+1. **每个开发 agent 开工先连"项目工具台"MCP**: 调 `brief()` 了解全貌。
+2. **测试直接用 `probe` / `call_capability` 打活系统** + `tail_log` 看错, 别写测试脚本搭场景。
+3. **查代码用 codegraph**。
+4. **读网页用 `web_read`**(不截图)。
+5. **开工前 `memory_search` 查有没有踩过的坑, 收工把决策/踩坑 `memory_write` 落盘**。
+
+MCP server 入口: `python3.14 dev_toolkit/server.py` (stdio), 注册在 `.mcp.json`。
+
 ## Scan Boundaries
 
 Allowed:

@@ -532,7 +532,7 @@ async def _call_capability(module: str, action: str, params: str = "{}", role: s
     body = {
         "target_module": module,
         "action": action,
-        "params": json.loads(params),
+        "parameters": json.loads(params),
     }
     async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=60) as client:
         resp = await client.post("/api/modules/call", json=body, headers=headers)

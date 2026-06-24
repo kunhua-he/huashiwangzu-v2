@@ -203,7 +203,13 @@ def read_static_memory_files(base_dir: str | None = None) -> list[str]:
         return []
 
     contents: list[str] = []
-    for md_path in sorted(dir_path.glob("*.md")):
+    try:
+        md_files = sorted(dir_path.glob("*.md"))
+    except (PermissionError, OSError) as exc:
+        logger.warning("Failed to list static memory directory %s: %s", resolve_dir, exc)
+        _STATIC_MEMORY_CACHE[cache_key] = (now, [])
+        return []
+    for md_path in md_files:
         try:
             text = md_path.read_text(encoding="utf-8")
             if text.strip():

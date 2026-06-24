@@ -115,47 +115,57 @@ async def _yield_final_stream(
     conversation_id: int | None = None,
 ):
     """Stream final content while checking for inline XML tool calls.
-
+    
     Buffers token events, checks accumulated content for inline tool calls when
     streaming completes. If inline calls found, they are stripped from `full`
     and a special dict event {"type": "_inline_tool_calls", "tool_calls": [...]}
     is yielded as the last event (caller should re-enter tool loop). Otherwise,
     buffered events are flushed to the frontend normally.
+
+    All failures are caught and yielded as error events — never propagate up.
     """
     logger.info("[DIAG] _yield_final_stream ENTER")
     event_count = 0
     token_buffer: list[tuple[str, str]] = []
-    async for event in chat_stream_with_degradation_chain(kwargs["messages"], profile_key, kwargs.get("tools"), conversation_id=conversation_id):
-        event_count += 1
-        event_type = event.get("type")
-        content = str(event.get("content") or "")
-        logger.info("[DIAG] _yield_final_stream event #%d type=%s content_len=%d", event_count, event_type, len(content))
-        if event_type == "thinking" and content:
-            thinking_parts.append(content)
-            timeline.append({"type": "thinking", "content": content})
-            yield f"data: {json.dumps({'type': 'thinking', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
-        elif event_type in ("token", "content") and content:
-            full.append(content)
-            timeline.append({"type": "text", "content": content})
-            token_buffer.append((event_type, content))
-        elif event_type == "error" and content:
-            yield f"data: {json.dumps({'type': 'error', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
-        elif event_type == "done":
-            logger.info("[DIAG] _yield_final_stream got done event — stream ending")
+    try:
+        async for event in chat_stream_with_degradation_chain(kwargs["messages"], profile_key, kwargs.get("tools"), conversation_id=conversation_id):
+            event_count += 1
+            event_type = event.get("type")
+            content = str(event.get("content") or "")
+            logger.info("[DIAG] _yield_final_stream event #%d type=%s content_len=%d", event_count, event_type, len(content))
+            if event_type == "thinking" and content:
+                thinking_parts.append(content)
+                timeline.append({"type": "thinking", "content": content})
+                yield f"data: {json.dumps({'type': 'thinking', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
+            elif event_type in ("token", "content") and content:
+                full.append(content)
+                timeline.append({"type": "text", "content": content})
+                token_buffer.append((event_type, content))
+            elif event_type == "error" and content:
+                yield f"data: {json.dumps({'type': 'error', 'content': content}, ensure_ascii=False)}\n\n".encode("utf-8")
+            elif event_type == "done":
+                logger.info("[DIAG] _yield_final_stream got done event — stream ending")
 
-    full_content = "".join(full)
-    clean_content, inline_calls = parse_inline_tool_calls(full_content)
-    if inline_calls:
-        full.clear()
-        full.append(clean_content)
-        logger.info("[DIAG] _yield_final_stream found %d inline tool calls, re-entering tool loop", len(inline_calls))
-        yield {"type": "_inline_tool_calls", "tool_calls": inline_calls}
-        return
+        full_content = "".join(full)
+        try:
+            clean_content, inline_calls = parse_inline_tool_calls(full_content)
+        except Exception as exc:
+            logger.warning("_yield_final_stream parse_inline_tool_calls failed: %s", exc)
+            clean_content, inline_calls = full_content, []
+        if inline_calls:
+            full.clear()
+            full.append(clean_content)
+            logger.info("[DIAG] _yield_final_stream found %d inline tool calls, re-entering tool loop", len(inline_calls))
+            yield {"type": "_inline_tool_calls", "tool_calls": inline_calls}
+            return
 
-    for etype, econtent in token_buffer:
-        yield f"data: {json.dumps({'type': 'token', 'content': econtent}, ensure_ascii=False)}\n\n".encode("utf-8")
+        for etype, econtent in token_buffer:
+            yield f"data: {json.dumps({'type': 'token', 'content': econtent}, ensure_ascii=False)}\n\n".encode("utf-8")
 
-    logger.info("[DIAG] _yield_final_stream EXIT after %d events — no inline calls", event_count)
+        logger.info("[DIAG] _yield_final_stream EXIT after %d events — no inline calls", event_count)
+    except Exception as exc:
+        logger.exception("_yield_final_stream unexpected error: %s", exc)
+        yield f"data: {json.dumps({'type': 'error', 'content': f'(stream error: {exc})'}, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
 async def handle_chat(payload, db: AsyncSession, user: User):
@@ -250,7 +260,11 @@ async def handle_chat(payload, db: AsyncSession, user: User):
                         tool_calls = result.get("tool_calls") or []
                     # 兜底：检查 content 里是否有 XML 式工具调用标记
                     if not tool_calls:
-                        clean_content, inline_calls = parse_inline_tool_calls(result.get("content", ""))
+                        try:
+                            clean_content, inline_calls = parse_inline_tool_calls(result.get("content", ""))
+                        except Exception as exc:
+                            logger.warning("parse_inline_tool_calls failed (non-fatal): %s", exc)
+                            clean_content, inline_calls = result.get("content", ""), []
                         if inline_calls:
                             result["content"] = clean_content
                             tool_calls = inline_calls

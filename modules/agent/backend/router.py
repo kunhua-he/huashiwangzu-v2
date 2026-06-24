@@ -222,6 +222,15 @@ async def admin_hook_lifecycle(
     return await handle_admin_hook_lifecycle(db, user)
 
 
+@router.get("/admin/failure-diagnostics")
+async def admin_failure_diagnostics(
+    limit: int = 50,
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_failure_diagnostics
+    return await handle_admin_failure_diagnostics(limit=limit)
+
+
 @router.get("/admin/memory-quality")
 async def admin_memory_quality(
     db: AsyncSession = Depends(get_db),

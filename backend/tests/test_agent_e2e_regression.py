@@ -196,6 +196,12 @@ class TestHookRunPersistence:
         src = Path(self.HOOKS_FILE).read_text("utf-8")
         assert "except Exception as exc" in src
 
+    def test_hook_runs_has_dual_growth_control(self):
+        src = Path(self.HOOKS_FILE).read_text("utf-8")
+        assert "_HOOK_RUN_MAX_AGE_DAYS" in src
+        assert "_HOOK_RUN_MAX_BYTES" in src
+        assert "_trim_hook_runs" in src
+
     def test_hook_lifecycle_endpoint_available(self, admin_token):
         resp = requests.get(
             API("/api/agent/admin/hook-lifecycle"),
@@ -315,3 +321,16 @@ class TestAdminEndpoints:
         data = resp.json()
         assert data.get("success")
         assert "rounds" in data["data"]
+
+    def test_failure_diagnostics_endpoint(self, admin_token):
+        resp = requests.get(
+            API("/api/agent/admin/failure-diagnostics?limit=10"),
+            headers=_auth(admin_token),
+            timeout=10,
+        )
+        assert resp.status_code == 200, f"Failure diagnostics: {resp.status_code} {resp.text[:200]}"
+        data = resp.json()
+        assert data.get("success"), f"Failure diagnostics error: {data}"
+        assert "total_returned" in data["data"]
+        assert "diagnostics" in data["data"]
+        assert isinstance(data["data"]["diagnostics"], list)

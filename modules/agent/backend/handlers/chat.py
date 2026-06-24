@@ -165,6 +165,8 @@ async def _yield_final_stream(
         logger.info("[DIAG] _yield_final_stream EXIT after %d events — no inline calls", event_count)
     except Exception as exc:
         logger.exception("_yield_final_stream unexpected error: %s", exc)
+        from ..engine.failure_diagnostics import record_failure
+        record_failure("chat", "yield_final_stream", type(exc).__name__, str(exc), conversation_id)
         yield f"data: {json.dumps({'type': 'error', 'content': f'(stream error: {exc})'}, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
@@ -559,6 +561,8 @@ async def handle_chat(payload, db: AsyncSession, user: User):
             except (Exception, asyncio.CancelledError) as exc:
                 logger.info("[DIAG] event_stream EXCEPTION %s: %s", type(exc).__name__, str(exc)[:300])
                 if not isinstance(exc, asyncio.CancelledError):
+                    from ..engine.failure_diagnostics import record_failure
+                    record_failure("chat", "event_stream", type(exc).__name__, str(exc), payload.conversation_id)
                     try:
                         yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n".encode("utf-8")
                     except GeneratorExit:

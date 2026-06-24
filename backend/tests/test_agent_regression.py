@@ -171,6 +171,21 @@ class TestHookMaintenanceChain:
         assert "_SAVE_PATH" in stuck_src or "_STUCK_DATA_FILE" in stuck_src
         assert "tempfile.mkstemp" in stuck_src
 
+    def test_hook_runs_max_age_days_exists(self):
+        assert "_HOOK_RUN_MAX_AGE_DAYS" in HOOKS_SRC
+
+    def test_hook_runs_max_bytes_exists(self):
+        assert "_HOOK_RUN_MAX_BYTES" in HOOKS_SRC
+
+    def test_hook_runs_trim_function_exists(self):
+        assert "_trim_hook_runs" in HOOKS_SRC
+
+    def test_hook_runs_max_age_is_7_days(self):
+        assert "_HOOK_RUN_MAX_AGE_DAYS = 7" in HOOKS_SRC
+
+    def test_hook_runs_max_bytes_is_1mb(self):
+        assert "_HOOK_RUN_MAX_BYTES = 1048576" in HOOKS_SRC
+
     def test_hook_lifecycle_admin_endpoint(self):
         assert "handle_admin_hook_lifecycle" in ADMIN_SRC
 
@@ -276,3 +291,98 @@ class TestMemoryQualityGovernance:
         layered_src = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")
         assert "record_recall_quality" in layered_src
         assert "RecallQualityRecord(" in layered_src
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Static memory cache → mtime invalidation
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestStaticMemoryCache:
+    """Verify static memory cache detects file changes via mtime."""
+
+    LAYERED_SRC = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")
+
+    def test_cache_ttl_is_300s(self):
+        assert "_STATIC_MEMORY_CACHE_TTL = 300.0" in self.LAYERED_SRC
+
+    def test_cache_includes_mtime_dict(self):
+        assert "tuple[float, list[str], dict[str, float]]" in self.LAYERED_SRC
+
+    def test_mtime_check_function_exists(self):
+        assert "_check_cache_mtime" in self.LAYERED_SRC
+
+    def test_cache_validates_mtime_on_hit(self):
+        assert "mtime_valid = _check_cache_mtime(file_mtimes)" in self.LAYERED_SRC
+
+    def test_cache_logs_hit_reason(self):
+        assert "Static memory cache HIT:" in self.LAYERED_SRC
+
+    def test_cache_logs_mtime_mismatch(self):
+        assert "invalidated by mtime change" in self.LAYERED_SRC
+
+    def test_cache_logs_expired(self):
+        assert "expired (TTL)" in self.LAYERED_SRC
+
+    def test_cache_collects_mtimes_on_load(self):
+        assert "file_mtimes[str(md_path)] = md_path.stat().st_mtime" in self.LAYERED_SRC
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Failure diagnostics recording
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestFailureDiagnostics:
+    """Verify failure diagnostics recording and endpoint exist."""
+
+    DIAG_SRC = (ENGINE_DIR / "failure_diagnostics.py").read_text("utf-8")
+
+    def test_record_failure_function_exists(self):
+        assert "def record_failure" in self.DIAG_SRC
+
+    def test_read_failure_diagnostics_exists(self):
+        assert "def read_failure_diagnostics" in self.DIAG_SRC
+
+    def test_diagnostic_max_bytes_512kb(self):
+        assert "_DIAGNOSTIC_MAX_BYTES = 524288" in self.DIAG_SRC
+
+    def test_jsonl_append_only_write(self):
+        assert ".jsonl" in self.DIAG_SRC
+        assert "f.flush()" in self.DIAG_SRC
+        assert "os.fsync" in self.DIAG_SRC
+
+    def test_trim_diagnostic_file_exists(self):
+        assert "_trim_diagnostic_file" in self.DIAG_SRC
+
+    def test_admin_handler_exists(self):
+        assert "handle_admin_failure_diagnostics" in ADMIN_SRC
+
+    def test_admin_route_exists_in_router(self):
+        router_src = (AGENT_DIR / "router.py").read_text("utf-8")
+        assert "failure-diagnostics" in router_src
+
+    def test_diagnostics_recorded_from_hook_failure(self):
+        """Verify post_turn_hooks wires record_failure for hook failures."""
+        assert "record_failure(" in HOOKS_SRC
+
+    def test_diagnostics_recorded_from_recall_quality_write_failure(self):
+        """Verify layered_memory wires record_failure for write failures."""
+        layered_src = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")
+        assert "record_failure(" in layered_src
+
+    def test_diagnostics_recorded_from_chat_yield_final_stream(self):
+        """Verify chat.py wires record_failure in yield_final_stream."""
+        assert "record_failure(" in CHAT_SRC
+
+    def test_recall_quality_has_age_control(self):
+        layered_src = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")
+        assert "_RECALL_QUALITY_MAX_AGE_DAYS" in layered_src
+
+    def test_recall_quality_has_bytes_control(self):
+        layered_src = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")
+        assert "_RECALL_QUALITY_MAX_BYTES" in layered_src
+
+    def test_recall_quality_trim_function(self):
+        layered_src = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")
+        assert "_trim_recall_quality" in layered_src

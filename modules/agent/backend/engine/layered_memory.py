@@ -31,6 +31,8 @@ MEMORY_RECALL_DEFAULT_LIMIT = 5
 
 _RECALL_QUALITY_FILE = "data/agent/recall_quality.json"
 _RECALL_QUALITY_MAX_ENTRIES = 1000
+_RECALL_QUALITY_MAX_AGE_DAYS = 30
+_RECALL_QUALITY_MAX_BYTES = 2097152  # 2MB
 
 
 @dataclass
@@ -86,8 +88,10 @@ def _read_recall_quality_file() -> list[dict]:
 
 def _write_recall_quality_file(records: list[dict]) -> None:
     """Atomically write records to the quality file (temp+rename)."""
+    from .failure_diagnostics import record_failure
     path = Path(_RECALL_QUALITY_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
+    records = _trim_recall_quality(records)
     try:
         fd, tmp_path_str = tempfile.mkstemp(
             suffix=".json", prefix="recall_quality_", dir=str(path.parent),
@@ -97,14 +101,27 @@ def _write_recall_quality_file(records: list[dict]) -> None:
         os.replace(tmp_path_str, str(path))
     except OSError as exc:
         logger.warning("Failed to write recall quality file: %s", exc)
+        record_failure("memory", "write_recall_quality_file", type(exc).__name__, str(exc))
+
+
+def _trim_recall_quality(records: list[dict]) -> list[dict]:
+    """Apply age, count, and bytes constraints to recall quality records."""
+    now = time.time()
+    age_cutoff = now - _RECALL_QUALITY_MAX_AGE_DAYS * 86400
+    records = [r for r in records if r.get("timestamp", 0) >= age_cutoff]
+    if len(records) > _RECALL_QUALITY_MAX_ENTRIES:
+        records = records[-_RECALL_QUALITY_MAX_ENTRIES:]
+    raw = json.dumps(records, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > _RECALL_QUALITY_MAX_BYTES:
+        drop = max(len(records) // 3, 1)
+        records = records[drop:]
+    return records
 
 
 def record_recall_quality(record: RecallQualityRecord) -> None:
     """Record a recall quality metric for governance (persisted)."""
     records = _read_recall_quality_file()
     records.append(record.to_dict())
-    if len(records) > _RECALL_QUALITY_MAX_ENTRIES:
-        records = records[-_RECALL_QUALITY_MAX_ENTRIES:]
     _write_recall_quality_file(records)
 
 
@@ -165,8 +182,8 @@ def get_recall_quality_summary() -> dict:
 
 
 STATIC_MEMORY_DIR = "data/static-memory"
-_STATIC_MEMORY_CACHE: dict[str, tuple[float, list[str]]] = {}
-_STATIC_MEMORY_CACHE_TTL = 60.0
+_STATIC_MEMORY_CACHE: dict[str, tuple[float, list[str], dict[str, float]]] = {}
+_STATIC_MEMORY_CACHE_TTL = 300.0  # 5 minutes (fallback if mtime is unsupported)
 
 
 def invalidate_static_memory_cache() -> None:
@@ -175,12 +192,25 @@ def invalidate_static_memory_cache() -> None:
     _STATIC_MEMORY_CACHE = {}
 
 
+def _check_cache_mtime(cached_mtimes: dict[str, float]) -> bool:
+    """Check if any cached file's mtime has changed. Returns True if cache is still valid."""
+    for fpath, cached_mtime in cached_mtimes.items():
+        try:
+            current_mtime = os.path.getmtime(fpath)
+        except OSError:
+            return False
+        if current_mtime != cached_mtime:
+            return False
+    return True
+
+
 def read_static_memory_files(base_dir: str | None = None) -> list[str]:
     """Read all markdown files from the static memory directory.
 
     Returns a list of content strings, one per file.  Files are sorted by
     name for deterministic ordering.  Cache is valid for ``_STATIC_MEMORY_CACHE_TTL``
-    seconds.
+    seconds, and additionally validates file mtime on each access so that
+    content changes (without path changes) are detected immediately.
 
     This is Layer 0 of the memory system — no DB, no embedding, no network.
     Pure file read, pure string injection.
@@ -193,31 +223,42 @@ def read_static_memory_files(base_dir: str | None = None) -> list[str]:
     now = time.time()
     cached = _STATIC_MEMORY_CACHE.get(cache_key)
     if cached is not None:
-        loaded_at, contents = cached
-        if (now - loaded_at) < _STATIC_MEMORY_CACHE_TTL:
+        loaded_at, contents, file_mtimes = cached
+        ttl_valid = (now - loaded_at) < _STATIC_MEMORY_CACHE_TTL
+        mtime_valid = _check_cache_mtime(file_mtimes)
+        if ttl_valid and mtime_valid:
+            logger.debug("Static memory cache HIT: TTL+mtime valid for %s (%d files, %.1fs old)",
+                         resolve_dir, len(file_mtimes), now - loaded_at)
             return list(contents)
+        if not mtime_valid:
+            logger.debug("Static memory cache invalidated by mtime change for %s", resolve_dir)
+        else:
+            logger.debug("Static memory cache expired (TTL) for %s, re-reading", resolve_dir)
 
     dir_path = Path(resolve_dir)
     if not dir_path.is_dir():
-        _STATIC_MEMORY_CACHE[cache_key] = (now, [])
+        _STATIC_MEMORY_CACHE[cache_key] = (now, [], {})
         return []
 
     contents: list[str] = []
+    file_mtimes: dict[str, float] = {}
     try:
         md_files = sorted(dir_path.glob("*.md"))
     except (PermissionError, OSError) as exc:
         logger.warning("Failed to list static memory directory %s: %s", resolve_dir, exc)
-        _STATIC_MEMORY_CACHE[cache_key] = (now, [])
+        _STATIC_MEMORY_CACHE[cache_key] = (now, [], {})
         return []
     for md_path in md_files:
         try:
             text = md_path.read_text(encoding="utf-8")
             if text.strip():
                 contents.append(text.strip())
+            file_mtimes[str(md_path)] = md_path.stat().st_mtime
         except Exception as exc:
             logger.warning("Failed to read static memory file %s: %s", md_path, exc)
 
-    _STATIC_MEMORY_CACHE[cache_key] = (now, contents)
+    _STATIC_MEMORY_CACHE[cache_key] = (now, contents, file_mtimes)
+    logger.debug("Static memory cache LOADED %d files from %s", len(contents), resolve_dir)
     return contents
 
 

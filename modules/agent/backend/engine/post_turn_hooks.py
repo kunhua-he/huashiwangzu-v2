@@ -54,6 +54,22 @@ _HOOK_LIFECYCLE_STATE: dict[str, str] = {
 }
 _HOOK_RUN_FILE = "data/agent/hook_runs.json"
 _HOOK_RUN_HISTORY_MAX = 200
+_HOOK_RUN_MAX_AGE_DAYS = 7
+_HOOK_RUN_MAX_BYTES = 1048576  # 1MB
+
+
+def _trim_hook_runs(records: list[dict]) -> list[dict]:
+    """Apply all three growth constraints: age, count, bytes. Returns trimmed list."""
+    now = time.time()
+    age_cutoff = now - _HOOK_RUN_MAX_AGE_DAYS * 86400
+    records = [r for r in records if r.get("timestamp", 0) >= age_cutoff]
+    if len(records) > _HOOK_RUN_HISTORY_MAX:
+        records = records[-_HOOK_RUN_HISTORY_MAX:]
+    raw = json.dumps(records, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > _HOOK_RUN_MAX_BYTES:
+        drop = max(len(records) // 3, 1)
+        records = records[drop:]
+    return records
 
 
 def _read_hook_runs_file() -> list[dict]:
@@ -72,8 +88,10 @@ def _read_hook_runs_file() -> list[dict]:
 
 
 def _write_hook_runs_file(records: list[dict]) -> None:
+    from .failure_diagnostics import record_failure
     path = Path(_HOOK_RUN_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
+    records = _trim_hook_runs(records)
     try:
         fd, tmp_path_str = tempfile.mkstemp(
             suffix=".json", prefix="hook_runs_", dir=str(path.parent),
@@ -83,6 +101,7 @@ def _write_hook_runs_file(records: list[dict]) -> None:
         os.replace(tmp_path_str, str(path))
     except OSError as exc:
         logger.warning("Failed to write hook runs file: %s", exc)
+        record_failure("hook", "write_hook_runs_file", type(exc).__name__, str(exc))
 
 
 def get_hook_lifecycle_state() -> dict:
@@ -110,8 +129,6 @@ def _record_hook_run(name: str, success: bool, duration_ms: float, detail: str =
         "detail": detail[:200],
         "timestamp": time.time(),
     })
-    if len(records) > _HOOK_RUN_HISTORY_MAX:
-        records = records[-_HOOK_RUN_HISTORY_MAX:]
     _write_hook_runs_file(records)
 
 
@@ -168,6 +185,8 @@ class PostTurnHooks:
                 logger.exception("Post-turn hook '%s' failed (non-fatal): %s", name, exc)
                 summary["errors"][name] = str(exc)
                 _record_hook_run(name, False, (_t1 - _t0) * 1000, str(exc)[:200])
+                from .failure_diagnostics import record_failure
+                record_failure("hook", f"run_{name}", type(exc).__name__, str(exc))
 
         asyncio.create_task(
             _safe_run("memory_distill", self._hook_memory_distill(

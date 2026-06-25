@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AppException, ConflictError, NotFound, ValidationError, PermissionDenied
 from app.database import get_db
 from app.schemas.common import ApiResponse
+from app.schemas.document_ir import DocumentIR
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.services.office import JsonPackageService, JsonVersionService, JsonPatchService
@@ -153,6 +154,26 @@ async def apply_patch(
         raise ValidationError(str(e))
     except RuntimeError as e:
         raise ConflictError(str(e))
+
+
+# ── 8. Document IR preview (unified IR view for any package) ──
+
+@router.get("/ir/{package_id}")
+async def preview_ir(
+    package_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    """Return the package content as a unified DocumentIR."""
+    await _require_package_access(db, package_id, user.id)
+    result = await package_svc.read_package(db, package_id)
+    if not result:
+        raise NotFound("Package not found")
+    json_content = result.get("json_content", {})
+    document_ir = result.get("document_ir")
+    if document_ir:
+        return ApiResponse(data=document_ir)
+    return ApiResponse(data=json_content)
 
 
 @router.post("/rollback")

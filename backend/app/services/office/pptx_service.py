@@ -10,13 +10,17 @@ class PptxService:
     async def export(self, file_path: str, json_content: dict) -> None:
         from pptx import Presentation as NewPresentation
         prs = NewPresentation()
-        content = json_content.get("content", json_content) if isinstance(json_content, dict) else json_content
 
-        if isinstance(content, list):
-            for slide_data in content:
+        content = json_content.get("content", json_content) if isinstance(json_content, dict) else json_content
+        blocks = content if isinstance(content, list) else json_content.get("blocks", [])
+
+        if isinstance(blocks, list):
+            for slide_data in blocks:
                 slide_layout = prs.slide_layouts[6]
                 slide = prs.slides.add_slide(slide_layout)
                 elements = slide_data.get("elements", [])
+                if not elements and slide_data.get("type") in ("paragraph", "heading"):
+                    elements = [{"type": "textbox", "content": slide_data.get("text", "")}]
                 for elem in elements:
                     if elem.get("type") == "textbox":
                         from pptx.util import Inches, Pt

@@ -9,6 +9,7 @@ from app.database import AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.schemas.document_ir import DocumentIR, ManifestIR
 from app.services.module_registry import register_capability
 from app.services.file_reader import resolve_caller_user_id, read_uploaded_file
 
@@ -20,7 +21,7 @@ class ParseRequest(BaseModel):
 
 
 async def _parse(params: dict, caller: str) -> dict:
-    """Parse XLSX/CSV file into unified content blocks."""
+    """Parse XLSX/CSV file into unified DocumentIR."""
     file_id = int(params.get("file_id", 0))
     if file_id <= 0:
         raise ValueError("file_id must be a positive integer")
@@ -54,7 +55,8 @@ async def _parse(params: dict, caller: str) -> dict:
                         break
                 if rows:
                     block_text = f"[Sheet: {sheet_name}]\n" + "\n".join(rows)
-                    blocks.append({"type": "表格", "text": block_text, "page": None, "resource_ref": None})
+                    blocks.append({"type": "table", "text": block_text, "page": None, "resource_ref": None,
+                                   "metadata": {"sheet_name": sheet_name}})
             wb.close()
         elif ext == "csv":
             raw = full_path.read_bytes()
@@ -71,14 +73,16 @@ async def _parse(params: dict, caller: str) -> dict:
                     rows.append("[... truncated at 5000 rows]")
                     break
             if rows:
-                blocks.append({"type": "表格", "text": "\n".join(rows), "page": None, "resource_ref": None})
+                blocks.append({"type": "table", "text": "\n".join(rows), "page": None, "resource_ref": None})
 
-    return {
-        "file_id": file_id,
-        "format": ext,
-        "blocks": blocks,
-        "resources": [],
-    }
+    ir = DocumentIR(
+        file_id=file_id,
+        format=ext,
+        manifest=ManifestIR(file_type=ext),
+        blocks=blocks,
+        resources=[],
+    )
+    return ir.model_dump(exclude_none=True)
 
 
 @router.get("/health")

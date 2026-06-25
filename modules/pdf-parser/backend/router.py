@@ -9,6 +9,7 @@ from app.database import AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.schemas.document_ir import DocumentIR, ManifestIR, ResourceIR
 from app.services.module_registry import register_capability
 from app.services.file_reader import resolve_caller_user_id, read_uploaded_file
 
@@ -45,7 +46,7 @@ async def _parse(params: dict, caller: str) -> dict:
                 if lines:
                     block_text = "\n".join(lines).strip()
                     if block_text:
-                        block_type = "标题" if pno == 1 and len(lines) <= 5 else "段落"
+                        block_type = "heading" if pno == 1 and len(lines) <= 5 else "paragraph"
                         blocks.append({"type": block_type, "text": block_text, "page": pno, "resource_ref": None})
 
                 tables = page.extract_tables()
@@ -58,25 +59,27 @@ async def _parse(params: dict, caller: str) -> dict:
                         rows.append(" | ".join(cells))
                     table_text = "\n".join(rows)
                     if table_text.strip():
-                        blocks.append({"type": "表格", "text": table_text, "page": pno, "resource_ref": None})
+                        blocks.append({"type": "table", "text": table_text, "page": pno, "resource_ref": None})
 
                 for img in page.images:
                     resource_counter += 1
                     xref = img.get("xref") or img.get("name", "")
-                    blocks.append({"type": "图片", "text": "", "page": pno, "resource_ref": resource_counter})
+                    blocks.append({"type": "image", "text": "", "page": pno, "resource_ref": resource_counter})
                     resources.append({
                         "id": resource_counter,
-                        "type": "图片",
+                        "type": "image",
                         "file_storage_id": None,
                         "text_desc": f"PDF page {pno} embedded image (xref={xref})",
                     })
 
-    return {
-        "file_id": file_id,
-        "format": "pdf",
-        "blocks": blocks,
-        "resources": resources,
-    }
+    ir = DocumentIR(
+        file_id=file_id,
+        format="pdf",
+        manifest=ManifestIR(file_type="pdf"),
+        blocks=blocks,
+        resources=resources,
+    )
+    return ir.model_dump(exclude_none=True)
 
 
 @router.get("/health")

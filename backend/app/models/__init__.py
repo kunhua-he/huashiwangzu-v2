@@ -9,6 +9,7 @@ from .desktop_state import DesktopState
 from .office import FileJsonPackage, FileJsonVersion, FileJsonPatch, FileJsonTask
 from .prompt import PromptCategory, PromptTemplate
 from .asset import FileAsset
+from .file_upload_session import FileUploadSession
 
 __all__ = ["User", "App", "Folder", "File", "FileShare", "RecycleItem",
            "SystemLog", "Notification", "UserNotificationRead", "Feedback", "Task",

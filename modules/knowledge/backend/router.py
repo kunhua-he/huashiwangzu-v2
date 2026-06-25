@@ -859,6 +859,18 @@ async def _cap_ingest(params: dict, caller: str) -> dict:
             logger.info("ingest skipped: unsupported extension '%s' for file_id=%d", ext, file_id)
             return {"skipped": True, "reason": f"unsupported extension '{ext}'"}
 
+        # ── MD5 内容级去重：全局查同内容是否已入库 ──
+        if file.md5_hash:
+            content_r = await db.execute(
+                select(KbDocument).where(
+                    KbDocument.md5_hash == file.md5_hash,
+                    KbDocument.deleted == False,
+                ).limit(1)
+            )
+            content_existing = content_r.scalar_one_or_none()
+            if content_existing:
+                return {"document_id": content_existing.id, "enqueued": False, "reason": "content already indexed"}
+
         # 已存在则返回现有记录
         existing_r = await db.execute(
             select(KbDocument).where(
@@ -883,15 +895,67 @@ register_capability(
     min_role="editor",
 )
 
-# ── Event handler: file.uploaded ──────────────────────────────────
+# ── Event handler: file.uploaded (upload → orchestration entry) ─────
+
+PARSER_EXTENSIONS = {
+    "txt", "md", "html", "csv",
+    "docx", "pptx", "xlsx", "pdf",
+}
+
+# Format families for future IR projection dispatch
+_FORMAT_FAMILIES = {
+    "txt": "text", "md": "markdown", "html": "html",
+    "docx": "ooxml", "pptx": "ooxml", "xlsx": "ooxml",
+    "pdf": "pdf",
+}
+
 
 async def _on_file_uploaded(payload: dict, caller: str, caller_role: str) -> dict:
-    """Handle file.uploaded event: register file into knowledge base.
+    """Handle file.uploaded event: orchestration entry for upload → parser/IR → KB pipeline.
 
-    Reuses _cap_ingest logic (type whitelist, idempotent, permission check).
+    Processing chain:
+      1. Permission & type guard (reuses _cap_ingest logic)
+      2. MD5 content-level dedup
+      3. If parseable → reserved for parser → IR generation (A11 integration point)
+      4. If KB-suitable → register document + enqueue kb_pipeline
+
     This is best-effort: failures are logged but do not block the upload flow.
     """
-    return await _cap_ingest(payload, caller)
+    owner_id = resolve_user_id(caller)
+    file_id = int(payload.get("file_id", 0) or 0)
+    if file_id <= 0:
+        return {"skipped": True, "reason": "invalid file_id"}
+
+    async with AsyncSessionLocal() as db:
+        from app.services.file_service import check_file_access
+        from app.core.exceptions import NotFound, PermissionDenied
+        try:
+            file = await check_file_access(db, file_id, owner_id)
+        except (NotFound, PermissionDenied):
+            return {"skipped": True, "reason": "file not found or access denied"}
+
+        ext = (file.extension or "").lower().strip(".")
+
+        # ── Parseable files: reserved for parser → IR generation ──
+        # A11 integration point: call parser capability, generate Document IR,
+        # then optionally route to KB ingestion.
+        if ext in PARSER_EXTENSIONS:
+            _format_family = _FORMAT_FAMILIES.get(ext, "unknown")
+            logger.info(
+                "file.uploaded: parseable file_id=%d ext=%s family=%s",
+                file_id, ext, _format_family,
+            )
+
+        # ── KB ingestion (with MD5 dedup) ──
+        if ext in INGEST_EXTENSIONS:
+            result = await _cap_ingest({"file_id": file_id}, caller)
+            logger.info(
+                "file.uploaded -> kb: file_id=%d result=%s", file_id, result
+            )
+            return result
+
+        logger.info("file.uploaded: no handler for file_id=%d ext=%s", file_id, ext)
+        return {"skipped": True, "reason": f"unsupported extension '{ext}'"}
 
 from app.services.module_events import register_module_event_handler
 register_module_event_handler("file.uploaded", _on_file_uploaded, "knowledge")

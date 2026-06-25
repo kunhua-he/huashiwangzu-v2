@@ -48,6 +48,19 @@ async def register_document(
     if ext not in SUPPORTED_EXTENSIONS:
         raise ValidationError(f"Unsupported file extension: {ext}")
 
+    # ── MD5 内容级去重预检 ──
+    if file.md5_hash:
+        md5_r = await db.execute(
+            select(KbDocument).where(
+                KbDocument.md5_hash == file.md5_hash,
+                KbDocument.owner_id == owner_id,
+                KbDocument.deleted == False,
+            ).limit(1)
+        )
+        md5_existing = md5_r.scalar_one_or_none()
+        if md5_existing:
+            return document_payload(md5_existing)
+
     # 已登记则返回现有记录
     existing_r = await db.execute(
         select(KbDocument).where(
@@ -68,6 +81,7 @@ async def register_document(
         extension=ext,
         file_size=file.size or 0,
         mime_type=file.mime_type or "",
+        md5_hash=file.md5_hash,
         parse_status="pending",
         vector_status="pending",
         raw_status="pending",
@@ -110,6 +124,7 @@ def document_payload(doc) -> dict:
         "extension": doc.extension,
         "file_size": doc.file_size,
         "mime_type": doc.mime_type,
+        "md5_hash": doc.md5_hash,
         "parse_status": doc.parse_status,
         "parse_error": doc.parse_error,
         "vector_status": doc.vector_status,

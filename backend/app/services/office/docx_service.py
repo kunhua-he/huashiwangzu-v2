@@ -4,24 +4,42 @@ from docx import Document
 logger = logging.getLogger(__name__)
 
 
+def _resolve_blocks(json_content: dict) -> list:
+    """Extract a flat list of block dicts from DocumentIR or legacy format."""
+    if "blocks" in json_content:
+        return json_content["blocks"]
+    content = json_content.get("content", json_content) if isinstance(json_content, dict) else json_content
+    return content if isinstance(content, list) else []
+
+
 class DocxService:
 
     async def export(self, file_path: str, json_content: dict) -> None:
         doc = Document()
-        content = json_content.get("content", json_content) if isinstance(json_content, dict) else json_content
+        blocks = _resolve_blocks(json_content)
 
-        if isinstance(content, list):
-            for item in content:
-                if item.get("type") == "paragraph":
-                    doc.add_paragraph(item.get("content", ""))
-                elif item.get("type") == "table":
-                    rows = item.get("rows", [])
-                    if rows:
-                        table = doc.add_table(rows=len(rows), cols=len(rows[0].get("cells", [])))
-                        for i, row_data in enumerate(rows):
-                            for j, cell_text in enumerate(row_data.get("cells", [])):
-                                if j < len(table.columns):
-                                    table.cell(i, j).text = cell_text
+        for item in blocks:
+            bt = item.get("type", "")
+            text = item.get("text", "")
+
+            if bt in ("paragraph", "段落"):
+                doc.add_paragraph(text)
+            elif bt == "heading":
+                level = item.get("level", 1)
+                doc.add_heading(text, level=min(level, 9))
+            elif bt == "table":
+                rows = item.get("rows", [])
+                if text and not rows:
+                    rows = [{"cells": [c.strip() for c in row.split("|")]}
+                            for row in text.split("\n") if "|" in row]
+                if rows:
+                    first_row = rows[0].get("cells", []) if isinstance(rows[0], dict) else rows[0]
+                    table = doc.add_table(rows=len(rows), cols=len(first_row))
+                    for i, row_data in enumerate(rows):
+                        cells = row_data.get("cells", []) if isinstance(row_data, dict) else row_data
+                        for j, cell_text in enumerate(cells):
+                            if j < len(table.columns):
+                                table.cell(i, j).text = str(cell_text)
 
         doc.save(file_path)
 
@@ -29,13 +47,12 @@ class DocxService:
         if patch.get("operation_type") not in ("replace_text", "modify_docx_paragraph"):
             raise ValueError("DOCX 补丁仅支持 replace_text 操作类型")
 
-        content = json_content.get("content", json_content) if isinstance(json_content, dict) else json_content
+        blocks = _resolve_blocks(json_content)
         target_id = None
-        if isinstance(content, list):
-            for item in content:
-                if item.get("type") == "paragraph" and item.get("content", "").strip():
-                    target_id = item["id"]
-                    break
+        for item in blocks:
+            if item.get("type") in ("paragraph", "heading") and item.get("text", "").strip():
+                target_id = item.get("id")
+                break
 
         return {
             "preview_passed": True,

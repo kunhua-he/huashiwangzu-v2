@@ -41,6 +41,8 @@ class KbDocument(Base, TimestampMixin):
     total_pages: Mapped[int] = mapped_column(Integer, default=0)
     # 摘要（由 LLM 生成）
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 内容级去重依据（同步自 File.md5_hash）
+    md5_hash: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="Content MD5 for global dedup")
     # 解析任务 worker 锁（防多 worker 重复消费）
     parse_worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parse_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

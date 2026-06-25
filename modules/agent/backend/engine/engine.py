@@ -296,6 +296,17 @@ async def _build_system_content(db: AsyncSession, owner_id: int, agent_code: str
         layers.append({"segment": "user_profile", "content": profile_text})
         audit.append({"segment": "user_profile", "chars": len(profile_text)})
 
+    # ── 默认开发工作流注入（全量，不依赖关键词匹配） ──
+    dev_workflow_injection = """
+<dev_workflow>
+你是执行 Agent，请对以下默认工作流有基本意识：
+- 查代码 → codegraph（首选）或 codemap
+- 验证 → probe / call_capability 打活系统
+- 收尾 → memory_write 落一条项目记忆
+</dev_workflow>"""
+    layers.append({"segment": "dev_workflow", "content": dev_workflow_injection})
+    audit.append({"segment": "dev_workflow", "chars": len(dev_workflow_injection)})
+
     result = "\n\n---\n\n".join(l["content"] for l in layers)
     audit.append({"segment": "_total", "chars": len(result), "layer_count": len(layers)})
     return result

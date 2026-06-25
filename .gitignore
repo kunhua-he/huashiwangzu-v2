@@ -67,3 +67,6 @@ frontend/tests/.auth/
 
 # codex/opencode 本地工具配置
 .codex/
+
+# 分片上传临时目录(运行态)
+backend/data/.chunked_uploads/

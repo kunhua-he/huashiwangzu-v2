@@ -821,7 +821,7 @@ server = Server("项目工具台")
 # ──────────────────── 工具 1: brief ──────────────────────────────────
 
 async def _brief() -> str:
-    """项目全景摘要, 取代手读主开发文档."""
+    """项目全景摘要, 取代手读主开发文档. 适合低上下文执行 agent."""
     parts = []
     # 主开发文档
     main_doc = REPO_ROOT / "开发文档" / "主开发文档.md"
@@ -909,12 +909,67 @@ async def _brief() -> str:
     except Exception:
         pass
 
+    # ── 默认工作流建议（适合低上下文执行 agent） ──
+    parts.append("""## 默认工作流建议
+你是执行 Agent，请按以下固定工作流操作：
+
+### 🅰 调研 / 查代码
+1. `code_explore(query)` / `code_node(symbol)` / `code_impact(path)` — codegraph 查符号/调用链/影响面
+2. codemap fallback — `POST /api/codemap/impact` — 当 codegraph 不可用时
+3. 实读验证 — 命中关联文件后实读确认，不盲信
+
+### 🅱 修复 / 开发
+4. 改前看 blast radius — `code_impact(path)` 先查改动影响
+5. 改后 lint — `lint(path)` ruff 静态检查
+
+### 🅲 验收
+6. `probe(method, path, body)` — 打后端接口验证
+7. `call_capability(module, action, params)` — 调模块能力验证
+
+### 🅳 收尾
+8. `memory_write(type, title, body, tags, agent="<你的标识>")` — 落一条项目记忆
+9. 标准五件套交付（回信到收件箱）
+
+### 🅴 codegraph 不准时
+- 调 `codemap report_inaccuracy` 反馈偏差
+- codemap 不可用则回退逐文件读
+
+> 效率的关键顺序：先 codegraph（秒级）→ codemap（秒级）→ 实读（需逐文件）。
+> 先 probe（不打日志）→ 再补测试脚本（持久化验证）。
+""")
+
     return "\n\n".join(parts)
+
+def _assess_evidence(result: dict) -> dict | None:
+    """对 probe/call_capability 结果做证据判定，适合低上下文执行 agent 快速理解。"""
+    sc = result.get("status_code", 0)
+    data = result.get("data", {})
+    if isinstance(data, dict):
+        success = data.get("success", sc == 200)
+        err = data.get("error")
+    else:
+        success = sc == 200
+        err = None
+    if not success and not err:
+        err = f"HTTP {sc}"
+    if success or sc == 200:
+        return {
+            "judgment": "PASS",
+            "summary": f"HTTP {sc}, 接口响应成功",
+            "suggestion": "此接口响应正常，可用于进一步验证。如需检查数据完整性，请继续调用具体查询端点。",
+        }
+    else:
+        return {
+            "judgment": "FAIL",
+            "summary": f"HTTP {sc}, 接口响应异常" + (f": {err}" if err else ""),
+            "suggestion": "请检查后端是否运行正常、参数是否正确、路径是否存在。然后重试。",
+        }
+
 
 # ──────────────────── 工具 2: probe ──────────────────────────────────
 
 async def _probe(method: str, path: str, body: str | None = None, role: str = "admin") -> str:
-    """打后端任意接口, 自动登录."""
+    """打后端任意接口, 自动登录. 返回原始结果 + 证据判定."""
     token = await _ensure_token(role)
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{BACKEND_BASE}{path}"
@@ -931,12 +986,18 @@ async def _probe(method: str, path: str, body: str | None = None, role: str = "a
         except Exception:
             data = resp.text
         result = {"status_code": resp.status_code, "data": data}
+
+        # 证据判定：适合低上下文执行者
+        evidence = _assess_evidence(result)
+        if evidence:
+            result["_evidence_assessment"] = evidence
+
         return json.dumps(result, ensure_ascii=False, indent=2)
 
 # ──────────────────── 工具 3: call_capability ────────────────────────
 
 async def _call_capability(module: str, action: str, params: str = "{}", role: str = "admin") -> str:
-    """调模块能力(跨模块调用入口)."""
+    """调模块能力(跨模块调用入口). 返回原始结果 + 证据判定."""
     token = await _ensure_token(role)
     headers = {"Authorization": f"Bearer {token}"}
     body = {
@@ -951,7 +1012,112 @@ async def _call_capability(module: str, action: str, params: str = "{}", role: s
         except Exception:
             data = resp.text
         result = {"status_code": resp.status_code, "data": data}
+
+        # 证据判定：适合低上下文执行者
+        evidence = _assess_evidence(result)
+        if evidence:
+            result["_evidence_assessment"] = evidence
+
         return json.dumps(result, ensure_ascii=False, indent=2)
+
+# ──────────────────── 工具: maturity ───────────────────────────────────
+
+_MATURITY_SCORE = {
+    "agent_runtime": {
+        "label": "Agent runtime",
+        "coverage": 0.7,
+        "quality": 0.6,
+        "completeness": 0.55,
+        "note": "会话执行层已可跑，工具循环/stuck/diminishing/budget 齐全；三层记忆/技能注入/经验库完备。但无理解环、review fork、runtime policy 未收口。",
+    },
+    "backend_platform": {
+        "label": "backend platform",
+        "coverage": 0.8,
+        "quality": 0.7,
+        "completeness": 0.7,
+        "note": "FastAPI 层稳，鉴权/模块注册/事件总线/任务 worker/模型网关/文件服务齐全。模块治理属性仍轻。",
+    },
+    "desktop_shell": {
+        "label": "desktop shell",
+        "coverage": 0.75,
+        "quality": 0.7,
+        "completeness": 0.65,
+        "note": "Vue3 桌面壳完整：登录/窗口/任务栏/启动器/模块加载。模块通信仍需强化。",
+    },
+    "memory_knowledge": {
+        "label": "memory / knowledge",
+        "coverage": 0.7,
+        "quality": 0.6,
+        "completeness": 0.5,
+        "note": "三层记忆/经验库/语义召回已可跑。知识库有 keyword+vector+RRF+fusion+entity graph。但缺 evidence plan/answerability/packet，A3/A4 后提升。",
+    },
+    "files_office_parsers": {
+        "label": "files / office / parsers",
+        "coverage": 0.75,
+        "quality": 0.65,
+        "completeness": 0.6,
+        "note": "文件上传读取/分享/office 包链/docx&xlsx 解析/office-gen 生成都有。但文件仍是 file service 非 artifact system，parser 格式 schema 仍分叉。",
+    },
+    "scheduler_automation": {
+        "label": "scheduler / automation",
+        "coverage": 0.5,
+        "quality": 0.5,
+        "completeness": 0.4,
+        "note": "scheduler 模块有创建/列出/取消定时任务。但事件驱动/自动化链路/backpressure/粘滞恢复未成熟。",
+    },
+    "module_platform": {
+        "label": "module platform",
+        "coverage": 0.7,
+        "quality": 0.65,
+        "completeness": 0.6,
+        "note": "manifest/runtime/capability registry/跨模块 call 通路已跑通。但治理属性轻、trace/timeout/contract 未成熟。",
+    },
+    "security_permissions": {
+        "label": "security / permissions",
+        "coverage": 0.65,
+        "quality": 0.6,
+        "completeness": 0.5,
+        "note": "JWT+role(file access)已有。但权限仍 file 级二维模型，缺协作语义/expiry/audit/scope/share policy。",
+    },
+}
+
+
+def _maturity(area: str = "") -> str:
+    """成熟度评分卡：按 coverage / quality / completeness 打分 8 个维度。
+
+    无参数返回全景；传 area 只返回该维度。
+    """
+    if area and area in _MATURITY_SCORE:
+        return json.dumps(_MATURITY_SCORE[area], ensure_ascii=False, indent=2)
+
+    overall = {"average_coverage": 0.0, "average_quality": 0.0, "average_completeness": 0.0}
+    result = {"dimensions": _MATURITY_SCORE, "summary": ""}
+    n = len(_MATURITY_SCORE)
+    overall["average_coverage"] = round(sum(d["coverage"] for d in _MATURITY_SCORE.values()) / n, 3)
+    overall["average_quality"] = round(sum(d["quality"] for d in _MATURITY_SCORE.values()) / n, 3)
+    overall["average_completeness"] = round(sum(d["completeness"] for d in _MATURITY_SCORE.values()) / n, 3)
+    result["overall"] = overall
+
+    # 按总分排序
+    sorted_dims = sorted(
+        _MATURITY_SCORE.values(),
+        key=lambda d: d["coverage"] + d["quality"] + d["completeness"],
+        reverse=True,
+    )
+    result["sorted_by_total_score"] = [
+        {"label": d["label"], "total": round(d["coverage"] + d["quality"] + d["completeness"], 3)}
+        for d in sorted_dims
+    ]
+
+    result["summary"] = (
+        f"8个维度平均: coverage={overall['average_coverage']:.1%}, "
+        f"quality={overall['average_quality']:.1%}, "
+        f"completeness={overall['average_completeness']:.1%}。"
+        f"总分最高: {sorted_dims[0]['label'] if sorted_dims else 'N/A'}。"
+        f"总分最低: {sorted_dims[-1]['label'] if sorted_dims else 'N/A'}。"
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
 
 # ──────────────────── 工具 4: tail_log ───────────────────────────────
 
@@ -1225,12 +1391,12 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="brief",
-            description="项目全景摘要: 主开发文档概览 + 最近变更 + 投递箱待处理 + 最近项目记忆",
+            description="项目全景摘要: 主开发文档概览 + 最近变更 + 投递箱待处理 + 最近项目记忆 + 默认工作流建议. 适合低上下文执行 agent 开工首选.",
             inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
             name="probe",
-            description="自动登录后打后端任意 HTTP 接口. 返回 {status_code, data}.",
+            description="自动登录后打后端任意 HTTP 接口. 返回 {status_code, data, _evidence_assessment}. 证据判定含 PASS/FAIL + 建议, 适合低上下文执行 agent.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1244,7 +1410,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="call_capability",
-            description="调模块能力(跨模块调用). 自动登录后打 /api/modules/call.",
+            description="调模块能力(跨模块调用). 自动登录后打 /api/modules/call. 返回含 _evidence_assessment 证据判定.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1371,7 +1537,17 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name=    "smoke_all",
+            name="maturity",
+            description="成熟度评分卡: 按coverage/quality/completeness打分8个维度(agent_runtime/backend_platform/desktop_shell/memory_knowledge/files_office_parsers/scheduler_automation/module_platform/security_permissions). 无参数返回全景, 传area返回单维度.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "area": {"type": "string", "description": "维度key: agent_runtime / backend_platform / desktop_shell / memory_knowledge / files_office_parsers / scheduler_automation / module_platform / security_permissions", "default": ""},
+                },
+            },
+        ),
+        Tool(
+            name="smoke_all",
             description="一键全回归: 后端集测(probe/call_capability) + 前端UI(Playwright) + 红绿矩阵.",
             inputSchema={
                 "type": "object",
@@ -1532,6 +1708,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await _code_node(symbol=arguments["symbol"])
         elif name == "code_impact":
             result = await _code_impact(path=arguments["path"])
+        elif name == "maturity":
+            result = _maturity(area=arguments.get("area", ""))
         elif name == "smoke_all":
             skip_ui = arguments.get("skip_ui", False)
             proc = await asyncio.create_subprocess_exec(

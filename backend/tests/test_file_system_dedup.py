@@ -48,8 +48,12 @@ async def test_diff_content_not_dedup():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         headers = {"Authorization": f"Bearer {await _login(client, 'admin')}"}
-        r1 = await client.post("/api/files/upload", files={"file": ("a.txt", b"aaa")}, headers=headers)
-        r2 = await client.post("/api/files/upload", files={"file": ("b.txt", b"bbb")}, headers=headers)
+        import os as _os
+        tag = _os.urandom(4).hex()
+        content1 = b"diff1_" + _os.urandom(8)
+        content2 = b"diff2_" + _os.urandom(8)
+        r1 = await client.post("/api/files/upload", files={"file": (f"diff1_{tag}.txt", content1)}, headers=headers)
+        r2 = await client.post("/api/files/upload", files={"file": (f"diff2_{tag}.txt", content2)}, headers=headers)
         assert r1.json()["success"] and r2.json()["success"]
         assert r2.json()["data"].get("deduplicated") is not True
         await _del_file(client, headers, r1.json()["data"]["id"])

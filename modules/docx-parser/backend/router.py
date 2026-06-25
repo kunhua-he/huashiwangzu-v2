@@ -9,6 +9,7 @@ from app.database import AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.schemas.document_ir import DocumentIR, ManifestIR
 from app.services.module_registry import register_capability
 from app.services.file_reader import resolve_caller_user_id, read_uploaded_file
 
@@ -20,7 +21,7 @@ class ParseRequest(BaseModel):
 
 
 async def _parse(params: dict, caller: str) -> dict:
-    """Parse DOCX file into unified content blocks."""
+    """Parse DOCX file into unified DocumentIR."""
     file_id = int(params.get("file_id", 0))
     if file_id <= 0:
         raise ValueError("file_id must be a positive integer")
@@ -42,8 +43,14 @@ async def _parse(params: dict, caller: str) -> dict:
             if not text:
                 continue
             style_name = str(para.style.name) if para.style else ""
-            block_type = "标题" if ("heading" in style_name.lower() or "标题" in style_name) else "段落"
-            blocks.append({"type": block_type, "text": text, "page": None, "resource_ref": None})
+            block_type = "heading" if ("heading" in style_name.lower() or "标题" in style_name) else "paragraph"
+            level = None
+            if block_type == "heading":
+                for i in range(1, 10):
+                    if str(i) in style_name or f"heading {i}" in style_name.lower():
+                        level = i
+                        break
+            blocks.append({"type": block_type, "text": text, "level": level, "page": None, "resource_ref": None})
 
         for table in doc.tables:
             rows = []
@@ -52,25 +59,27 @@ async def _parse(params: dict, caller: str) -> dict:
                 rows.append(" | ".join(cells))
             table_text = "\n".join(rows)
             if table_text.strip():
-                blocks.append({"type": "表格", "text": table_text, "page": None, "resource_ref": None})
+                blocks.append({"type": "table", "text": table_text, "page": None, "resource_ref": None})
 
         for rel in doc.part.rels.values():
             if "image" in str(rel.reltype or "").lower():
                 resource_counter += 1
-                blocks.append({"type": "图片", "text": "", "page": None, "resource_ref": resource_counter})
+                blocks.append({"type": "image", "text": "", "page": None, "resource_ref": resource_counter})
                 resources.append({
                     "id": resource_counter,
-                    "type": "图片",
+                    "type": "image",
                     "file_storage_id": None,
                     "text_desc": f"DOCX embedded image ({rel.target_ref})",
                 })
 
-    return {
-        "file_id": file_id,
-        "format": "docx",
-        "blocks": blocks,
-        "resources": resources,
-    }
+    ir = DocumentIR(
+        file_id=file_id,
+        format="docx",
+        manifest=ManifestIR(file_type="docx"),
+        blocks=blocks,
+        resources=resources,
+    )
+    return ir.model_dump(exclude_none=True)
 
 
 @router.get("/health")

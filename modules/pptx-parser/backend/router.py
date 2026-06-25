@@ -9,6 +9,7 @@ from app.database import AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.schemas.document_ir import DocumentIR, ManifestIR, ResourceIR
 from app.services.module_registry import register_capability
 from app.services.file_reader import resolve_caller_user_id, read_uploaded_file
 
@@ -45,24 +46,26 @@ async def _parse(params: dict, caller: str) -> dict:
                         text = para.text.strip()
                         if not text:
                             continue
-                        block_type = "标题" if ("title" in str(shape.name).lower() or "标题" in str(shape.name)) else "段落"
+                        block_type = "heading" if ("title" in str(shape.name).lower() or "标题" in str(shape.name)) else "paragraph"
                         blocks.append({"type": block_type, "text": text, "page": pno, "resource_ref": None})
                 if shape.shape_type and "picture" in str(shape.shape_type).lower():
                     resource_counter += 1
-                    blocks.append({"type": "图片", "text": "", "page": pno, "resource_ref": resource_counter})
+                    blocks.append({"type": "image", "text": "", "page": pno, "resource_ref": resource_counter})
                     resources.append({
                         "id": resource_counter,
-                        "type": "图片",
+                        "type": "image",
                         "file_storage_id": None,
                         "text_desc": f"Slide {pno} image ({shape.name})",
                     })
 
-    return {
-        "file_id": file_id,
-        "format": "pptx",
-        "blocks": blocks,
-        "resources": resources,
-    }
+    ir = DocumentIR(
+        file_id=file_id,
+        format="pptx",
+        manifest=ManifestIR(file_type="pptx"),
+        blocks=blocks,
+        resources=resources,
+    )
+    return ir.model_dump(exclude_none=True)
 
 
 @router.get("/health")

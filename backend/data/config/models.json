@@ -2,7 +2,12 @@
   "_notes": [
     "This file is the single source of truth for all model configuration.",
     "Edit here instead of modifying Python code for day-to-day model changes.",
-    "Each profile needs a response_adapter matching an adapter in gateway/adapters/."
+    "Each profile needs a response_adapter matching an adapter in gateway/adapters/.",
+    "",
+    "v2 governance model: provider → model_capability → variant_template → routing_policy.",
+    "templates: named presets referencing one or more profiles (for role routing).",
+    "routing_policies: rules mapping role/risk/stage/task_complexity → template.",
+    "budget_rates: per-provider rate-limits and daily budget caps."
   ],
 
   "watchdog_defaults": {
@@ -38,6 +43,99 @@
       "api_key_env": "MIMO_GATE1_KEY",
       "provider_name": "mimo",
       "description": "Xiaomi MiMo cloud vision-language model"
+    }
+  },
+
+  "templates": {
+    "default": {
+      "description": "Default template — single flash model, linear fallback chain",
+      "primary_profile": "deepseek-v4-flash",
+      "fallback_chain": ["deepseek-v4-pro", "gemma-4", "ollama-local"],
+      "budget_ratio": 1.0
+    },
+    "planner": {
+      "description": "Planner/reasoning template — uses pro model for deep thinking",
+      "primary_profile": "deepseek-v4-pro",
+      "fallback_chain": ["deepseek-v4-flash", "ollama-local"],
+      "budget_ratio": 1.5
+    },
+    "executor": {
+      "description": "Executor template — fast flash model for tool execution",
+      "primary_profile": "deepseek-v4-flash",
+      "fallback_chain": ["ollama-local"],
+      "budget_ratio": 0.8
+    },
+    "understanding": {
+      "description": "Understanding / classification template — fast and cheap for intent analysis",
+      "primary_profile": "deepseek-v4-flash",
+      "fallback_chain": ["ollama-local"],
+      "budget_ratio": 0.6
+    },
+    "reviewer": {
+      "description": "Reviewer template — uses pro for thorough review",
+      "primary_profile": "deepseek-v4-pro",
+      "fallback_chain": ["deepseek-v4-flash"],
+      "budget_ratio": 1.2
+    },
+    "retrieval": {
+      "description": "Retrieval / evidence template — fast for simple judgments",
+      "primary_profile": "deepseek-v4-flash",
+      "fallback_chain": ["ollama-local"],
+      "budget_ratio": 0.5
+    },
+    "clarifier": {
+      "description": "Intent clarifier — cheap flash for ambiguity resolution",
+      "primary_profile": "deepseek-v4-flash",
+      "fallback_chain": ["ollama-local"],
+      "budget_ratio": 0.5
+    },
+    "critic": {
+      "description": "Plan critic — uses pro for quality assessment",
+      "primary_profile": "deepseek-v4-pro",
+      "fallback_chain": ["deepseek-v4-flash"],
+      "budget_ratio": 1.0
+    }
+  },
+
+  "routing_policies": {
+    "default_policy": {
+      "description": "Default routing: role → template mapping",
+      "rules": {
+        "default": "default",
+        "planner": "planner",
+        "executor": "executor",
+        "reviewer": "reviewer",
+        "understanding": "understanding",
+        "retrieval": "retrieval",
+        "clarifier": "clarifier",
+        "critic": "critic"
+      },
+      "high_ambiguity_override": "planner",
+      "high_cost_override": "planner",
+      "budget_tight_override": "executor"
+    }
+  },
+
+  "budget_rates": {
+    "opencode": {
+      "tpm_limit": 100000,
+      "daily_budget": null,
+      "monthly_budget": null
+    },
+    "llama": {
+      "tpm_limit": 50000,
+      "daily_budget": null,
+      "monthly_budget": null
+    },
+    "ollama": {
+      "tpm_limit": 20000,
+      "daily_budget": null,
+      "monthly_budget": null
+    },
+    "mimo": {
+      "tpm_limit": 30000,
+      "daily_budget": null,
+      "monthly_budget": null
     }
   },
 

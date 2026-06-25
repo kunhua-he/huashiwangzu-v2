@@ -46,6 +46,12 @@ class RuntimePolicy:
     allow_inline_tool_recovery: bool = True
     allow_final_summary_fallback: bool = True
 
+    # ── Understanding loop precision handles ───────────────────────
+
+    enable_understanding_loop: bool = True
+    understanding_max_rounds: int = 2
+    understanding_min_chars: int = 20
+
     # ── Convenience factory ────────────────────────────────────────
 
     @classmethod

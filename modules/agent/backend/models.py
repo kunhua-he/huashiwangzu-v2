@@ -368,3 +368,54 @@ class SkillUsage(Base, TimestampMixin):
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ── Understanding Loop Models ───────────────────────────────────────────
+
+
+class UnderstandingPacket(Base, TimestampMixin):
+    """Structured understanding packet produced by the understanding loop.
+
+    Created when a high-ambiguity or high-cost task triggers the
+    understanding orchestrator. Contains the consolidated output from
+    multiple understanding roles (intent_clarifier, concern_miner,
+    plan_critic, retrieval_evidence).
+
+    Owner_id is required and must be set from the runtime caller.
+    """
+    __tablename__ = "agent_understanding_packets"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    trigger_reason: Mapped[str] = mapped_column(String(64), default="high_ambiguity")
+    user_input: Mapped[str] = mapped_column(Text, default="")
+    intent: Mapped[str] = mapped_column(Text, default="")
+    concerns: Mapped[list] = mapped_column(JSON, default=list)
+    plan_critique: Mapped[str] = mapped_column(Text, default="")
+    retrieval_evidence: Mapped[list] = mapped_column(JSON, default=list)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    rounds_used: Mapped[int] = mapped_column(Integer, default=0)
+    roles_executed: Mapped[list] = mapped_column(JSON, default=list)
+    resolved_profile_key: Mapped[str] = mapped_column(String(64), default="")
+    resolved_template: Mapped[str] = mapped_column(String(64), default="default")
+
+
+class UnderstandingEvent(Base, TimestampMixin):
+    """Per-role call record within an understanding loop.
+
+    Each role (intent_clarifier, concern_miner, etc.) produces one event.
+    Enables audit of what each role contributed.
+    """
+    __tablename__ = "agent_understanding_events"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    packet_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    role_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    response: Mapped[str] = mapped_column(Text, default="")
+    profile_key: Mapped[str] = mapped_column(String(64), default="")
+    round_index: Mapped[int] = mapped_column(Integer, default=0)
+    duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

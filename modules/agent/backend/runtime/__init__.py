@@ -3,6 +3,7 @@ from .stream_emitter import StreamEmitter
 from .task_sink import RuntimeTaskSink
 from .tool_loop_runtime import ToolLoopRuntime
 from .conversation_runtime import ConversationRuntime
+from .understanding_loop import UnderstandingLoopOrchestrator
 
 __all__ = [
     "RuntimePolicy",
@@ -10,4 +11,5 @@ __all__ = [
     "RuntimeTaskSink",
     "ToolLoopRuntime",
     "ConversationRuntime",
+    "UnderstandingLoopOrchestrator",
 ]

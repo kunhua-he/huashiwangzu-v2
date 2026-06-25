@@ -117,7 +117,11 @@ async def _cap_update_my_profile(params: dict, caller: str) -> dict:
 # ── Capability: agent:spawn_subagent ──
 
 async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
-    """子 Agent：把子任务委托给一个独立工具循环，拿回结论。"""
+    """子 Agent：把子任务委托给一个独立工具循环，拿回结论。
+
+    Supports role-based model routing via ``role`` param (default: "executor").
+    Supported roles: executor, planner, reviewer, understanding, retrieval.
+    """
     task = params.get("task", "")
     if not task or not isinstance(task, str):
         return {"error": "task is required"}
@@ -125,6 +129,7 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
     caller_role = "viewer"
     extra_tools = params.get("tools") or []
     extra_context = params.get("context") or ""
+    agent_role = params.get("role", "executor")
 
     try:
         system_prompt = (
@@ -149,9 +154,11 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
 
         messages = [{"role": "system", "content": system_prompt}]
 
+        # Resolve profile via role-based template routing
+        profile_key = gateway_service.resolve_role_profile(agent_role)
         full_content = ""
         for _round in range(SUBAGENT_MAX_ROUNDS):
-            kwargs = {"messages": messages, "tools": tools}
+            kwargs = {"messages": messages, "tools": tools, "profile_key": profile_key}
             result = await gateway_service.chat(**kwargs)
 
             if result.get("error"):

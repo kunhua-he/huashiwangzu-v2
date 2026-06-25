@@ -538,6 +538,64 @@ async def ensure_review_governance_tables(db: AsyncSession) -> None:
         logger.warning("Migration: review/governance tables check failed: %s", e)
 
 
+async def ensure_understanding_tables(db: AsyncSession) -> None:
+    """Ensure understanding loop tables exist (idempotent)."""
+    tables = [
+        """
+        CREATE TABLE IF NOT EXISTS agent_understanding_packets (
+            id BIGSERIAL PRIMARY KEY,
+            owner_id INTEGER NOT NULL,
+            conversation_id BIGINT NOT NULL,
+            trigger_reason VARCHAR(64) DEFAULT 'high_ambiguity',
+            user_input TEXT DEFAULT '',
+            intent TEXT DEFAULT '',
+            concerns JSONB DEFAULT '[]'::jsonb,
+            plan_critique TEXT DEFAULT '',
+            retrieval_evidence JSONB DEFAULT '[]'::jsonb,
+            summary TEXT DEFAULT '',
+            rounds_used INTEGER DEFAULT 0,
+            roles_executed JSONB DEFAULT '[]'::jsonb,
+            resolved_profile_key VARCHAR(64) DEFAULT '',
+            resolved_template VARCHAR(64) DEFAULT 'default',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_understanding_events (
+            id BIGSERIAL PRIMARY KEY,
+            owner_id INTEGER NOT NULL,
+            packet_id BIGINT NOT NULL,
+            conversation_id BIGINT NOT NULL,
+            role_name VARCHAR(64) NOT NULL,
+            prompt TEXT DEFAULT '',
+            response TEXT DEFAULT '',
+            profile_key VARCHAR(64) DEFAULT '',
+            round_index INTEGER DEFAULT 0,
+            duration_ms DOUBLE PRECISION DEFAULT 0.0,
+            success BOOLEAN DEFAULT TRUE,
+            error TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_understanding_packets_owner ON agent_understanding_packets(owner_id)",
+        "CREATE INDEX IF NOT EXISTS ix_understanding_packets_conv ON agent_understanding_packets(conversation_id)",
+        "CREATE INDEX IF NOT EXISTS ix_understanding_events_owner ON agent_understanding_events(owner_id)",
+        "CREATE INDEX IF NOT EXISTS ix_understanding_events_packet ON agent_understanding_events(packet_id)",
+    ]
+    try:
+        for sql in tables + indexes:
+            await db.execute(text(sql))
+        await db.commit()
+        logger.info("Migration: ensured understanding loop tables")
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Migration: understanding tables check failed: %s", e)
+
+
 async def ensure_memory_snapshot_table(db: AsyncSession) -> None:
     """Ensure agent_memory_snapshots table exists (idempotent)."""
     try:
@@ -588,6 +646,7 @@ async def run_init(db: AsyncSession) -> None:
     await ensure_maintenance_state_table(db)
     await ensure_review_governance_tables(db)
     await ensure_memory_snapshot_table(db)
+    await ensure_understanding_tables(db)
     await ensure_default_prompts(db)
     await update_existing_prompts(db)
     _init_done = True

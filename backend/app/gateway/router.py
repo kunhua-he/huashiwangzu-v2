@@ -8,7 +8,12 @@ from .opencode_provider import OpenCodeProvider
 from .openai_provider import OpenAIProvider
 from .local import LocalProvider
 from .adapters import get_adapter
-from .config import DEFAULT_MODEL, _config, MODEL_PROFILES, resolve_api_key
+from .config import (
+    DEFAULT_MODEL, _config, MODEL_PROFILES, resolve_api_key,
+    TEMPLATES, ROUTING_POLICIES, DEFAULT_ROUTING_POLICY,
+    BUDGET_RATES, VariantTemplate,
+    resolve_template_for_role, list_templates, list_routing_policies,
+)
 
 logger = logging.getLogger("v2.gateway.router")
 RETRY_MAX_ATTEMPTS = 3
@@ -50,6 +55,58 @@ class RetryBudget:
             "total_attempts": len(self.attempts),
             "attempts": self.attempts,
         }
+
+# ── Model governance ─ ModelRouter (template + routing policy + budget/health diag) ──
+
+
+class ModelRouter:
+    """Governance-level model router: resolves templates, evaluates policy, reports diagnostics.
+
+    This is the control-plane layer above the existing ``ModelGatewayRouter``.
+    Consumers can ask "what template should role X use?" without knowing
+    about raw profile keys.
+    """
+
+    @staticmethod
+    def resolve_template(role: str = "default",
+                          high_ambiguity: bool = False,
+                          high_cost: bool = False,
+                          budget_tight: bool = False,
+                          policy_name: str = "default_policy") -> VariantTemplate:
+        return resolve_template_for_role(role, high_ambiguity, high_cost, budget_tight, policy_name)
+
+    @staticmethod
+    def resolve_profile_key(role: str = "default",
+                             high_ambiguity: bool = False,
+                             high_cost: bool = False,
+                             budget_tight: bool = False,
+                             policy_name: str = "default_policy") -> str:
+        tpl = resolve_template_for_role(role, high_ambiguity, high_cost, budget_tight, policy_name)
+        return tpl.primary_profile
+
+    @staticmethod
+    def get_template(name: str) -> VariantTemplate | None:
+        return TEMPLATES.get(name)
+
+    @staticmethod
+    def list_templates() -> list[dict]:
+        return list_templates()
+
+    @staticmethod
+    def list_policies() -> list[dict]:
+        return list_routing_policies()
+
+    @staticmethod
+    def get_diagnostics() -> dict:
+        """Return current routing state for admin observability."""
+        return {
+            "templates": list_templates(),
+            "policies": list_routing_policies(),
+            "budget_rates": {k: v for k, v in BUDGET_RATES.items()},
+            "default_policy": DEFAULT_ROUTING_POLICY.name,
+            "available_profiles": list(MODEL_PROFILES.keys()),
+        }
+
 
 # ── Cost logging helper ───────────────────────────────────────────────
 
@@ -204,6 +261,24 @@ class ModelGatewayRouter:
 
     def list_profiles(self) -> list[dict]:
         return list_model_profiles()
+
+    def resolve_template(self, role: str = "default",
+                          high_ambiguity: bool = False,
+                          high_cost: bool = False,
+                          budget_tight: bool = False,
+                          policy_name: str = "default_policy") -> VariantTemplate:
+        return resolve_template_for_role(role, high_ambiguity, high_cost, budget_tight, policy_name)
+
+    def resolve_profile_key_for_role(self, role: str = "default",
+                                      high_ambiguity: bool = False,
+                                      high_cost: bool = False,
+                                      budget_tight: bool = False,
+                                      policy_name: str = "default_policy") -> str:
+        tpl = resolve_template_for_role(role, high_ambiguity, high_cost, budget_tight, policy_name)
+        return tpl.primary_profile
+
+    def get_routing_diagnostics(self) -> dict:
+        return ModelRouter.get_diagnostics()
 
     def get_provider(self, provider_name: str) -> BaseProvider:
         provider = self._providers.get(provider_name)

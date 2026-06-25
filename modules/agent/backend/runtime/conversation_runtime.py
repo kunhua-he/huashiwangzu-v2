@@ -4,11 +4,12 @@ HTTP handler only does: parse request, authenticate, call
 ``ConversationRuntime.execute()``, return the ``StreamingResponse``.
 
 Owns initialization, user-message persistence, context assembly,
-tool discovery, and wiring of the sub-runtime objects.
+tool discovery, understanding loop, and wiring of the sub-runtime objects.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi.responses import StreamingResponse
@@ -25,6 +26,7 @@ from ..services import tool_discovery
 from .runtime_policy import RuntimePolicy
 from .tool_loop_runtime import ToolLoopRuntime
 from .task_sink import RuntimeTaskSink
+from .understanding_loop import UnderstandingLoopOrchestrator
 
 logger = logging.getLogger("v2.agent").getChild("runtime.conversation")
 
@@ -53,9 +55,10 @@ class ConversationRuntime:
         1. ``run_init`` / ``ensure_user_profile``
         2. Persist user message
         3. ``assemble_context`` + record assembly diagnostic
-        4. Build tool list
-        5. Create ``ToolLoopRuntime`` + ``RuntimeTaskSink``
-        6. Return ``StreamingResponse`` over the tool-loop generator
+        4. Run understanding loop (if high-ambiguity)
+        5. Build tool list
+        6. Create ``ToolLoopRuntime`` + ``RuntimeTaskSink``
+        7. Return ``StreamingResponse`` over the tool-loop generator
         """
         await run_init(db)
         await ensure_user_profile(db, user.id)
@@ -100,6 +103,42 @@ class ConversationRuntime:
                 "Record assembly diag failed (non-fatal): %s", diag_exc,
             )
 
+        # ── Understanding phase (high-ambiguity / high-cost tasks) ──
+        understanding_packet = None
+        if self.policy.enable_understanding_loop and len(payload.content) >= self.policy.understanding_min_chars:
+            try:
+                uloop = UnderstandingLoopOrchestrator(
+                    conversation_id=payload.conversation_id,
+                    owner_id=user.id,
+                    profile_key=profile_key,
+                )
+                if await uloop.should_trigger(payload.content):
+                    understanding_packet = await uloop.run(payload.content)
+                    await record_event(
+                        db, payload.conversation_id, "understanding_diag",
+                        {
+                            "triggered": True,
+                            "roles_executed": understanding_packet.get("roles_executed", []),
+                            "rounds_used": understanding_packet.get("rounds_used", 0),
+                            "intent": understanding_packet.get("intent", "")[:200],
+                            "summary": understanding_packet.get("summary", ""),
+                        },
+                    )
+                    # Inject understanding context into system message
+                    if understanding_packet.get("intent") or understanding_packet.get("summary"):
+                        understanding_injection = self._build_understanding_injection(understanding_packet)
+                        if understanding_injection and messages:
+                            for msg in messages:
+                                if msg["role"] == "system":
+                                    msg["content"] += understanding_injection
+                                    break
+            except Exception as uloop_exc:
+                logger.warning("Understanding loop failed (non-fatal): %s", uloop_exc)
+                await record_event(
+                    db, payload.conversation_id, "understanding_diag",
+                    {"triggered": True, "error": str(uloop_exc)},
+                )
+
         # ── Build tools ─────────────────────────────────────────────
         tools = tool_discovery.build_tools(user.role)
 
@@ -121,3 +160,37 @@ class ConversationRuntime:
                 yield event
 
         return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+    def _build_understanding_injection(self, packet: dict) -> str:
+        """Build a system-prompt injection from the understanding packet."""
+        parts = []
+        intent = packet.get("intent", "")
+        if intent:
+            parts.append(f"【意图理解】系统已识别用户核心意图：{intent}")
+        concerns = packet.get("concerns", [])
+        if concerns:
+            top = concerns[:3]
+            parts.append("【关注点】" + "; ".join(
+                c.get("concern", "") for c in top if c.get("concern")
+            ))
+        plan = packet.get("plan_critique", "")
+        if plan:
+            try:
+                plan_data = json.loads(plan)
+                if isinstance(plan_data, dict):
+                    feasibility = plan_data.get("feasibility", "")
+                    approach = plan_data.get("suggested_approach", "")
+                    if feasibility:
+                        parts.append(f"【可行性评估】{feasibility}")
+                    if approach:
+                        parts.append(f"【建议方案】{approach}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+        retrieval = packet.get("retrieval_evidence", [])
+        if retrieval:
+            queries = [r.get("query", "") for r in retrieval if r.get("query")]
+            if queries:
+                parts.append(f"【可能需要检索】{' | '.join(queries[:3])}")
+        if not parts:
+            return ""
+        return "\n\n---\n\n" + "\n".join(parts)

@@ -589,6 +589,49 @@ async def get_graph_context(db: AsyncSession, owner_id: int, entity_id: int) -> 
     }
 
 
+async def get_evidence_graph_context(
+    db: AsyncSession, owner_id: int, document_ids: list[int], max_nodes: int = 5,
+) -> list[dict]:
+    """Get graph context relevant to the given documents for the evidence packet.
+
+    Returns a list of edge summaries showing entity relationships within
+    the document set.
+    """
+    from ..models import KbGraphNode, KbGraphEdge, KbEntityDictionary
+
+    # Find entities linked to these documents
+    entity_r = await db.execute(
+        select(KbGraphNode).where(
+            KbGraphNode.owner_id == owner_id,
+        ).limit(max_nodes * 2)
+    )
+    nodes = entity_r.scalars().all()
+    if not nodes:
+        return []
+
+    node_ids = [n.id for n in nodes]
+    edge_r = await db.execute(
+        select(KbGraphEdge).where(
+            (KbGraphEdge.source_node_id.in_(node_ids) | KbGraphEdge.target_node_id.in_(node_ids)),
+            KbGraphEdge.owner_id == owner_id,
+        ).limit(max_nodes * 2)
+    )
+    edges = edge_r.scalars().all()
+    node_map = {n.id: n.label for n in nodes}
+
+    results = []
+    for e in edges:
+        source_label = node_map.get(e.source_node_id, f"node_{e.source_node_id}")
+        target_label = node_map.get(e.target_node_id, f"node_{e.target_node_id}")
+        results.append({
+            "source": source_label,
+            "relation": e.relation,
+            "target": target_label,
+            "weight": e.weight,
+        })
+    return results
+
+
 async def get_page_fusion(db: AsyncSession, document_id: int, page: int) -> dict | None:
     """获取页级融合内容。"""
     from ..models import KbPageFusion

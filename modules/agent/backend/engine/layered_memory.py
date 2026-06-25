@@ -430,6 +430,214 @@ async def trigger_dream(
         return {}
 
 
+# ── Memory Selector (recall-time relevance filtering) ─────────────────
+
+
+MIN_RELEVANCE_SCORE = 0.35
+MAX_MEMORY_SEGMENTS = 12
+ALLOW_SEMANTIC_WHEN_BUDGET_HIGH = True
+STABLE_RULES_HARD_CAP = 20
+CHUNK_VS_SEMANTIC_RATIO = 0.6
+
+
+@dataclass
+class MemorySelectionResult:
+    """Result of memory selection — what was kept and why."""
+    raw_rules: int
+    raw_chunks: int
+    raw_semantic: int
+    kept_rules: int
+    kept_chunks: int
+    kept_semantic: int
+    dropped_rules: list[str]
+    dropped_chunks: list[str]
+    dropped_semantic: list[str]
+    selection_reason: str
+
+
+def select_memory_segments(
+    rules: list[dict],
+    chunks: list[dict],
+    semantic: list[dict],
+    query: str | None = None,
+    max_segments: int = MAX_MEMORY_SEGMENTS,
+    min_relevance: float = MIN_RELEVANCE_SCORE,
+) -> tuple[MemorySelectionResult, list[dict], list[dict], list[dict]]:
+    """Selector: post-recall relevance filter that trims noisy/low-value entries.
+
+    Keeps the highest-value entries from each layer while respecting
+    ``max_segments`` and a minimum relevance threshold.  Rules are always
+    kept (they are deterministic constraints), but the cap is enforced.
+    """
+    result = MemorySelectionResult(
+        raw_rules=len(rules),
+        raw_chunks=len(chunks),
+        raw_semantic=len(semantic),
+        kept_rules=0,
+        kept_chunks=0,
+        kept_semantic=0,
+        dropped_rules=[],
+        dropped_chunks=[],
+        dropped_semantic=[],
+        selection_reason="",
+    )
+
+    # ── Stable rules: keep all (they are constraints), cap only ──────
+    kept_rules = sorted(rules, key=lambda r: r.get("priority", 0), reverse=True)
+    if len(kept_rules) > STABLE_RULES_HARD_CAP:
+        dropped_count = len(kept_rules) - STABLE_RULES_HARD_CAP
+        result.dropped_rules = [
+            r.get("content", "")[:80] for r in kept_rules[STABLE_RULES_HARD_CAP:]
+        ]
+        kept_rules = kept_rules[:STABLE_RULES_HARD_CAP]
+    else:
+        result.dropped_rules = []
+    result.kept_rules = len(kept_rules)
+
+    # ── Chunks: score by similarity + provenance quality ─────────────
+    scored_chunks = []
+    for c in chunks:
+        sim = c.get("similarity", c.get("score", 0)) or 0
+        if sim >= min_relevance:
+            provenance_boost = 1.0 if c.get("provenance") else 0.8
+            scored_chunks.append((c, sim * provenance_boost))
+    scored_chunks.sort(key=lambda x: -x[1])
+    dropped_chunks = [c.get("text", "")[:60] for c, _ in scored_chunks[max_segments // 2:]]
+    kept_chunks = [c for c, _ in scored_chunks[:max_segments // 2]]
+    result.kept_chunks = len(kept_chunks)
+    result.dropped_chunks = dropped_chunks
+
+    # ── Semantic: score by similarity, trim to remaining budget ──────
+    remaining = max_segments - result.kept_rules - result.kept_chunks
+    semantic_budget = max(0, min(remaining, max_segments // 3))
+
+    scored_semantic = [(s, s.get("similarity", 0) or 0) for s in semantic]
+    scored_semantic.sort(key=lambda x: -x[1])
+    dropped_semantic = [s.get("text", s.get("summary", ""))[:60] for s, _ in scored_semantic[semantic_budget:]]
+    kept_semantic = [s for s, _ in scored_semantic[:semantic_budget] if _ >= min_relevance]
+    result.kept_semantic = len(kept_semantic)
+    result.dropped_semantic = dropped_semantic
+
+    total_dropped = len(result.dropped_rules) + len(result.dropped_chunks) + len(result.dropped_semantic)
+    result.selection_reason = f"kept {result.kept_rules}r+{result.kept_chunks}c+{result.kept_semantic}s (dropped {total_dropped})"
+
+    return result, kept_rules, kept_chunks, kept_semantic
+
+
+# ── Memory Fencing ──────────────────────────────────────────────────────
+
+
+@dataclass
+class MemoryFence:
+    """Fencing policy — controls which memory layers are injected and when."""
+    inject_stable_rules: bool = True
+    inject_chunks: bool = True
+    inject_semantic: bool = True
+    inject_experience: bool = True
+    stable_rules_max_char: int = 2000
+    chunks_max_char: int = 3000
+    semantic_max_char: int = 2000
+    experience_max_char: int = 1500
+
+
+DEFAULT_MEMORY_FENCE = MemoryFence()
+
+
+def apply_fencing(
+    injection_parts: dict[str, str],
+    fence: MemoryFence | None = None,
+) -> str:
+    """Apply fencing policy — enforce per-layer char caps and layer toggles.
+
+    Args:
+        injection_parts: ``{"stable_rules": ..., "chunks": ..., "semantic": ...}``
+        fence: The fencing policy. Uses ``DEFAULT_MEMORY_FENCE`` if ``None``.
+
+    Returns:
+        The assembled injection string with caps enforced per layer.
+    """
+    f = fence or DEFAULT_MEMORY_FENCE
+    segments: list[str] = []
+
+    if f.inject_stable_rules and injection_parts.get("stable_rules"):
+        segments.append(injection_parts["stable_rules"][:f.stable_rules_max_char])
+    if f.inject_chunks and injection_parts.get("chunks"):
+        segments.append(injection_parts["chunks"][:f.chunks_max_char])
+    if f.inject_semantic and injection_parts.get("semantic"):
+        segments.append(injection_parts["semantic"][:f.semantic_max_char])
+
+    result = "\n\n".join(segments)
+    return result
+
+
+# ── Frozen Snapshot ─────────────────────────────────────────────────────
+# Long-running conversations can freeze a memory snapshot at a given point
+# so that subsequent turns reuse the same snapshot instead of re-recall.
+# This reduces noise from early conversation context drifting away.
+
+
+@dataclass
+class FrozenSnapshot:
+    """A frozen memory snapshot captured at a point in time."""
+    snapshot_type: str  # "conversation_start", "mid_turn", "manual"
+    captured_at: float
+    owner_id: int
+    conversation_id: int | None
+    stable_rules: list[dict]
+    chunks: list[dict]
+    semantic: list[dict]
+    token_estimate: int
+    turn_count: int
+    label: str = ""
+
+
+_SNAPSHOT_CACHE: dict[str, FrozenSnapshot] = {}
+
+
+def freeze_memory_snapshot(
+    owner_id: int,
+    conversation_id: int | None,
+    stable_rules: list[dict],
+    chunks: list[dict],
+    semantic: list[dict],
+    token_estimate: int = 0,
+    turn_count: int = 0,
+    label: str = "",
+) -> str:
+    """Freeze a memory snapshot and return its cache key.
+
+    The snapshot is stored in-process (cross-worker with DB would use
+    ``agent_context_snapshots`` table).  The key format is
+    ``frozen:{owner_id}:{conversation_id}:{label}`` so long tasks can
+    reuse the same snapshot across turns.
+    """
+    import time
+    key = f"frozen:{owner_id}:{conversation_id or 0}:{label}"
+    _SNAPSHOT_CACHE[key] = FrozenSnapshot(
+        snapshot_type="conversation_start" if not label else label,
+        captured_at=time.time(),
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        stable_rules=list(stable_rules),
+        chunks=list(chunks),
+        semantic=list(semantic),
+        token_estimate=token_estimate,
+        turn_count=turn_count,
+        label=label,
+    )
+    return key
+
+
+def get_frozen_snapshot(key: str) -> FrozenSnapshot | None:
+    """Retrieve a frozen snapshot by its cache key."""
+    return _SNAPSHOT_CACHE.get(key)
+
+
+def invalidate_frozen_snapshot(key: str) -> None:
+    """Remove a frozen snapshot from cache."""
+    _SNAPSHOT_CACHE.pop(key, None)
+
+
 # ── Three-layer memory helpers ──────────────────────────────────────────
 
 
@@ -571,6 +779,8 @@ async def save_stable_rule(
 async def three_layer_recall(
     owner_id: int,
     query: str,
+    fence: MemoryFence | None = None,
+    frozen_key: str | None = None,
 ) -> dict[str, Any]:
     """Combined recall from all three memory layers in one call.
 
@@ -583,15 +793,40 @@ async def three_layer_recall(
     Args:
         owner_id: The user to recall for.
         query: Natural-language query driving semantic searches (chunks + semantic).
+        fence: Optional fencing policy. Uses ``DEFAULT_MEMORY_FENCE`` if ``None``.
+        frozen_key: If provided, returns the frozen snapshot instead of re-recall.
 
     Returns:
         Dict with keys:
-            ``stable_rules`` — all active stable rules for this user
-            ``chunks``       — chunk-level recall results
-            ``semantic``     — existing semantic recall results
-            ``injection``    — formatted prompt injection string combining all three layers
+            ``stable_rules`` — selected stable rules for this user
+            ``chunks``       — selected chunk-level recall results
+            ``semantic``     — selected semantic recall results
+            ``injection``    — formatted prompt injection string
+            ``selection``    — ``MemorySelectionResult`` dict
+            ``frozen_key``   — snapshot key if frozen was used/created
+            ``quality_score`` — estimated quality (0-1)
     """
     import asyncio
+
+    # ── Use frozen snapshot if available ─────────────────────────────
+    if frozen_key:
+        snapshot = get_frozen_snapshot(frozen_key)
+        if snapshot:
+            inj_parts = {
+                "stable_rules": _format_rules_injection(snapshot.stable_rules),
+                "chunks": _format_chunks_injection(snapshot.chunks),
+                "semantic": _format_semantic_injection(snapshot.semantic),
+            }
+            injection = apply_fencing(inj_parts, fence)
+            return {
+                "stable_rules": snapshot.stable_rules,
+                "chunks": snapshot.chunks,
+                "semantic": snapshot.semantic,
+                "injection": injection,
+                "frozen_key": frozen_key,
+                "quality_score": 1.0,
+                "selection": {"from_snapshot": True, "label": snapshot.label},
+            }
 
     async def _safe_stable():
         try:
@@ -618,60 +853,80 @@ async def three_layer_recall(
         _safe_stable(), _safe_chunk(), _safe_semantic(),
     )
 
-    injection = _format_three_layer_injection(stable_rules, chunks, semantic)
+    # ── Apply Selector ───────────────────────────────────────────────
+    selection, kept_rules, kept_chunks, kept_semantic = select_memory_segments(
+        stable_rules, chunks, semantic, query=query,
+    )
+
+    # ── Format each layer ────────────────────────────────────────────
+    inj_parts = {
+        "stable_rules": _format_rules_injection(kept_rules),
+        "chunks": _format_chunks_injection(kept_chunks),
+        "semantic": _format_semantic_injection(kept_semantic),
+    }
+
+    # ── Apply Fencing ────────────────────────────────────────────────
+    injection = apply_fencing(inj_parts, fence)
+
+    # ── Quality estimate ─────────────────────────────────────────────
+    total_raw = selection.raw_rules + selection.raw_chunks + selection.raw_semantic
+    total_kept = selection.kept_rules + selection.kept_chunks + selection.kept_semantic
+    quality_score = min(1.0, (total_kept / max(total_raw, 1)) * 0.7 + 0.3) if total_raw > 0 else 0.5
 
     return {
-        "stable_rules": stable_rules,
-        "chunks": chunks,
-        "semantic": semantic,
+        "stable_rules": kept_rules,
+        "chunks": kept_chunks,
+        "semantic": kept_semantic,
         "injection": injection,
+        "selection": {
+            "raw_rules": selection.raw_rules,
+            "raw_chunks": selection.raw_chunks,
+            "raw_semantic": selection.raw_semantic,
+            "kept_rules": selection.kept_rules,
+            "kept_chunks": selection.kept_chunks,
+            "kept_semantic": selection.kept_semantic,
+            "dropped_count": len(selection.dropped_rules) + len(selection.dropped_chunks) + len(selection.dropped_semantic),
+            "reason": selection.selection_reason,
+        },
+        "frozen_key": None,
+        "quality_score": round(quality_score, 3),
     }
 
 
-def _format_three_layer_injection(
-    rules: list[dict],
-    chunks: list[dict],
-    semantic: list[dict],
-) -> str:
-    """Format the three memory layers into a single structured prompt injection string.
+def _format_rules_injection(rules: list[dict]) -> str:
+    """Format stable rules into a prompt injection block."""
+    if not rules:
+        return ""
+    rules_sorted = sorted(rules, key=lambda r: r.get("priority", 0), reverse=True)
+    rule_lines = [f"  [{r.get('rule_type', 'general')}] {r.get('content', '')}" for r in rules_sorted]
+    return "<stable_rules>\n" + "\n".join(rule_lines) + "\n</stable_rules>"
 
-    The output is designed to be prepended to the system prompt so the LLM
-    sees all relevant context organised by memory tier.
-    """
-    parts: list[str] = []
 
-    # ── Layer 1: Stable rules ────────────────────────────────────────
-    if rules:
-        rules_sorted = sorted(rules, key=lambda r: r.get("priority", 0), reverse=True)
-        rule_lines: list[str] = []
-        for r in rules_sorted:
-            rule_type = r.get("rule_type", "general")
-            content = r.get("content", "")
-            rule_lines.append(f"  [{rule_type}] {content}")
-        parts.append("<stable_rules>\n" + "\n".join(rule_lines) + "\n</stable_rules>")
+def _format_chunks_injection(chunks: list[dict]) -> str:
+    """Format chunk-level memories into a prompt injection block."""
+    if not chunks:
+        return ""
+    chunk_lines = []
+    for i, c in enumerate(chunks, 1):
+        text = c.get("text", "")
+        provenance = c.get("provenance", "")
+        if provenance:
+            chunk_lines.append(f"  [{i}] {text}  (source: {provenance})")
+        else:
+            chunk_lines.append(f"  [{i}] {text}")
+    return "<chunks>\n" + "\n".join(chunk_lines) + "\n</chunks>"
 
-    # ── Layer 2: Chunks ──────────────────────────────────────────────
-    if chunks:
-        chunk_lines: list[str] = []
-        for i, c in enumerate(chunks, 1):
-            text = c.get("text", "")
-            provenance = c.get("provenance", "")
-            if provenance:
-                chunk_lines.append(f"  [{i}] {text}  (source: {provenance})")
-            else:
-                chunk_lines.append(f"  [{i}] {text}")
-        parts.append("<chunks>\n" + "\n".join(chunk_lines) + "\n</chunks>")
 
-    # ── Layer 3: Semantic ────────────────────────────────────────────
-    if semantic:
-        sem_lines: list[str] = []
-        for i, s in enumerate(semantic, 1):
-            text = s.get("text") or s.get("summary", "")
-            similarity = s.get("similarity", "")
-            if similarity:
-                sem_lines.append(f"  [{i}] {text}  (relevance: {similarity})")
-            else:
-                sem_lines.append(f"  [{i}] {text}")
-        parts.append("<semantic_memories>\n" + "\n".join(sem_lines) + "\n</semantic_memories>")
-
-    return "\n\n".join(parts)
+def _format_semantic_injection(semantic: list[dict]) -> str:
+    """Format semantic memories into a prompt injection block."""
+    if not semantic:
+        return ""
+    sem_lines = []
+    for i, s in enumerate(semantic, 1):
+        text = s.get("text") or s.get("summary", "")
+        similarity = s.get("similarity", "")
+        if similarity:
+            sem_lines.append(f"  [{i}] {text}  (relevance: {similarity})")
+        else:
+            sem_lines.append(f"  [{i}] {text}")
+    return "<semantic_memories>\n" + "\n".join(sem_lines) + "\n</semantic_memories>"

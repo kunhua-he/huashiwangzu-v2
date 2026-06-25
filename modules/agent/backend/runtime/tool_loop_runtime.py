@@ -446,7 +446,7 @@ class ToolLoopRuntime:
                 )
                 async with AsyncSessionLocal() as _bt2_db:
                     await budget_tracker.record_round(
-                        _bt2_db, _budget_session_key,
+                        _bt2_db, _budget_session_key, self.owner_id,
                         _tool_round_tokens_before, _tokens_after,
                     )
                     _tool_round_tokens_before = _tokens_after

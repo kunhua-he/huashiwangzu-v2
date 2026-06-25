@@ -538,6 +538,39 @@ async def ensure_review_governance_tables(db: AsyncSession) -> None:
         logger.warning("Migration: review/governance tables check failed: %s", e)
 
 
+async def ensure_memory_snapshot_table(db: AsyncSession) -> None:
+    """Ensure agent_memory_snapshots table exists (idempotent)."""
+    try:
+        await db.execute(text("""
+            CREATE TABLE IF NOT EXISTS agent_memory_snapshots (
+                id BIGSERIAL PRIMARY KEY,
+                owner_id INTEGER NOT NULL,
+                conversation_id BIGINT,
+                label VARCHAR(64) DEFAULT '',
+                snapshot_type VARCHAR(32) DEFAULT 'conversation_start',
+                token_estimate INTEGER DEFAULT 0,
+                turn_count INTEGER DEFAULT 0,
+                stable_rules_data JSONB,
+                chunks_data JSONB,
+                semantic_data JSONB,
+                selection_audit JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        await db.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_memory_snapshots_owner ON agent_memory_snapshots(owner_id)"
+        ))
+        await db.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_memory_snapshots_conv ON agent_memory_snapshots(conversation_id)"
+        ))
+        await db.commit()
+        logger.info("Migration: ensured agent_memory_snapshots table")
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Migration: agent_memory_snapshots table check failed: %s", e)
+
+
 _init_done: bool = False
 
 
@@ -554,6 +587,7 @@ async def run_init(db: AsyncSession) -> None:
     await ensure_agent_state_tables(db)
     await ensure_maintenance_state_table(db)
     await ensure_review_governance_tables(db)
+    await ensure_memory_snapshot_table(db)
     await ensure_default_prompts(db)
     await update_existing_prompts(db)
     _init_done = True

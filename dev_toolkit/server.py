@@ -1015,7 +1015,11 @@ async def _log_errors(module: str = "backend", lines: int = 400) -> str:
     if not path:
         return f"[未找到模块日志] {module}"
     text = _tail_file(path, lines)
-    hits = [ln for ln in text.split("\n") if _ERROR_PAT.search(ln)]
+    # 跳过 INFO/DIAG 诊断行(含 error=False 这类正常字样), 只留真报错
+    hits = [
+        ln for ln in text.split("\n")
+        if _ERROR_PAT.search(ln) and "[DIAG]" not in ln and " INFO " not in ln
+    ]
     if not hits:
         return f"✅ {path.name} 最近 {lines} 行无异常/报错命中"
     return f"⚠️ {path.name} 命中 {len(hits)} 条疑似吞掉的异常/报错:\n" + "\n".join(hits[-40:])

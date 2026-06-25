@@ -132,25 +132,43 @@ async def assemble_context(
     diagnosis["effective_profile_key"] = effective_profile_key
     diagnosis["assembly_audit"] = assembly_audit
 
-    # ── 三层记忆注入（批5）：稳定规则 + chunk + 语义记忆 ──────────
+    # ── 三层记忆注入（批5+selector/fencing/snapshot）：稳定规则 + chunk + 语义记忆 ──
     try:
-        three_layer = await _three_layer_recall(owner_id, current_user_input)
+        # Check for frozen snapshot on long-running conversations
+        _frozen_key = None
+        if agent_cfg and agent_cfg.get("agent_code"):
+            # Long tasks reuse snapshot (key set manually by prior turn)
+            pass  # snapshot key management is per-task, not automatic yet
+        three_layer = await _three_layer_recall(
+            owner_id, current_user_input,
+            frozen_key=_frozen_key,
+        )
         if three_layer.get("injection") and messages:
             for msg in messages:
                 if msg["role"] == "system":
                     msg["content"] += "\n\n---\n\n" + three_layer["injection"]
                     break
+            selection = three_layer.get("selection", {})
             stable_count = len(three_layer.get("stable_rules", []))
             chunk_count = len(three_layer.get("chunks", []))
             semantic_count = len(three_layer.get("semantic", []))
+            dropped_count = selection.get("dropped_count", 0)
             diagnosis["three_layer_memory"] = {
                 "stable_rules": stable_count,
                 "chunks": chunk_count,
                 "semantic": semantic_count,
+                "selector_dropped": dropped_count,
+                "selection_reason": selection.get("reason", ""),
             }
-            assembly_audit.append({"segment": "three_layer_memory", "stable_rules": stable_count, "chunks": chunk_count, "semantic": semantic_count})
+            assembly_audit.append({
+                "segment": "three_layer_memory",
+                "stable_rules": stable_count,
+                "chunks": chunk_count,
+                "semantic": semantic_count,
+                "selector_dropped": dropped_count,
+            })
             quality_score = three_layer.get("quality_score", 1.0)
-            emit_signal("memory_recall_quality", quality_score, f"layer=three_layer")
+            emit_signal("memory_recall_quality", quality_score, f"layer=three_layer sel_drop={dropped_count}")
         else:
             assembly_audit.append({"segment": "three_layer_memory", "injected": False})
     except Exception as e:

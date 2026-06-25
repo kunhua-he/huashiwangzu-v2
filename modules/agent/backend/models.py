@@ -232,6 +232,37 @@ class AgentMaintenanceState(Base, TimestampMixin):
 from .models_prompt import AgentPrompt
 
 
+# ── Memory Snapshot / Frozen Snapshot Models ────────────────────────────
+
+
+class MemorySnapshot(Base, TimestampMixin):
+    """Persistent frozen memory snapshot for long-running conversations.
+
+    Unlike ``ContextSnapshot`` (which records pre/post-compress state for
+    diagnostics), this table holds the *memory content* of a snapshot —
+    the actual stable rules, chunks, and semantic memories that were selected
+    at a given turn.  Long tasks can request ``frozen_key`` at turn N and
+    reuse the same memory context through turn N+M without re-recall.
+
+    Snapshots are created by ``freeze_memory_snapshot()`` (which writes to
+    a process cache) and can be optionally persisted here for cross-worker
+    reuse.
+    """
+    __tablename__ = "agent_memory_snapshots"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    label: Mapped[str] = mapped_column(String(64), default="")
+    snapshot_type: Mapped[str] = mapped_column(String(32), default="conversation_start")
+    token_estimate: Mapped[int] = mapped_column(Integer, default=0)
+    turn_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Serialised memory content
+    stable_rules_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    chunks_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    semantic_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    selection_audit: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
 # ── Review / Skill Governance Models ────────────────────────────────────
 
 

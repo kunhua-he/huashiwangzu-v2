@@ -313,7 +313,15 @@ async def index_fusions_to_chunks(db: AsyncSession, document_id: int, owner_id: 
     )
     fusions = r.scalars().all()
     blocks = [
-        {"type": "融合", "text": pf.fused_text, "page": pf.page, "resource_ref": None}
+        {
+            "type": "融合",
+            "text": pf.fused_text,
+            "page": pf.page,
+            "resource_ref": None,
+            "provenance": pf.page_summary or f"page_{pf.page}",
+            "evidence_ids": pf.evidence_json or [],
+            "confidence": pf.confidence or 0.0,
+        }
         for pf in fusions
         if pf.fused_text and pf.fused_text.strip()
     ]

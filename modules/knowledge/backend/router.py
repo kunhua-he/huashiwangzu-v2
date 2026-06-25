@@ -19,7 +19,7 @@ from .services.document_service import (
     parse_and_index_document, resolve_user_id,
 )
 from .services.embedding_service import get_chunk_by_id
-from .services.search_service import hybrid_search, get_document_chunks
+from .services.search_service import hybrid_search, get_document_chunks, evidence_oriented_search
 from .services.entity_service import get_entity_dictionary, get_graph_context, get_page_fusion, process_document_entities_from_fusions
 from .services.governance_service import (
     list_governance_candidates, approve_candidate, reject_candidate,
@@ -434,6 +434,36 @@ async def api_search(
     result = await hybrid_search(db, payload.query, user.id, payload.top_k, payload.use_rerank)
     return ApiResponse(data={"query": payload.query, "results": result})
 
+
+class EvidenceSearchRequest(BaseModel):
+    query: str
+    top_k: int = 10
+    use_rerank: bool = False
+    enable_rewrite: bool = True
+    enable_answerability: bool = True
+    include_fusion: bool = True
+    include_graph: bool = True
+
+
+@router.post("/evidence-search")
+async def api_evidence_search(
+    payload: EvidenceSearchRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    """Evidence-oriented search: returns a structured evidence packet with
+    answerability judgment, citations, fusion context, and graph context."""
+    result = await evidence_oriented_search(
+        db, payload.query, user.id,
+        top_k=payload.top_k,
+        use_rerank=payload.use_rerank,
+        enable_rewrite=payload.enable_rewrite,
+        enable_answerability=payload.enable_answerability,
+        include_fusion=payload.include_fusion,
+        include_graph=payload.include_graph,
+    )
+    return ApiResponse(data=result)
+
 @router.get("/documents/{document_id}/chunks")
 async def api_document_chunks(
     document_id: int,
@@ -611,7 +641,18 @@ async def _cap_search(params: dict, caller: str) -> dict:
                 doc_cache[doc_id] = doc.filename if doc else ""
             r["document_name"] = doc_cache.get(doc_id, "")
             enriched.append(r)
-        return {"query": query, "results": enriched}
+
+        # Evidence metadata for agent consumption: answerability + citation count
+        answerable = "yes" if enriched and enriched[0].get("rrf_score", 0) > 0.5 else "weak" if enriched else "no"
+        return {
+            "query": query,
+            "results": enriched,
+            "evidence_meta": {
+                "answerable": answerable,
+                "citation_count": len(enriched),
+                "hint": "use evidence_search for full evidence packet (answerability, fusion, graph)",
+            },
+        }
 
 async def _cap_get_block(params: dict, caller: str) -> dict:
     owner_id = resolve_user_id(caller)
@@ -660,6 +701,39 @@ async def _cap_get_evidence_detail(params: dict, caller: str) -> dict:
     async with AsyncSessionLocal() as db:
         result = await get_evidence_detail(db, owner_id, entity_id)
         return {"evidence": result}
+
+async def _cap_evidence_search(params: dict, caller: str) -> dict:
+    """Evidence-oriented search capability for agent consumption.
+
+    Returns a structured evidence packet with:
+    - ``answerable``: "yes" | "weak" | "no"
+    - ``answerability_reason``: explanation
+    - ``citations``: list of chunk citations with provenance
+    - ``fusion_context``: page-level fusion content
+    - ``graph_context``: entity relationship summaries
+    - ``rewritten_query``: if query was rewritten
+    """
+    owner_id = resolve_user_id(caller)
+    query = str(params.get("query", "")).strip()
+    top_k = int(params.get("top_k", 10) or 10)
+    enable_rewrite = bool(params.get("enable_rewrite", True))
+    enable_answerability = bool(params.get("enable_answerability", True))
+    include_fusion = bool(params.get("include_fusion", True))
+    include_graph = bool(params.get("include_graph", True))
+    if not query:
+        raise ValueError("query is required")
+    async with AsyncSessionLocal() as db:
+        result = await evidence_oriented_search(
+            db, query, owner_id,
+            top_k=top_k,
+            use_rerank=False,
+            enable_rewrite=enable_rewrite,
+            enable_answerability=enable_answerability,
+            include_fusion=include_fusion,
+            include_graph=include_graph,
+        )
+        return result
+
 
 # 注册对外能力：Agent 会通过 list_capabilities 自动发现 knowledge__search 等工具。
 register_capability(
@@ -715,6 +789,20 @@ register_capability(
     description="Get evidence details for an entity",
     brief="查看治理证据",
     parameters={"entity_id": {"type": "integer", "description": "Entity ID"}},
+    min_role="viewer",
+)
+register_capability(
+    "knowledge", "evidence_search", _cap_evidence_search,
+    description="Search knowledge base with evidence-oriented results: returns answerability judgment, citations, fusion context, and graph context in a unified evidence packet",
+    brief="知识库证据检索",
+    parameters={
+        "query": {"type": "string", "description": "Search query"},
+        "top_k": {"type": "integer", "description": "Number of results, default 10"},
+        "enable_rewrite": {"type": "boolean", "description": "Enable query rewriting, default true"},
+        "enable_answerability": {"type": "boolean", "description": "Enable answerability judgment, default true"},
+        "include_fusion": {"type": "boolean", "description": "Include page fusion context, default true"},
+        "include_graph": {"type": "boolean", "description": "Include graph context, default true"},
+    },
     min_role="viewer",
 )
 

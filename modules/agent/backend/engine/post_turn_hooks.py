@@ -645,6 +645,7 @@ def setup_global_hooks() -> None:
         logger.warning("setup_global_hooks: previous background task finished, restarting")
 
     async def _maintenance_loop() -> None:
+        global _background_maintenance_run_count  # 嵌套函数对模块全局 += 必须声明, 否则 UnboundLocalError
         logger.info(
             "Maintenance observer started (interval=%ss, EVERY_N_TURNS=%s, MAX_PERIODIC_SNAPSHOTS=%s)",
             _MAINTENANCE_INTERVAL, EVERY_N_TURNS, MAX_PERIODIC_SNAPSHOTS,

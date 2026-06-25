@@ -53,11 +53,11 @@ class DiminishingBudgetTracker:
         row = r.scalar_one_or_none()
         return (row.rounds_data or {}).get("rounds", []) if row else []
 
-    async def _save_to_db(self, db: AsyncSession, session_key: str, records: list[dict]) -> None:
+    async def _save_to_db(self, db: AsyncSession, session_key: str, owner_id: int, records: list[dict]) -> None:
         conv_id = self._conv_id(session_key)
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         stmt = pg_insert(AgentBudgetState).values(
-            conversation_id=conv_id, rounds_data={"rounds": records},
+            conversation_id=conv_id, owner_id=owner_id, rounds_data={"rounds": records},
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["conversation_id"],
@@ -78,6 +78,7 @@ class DiminishingBudgetTracker:
         self,
         db: AsyncSession,
         session_key: str,
+        owner_id: int,
         tokens_before: int,
         tokens_after: int,
     ) -> DiminishingReturnRecord:
@@ -97,7 +98,7 @@ class DiminishingBudgetTracker:
             "token_count_after": tokens_after,
             "net_gain_tokens": net_gain,
         })
-        await self._save_to_db(db, session_key, records)
+        await self._save_to_db(db, session_key, owner_id, records)
         return rec
 
     async def should_stop(self, db: AsyncSession, session_key: str) -> tuple[bool, str]:

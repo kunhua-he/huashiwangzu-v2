@@ -392,6 +392,17 @@ class ToolLoopRuntime:
                             "llm_response_id": None,
                         })
 
+                    # ── Auto-create assets for tool outputs ─────────
+                    try:
+                        async with AsyncSessionLocal() as _aa_db:
+                            await sink.record_assets(
+                                orchestrated_results,
+                            )
+                    except Exception as _aa_exc:
+                        logger.warning(
+                            "Auto-asset creation failed (non-fatal): %s", _aa_exc,
+                        )
+
                 # ── Incremental event persistence ───────────────────
                 try:
                     async with AsyncSessionLocal() as _cp_db:

@@ -8,10 +8,12 @@ from .role_matrix import RoleMatrix
 from .desktop_state import DesktopState
 from .office import FileJsonPackage, FileJsonVersion, FileJsonPatch, FileJsonTask
 from .prompt import PromptCategory, PromptTemplate
+from .asset import FileAsset
 
 __all__ = ["User", "App", "Folder", "File", "FileShare", "RecycleItem",
            "SystemLog", "Notification", "UserNotificationRead", "Feedback", "Task",
            "Setting", "SystemTaskQueue",
            "RoleMatrix", "DesktopState",
            "FileJsonPackage", "FileJsonVersion", "FileJsonPatch", "FileJsonTask",
-           "PromptCategory", "PromptTemplate"]
+           "PromptCategory", "PromptTemplate",
+           "FileAsset"]

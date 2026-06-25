@@ -9,7 +9,7 @@ MODULE_BACKEND = Path(__file__).resolve().parent.parent.parent / "modules" / "ag
 if str(MODULE_BACKEND) not in sys.path:
     sys.path.insert(0, str(MODULE_BACKEND))
 
-from model_client import parse_inline_tool_calls, final_clean_content
+from services.model_client import parse_inline_tool_calls, final_clean_content
 
 
 class TestParseInlineToolCalls:

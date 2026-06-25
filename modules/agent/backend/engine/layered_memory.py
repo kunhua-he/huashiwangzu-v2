@@ -11,8 +11,10 @@
 每轮上下文装配时直接注入 system prompt，零延迟、零依赖。
 """
 import logging
+import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select, desc, func as sa_func
@@ -83,16 +85,70 @@ async def _append_recall_quality(
     await db.commit()
 
 
-async def record_recall_quality(
-    owner_id: int, conversation_id: int | None, record: RecallQualityRecord,
+def record_recall_quality(
+    owner_id: int, record: RecallQualityRecord, conversation_id: int | None = None,
 ) -> None:
-    """Record a recall quality metric for governance (persisted via DB).
-
-    Opens its own DB session (fire-and-forget quality metric).
-    """
+    """Record a recall quality metric for governance (persisted via DB, sync wrapper)."""
+    import asyncio
     from app.database import AsyncSessionLocal
-    async with AsyncSessionLocal() as db:
-        await _append_recall_quality(db, owner_id, conversation_id, record)
+
+    async def _do():
+        async with AsyncSessionLocal() as db:
+            await _append_recall_quality(db, owner_id, conversation_id, record)
+
+    def _log_task_failure(task: asyncio.Task) -> None:
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is None:
+            return
+
+        async def _record() -> None:
+            from .failure_diagnostics import record_failure
+            await record_failure(
+                "memory",
+                "record_recall_quality",
+                type(exc).__name__,
+                str(exc),
+                conversation_id=conversation_id,
+                owner_id=owner_id,
+            )
+
+        try:
+            asyncio.create_task(_record())
+        except RuntimeError:
+            logger.warning("Recall quality write failed and diagnostic loop is unavailable: %s", exc)
+
+    try:
+        task = asyncio.create_task(_do())
+        task.add_done_callback(_log_task_failure)
+    except RuntimeError:
+        # No running event loop — spawn in a new one
+        import threading
+        def _run():
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(_do())
+            except Exception as exc:
+                logger.warning("Recall quality write failed in fallback thread: %s", exc)
+                from .failure_diagnostics import record_failure
+                try:
+                    loop.run_until_complete(
+                        record_failure(
+                            "memory",
+                            "record_recall_quality_thread_fallback",
+                            type(exc).__name__,
+                            str(exc),
+                            conversation_id=conversation_id,
+                            owner_id=owner_id,
+                        )
+                    )
+                except Exception as diag_exc:
+                    logger.warning("Failed to record recall quality fallback diagnostic: %s", diag_exc)
+            finally:
+                loop.close()
+        threading.Thread(target=_run, daemon=True).start()
 
 
 async def get_recall_quality_summary(
@@ -312,7 +368,7 @@ async def recall(
             _t1 = time.time()
             sims = [r.get("similarity", 0) or 0 for r in items]
             confs = [r.get("confidence", 0) or 0 for r in items]
-            record_recall_quality(RecallQualityRecord(
+            record_recall_quality(owner_id, RecallQualityRecord(
                 timestamp=_t0, query=query[:100],
                 layer="semantic", limit=limit,
                 total_results=len(items),
@@ -404,7 +460,7 @@ async def recall_stable_rules(
             items = result["data"]
             _t1 = time.time()
             confs = [r.get("priority", 0) / 100 for r in items if r.get("priority")]
-            record_recall_quality(RecallQualityRecord(
+            record_recall_quality(owner_id, RecallQualityRecord(
                 timestamp=_t0, query=f"stable_rules:{rule_types or 'all'}",
                 layer="stable_rules", limit=100,
                 total_results=len(items),
@@ -453,7 +509,7 @@ async def recall_chunk(
             _t1 = time.time()
             sims = [r.get("similarity", 0) or 0 for r in items]
             confs = [r.get("confidence", 0) or 0 for r in items]
-            record_recall_quality(RecallQualityRecord(
+            record_recall_quality(owner_id, RecallQualityRecord(
                 timestamp=_t0, query=query[:100],
                 layer="chunk", limit=limit,
                 total_results=len(items),

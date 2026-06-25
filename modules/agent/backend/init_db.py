@@ -395,13 +395,49 @@ async def ensure_agent_state_tables(db: AsyncSession) -> None:
         logger.warning("Migration: agent state tables check failed: %s", e)
 
 
+async def ensure_maintenance_state_table(db: AsyncSession) -> None:
+    """Ensure the cross-worker hook lifecycle state table exists (idempotent)."""
+    try:
+        await db.execute(text("""
+            CREATE TABLE IF NOT EXISTS agent_maintenance_state (
+                id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                maintenance_status VARCHAR(16) DEFAULT 'stopped',
+                worker_id VARCHAR(64) DEFAULT '',
+                started_at TIMESTAMPTZ,
+                last_heartbeat_at TIMESTAMPTZ,
+                run_count INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        # Seed the single row if missing
+        await db.execute(text("""
+            INSERT INTO agent_maintenance_state (id, maintenance_status, worker_id, run_count)
+            VALUES (1, 'stopped', '', 0)
+            ON CONFLICT (id) DO NOTHING
+        """))
+        await db.commit()
+        logger.info("Migration: ensured agent_maintenance_state table + seed row")
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Migration: agent_maintenance_state table check failed: %s", e)
+
+
+_init_done: bool = False
+
+
 async def run_init(db: AsyncSession) -> None:
-    """Agent 模块启动初始化入口。"""
+    """Agent 模块启动初始化入口。在首次请求时执行一次，后续跳过（惰性初始化）。"""
+    global _init_done
+    if _init_done:
+        return
     await ensure_migrated_tables(db)
     await ensure_timeline_column(db)
     await ensure_processing_column(db)
     await ensure_event_table(db)
     await ensure_snapshot_table(db)
     await ensure_agent_state_tables(db)
+    await ensure_maintenance_state_table(db)
     await ensure_default_prompts(db)
     await update_existing_prompts(db)
+    _init_done = True

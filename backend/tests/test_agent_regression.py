@@ -27,6 +27,11 @@ ORCHESTRATOR_SRC = (ENGINE_DIR / "tool_orchestrator.py").read_text("utf-8")
 WORKFLOW_SRC = (ENGINE_DIR / "workflow_strategy.py").read_text("utf-8")
 HOOKS_SRC = (ENGINE_DIR / "post_turn_hooks.py").read_text("utf-8")
 BUDGET_SRC = (ENGINE_DIR / "budget_allocator.py").read_text("utf-8")
+RUNTIME_DIR = AGENT_DIR / "runtime"
+CONV_RUNTIME_SRC = (RUNTIME_DIR / "conversation_runtime.py").read_text("utf-8")
+TOOL_LOOP_SRC = (RUNTIME_DIR / "tool_loop_runtime.py").read_text("utf-8")
+STREAM_EMITTER_SRC = (RUNTIME_DIR / "stream_emitter.py").read_text("utf-8")
+TASK_SINK_SRC = (RUNTIME_DIR / "task_sink.py").read_text("utf-8")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -41,19 +46,19 @@ class TestChatToolMemoryChain:
         assert "async def handle_chat" in CHAT_SRC
 
     def test_chat_calls_assemble_context(self):
-        assert "assemble_context" in CHAT_SRC
+        assert "assemble_context" in CONV_RUNTIME_SRC or "assemble_context" in CHAT_SRC
 
     def test_chat_invokes_tool_discovery(self):
-        assert "tool_discovery.build_tools" in CHAT_SRC
+        assert "tool_discovery.build_tools" in CONV_RUNTIME_SRC or "tool_discovery.build_tools" in CHAT_SRC
 
     def test_chat_uses_orchestrator(self):
-        assert "get_orchestrator()" in CHAT_SRC
+        assert "get_orchestrator()" in TOOL_LOOP_SRC or "get_orchestrator()" in CHAT_SRC
 
     def test_chat_persists_events(self):
-        assert "record_event" in CHAT_SRC
+        assert "record_event" in CONV_RUNTIME_SRC or "record_event" in TASK_SINK_SRC
 
     def test_chat_triggers_post_turn_hooks(self):
-        assert "hooks.run_hooks" in CHAT_SRC
+        assert "hooks.run_hooks" in TASK_SINK_SRC or "hooks.run_hooks" in CHAT_SRC
 
     def test_assemble_context_injects_memory(self):
         assert "three_layer_recall" in ENGINE_SRC
@@ -160,6 +165,10 @@ class TestHookMaintenanceChain:
 
     def test_hooks_maintenance_interval_positive(self):
         assert "_MAINTENANCE_INTERVAL = 300" in HOOKS_SRC
+
+    def test_maintenance_heartbeat_guarded_by_worker_id(self):
+        assert "AND worker_id = :worker_id" in HOOKS_SRC
+        assert "AND maintenance_status = 'running'" in HOOKS_SRC
 
     def test_budget_tracker_db_persisted(self):
         assert "AgentBudgetState" in BUDGET_SRC
@@ -355,8 +364,8 @@ class TestFailureDiagnostics:
         assert "record_failure(" in HOOKS_SRC
 
     def test_diagnostics_recorded_from_chat_yield_final_stream(self):
-        """Verify chat.py wires record_failure in yield_final_stream."""
-        assert "record_failure(" in CHAT_SRC
+        """Verify stream_emitter wires record_failure in yield_final_stream."""
+        assert "record_failure(" in STREAM_EMITTER_SRC or "record_failure(" in CHAT_SRC
 
     def test_recall_quality_has_limit(self):
         layered_src = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")

@@ -265,7 +265,7 @@ async def update_enterprise_prompt(db: AsyncSession, content: str, updated_by: i
 
 async def get_user_profile(db: AsyncSession, owner_id: int) -> AgentUserProfile | None:
     """获取用户画像记录。"""
-    from init_db import ensure_user_profile
+    from ..init_db import ensure_user_profile
     return await ensure_user_profile(db, owner_id)
 
 
@@ -278,7 +278,7 @@ async def update_user_profile(
 ) -> AgentUserProfile:
     """更新用户画像（版本递增 + 时间戳）。"""
     from datetime import datetime, timezone
-    from init_db import ensure_user_profile
+    from ..init_db import ensure_user_profile
     profile = await ensure_user_profile(db, owner_id)
     profile.profile_data = json.dumps(profile_data, ensure_ascii=False)
     profile.version = (profile.version or 0) + 1
@@ -291,7 +291,7 @@ async def update_user_profile(
 
 async def increment_conversation_count(db: AsyncSession, owner_id: int) -> None:
     """对话完成时递增画像会话计数。"""
-    from init_db import ensure_user_profile
+    from ..init_db import ensure_user_profile
     profile = await ensure_user_profile(db, owner_id)
     profile.conversation_count = (profile.conversation_count or 0) + 1
     await db.commit()

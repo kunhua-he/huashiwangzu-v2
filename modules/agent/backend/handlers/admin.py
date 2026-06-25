@@ -512,3 +512,23 @@ async def handle_admin_snapshot_restore(
         "summary": snap.summary if snap else None,
         "messages": messages,
     })
+
+
+async def handle_admin_lifecycle_chain(
+    conversation_id: int, db: AsyncSession, user,
+) -> ApiResponse:
+    """生命周期链：返回 conversation 的 hook 运行、快照、恢复、压缩追踪的完整时间线。"""
+    from ..engine.post_turn_hooks import get_lifecycle_chain
+    chain = await get_lifecycle_chain(db, conversation_id)
+    return ApiResponse(data={
+        "conversation_id": conversation_id,
+        "chain": chain,
+        "total_entries": len(chain),
+    })
+
+
+async def handle_admin_signal_summary(user) -> ApiResponse:
+    """返回当前 worker 的信号总线摘要（内存级，不跨 worker）。"""
+    from ..engine.signals import get_signal_summary
+    summary = get_signal_summary()
+    return ApiResponse(data=summary)

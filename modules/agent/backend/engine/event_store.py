@@ -47,9 +47,25 @@ async def record_event(
         payload=payload,
         llm_response_id=llm_response_id,
     )
-    db.add(event)
-    await db.commit()
-    await db.refresh(event)
+    try:
+        db.add(event)
+        await db.commit()
+        await db.refresh(event)
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("record_event failed: event_type=%s conv=%s err=%s", event_type, conversation_id, exc)
+        try:
+            from .failure_diagnostics import record_failure as _record_failure_diag
+            await _record_failure_diag(
+                source="event_store",
+                operation=f"record_{event_type}",
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:500],
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            pass
+        raise
     return event
 
 
@@ -156,25 +172,4 @@ async def project_to_messages(
     return messages
 
 
-async def run_event_migration(db: AsyncSession) -> None:
-    from sqlalchemy import text
-    try:
-        await db.execute(text(
-            "CREATE TABLE IF NOT EXISTS agent_events ("
-            "  id BIGSERIAL PRIMARY KEY,"
-            "  conversation_id BIGINT NOT NULL,"
-            "  event_type VARCHAR(32) NOT NULL,"
-            "  payload JSONB DEFAULT '{}'::jsonb,"
-            "  llm_response_id VARCHAR(64),"
-            "  created_at TIMESTAMPTZ DEFAULT NOW(),"
-            "  updated_at TIMESTAMPTZ DEFAULT NOW()"
-            ")"
-        ))
-        await db.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_agent_events_conversation_id ON agent_events(conversation_id)"
-        ))
-        await db.commit()
-        logger.info("Migration: ensured agent_events table")
-    except Exception as e:
-        await db.rollback()
-        logger.warning("Migration: agent_events table check failed: %s", e)
+

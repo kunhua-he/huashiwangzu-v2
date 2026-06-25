@@ -213,4 +213,20 @@ class AgentFailureDiagnostic(Base, TimestampMixin):
     extra_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class AgentMaintenanceState(Base, TimestampMixin):
+    """Single-row table for cross-worker hook lifecycle state.
+
+    Enforced by CHECK (id = 1) — only one row ever exists.
+    Each worker upserts its heartbeat; the admin endpoint reads the
+    latest state for observability across all workers.
+    """
+    __tablename__ = "agent_maintenance_state"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    maintenance_status: Mapped[str] = mapped_column(String(16), default="stopped")
+    worker_id: Mapped[str] = mapped_column(String(64), default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
 from .models_prompt import AgentPrompt

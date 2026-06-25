@@ -1,13 +1,19 @@
-"""Cross-module capability registry（带元数据，支持技能发现）。"""
+"""Cross-module capability registry（带元数据，支持技能发现）。
+
+Governance metadata shared with module_events:
+  - module_key / description / contract_version / timeout / trace
+"""
 import logging
+import uuid
 from typing import Awaitable, Callable
+from datetime import datetime, timezone
 
 from app.core.exceptions import NotFound, PermissionDenied
 
 logger = logging.getLogger("v2.module_registry")
 
 CapabilityHandler = Callable[[dict, str], Awaitable[dict]]
-# key -> {handler, description, parameters, min_role}
+# key -> {handler, description, parameters, min_role, contract_version, timeout}
 _CAPABILITIES: dict[str, dict] = {}
 
 _ROLE_ORDER = {"viewer": 0, "editor": 1, "admin": 2}
@@ -32,16 +38,25 @@ def register_capability(
     parameters: dict | None = None,
     min_role: str = "viewer",
     brief: str = "",
+    contract_version: str = "1.0.0",
+    timeout: float | None = None,
 ) -> None:
-    """模块注册一个对外能力。description/parameters/min_role 供技能发现用。brief 供 skill_list 紧凑展示（≤20字）。"""
+    """模块注册一个对外能力。
+
+    Governance fields:
+      - contract_version: 能力契约版本号（模块升级能力签名时可递增）
+      - timeout: 能力调用超时秒数（None = 不限制）
+    """
     _CAPABILITIES[_key(module_key, action)] = {
         "handler": handler,
         "description": description,
         "parameters": parameters or {},
         "min_role": min_role,
         "brief": brief or description[:20],
+        "contract_version": contract_version,
+        "timeout": timeout,
     }
-    logger.info("Registered capability: %s:%s", module_key, action)
+    logger.info("Registered capability: %s:%s (contract=%s)", module_key, action, contract_version)
 
 
 def _resolve_caller_role(caller: str, caller_role: str) -> str:
@@ -74,12 +89,14 @@ async def call_capability(
     params: dict,
     caller: str,
     caller_role: str = "viewer",
+    trace_id: str | None = None,
 ) -> dict:
     """跨模块调用的唯一入口。target 未公开或角色不足则抛异常。
 
-    caller_role 对 user: 前缀的调用者不做严格审计（保持兼容），
-    对 system: 前缀的调用者从 _SERVICE_PRINCIPAL_ROLES 白名单获取角色。
+    trace_id: 调用方传入的追踪 ID，用于跨能力/事件/重试的诊断串联。
+    返回 dict 含 _trace 字段（trace_id + 能力元数据快照）。
     """
+    trace_id = trace_id or str(uuid.uuid4())
     entry = _CAPABILITIES.get(_key(target_module, action))
     if not entry:
         raise NotFound(f"Module '{target_module}' does not expose action '{action}'")
@@ -90,10 +107,18 @@ async def call_capability(
             f"Requires at least '{min_role}' role, got '{resolved_role}'"
         )
     logger.info(
-        "Cross-module call: caller=%s role=%s -> %s:%s",
-        caller, resolved_role, target_module, action,
+        "Cross-module call: caller=%s role=%s -> %s:%s trace=%s",
+        caller, resolved_role, target_module, action, trace_id,
     )
-    return await entry["handler"](params, caller)
+    result = await entry["handler"](params, caller)
+    result["_trace"] = {
+        "trace_id": trace_id,
+        "module": target_module,
+        "action": action,
+        "contract_version": entry.get("contract_version", "1.0.0"),
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    return result
 
 
 def list_capabilities(role: str | None = None) -> list[dict]:
@@ -110,6 +135,8 @@ def list_capabilities(role: str | None = None) -> list[dict]:
             "parameters": e["parameters"],
             "min_role": e["min_role"],
             "brief": e.get("brief", e["description"][:20]),
+            "contract_version": e.get("contract_version", "1.0.0"),
+            "timeout": e.get("timeout"),
         })
     return result
 

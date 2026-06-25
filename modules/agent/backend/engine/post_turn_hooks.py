@@ -21,13 +21,15 @@ interval to enforce retention policies across all conversations.
 import asyncio
 import json
 import logging
+import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, func, desc, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import AgentEvent, ContextSnapshot, AgentHookRun
+from ..models import AgentEvent, ContextSnapshot, AgentHookRun, AgentMaintenanceState
 from .context_snapshot import take_snapshot
 
 logger = logging.getLogger("v2.agent").getChild("engine.post_turn_hooks")
@@ -41,15 +43,11 @@ MAX_PERIODIC_SNAPSHOTS = 10
 # Background maintenance interval (seconds)
 _BACKGROUND_MAINTENANCE_INTERVAL = 300  # 5 minutes
 
-# Background maintenance lifecycle tracking
+# Background maintenance lifecycle tracking (per-worker control state)
 _background_maintenance_task: asyncio.Task | None = None
-_background_maintenance_started_at: float = 0.0
 _background_maintenance_run_count: int = 0
 
-# ── Hook lifecycle governance (persisted via DB) ──────────────────────
-_HOOK_LIFECYCLE_STATE: dict[str, str] = {
-    "maintenance_status": "stopped",
-}
+# ── Hook lifecycle governance (persisted via DB for cross-worker) ─────
 _HOOK_RUN_HISTORY_MAX = 200
 
 
@@ -87,19 +85,153 @@ async def _append_hook_run(
     await db.commit()
 
 
+async def _read_maintenance_state(db: AsyncSession) -> dict:
+    """Read lifecycle state from the single-row DB table."""
+    r = await db.execute(
+        select(AgentMaintenanceState).where(AgentMaintenanceState.id == 1)
+    )
+    row = r.scalar_one_or_none()
+    if not row:
+        return {
+            "maintenance_status": "stopped",
+            "run_count": 0,
+            "started_at": None,
+            "last_heartbeat_at": None,
+            "worker_id": "",
+        }
+    return {
+        "maintenance_status": row.maintenance_status,
+        "run_count": row.run_count,
+        "started_at": row.started_at.timestamp() if row.started_at else None,
+        "last_heartbeat_at": row.last_heartbeat_at.timestamp() if row.last_heartbeat_at else None,
+        "worker_id": row.worker_id,
+    }
+
+
+async def _upsert_maintenance_state(db: AsyncSession, state: dict) -> None:
+    """Upsert the single-row maintenance state (cross-worker safe).
+
+    WARNING: This overwrites *started_at* if present in *state*.
+    Do NOT use this for periodic heartbeats — use ``_try_claim_leadership``
+    or ``_increment_and_heartbeat`` instead to preserve the original
+    ``started_at`` value.
+    """
+    stmt = pg_insert(AgentMaintenanceState).values(
+        id=1,
+        maintenance_status=state.get("maintenance_status", "stopped"),
+        worker_id=state.get("worker_id", ""),
+        started_at=state.get("started_at"),
+        last_heartbeat_at=state.get("last_heartbeat_at", datetime.now(timezone.utc)),
+        run_count=state.get("run_count", 0),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id"],
+        set_={
+            "maintenance_status": stmt.excluded.maintenance_status,
+            "worker_id": stmt.excluded.worker_id,
+            "started_at": stmt.excluded.started_at,
+            "last_heartbeat_at": stmt.excluded.last_heartbeat_at,
+            "run_count": stmt.excluded.run_count,
+        },
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+
 async def get_hook_lifecycle_state(db: AsyncSession, owner_id: int | None = None) -> dict:
-    """Return observable hook lifecycle state for admin health check."""
-    global _HOOK_LIFECYCLE_STATE
-    state = dict(_HOOK_LIFECYCLE_STATE)
-    state["maintenance_task_running"] = (
+    """Return observable hook lifecycle state for admin health check.
+
+    Source of truth is the DB row (cross-worker consistent).  Per-worker
+    in-memory state is returned under a separate ``local_observer_running``
+    field so it cannot be mistaken for the global truth.
+    """
+    state = await _read_maintenance_state(db)
+    # DB-backed global state — consistent across workers
+    state["maintenance_running"] = (state.get("maintenance_status") == "running")
+    state["local_observer_running"] = (
         _background_maintenance_task is not None and not _background_maintenance_task.done()
     )
-    state["maintenance_started_at"] = _background_maintenance_started_at
-    state["maintenance_run_count"] = _background_maintenance_run_count
+    state["maintenance_started_at"] = state.pop("started_at", None)
+    state["maintenance_run_count"] = state.pop("run_count", None)
     all_runs = await _read_hook_runs(db, owner_id)
-    state["recent_hook_runs"] = all_runs[-20:]
+    state["recent_hook_runs"] = all_runs[:20]  # all_runs is DESC-ordered (newest first)
     state["hook_names"] = ["memory_distill", "profile_evolve", "context_snapshot", "cleanup_archive", "prompt_suggestion"]
+    # lifecycle stats
+    total = len(all_runs)
+    failures = [r for r in all_runs if not r.get("success")]
+    state["lifecycle"] = {
+        "total_hook_runs": total,
+        "failed_hook_runs": len(failures),
+        "success_rate": round((total - len(failures)) / max(total, 1), 3),
+        "per_hook": {},
+    }
+    for name in state["hook_names"]:
+        runs = [r for r in all_runs if r.get("hook_name") == name]
+        hook_fails = [r for r in runs if not r.get("success")]
+        state["lifecycle"]["per_hook"][name] = {
+            "total": len(runs),
+            "failed": len(hook_fails),
+            "avg_duration_ms": round(sum(r.get("duration_ms", 0) for r in runs) / max(len(runs), 1), 1),
+        }
     return state
+
+
+async def get_lifecycle_chain(db: AsyncSession, conversation_id: int, limit: int = 50) -> list[dict]:
+    """Return the lifecycle event chain for a conversation.
+
+    Combines hook runs, snapshots, snapshots_restored, and maintenance
+    events into a unified timeline.
+    """
+    from .event_store import read_events as _read_events
+    from .context_snapshot import list_snapshots as _list_snapshots
+
+    events = await _read_events(db, conversation_id)
+    snapshots = await _list_snapshots(db, conversation_id, limit)
+
+    chain: list[dict] = []
+    # hook runs
+    hook_runs = await _read_hook_runs(db)
+    for hr in hook_runs:
+        if hr.get("conversation_id") == conversation_id:
+            chain.append({
+                "type": "hook_run",
+                "hook_name": hr["hook_name"],
+                "success": hr["success"],
+                "duration_ms": hr["duration_ms"],
+                "timestamp": hr.get("timestamp", 0),
+            })
+    # compression traces from events
+    for ev in events:
+        if ev.event_type == "compression_trace":
+            chain.append({
+                "type": "compression_trace",
+                "event_id": ev.id,
+                "folded_count": ev.payload.get("folded_count", 0),
+                "pre_snapshot_id": ev.payload.get("pre_snapshot_id"),
+                "post_snapshot_id": ev.payload.get("post_snapshot_id"),
+                "timestamp": ev.created_at.timestamp() if ev.created_at else 0,
+            })
+        elif ev.event_type == "snapshot_restore":
+            chain.append({
+                "type": "snapshot_restore",
+                "event_id": ev.id,
+                "snapshot_id": ev.payload.get("snapshot_id"),
+                "timestamp": ev.created_at.timestamp() if ev.created_at else 0,
+            })
+    # snapshots
+    for snap in snapshots:
+        chain.append({
+            "type": "snapshot",
+            "snapshot_id": snap.id,
+            "snapshot_type": snap.snapshot_type,
+            "compression_ratio": snap.compression_ratio,
+            "message_count_before": snap.message_count_before,
+            "message_count_after": snap.message_count_after,
+            "restored_from": snap.restored_from,
+            "timestamp": snap.created_at.timestamp() if snap.created_at else 0,
+        })
+    chain.sort(key=lambda x: x.get("timestamp", 0))
+    return chain[-limit:]
 
 
 async def _record_hook_run(
@@ -366,43 +498,148 @@ class PostTurnHooks:
 
 _MAINTENANCE_INTERVAL = 300  # 5 minutes, must be > 0
 
+_STALE_LEADERSHIP_SECONDS = _MAINTENANCE_INTERVAL * 2 + 60  # 660s = ~11min
+
+
+async def _try_claim_leadership(db: AsyncSession) -> bool:
+    """Atomically claim maintenance leadership via DB.
+
+    Only succeeds when no other worker has a fresh heartbeat.
+    Returns True if this worker is now the leader.
+    Uses a single atomic UPDATE with conditional WHERE so multiple workers
+    never run maintenance concurrently.
+    """
+    now = datetime.now(timezone.utc)
+    worker_id = f"worker:{os.getpid()}"
+    stale_threshold = now - timedelta(seconds=_STALE_LEADERSHIP_SECONDS)
+    from sqlalchemy import text as _text
+    r = await db.execute(
+        _text("""
+            UPDATE agent_maintenance_state
+            SET maintenance_status = 'running',
+                worker_id = :worker_id,
+                last_heartbeat_at = :now,
+                started_at = COALESCE(started_at, :now)
+            WHERE id = 1
+              AND (maintenance_status IN ('stopped', 'cancelled')
+                   OR last_heartbeat_at IS NULL
+                   OR last_heartbeat_at < :stale_threshold
+                   OR (worker_id = :worker_id AND maintenance_status = 'running'))
+            RETURNING 1
+        """),
+        {
+            "worker_id": worker_id,
+            "now": now,
+            "stale_threshold": stale_threshold,
+        },
+    )
+    await db.commit()
+    return r.rowcount > 0
+
+
+async def _increment_and_heartbeat(db: AsyncSession) -> None:
+    """Increment run_count and refresh heartbeat for the current lease holder.
+
+    The write is guarded by ``worker_id`` so a worker that lost leadership
+    during a long maintenance cycle cannot overwrite the new leader's state.
+    """
+    now = datetime.now(timezone.utc)
+    worker_id = f"worker:{os.getpid()}"
+    from sqlalchemy import text as _text
+    await db.execute(
+        _text("""
+            UPDATE agent_maintenance_state
+            SET run_count = run_count + 1,
+                last_heartbeat_at = :now
+            WHERE id = 1
+              AND worker_id = :worker_id
+              AND maintenance_status = 'running'
+        """),
+        {"now": now, "worker_id": worker_id},
+    )
+    await db.commit()
+
+
+async def _mark_maintenance_stopped(db: AsyncSession) -> None:
+    """Mark maintenance as stopped (on cancellation/shutdown).
+
+    Only succeeds when this worker is the current lease holder.
+    Non-leader workers calling this is a no-op.
+    """
+    worker_id = f"worker:{os.getpid()}"
+    from sqlalchemy import text as _text
+    await db.execute(
+        _text("""
+            UPDATE agent_maintenance_state
+            SET maintenance_status = 'stopped',
+                last_heartbeat_at = NOW()
+            WHERE id = 1
+              AND worker_id = :worker_id
+        """),
+        {"worker_id": worker_id},
+    )
+    await db.commit()
+
 
 def setup_global_hooks() -> None:
     """Register startup hooks for the post-turn system.
 
-    Starts a background maintenance task that periodically enforces
-    snapshot retention across all conversations.  The task runs on
-    a fixed interval (``_MAINTENANCE_INTERVAL`` seconds) and is
-    wrapped in try/except so a single failure never kills the loop.
+    Starts a background observer task that periodically enforces
+    snapshot retention across all conversations.  The task uses a
+    DB-based leader election (``agent_maintenance_state``, single-row)
+    so that only one worker across the process pool runs the actual
+    maintenance — others observe and skip.
 
-    Lifecycle:
-    - Tracks ``_background_maintenance_started_at`` timestamp.
-    - Counts ``_background_maintenance_run_count`` iterations.
-    - On cancellation, logs the total runtime and run count.
-    - On exception, logs the error and continues (self-healing).
+    The observer runs on a fixed interval (``_MAINTENANCE_INTERVAL``
+    seconds) and is wrapped in try/except so a single failure never
+    kills the loop.
+
+    Lifecycle state is persisted to the DB for cross-worker observability;
+    per-worker counters are used only for local logging.
     """
-    global _background_maintenance_task, _background_maintenance_started_at, _background_maintenance_run_count  # noqa: PLW0603
-    _HOOK_LIFECYCLE_STATE["maintenance_status"] = "starting"
+    global _background_maintenance_task, _background_maintenance_run_count  # noqa: PLW0603
 
     if _background_maintenance_task is not None:
         if not _background_maintenance_task.done():
             logger.debug("setup_global_hooks: background task already running")
-            _HOOK_LIFECYCLE_STATE["maintenance_status"] = "running"
             return
         logger.warning("setup_global_hooks: previous background task finished, restarting")
 
     async def _maintenance_loop() -> None:
-        global _background_maintenance_run_count  # noqa: PLW0603
         logger.info(
-            "Maintenance loop started (interval=%ss, EVERY_N_TURNS=%s, MAX_PERIODIC_SNAPSHOTS=%s)",
+            "Maintenance observer started (interval=%ss, EVERY_N_TURNS=%s, MAX_PERIODIC_SNAPSHOTS=%s)",
             _MAINTENANCE_INTERVAL, EVERY_N_TURNS, MAX_PERIODIC_SNAPSHOTS,
         )
         while True:
             try:
                 await asyncio.sleep(_MAINTENANCE_INTERVAL)
-                result = await _run_global_retention()
+
+                # Atomically claim leadership via DB
+                # Only one worker across the process pool becomes the leader.
+                try:
+                    from app.database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as _db:
+                        is_leader = await _try_claim_leadership(_db)
+                except Exception as _claim_exc:
+                    logger.warning("Maintenance leadership claim failed: %s", _claim_exc)
+                    continue
+
+                if not is_leader:
+                    logger.debug("Maintenance: another worker is leading, skipping cycle")
+                    continue
+
+                # We are the leader — run global retention
                 _background_maintenance_run_count += 1
-                _HOOK_LIFECYCLE_STATE["maintenance_status"] = "running"
+                result = await _run_global_retention()
+
+                # Sync run_count and heartbeat to DB
+                try:
+                    from app.database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as _db:
+                        await _increment_and_heartbeat(_db)
+                except Exception as _sync_exc:
+                    logger.warning("Maintenance heartbeat sync failed: %s", _sync_exc)
+
                 if result.get("total_pruned", 0) > 0:
                     logger.info(
                         "Maintenance iteration %d: pruned %d snapshots",
@@ -410,19 +647,21 @@ def setup_global_hooks() -> None:
                     )
             except asyncio.CancelledError:
                 logger.info(
-                    "Maintenance loop cancelled after %d iterations (%.1fs runtime)",
+                    "Maintenance observer cancelled (local run count: %d)",
                     _background_maintenance_run_count,
-                    time.time() - _background_maintenance_started_at,
                 )
-                _HOOK_LIFECYCLE_STATE["maintenance_status"] = "cancelled"
+                try:
+                    from app.database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as _db:
+                        await _mark_maintenance_stopped(_db)
+                except Exception:
+                    pass
                 break
             except Exception:
-                logger.exception("Maintenance loop iteration failed (will retry)")
+                logger.exception("Maintenance observer iteration failed (will retry)")
 
     _background_maintenance_task = asyncio.create_task(_maintenance_loop(), name="agent-hooks-maintenance")
-    _background_maintenance_started_at = time.time()
     _background_maintenance_run_count = 0
-    _HOOK_LIFECYCLE_STATE["maintenance_status"] = "running"
     logger.info(
         "setup_global_hooks: post-turn hooks ready (EVERY_N_TURNS=%s, MAX_PERIODIC_SNAPSHOTS=%s)",
         EVERY_N_TURNS, MAX_PERIODIC_SNAPSHOTS,

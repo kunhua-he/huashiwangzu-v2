@@ -7,7 +7,7 @@ the LLM gateway to extract/update tone, taboos, focus areas, and habits.
 import json
 import logging
 from app.database import AsyncSessionLocal
-from app.gateway.router import gateway_router
+from app.gateway import service as gateway_service
 
 logger = logging.getLogger("v2.agent").getChild("profile_evolve")
 
@@ -49,6 +49,23 @@ async def handle_profile_evolve(params: dict) -> dict:
 
     logger.info("Profile evolve starting for user %s, conv %s", owner_id, conversation_id)
 
+    try:
+        return await _do_profile_evolve(conversation_id, owner_id)
+    except Exception as exc:
+        logger.exception("Profile evolve failed for user %s, conv %s: %s", owner_id, conversation_id, exc)
+        try:
+            from ..engine.failure_diagnostics import record_failure
+            await record_failure(
+                "profile_evolve", "handle_profile_evolve",
+                type(exc).__name__, str(exc),
+                conversation_id=conversation_id, owner_id=owner_id,
+            )
+        except Exception:
+            pass
+        return {"error": str(exc), "owner_id": owner_id, "conversation_id": conversation_id}
+
+
+async def _do_profile_evolve(conversation_id: int, owner_id: int) -> dict:
     async with AsyncSessionLocal() as db:
         # 获取最近对话
         from . import conversation_service as conv_svc
@@ -73,7 +90,7 @@ async def handle_profile_evolve(params: dict) -> dict:
         ]
 
         # 调大模型分析
-        result = await gateway_router.chat(
+        result = await gateway_service.chat(
             messages=chat_messages,
             profile_key=EVOLVE_MODEL_KEY,
         )

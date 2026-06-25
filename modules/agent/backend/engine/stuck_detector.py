@@ -32,13 +32,13 @@ async def _load_history(db: AsyncSession, conv_id: int) -> list[dict]:
     return (row.rounds_data or {}).get("history", []) if row else []
 
 
-async def _save_history(db: AsyncSession, conv_id: int, history: list[dict]) -> None:
+async def _save_history(db: AsyncSession, conv_id: int, owner_id: int, history: list[dict]) -> None:
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     stmt = pg_insert(AgentStuckRound).values(
-        conversation_id=conv_id, rounds_data={"history": history},
+        conversation_id=conv_id, owner_id=owner_id, rounds_data={"history": history},
     )
     stmt = stmt.on_conflict_do_update(
-        constraint="agent_stuck_rounds_conversation_id_key",
+        index_elements=["conversation_id"],
         set_={"rounds_data": {"history": history}},
     )
     await db.execute(stmt)
@@ -47,6 +47,7 @@ async def _save_history(db: AsyncSession, conv_id: int, history: list[dict]) -> 
 
 async def detect_stuck(
     db: AsyncSession,
+    owner_id: int,
     tool_name: str | None,
     tool_args: dict | None,
     error_text: str | None,
@@ -67,7 +68,7 @@ async def detect_stuck(
     if len(history) > STUCK_WINDOW_SIZE:
         history = history[-STUCK_WINDOW_SIZE:]
 
-    await _save_history(db, conv_id, history)
+    await _save_history(db, conv_id, owner_id, history)
 
     if len(history) < STUCK_THRESHOLD:
         return {"stuck": False, "reason": ""}
@@ -81,7 +82,7 @@ async def detect_stuck(
     )
     if all_same_tool:
         logger.warning("stuck_detector命中: 连续 %d 次相同工具调用 %s", STUCK_THRESHOLD, recent[0]["tool_name"])
-        await _save_history(db, conv_id, [])
+        await _save_history(db, conv_id, owner_id, [])
         return {
             "stuck": True,
             "reason": f"检测到重复操作（连续{STUCK_THRESHOLD}次相同工具: {recent[0]['tool_name']}），已停止。请换个说法或拆小任务。",
@@ -93,7 +94,7 @@ async def detect_stuck(
     )
     if all_same_error:
         logger.warning("stuck_detector命中: 连续 %d 次相同错误 %s", STUCK_THRESHOLD, recent[0]["error_text"])
-        await _save_history(db, conv_id, [])
+        await _save_history(db, conv_id, owner_id, [])
         return {
             "stuck": True,
             "reason": f"检测到重复错误（连续{STUCK_THRESHOLD}次: {recent[0]['error_text']}），已停止。请换个说法或拆小任务。",
@@ -102,7 +103,7 @@ async def detect_stuck(
     all_empty = all(e["is_empty"] for e in recent)
     if all_empty:
         logger.warning("stuck_detector命中: 连续 %d 次空响应", STUCK_THRESHOLD)
-        await _save_history(db, conv_id, [])
+        await _save_history(db, conv_id, owner_id, [])
         return {
             "stuck": True,
             "reason": f"检测到连续{STUCK_THRESHOLD}次空响应，已停止。请换个说法或拆小任务。",

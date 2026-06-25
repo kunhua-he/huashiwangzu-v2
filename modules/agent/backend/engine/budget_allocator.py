@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.router import MODEL_PROFILES
+from app.gateway import service as gateway_service
 from ..models import AgentBudgetState
 
 logger = logging.getLogger("v2.agent").getChild("engine.budget_allocator")
@@ -45,9 +45,6 @@ class DiminishingBudgetTracker:
     Each conversation has one row identified by conversation_id (derived from session_key).
     """
 
-    def __init__(self) -> None:
-        self._rounds: dict[str, list[dict]] = {}
-
     async def _load_from_db(self, db: AsyncSession, session_key: str) -> list[dict]:
         conv_id = self._conv_id(session_key)
         r = await db.execute(
@@ -63,7 +60,7 @@ class DiminishingBudgetTracker:
             conversation_id=conv_id, rounds_data={"rounds": records},
         )
         stmt = stmt.on_conflict_do_update(
-            constraint="agent_budget_states_conversation_id_key",
+            index_elements=["conversation_id"],
             set_={"rounds_data": {"rounds": records}},
         )
         await db.execute(stmt)
@@ -160,7 +157,7 @@ class DiminishingBudgetTracker:
 
 
 def get_context_budget(profile_key: str) -> int | None:
-    profile = MODEL_PROFILES.get(profile_key, {})
+    profile = gateway_service.get_model_profile_safe(profile_key) or {}
     budget = profile.get("context_budget")
     if budget is not None:
         try:

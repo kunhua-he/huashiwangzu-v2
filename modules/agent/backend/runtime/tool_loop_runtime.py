@@ -411,6 +411,7 @@ class ToolLoopRuntime:
                             fn = tc.get("function", tc)
                             _stuck_check = await detect_stuck(
                                 _sd_db,
+                                self.owner_id,
                                 tool_name=fn.get("name", ""),
                                 tool_args=fn.get("arguments", {}),
                                 error_text=None,
@@ -424,6 +425,7 @@ class ToolLoopRuntime:
                         is_empty = not result.get("content") and not result.get("tool_calls")
                         _stuck_check = await detect_stuck(
                             _sd_db,
+                            self.owner_id,
                             tool_name=None,
                             tool_args=None,
                             error_text=str(result.get("error"))[:100] if has_error else None,

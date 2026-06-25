@@ -11,7 +11,7 @@ import logging
 import re
 import uuid
 
-from app.gateway.router import gateway_router
+from app.gateway import service as gateway_service
 
 logger = logging.getLogger("v2.agent").getChild("model_client")
 
@@ -97,8 +97,8 @@ async def recover_tool_calls(messages: list[dict], profile_key: str, tools: list
     adapter 修对后此函数应极少被触发。
     """
     logger.info("recover_tool_calls triggered — adapter may have missed tool_calls (profile=%s)", profile_key)
-    profile = gateway_router.get_profile(profile_key)
-    provider = gateway_router.get_provider(profile["provider"])
+    profile = gateway_service.get_model_profile(profile_key)
+    provider = gateway_service.get_model_provider(profile["provider"])
     raw = await provider.chat(
         messages=messages,
         model=profile["model"],

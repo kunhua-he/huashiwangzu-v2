@@ -1,56 +1,10 @@
 import logging
 from docx import Document
-from app.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
 
 class DocxService:
-
-    MAX_PARAGRAPHS = 10000
-
-    async def parse(self, file_path: str) -> dict:
-        doc = Document(file_path)
-        paragraphs = []
-        tables = []
-        p_count = 0
-        t_count = 0
-
-        for element in doc.element.body:
-            if element.tag.endswith("}p"):
-                if p_count >= self.MAX_PARAGRAPHS:
-                    raise ValidationError(f"文档段落数超过 {self.MAX_PARAGRAPHS} 限制")
-                p_count += 1
-                text = element.text or ""
-                for sub in element.iter():
-                    if sub.tag.endswith("}t") and sub.text:
-                        text += sub.text
-                paragraphs.append({
-                    "id": f"p{p_count}", "type": "paragraph",
-                    "content": text.strip(),
-                })
-            elif element.tag.endswith("}tbl"):
-                t_count += 1
-                rows = []
-                for tr in element.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tr"):
-                    cells = []
-                    for tc in tr.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tc"):
-                        cell_text = "".join(
-                            t.text or "" for t in tc.iter()
-                            if t.tag.endswith("}t") and t.text
-                        )
-                        cells.append(cell_text.strip())
-                    rows.append({"cells": cells})
-                tables.append({"id": f"t{t_count}", "type": "table", "rows": rows})
-
-        content = paragraphs + tables
-        return {
-            "manifest": {
-                "file_type": "docx", "version": "1.0.0",
-                "paragraph_count": p_count, "table_count": t_count,
-            },
-            "content": content,
-        }
 
     async def export(self, file_path: str, json_content: dict) -> None:
         doc = Document()

@@ -64,3 +64,6 @@ dev_toolkit/memory/
 
 # Playwright 登录态(含token,禁提交)
 frontend/tests/.auth/
+
+# codex/opencode 本地工具配置
+.codex/

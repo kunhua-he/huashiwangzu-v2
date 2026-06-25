@@ -7,7 +7,7 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.services.office.text_editor_service import TextEditorService
 from app.services.office.csv_editor_service import CsvEditorService
-from app.services.file_share_service import check_file_access
+from app.services.file_share_service import require_resource_permission
 
 router = APIRouter(prefix="/api/editors", tags=["editors"])
 
@@ -16,14 +16,12 @@ csv_svc = CsvEditorService()
 
 
 async def _require_read_access(db: AsyncSession, file_id: int, user_id: int):
-    """Check user has read access to the file (owner or shared read/edit)."""
+    """Check user has read access to the file (owner or shared read/edit/comment)."""
     from app.models.file import File
     file = await db.get(File, file_id)
     if not file or file.deleted:
         raise AppException("File not found", status_code=404)
-    access = await check_file_access(db, file_id, user_id)
-    if not access["accessible"]:
-        raise PermissionDenied("No permission to access this file")
+    await require_resource_permission(db, "file", file_id, user_id, "read")
 
 
 async def _require_write_access(db: AsyncSession, file_id: int, user_id: int):
@@ -32,11 +30,7 @@ async def _require_write_access(db: AsyncSession, file_id: int, user_id: int):
     file = await db.get(File, file_id)
     if not file or file.deleted:
         raise AppException("File not found", status_code=404)
-    if file.owner_id == user_id:
-        return
-    access = await check_file_access(db, file_id, user_id)
-    if not access["accessible"] or access["permission"] not in ("owner", "edit"):
-        raise PermissionDenied("No write permission for this file")
+    await require_resource_permission(db, "file", file_id, user_id, "edit")
 
 
 @router.get("/text/{file_id}")

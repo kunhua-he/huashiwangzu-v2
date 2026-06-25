@@ -44,14 +44,18 @@ async def export_matrix(
     current_user: User = Depends(require_permission("admin")),
 ):
     matrix = await get_role_matrix(db)
-    lines = ["role_key,display_name,user_management,system_config,role_matrix"]
+    lines = ["role_key,display_name,user_management,system_config,role_matrix,can_share,can_publish,can_reshare,can_collab"]
     for item in matrix:
         permissions = item["permissions"]
         lines.append(
             f'{item["role_key"]},{item["display_name"]},'
             f'{int(bool(permissions.get("user_management")))},'
             f'{int(bool(permissions.get("system_config")))},'
-            f'{int(bool(permissions.get("role_matrix")))}'
+            f'{int(bool(permissions.get("role_matrix")))},'
+            f'{int(bool(permissions.get("can_share")))},'
+            f'{int(bool(permissions.get("can_publish")))},'
+            f'{int(bool(permissions.get("can_reshare")))},'
+            f'{int(bool(permissions.get("can_collab")))}'
         )
     return Response(
         content="\n".join(lines),

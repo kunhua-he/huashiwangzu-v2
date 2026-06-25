@@ -7,7 +7,7 @@ from app.schemas.document_ir import DocumentIR
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.services.office import JsonPackageService, JsonVersionService, JsonPatchService
-from app.services.file_share_service import check_file_access
+from app.services.file_share_service import require_resource_permission
 
 router = APIRouter(prefix="/api/office", tags=["office"])
 
@@ -22,9 +22,7 @@ async def _require_file_access(db: AsyncSession, file_id: int, user_id: int):
     file = await db.get(File, file_id)
     if not file or file.deleted:
         raise NotFound("File not found")
-    access = await check_file_access(db, file_id, user_id)
-    if not access["accessible"]:
-        raise PermissionDenied("No permission to access this file")
+    await require_resource_permission(db, "file", file_id, user_id, "read")
 
 
 @router.get("/status/{file_id}")

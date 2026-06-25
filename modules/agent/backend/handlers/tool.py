@@ -228,4 +228,108 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
         return {"error": f"子 Agent 执行异常：{exc}"}
 
 
+# ── Capability: agent:skill_manage ──
 
+async def _cap_skill_manage(params: dict, caller: str) -> dict:
+    """Manage skills: list, create, update, delete, scan, usage, provenance.
+
+    Review fork proposals CANNOT directly modify skills —
+    review-sourced updates go through approval gate (pending_approval).
+
+    Operations:
+      - action=list        → list all registered skills
+      - action=get         → get a single skill (param: name)
+      - action=create      → create a new skill (param: name, description, body, ...)
+      - action=update      → update a skill (param: name, updates dict)
+      - action=delete      → soft-delete a skill (param: name)
+      - action=scan        → scan file skills into registry
+      - action=usage       → get usage stats (param: skill_name, days)
+      - action=provenance  → get provenance trail (param: skill_name)
+      - action=pending-approvals → list pending approvals
+    """
+    from app.database import AsyncSessionLocal
+    from ..services.skill_governance_service import (
+        list_skills, get_skill, create_skill, update_skill, delete_skill,
+        scan_file_skills_to_registry, get_skill_usage_stats, get_skill_provenance,
+        list_pending_skill_approvals, request_skill_approval,
+    )
+
+    action = params.get("action", "list")
+    caller_uid = _resolve_user_id(caller)
+
+    async with AsyncSessionLocal() as db:
+        if action == "list":
+            scope = params.get("scope")
+            enabled_only = params.get("enabled_only", False)
+            skills = await list_skills(db, scope=scope, enabled_only=enabled_only)
+            return {"skills": skills, "total": len(skills)}
+
+        elif action == "get":
+            name = params.get("name", "")
+            if not name:
+                return {"error": "name is required"}
+            skill = await get_skill(db, name)
+            if not skill:
+                return {"error": f"Skill '{name}' not found"}
+            return {"skill": skill}
+
+        elif action == "create":
+            name = params.get("name", "")
+            if not name:
+                return {"error": "name is required"}
+            source = params.get("source", "manual")
+            result = await create_skill(
+                db,
+                name=name,
+                description=params.get("description", ""),
+                body=params.get("body", ""),
+                allowed_tools=params.get("allowed_tools"),
+                paths=params.get("paths"),
+                scope=params.get("scope", "global"),
+                priority=params.get("priority", 0),
+                source=source,
+                created_by=caller_uid,
+            )
+            return result
+
+        elif action == "update":
+            name = params.get("name", "")
+            if not name:
+                return {"error": "name is required"}
+            updates = params.get("updates", {})
+            from_review = params.get("from_review", False)
+            result = await update_skill(db, name, updates, updated_by=caller_uid, from_review=from_review)
+            return result
+
+        elif action == "delete":
+            name = params.get("name", "")
+            if not name:
+                return {"error": "name is required"}
+            result = await delete_skill(db, name, deleted_by=caller_uid)
+            return result
+
+        elif action == "scan":
+            base_dir = params.get("base_dir", "data/skills")
+            result = await scan_file_skills_to_registry(db, base_dir=base_dir, created_by=caller_uid)
+            return result
+
+        elif action == "usage":
+            skill_name = params.get("skill_name")
+            days = params.get("days", 7)
+            stats = await get_skill_usage_stats(db, skill_name=skill_name, days=days)
+            return {"usage_stats": stats}
+
+        elif action == "provenance":
+            skill_name = params.get("skill_name", "")
+            if not skill_name:
+                return {"error": "skill_name is required"}
+            trail = await get_skill_provenance(db, skill_name)
+            return {"provenance": trail}
+
+        elif action == "pending-approvals":
+            limit = params.get("limit", 50)
+            approvals = await list_pending_skill_approvals(db, limit=limit)
+            return {"approvals": approvals}
+
+        else:
+            return {"error": f"Unknown action: {action}"}

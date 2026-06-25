@@ -199,7 +199,7 @@ class TestPostTurnHooksLifecycle:
 
     def test_maintenance_loop_restarts_after_exception(self):
         """Maintenance loop must catch exceptions and continue."""
-        assert "logger.exception(\"Maintenance loop iteration failed" in self.SRC
+        assert "logger.exception(\"Maintenance observer iteration failed" in self.SRC
 
     def test_setup_global_hooks_is_idempotent(self):
         """setup_global_hooks must skip re-creation if task already running."""

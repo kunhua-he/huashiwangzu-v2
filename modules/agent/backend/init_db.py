@@ -423,6 +423,121 @@ async def ensure_maintenance_state_table(db: AsyncSession) -> None:
         logger.warning("Migration: agent_maintenance_state table check failed: %s", e)
 
 
+async def ensure_review_governance_tables(db: AsyncSession) -> None:
+    """Ensure review + skill governance tables exist (idempotent)."""
+    tables = [
+        """
+        CREATE TABLE IF NOT EXISTS agent_review_tasks (
+            id BIGSERIAL PRIMARY KEY,
+            conversation_id BIGINT NOT NULL,
+            owner_id INTEGER NOT NULL,
+            status VARCHAR(16) DEFAULT 'pending',
+            review_context JSONB,
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_review_results (
+            id BIGSERIAL PRIMARY KEY,
+            review_task_id BIGINT NOT NULL,
+            owner_id INTEGER NOT NULL,
+            result_type VARCHAR(32) NOT NULL,
+            title VARCHAR(256) DEFAULT '',
+            summary TEXT DEFAULT '',
+            detail JSONB,
+            status VARCHAR(16) DEFAULT 'proposal',
+            reviewed_by INTEGER,
+            reviewed_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_skill_registry (
+            id BIGSERIAL PRIMARY KEY,
+            name VARCHAR(128) NOT NULL UNIQUE,
+            description TEXT DEFAULT '',
+            source VARCHAR(32) DEFAULT 'file_scan',
+            source_file TEXT,
+            body TEXT DEFAULT '',
+            allowed_tools JSONB,
+            paths JSONB,
+            scope VARCHAR(32) DEFAULT 'global',
+            priority INTEGER DEFAULT 0,
+            enabled BOOLEAN DEFAULT TRUE,
+            approval_status VARCHAR(16) DEFAULT 'pending_approval',
+            created_by INTEGER,
+            updated_by INTEGER,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_skill_approvals (
+            id BIGSERIAL PRIMARY KEY,
+            skill_name VARCHAR(128) NOT NULL,
+            operation VARCHAR(16) NOT NULL,
+            previous_state JSONB,
+            requested_state JSONB,
+            status VARCHAR(16) DEFAULT 'pending_approval',
+            requested_by INTEGER NOT NULL,
+            decided_by INTEGER,
+            reason TEXT,
+            decided_at TIMESTAMPTZ,
+            review_result_id BIGINT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_skill_provenance (
+            id BIGSERIAL PRIMARY KEY,
+            skill_name VARCHAR(128) NOT NULL,
+            event_type VARCHAR(32) NOT NULL,
+            source VARCHAR(64) DEFAULT '',
+            detail JSONB,
+            actor_id INTEGER,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_skill_usage (
+            id BIGSERIAL PRIMARY KEY,
+            skill_name VARCHAR(128) NOT NULL,
+            conversation_id BIGINT,
+            owner_id INTEGER,
+            success BOOLEAN DEFAULT TRUE,
+            duration_ms DOUBLE PRECISION DEFAULT 0.0,
+            error_detail TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """,
+    ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_review_tasks_conv ON agent_review_tasks(conversation_id)",
+        "CREATE INDEX IF NOT EXISTS ix_review_tasks_owner ON agent_review_tasks(owner_id)",
+        "CREATE INDEX IF NOT EXISTS ix_review_results_task ON agent_review_results(review_task_id)",
+        "CREATE INDEX IF NOT EXISTS ix_review_results_owner ON agent_review_results(owner_id)",
+        "CREATE INDEX IF NOT EXISTS ix_skill_registry_name ON agent_skill_registry(name)",
+        "CREATE INDEX IF NOT EXISTS ix_skill_approvals_name ON agent_skill_approvals(skill_name)",
+        "CREATE INDEX IF NOT EXISTS ix_skill_provenance_name ON agent_skill_provenance(skill_name)",
+        "CREATE INDEX IF NOT EXISTS ix_skill_usage_name ON agent_skill_usage(skill_name)",
+    ]
+    try:
+        for sql in tables + indexes:
+            await db.execute(text(sql))
+        await db.commit()
+        logger.info("Migration: ensured review + skill governance tables")
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Migration: review/governance tables check failed: %s", e)
+
+
 _init_done: bool = False
 
 
@@ -438,6 +553,7 @@ async def run_init(db: AsyncSession) -> None:
     await ensure_snapshot_table(db)
     await ensure_agent_state_tables(db)
     await ensure_maintenance_state_table(db)
+    await ensure_review_governance_tables(db)
     await ensure_default_prompts(db)
     await update_existing_prompts(db)
     _init_done = True

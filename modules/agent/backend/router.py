@@ -247,6 +247,84 @@ async def admin_signal_summary(
     return await handle_admin_signal_summary(user)
 
 
+# ── Review / Skill Governance Admin Endpoints ──
+
+@router.get("/admin/review-tasks")
+async def admin_review_tasks(
+    limit: int = 20,
+    status: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_review_tasks
+    return await handle_admin_review_tasks(db, user, limit=limit, status=status)
+
+
+@router.get("/admin/review-results")
+async def admin_review_results(
+    review_task_id: int | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_review_results
+    return await handle_admin_review_results(db, user, review_task_id=review_task_id, status=status, limit=limit)
+
+
+@router.post("/admin/review-results/{result_id}/apply")
+async def admin_review_result_apply(
+    result_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_review_result_apply
+    return await handle_admin_review_result_apply(result_id, db, user)
+
+
+@router.get("/admin/skill-registry")
+async def admin_skill_registry(
+    scope: str | None = None,
+    enabled_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_skill_registry
+    return await handle_admin_skill_registry(db, user, scope=scope, enabled_only=enabled_only)
+
+
+@router.get("/admin/skill-approvals")
+async def admin_skill_approvals(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_skill_approvals
+    return await handle_admin_skill_approvals(db, user, limit=limit)
+
+
+@router.post("/admin/skill-approvals/{approval_id}/resolve")
+async def admin_resolve_skill_approval(
+    approval_id: int,
+    body: ApprovalDecision,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_resolve_skill_approval
+    return await handle_admin_resolve_skill_approval(approval_id, body.decision, body.reason, db, user)
+
+
+@router.get("/admin/skill-usage")
+async def admin_skill_usage(
+    skill_name: str | None = None,
+    days: int = 7,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .handlers.admin import handle_admin_skill_usage
+    return await handle_admin_skill_usage(db, user, skill_name=skill_name, days=days)
+
+
 # ── 敏感操作审批 API ──
 
 @router.get("/admin/approvals/pending")

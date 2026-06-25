@@ -230,3 +230,110 @@ class AgentMaintenanceState(Base, TimestampMixin):
 
 
 from .models_prompt import AgentPrompt
+
+
+# ── Review / Skill Governance Models ────────────────────────────────────
+
+
+class ReviewTask(Base, TimestampMixin):
+    """A background review task spawned after a conversation turn.
+    
+    Runs with restricted tools (memory/skill only) and produces structured
+    proposals.  Does not interact with the user.
+    """
+    __tablename__ = "agent_review_tasks"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    review_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReviewResult(Base, TimestampMixin):
+    """A structured proposal produced by a background review task.
+    
+    Types:
+      - stable_rule: proposal to persist a chat-learned rule
+      - chunk_proposal: proposal to create/update a memory chunk
+      - experience_proposal: proposal to save a reusable experience
+      - skill_create: proposal to create a new skill
+      - skill_patch: proposal to modify an existing skill
+      - profile_note: suggested user profile update
+      - safety_note: safety observation
+    """
+    __tablename__ = "agent_review_results"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    review_task_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    result_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="proposal")
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SkillRegistryItem(Base, TimestampMixin):
+    """DB-backed skill record for lifecycle governance (beyond file-scan).
+    
+    A skill can originate from a file scan or be authored via skill_manage.
+    When both file and DB records exist for the same name, the DB record
+    takes precedence for status/approval.
+    """
+    __tablename__ = "agent_skill_registry"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(32), default="file_scan")
+    source_file: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body: Mapped[str] = mapped_column(Text, default="")
+    allowed_tools: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    paths: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    scope: Mapped[str] = mapped_column(String(32), default="global")
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    approval_status: Mapped[str] = mapped_column(String(16), default="pending_approval")
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SkillApproval(Base, TimestampMixin):
+    """Approval record for skill create/update/delete operations."""
+    __tablename__ = "agent_skill_approvals"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    skill_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    previous_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    requested_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending_approval")
+    requested_by: Mapped[int] = mapped_column(Integer, nullable=False)
+    decided_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_result_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class SkillProvenance(Base, TimestampMixin):
+    """Provenance trail for skill origins and modifications."""
+    __tablename__ = "agent_skill_provenance"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    skill_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), default="")
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SkillUsage(Base, TimestampMixin):
+    """Per-invocation usage tracking for skills."""
+    __tablename__ = "agent_skill_usage"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    skill_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)

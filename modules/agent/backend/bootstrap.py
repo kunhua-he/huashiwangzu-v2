@@ -33,6 +33,8 @@ def register_agent_capabilities() -> None:
         _cap_spawn_subagent,
     )
 
+    from .handlers.tool import _cap_skill_manage
+
     capabilities = [
         ("agent", "get_system_prompt", _cap_get_system_prompt,
          "读取当前系统提示词（管理员权限）。系统提示词定义了 Agent 的核心行为、知识库使用规则和联网能力规则。",
@@ -68,6 +70,17 @@ def register_agent_capabilities() -> None:
          "委托子Agent执行任务",
          {"task": {"type": "string"}, "tools": {"type": "array", "items": {"type": "string"}},
           "context": {"type": "string"}}, "viewer"),
+        ("agent", "skill_manage", _cap_skill_manage,
+         "管理技能：列表、创建、更新、删除、扫描、使用统计和来源追溯。"
+         "Review fork 产出的技能 proposal 不能直接修改正式技能，必须走审批（pending_approval）。",
+         "管理技能",
+         {"action": {"type": "string", "description": "list/get/create/update/delete/scan/usage/provenance/pending-approvals"},
+          "name": {"type": "string", "description": "技能名称（create/get/update/delete/provenance 需要）"},
+          "description": {"type": "string", "description": "技能描述（create 需要）"},
+          "body": {"type": "string", "description": "技能内容（create/update 可选）"},
+          "allowed_tools": {"type": "array", "items": {"type": "string"}, "description": "允许的工具列表"},
+          "scope": {"type": "string", "description": "作用域 global/project/workspace"},
+          "from_review": {"type": "boolean", "description": "是否来自 review fork proposal"}}, "admin"),
     ]
 
     for module_key, action, handler, desc, brief, params, min_role in capabilities:

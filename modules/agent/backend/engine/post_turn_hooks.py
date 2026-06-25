@@ -155,7 +155,7 @@ async def get_hook_lifecycle_state(db: AsyncSession, owner_id: int | None = None
     state["maintenance_run_count"] = state.pop("run_count", None)
     all_runs = await _read_hook_runs(db, owner_id)
     state["recent_hook_runs"] = all_runs[:20]  # all_runs is DESC-ordered (newest first)
-    state["hook_names"] = ["memory_distill", "profile_evolve", "context_snapshot", "cleanup_archive", "prompt_suggestion"]
+    state["hook_names"] = ["memory_distill", "profile_evolve", "context_snapshot", "cleanup_archive", "prompt_suggestion", "background_review"]
     # lifecycle stats
     total = len(all_runs)
     failures = [r for r in all_runs if not r.get("success")]
@@ -337,6 +337,12 @@ class PostTurnHooks:
             ))
         )
 
+        asyncio.create_task(
+            _safe_run("background_review", self._hook_background_review(
+                conversation_id, owner_id, messages, tool_events,
+            ))
+        )
+
         return summary
 
     async def _hook_memory_distill(
@@ -494,6 +500,39 @@ class PostTurnHooks:
             except Exception as exc:
                 await session.rollback()
                 logger.warning("cleanup_archive failed (non-fatal): %s", exc)
+
+    async def _hook_background_review(
+        self,
+        conversation_id: int,
+        owner_id: int,
+        messages: list[dict],
+        tool_events: list[dict],
+    ) -> None:
+        """Run a background review fork after each conversation turn.
+
+        The review fork:
+          - Uses a restricted tool set (memory + skill proposals only)
+          - Does NOT interact with the user
+          - Produces structured proposals stored in agent_review_results
+          - Review fork proposals CANNOT directly modify skills
+
+        Throttled: skips if the last N messages have no user content
+        or if the conversation is too short (< 3 messages).
+        """
+        if len(messages) < 3:
+            return
+
+        has_user_msg = any(m.get("role") == "user" for m in messages[-3:])
+        if not has_user_msg:
+            return
+
+        from ..services.review_service import run_background_review
+        await run_background_review(
+            conversation_id=conversation_id,
+            owner_id=owner_id,
+            messages=messages,
+            tool_events=tool_events,
+        )
 
 
 _MAINTENANCE_INTERVAL = 300  # 5 minutes, must be > 0

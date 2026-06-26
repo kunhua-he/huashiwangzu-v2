@@ -486,7 +486,7 @@ class ToolLoopRuntime:
                                 {"reason": _stop_reason, "round": _round + 1},
                             )
                     except Exception:
-                        pass
+                        logger.debug("Failed to record diminishing_stop event")
                     break
 
                 # ── Checkpoint: save execution state after each round ──
@@ -594,7 +594,7 @@ class ToolLoopRuntime:
             try:
                 yield b"data: [DONE]\n\n"
             except GeneratorExit:
-                pass
+                logger.debug("GeneratorExit during final SSE yield (client disconnected)")
         logger.info("[DIAG] ToolLoopRuntime EXIT")
 
     @staticmethod

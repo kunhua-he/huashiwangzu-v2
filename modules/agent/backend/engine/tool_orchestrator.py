@@ -508,7 +508,7 @@ class ToolOrchestrator:
                 from .signals import emit_signal as _emit_signal
                 _emit_signal("tool_failure_rate", 1.0, f"tool={name}:{last_error[:200] if last_error else 'unknown'}")
             except Exception:
-                pass
+                logger.warning("Failed to emit tool_failure_rate signal for %s", name)
             return {
                 "name": name,
                 "tool_call_id": tool_call_id,
@@ -600,6 +600,6 @@ class ToolOrchestrator:
                 error_rate = len(errors) / max(total, 1)
                 _emit_signal_batch("tool_failure_rate", error_rate, f"batch: {len(errors)}/{total} failures")
             except Exception:
-                pass
+                logger.warning("Failed to emit batch tool_failure_rate signal")
 
         return final_results

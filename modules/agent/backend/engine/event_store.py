@@ -64,7 +64,7 @@ async def record_event(
                 conversation_id=conversation_id,
             )
         except Exception:
-            pass
+            logger.warning("Failed to record diagnostic for record_%s", event_type)
         raise
     return event
 

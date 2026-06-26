@@ -1,4 +1,4 @@
-"""Span recording and trace query — stores to system_trace_spans table.
+"""Span recording and trace query — stores to framework_system_trace_spans table.
 
 trace_id and parent_span_id flow through a contextvar (`_trace_ctx_var`)
 that middleware (logging_middleware) initialises per-request and

@@ -1,27 +1,63 @@
 import asyncio
+import json
 import logging
+import time
 import uuid
-from typing import AsyncGenerator
 from datetime import datetime, timezone
-from .base import BaseProvider
-from .opencode_provider import OpenCodeProvider
-from .openai_provider import OpenAIProvider
-from .local import LocalProvider
+from pathlib import Path
+from typing import AsyncGenerator
+
 from .adapters import get_adapter
+from .base import BaseProvider
 from .config import (
-    DEFAULT_MODEL, _config, MODEL_PROFILES, resolve_api_key,
-    TEMPLATES, ROUTING_POLICIES, DEFAULT_ROUTING_POLICY,
-    BUDGET_RATES, VariantTemplate,
-    resolve_template_for_role, list_templates, list_routing_policies,
+    BUDGET_RATES,
+    DEFAULT_MODEL,
+    DEFAULT_ROUTING_POLICY,
+    MODEL_PROFILES,
+    TEMPLATES,
+    VariantTemplate,
+    _config,
+    list_routing_policies,
+    list_templates,
+    resolve_api_key,
+    resolve_template_for_role,
 )
 from .error_classifier import (
-    classify_error, compute_delay, max_attempts_for_category,
     _get_status_code,
+    classify_error,
+    compute_delay,
+    max_attempts_for_category,
 )
+from .local import LocalProvider
+from .openai_provider import OpenAIProvider
+from .opencode_provider import OpenCodeProvider
 
 logger = logging.getLogger("v2.gateway.router")
 RETRY_MAX_ATTEMPTS = 3
 RETRY_BASE_DELAY_SECONDS = 1.0
+
+# ── Gateway trace persistence ─────────────────────────────────────
+GATEWAY_TRACE_DIR = Path(__file__).resolve().parents[2] / "data" / "runtime"
+GATEWAY_TRACE_DIR.mkdir(parents=True, exist_ok=True)
+GATEWAY_TRACE_FILE = GATEWAY_TRACE_DIR / "gateway_traces.jsonl"
+
+
+def _persist_gateway_trace(entry: dict) -> None:
+    """Append a gateway trace entry to the JSONL file (atomic append).
+
+    Safe for multi-worker: each write appends one line; reads must
+    handle concurrent writers gracefully.
+    """
+    try:
+        line = json.dumps(entry, ensure_ascii=False, default=str) + "\n"
+        with open(GATEWAY_TRACE_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as exc:
+        logger.warning("Failed to persist gateway trace: %s", exc)
+
+
+def _message_chars(messages: list[dict]) -> int:
+    return sum(len(str(m.get("content") or "")) for m in messages)
 
 # ── Unified retry budget / attempt trace ──────────────────────────────
 
@@ -35,7 +71,7 @@ class RetryBudget:
     Diagnostics contract (shared with fallback chain):
       - trace_id        : propagated from caller
       - fallback_reason : when a fallback switch occurs, records the reason
-      - attempt history : per-attempt profile/provider/status/reason
+      - attempt history : per-attempt profile/provider/status/reason/timing
     """
 
     def __init__(self, max_retries: int = 6):
@@ -44,14 +80,41 @@ class RetryBudget:
         self.trace_id: str = str(uuid.uuid4())
         self.fallback_reason: str | None = None
 
-    def record_attempt(self, profile_key: str, provider: str, status: int | None, reason: str = "") -> None:
-        self.attempts.append({
+    def record_attempt(self, profile_key: str, provider: str, status: int | None, reason: str = "",
+                       elapsed_ms: float | None = None, retry_delay_ms: float | None = None,
+                       request_input_chars: int | None = None,
+                       request_body_bytes: int | None = None,
+                       response_content_chars: int | None = None,
+                       reasoning_chars: int | None = None,
+                       tokens: dict | None = None,
+                       error_type: str | None = None,
+                       retryable: bool | None = None) -> None:
+        entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "profile_key": profile_key,
             "provider": provider,
             "status": status,
             "reason": _extract_reason_from_str(reason)[:200],
-        })
+        }
+        if elapsed_ms is not None:
+            entry["elapsed_ms"] = round(elapsed_ms, 1)
+        if retry_delay_ms is not None:
+            entry["retry_delay_ms"] = round(retry_delay_ms, 1)
+        if request_input_chars is not None:
+            entry["request_input_chars"] = request_input_chars
+        if request_body_bytes is not None:
+            entry["request_body_bytes"] = request_body_bytes
+        if response_content_chars is not None:
+            entry["response_content_chars"] = response_content_chars
+        if reasoning_chars is not None:
+            entry["reasoning_chars"] = reasoning_chars
+        if tokens is not None:
+            entry["tokens"] = tokens
+        if error_type is not None:
+            entry["error_type"] = error_type
+        if retryable is not None:
+            entry["retryable"] = retryable
+        self.attempts.append(entry)
 
     def record_fallback(self, from_profile: str, to_profile: str, reason: str) -> None:
         self.fallback_reason = f"{from_profile} -> {to_profile}: {_extract_reason_from_str(reason)[:200]}"
@@ -61,6 +124,7 @@ class RetryBudget:
             "provider": "fallback",
             "status": None,
             "reason": self.fallback_reason,
+            "error_type": "fallback",
         })
 
     @property
@@ -154,8 +218,10 @@ async def _log_model_usage(
         cost = (prompt_tokens * price_input + completion_tokens * price_output) / 1_000_000
 
         from datetime import date
-        from app.database import AsyncSessionLocal
+
         from sqlalchemy import text
+
+        from app.database import AsyncSessionLocal
 
         today = date.today()
         async with AsyncSessionLocal() as db:
@@ -214,7 +280,7 @@ def _extract_reason(exc: Exception) -> str:
             if body:
                 detail = f"{detail[:200]} | body:{body[:500]}"
         except Exception:
-            pass
+            logger.debug("Failed to extract response body from exception")
     return detail[:500]
 
 
@@ -241,7 +307,11 @@ async def _call_with_retry(
     timeout: dict | None = None,
 ) -> dict:
     last_exception = None
+    input_chars = _message_chars(messages)
+    body_bytes = len(json.dumps(messages, ensure_ascii=False)) if messages else 0
     for attempt_index in range(RETRY_MAX_ATTEMPTS):
+        started = time.perf_counter()
+        retry_delay_ms: float | None = None
         try:
             result = await provider.chat(
                 messages=messages,
@@ -251,15 +321,25 @@ async def _call_with_retry(
                 tools=tools,
                 timeout=timeout,
             )
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            response_content = str(result.get("content") or "")
+            reasoning_content = str(result.get("reasoning_content") or "")
             if budget:
                 budget.record_attempt(
                     profile_key=model,
                     provider=getattr(provider, "name", type(provider).__name__),
                     status=200,
                     reason="Success",
+                    elapsed_ms=elapsed_ms,
+                    request_input_chars=input_chars,
+                    request_body_bytes=body_bytes,
+                    response_content_chars=len(response_content),
+                    reasoning_chars=len(reasoning_content),
+                    tokens=result.get("usage") or result.get("tokens"),
                 )
             return result
         except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000
             last_exception = exc
             status = _status_code_from_exception(exc)
             clf = classify_error(exception=exc, status_code=status)
@@ -269,16 +349,25 @@ async def _call_with_retry(
                     provider=getattr(provider, "name", type(provider).__name__),
                     status=status,
                     reason=f"[{clf.category}] {clf.message}",
+                    elapsed_ms=elapsed_ms,
+                    request_input_chars=input_chars,
+                    request_body_bytes=body_bytes,
+                    error_type=clf.category,
+                    retryable=clf.retryable,
                 )
             max_attempts = max_attempts_for_category(clf.category, RETRY_MAX_ATTEMPTS)
             if not clf.retryable or attempt_index >= max_attempts - 1:
                 break
             delay = compute_delay(clf, attempt_index, RETRY_BASE_DELAY_SECONDS)
+            retry_delay_ms = delay * 1000
             logger.warning(
-                "AI gateway call attempt %d/%d failed (status=%s, category=%s), retrying in %.1fs",
-                attempt_index + 1, max_attempts, status, clf.category, delay,
+                "AI gateway call attempt %d/%d failed (status=%s, category=%s, elapsed=%.0fms), retrying in %.1fs",
+                attempt_index + 1, max_attempts, status, clf.category, elapsed_ms, delay,
             )
             await asyncio.sleep(delay)
+            # Record retry delay on the failed attempt
+            if budget and budget.attempts:
+                budget.attempts[-1]["retry_delay_ms"] = round(retry_delay_ms, 1)
 
     raise last_exception or RuntimeError("AI gateway retry loop exhausted")
 
@@ -362,10 +451,45 @@ class ModelGatewayRouter:
     ) -> dict:
         budget = budget or RetryBudget()
         profile = self.get_profile(profile_key)
+        total_started = time.perf_counter()
         if profile["provider"] == "llama":
             await _ensure_local_text_model(profile)
         provider = self.get_provider(profile["provider"])
         timeout = _get_profile_timeout(profile)
+
+        def _build_diagnostics(result_dict: dict | None = None,
+                               error_info: dict | None = None) -> dict:
+            total_elapsed = (time.perf_counter() - total_started) * 1000
+            diag = {
+                "trace_id": budget.trace_id,
+                "profile_key": profile_key,
+                "provider": profile.get("provider", ""),
+                "model": profile.get("model", ""),
+                "attempts": len(budget.attempts),
+                "total_elapsed_ms": round(total_elapsed, 1),
+                "attempt_logs": budget.attempts,
+                "request_summary": {
+                    "message_count": len(messages),
+                    "input_chars": _message_chars(messages),
+                    "max_tokens": profile.get("max_tokens"),
+                    "temperature": profile.get("temperature"),
+                    "stream": False,
+                },
+            }
+            if error_info:
+                diag["error"] = error_info
+            if result_dict:
+                content = str(result_dict.get("content") or "")
+                diag["response_summary"] = {
+                    "output_chars": len(content),
+                    "reasoning_chars": len(str(result_dict.get("reasoning_content") or "")),
+                }
+                tokens = result_dict.get("tokens") or result_dict.get("usage")
+                if tokens:
+                    diag["response_summary"]["tokens"] = tokens
+            return diag
+
+        error_diag = None
         try:
             raw = await _call_with_retry(
                 provider=provider,
@@ -385,13 +509,23 @@ class ModelGatewayRouter:
                     if body:
                         detail = f"{detail}\n响应体: {body[:1000]}"
                 except Exception:
-                    pass
-            # Classify the final error for the caller
+                    logger.debug("Failed to extract error response body from LLM provider")
             clf = classify_error(exception=exc)
             logger.error("AI gateway chat failed after retries: [%s] %s", clf.category, detail)
-            return {"error": str(exc), "content": f"(Model error: {detail})", "_retry_budget": budget.to_dict(), "_error_category": clf.category}
+            error_diag = _build_diagnostics(error_info={"category": clf.category, "detail": detail[:500]})
+            _persist_gateway_trace(error_diag)
+            return {
+                "error": str(exc),
+                "content": f"(Model error: {detail})",
+                "_retry_budget": budget.to_dict(),
+                "_error_category": clf.category,
+                "diagnostics": error_diag,
+            }
         if "error" in raw:
             raw["_retry_budget"] = budget.to_dict()
+            error_diag = _build_diagnostics(error_info={"detail": str(raw.get("error", ""))[:500]})
+            raw["diagnostics"] = error_diag
+            _persist_gateway_trace(error_diag)
             return raw
         # Log usage cost
         if "usage" in raw:
@@ -407,6 +541,9 @@ class ModelGatewayRouter:
                 )
         result = raw if profile["provider"] in ("local",) else get_adapter(profile["model"]).adapt_response(raw, provider=profile["provider"])
         result["_retry_budget"] = budget.to_dict()
+        diag = _build_diagnostics(result_dict=result)
+        result["diagnostics"] = diag
+        _persist_gateway_trace(diag)
         return result
 
     async def chat_stream(
@@ -558,9 +695,9 @@ class ModelGatewayRouter:
                 if m:
                     tool_config["dimensions"] = f"{m.group(1)}x{m.group(2)}"
 
-                import httpx
-                import base64 as b64
                 import random
+
+                import httpx
 
                 max_retries = 3
                 for attempt in range(max_retries):
@@ -646,6 +783,7 @@ gateway_router = ModelGatewayRouter()
 
 async def _ensure_local_text_model(profile: dict | None = None) -> None:
     from asyncio import to_thread
+
     from app.services.model_watchdog.watchdog import ensure_model
     watchdog_name = (profile or {}).get("watchdog", "gemma-4")
     await to_thread(ensure_model, watchdog_name)
@@ -654,6 +792,7 @@ async def _ensure_local_text_model(profile: dict | None = None) -> None:
 async def _ensure_local_vision_model(profile: dict) -> None:
     """Ensure a local vision model (e.g. qwen3-vl) is running via watchdog."""
     from asyncio import to_thread
+
     from app.services.model_watchdog.watchdog import ensure_model
     watchdog_name = profile.get("watchdog", "qwen3-vl")
     await to_thread(ensure_model, watchdog_name)

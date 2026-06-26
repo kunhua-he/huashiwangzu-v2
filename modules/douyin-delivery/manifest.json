@@ -1,0 +1,43 @@
+{
+  "key": "douyin-delivery",
+  "name": "抖音投放助手",
+  "icon": "VideoPlay",
+  "icon_asset": "",
+  "category": "AI",
+  "component_key": "index.vue",
+  "route_prefix": "/api/douyin-delivery",
+  "permissions": ["viewer", "editor", "admin"],
+  "sort_order": 150,
+  "default_width": 1100,
+  "default_height": 750,
+  "singleton": true,
+  "show_in_launcher": true,
+  "show_on_desktop": true,
+  "show_in_tray": false,
+  "show_in_sidebar": false,
+  "window_type": "normal",
+  "allow_multiple": false,
+  "supported_formats": [],
+  "editable_formats": [],
+  "creatable_formats": [],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "permission_declaration": {
+    "default": "viewer",
+    "actions": [
+      {"action": "douyin_delivery_view", "name": "查看投放助手", "min_role": "viewer"},
+      {"action": "douyin_delivery_generate", "name": "内容/文案生成", "min_role": "editor"},
+      {"action": "douyin_delivery_manage", "name": "投放计划管理", "min_role": "editor"},
+      {"action": "douyin_delivery_admin", "name": "管理设置", "min_role": "admin"}
+    ]
+  },
+  "public_actions": [
+    {"action": "generate_script", "description": "生成抖音口播脚本", "parameters": {"product": {"type": "string", "description": "产品名称或卖点方向"}, "channel": {"type": "string", "description": "投放渠道: local_push/ocean_engine/qianchuan"}}, "min_role": "editor"},
+    {"action": "generate_ad_copy", "description": "生成广告文案", "parameters": {"product": {"type": "string", "description": "产品名称或卖点"}, "channel": {"type": "string", "description": "投放渠道"}, "ad_type": {"type": "string", "description": "广告类型"}}, "min_role": "editor"},
+    {"action": "validate_content", "description": "知识库校验成分/功效内容", "parameters": {"content": {"type": "string", "description": "需要校验的文本"}}, "min_role": "editor"}
+  ],
+  "dependency_declaration": [{"module": "knowledge", "optional": true}],
+  "event_handler_declaration": [],
+  "db_migration_declaration": [],
+  "backend": {"enabled": true, "router": "backend/router.py"}
+}

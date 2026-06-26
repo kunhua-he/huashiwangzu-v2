@@ -29,7 +29,7 @@ async def _record_degradation_event(conversation_id: int | None, from_profile: s
                 "reason": reason[:500],
             }, llm_response_id=None)
     except Exception:
-        pass
+        logger.debug("Failed to record degradation event for %s → %s", from_profile, to_profile)
 
 
 async def chat_with_fallback(
@@ -78,7 +78,7 @@ def _extract_reason(exc: Exception) -> str:
             if body:
                 detail = f"{detail[:200]} | 响应体:{body[:500]}"
         except Exception:
-            pass
+            logger.debug("Failed to extract response body from exception")
     return detail[:300]
 
 

@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFound
@@ -12,6 +14,7 @@ from app.services.app_service import (
     update_app, create_app, app_to_dict, sync_apps_from_manifest
 )
 
+logger = logging.getLogger("v2.app_manager")
 router = APIRouter(prefix="/api/app-manager", tags=["app-manager"])
 
 
@@ -45,7 +48,7 @@ async def manager_get_app(
         try:
             app = await get_app_by_id(db, int(app_id))
         except (ValueError, TypeError):
-            pass
+            logger.debug("app_id is not an integer, treating as key: %s", app_id)
     if not app:
         raise NotFound("App not found")
     return ApiResponse(data=app_to_dict(app))

@@ -215,7 +215,7 @@ class ConversationRuntime:
                     if approach:
                         parts.append(f"【建议方案】{approach}")
             except (json.JSONDecodeError, TypeError):
-                pass
+                logger.debug("Failed to parse plan_data from planning packet")
         retrieval = packet.get("retrieval_evidence", [])
         if retrieval:
             queries = [r.get("query", "") for r in retrieval if r.get("query")]

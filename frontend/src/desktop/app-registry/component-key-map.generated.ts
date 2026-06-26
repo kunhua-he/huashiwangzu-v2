@@ -9,6 +9,7 @@ export const componentKeyMap: Record<string, () => Promise<{ default: Component 
   'doc-viewer/index.vue': () => import('@modules/doc-viewer/frontend/index.vue'),
   'docs-open/index.vue': () => import('@modules/docs-open/frontend/index.vue'),
   'docx-parser/index.vue': () => import('@modules/docx-parser/frontend/index.vue'),
+  'douyin-delivery/index.vue': () => import('@modules/douyin-delivery/frontend/index.vue'),
   'excel-engine/index.vue': () => import('@modules/excel-engine/frontend/index.vue'),
   'im/index.vue': () => import('@modules/im/frontend/index.vue'),
   'image-gen/index.vue': () => import('@modules/image-gen/frontend/index.vue'),
@@ -25,5 +26,6 @@ export const componentKeyMap: Record<string, () => Promise<{ default: Component 
   'terminal-tools/index.vue': () => import('@modules/terminal-tools/frontend/index.vue'),
   'text-editor/index.vue': () => import('@modules/text-editor/frontend/index.vue'),
   'text-parser/index.vue': () => import('@modules/text-parser/frontend/index.vue'),
+  'wechat-writer/index.vue': () => import('@modules/wechat-writer/frontend/index.vue'),
   'xlsx-parser/index.vue': () => import('@modules/xlsx-parser/frontend/index.vue'),
 }

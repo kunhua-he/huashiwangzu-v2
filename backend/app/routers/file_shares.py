@@ -6,6 +6,7 @@ from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.services import file_share_service as svc
 from app.schemas.common import ApiResponse
+from app.core.exceptions import ValidationError
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/files/share", tags=["File Shares"])
@@ -151,7 +152,7 @@ async def resolve_permission(
     resource_type = body.get("resource_type", "file")
     resource_id = body.get("resource_id")
     if not resource_id:
-        return ApiResponse(success=False, error="resource_id is required")
+        raise ValidationError("resource_id is required")
     result = await svc.resolve_resource_permission(
         db, resource_type, resource_id, current_user.id
     )

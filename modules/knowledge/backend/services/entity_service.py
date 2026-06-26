@@ -13,6 +13,8 @@ from app.gateway.router import gateway_router
 from app.database import AsyncSessionLocal
 from app.services.task_worker import register_task_handler
 
+from .llm_diagnostics import timed_llm_chat
+
 logger = logging.getLogger("v2.knowledge").getChild("entity")
 
 # 实体抽取提示词
@@ -49,7 +51,13 @@ PAGE_FUSION_PROMPT = """你是一个企业文档内容融合专家。请将以�
 """
 
 
-async def extract_entities_from_text(text: str, profile_key: str = "deepseek-v4-flash") -> dict:
+async def extract_entities_from_text(
+    text: str,
+    profile_key: str = "deepseek-v4-flash",
+    *,
+    document_id: int | None = None,
+    page: int | None = None,
+) -> dict:
     """用大模型从文本中提取实体和关系。返回 {"entities": [...], "relationships": [...]}。"""
     if not text.strip():
         return {"entities": [], "relationships": []}
@@ -59,7 +67,16 @@ async def extract_entities_from_text(text: str, profile_key: str = "deepseek-v4-
             {"role": "system", "content": ENTITY_EXTRACTION_PROMPT},
             {"role": "user", "content": f"请提取以下内容的实体和关系：\n\n{text[:6000]}"},
         ]
-        resp = await gateway_router.chat(messages, profile_key=profile_key)
+        resp = await timed_llm_chat(
+            logger=logger,
+            stage="graph_entity_extract",
+            profile_key=profile_key,
+            messages=messages,
+            chat_func=gateway_router.chat,
+            document_id=document_id,
+            page=page,
+            extra={"source_chars": len(text), "prompt_text_chars": len(text[:6000])},
+        )
         content = resp.get("content", "")
         if not content:
             return {"entities": [], "relationships": []}
@@ -85,7 +102,13 @@ async def extract_entities_from_text(text: str, profile_key: str = "deepseek-v4-
         return {"entities": [], "relationships": []}
 
 
-async def fuse_page_text(text: str, profile_key: str = "deepseek-v4-flash") -> str:
+async def fuse_page_text(
+    text: str,
+    profile_key: str = "deepseek-v4-flash",
+    *,
+    document_id: int | None = None,
+    page: int | None = None,
+) -> str:
     """用大模型融合页级文本。"""
     if not text.strip():
         return text
@@ -95,7 +118,16 @@ async def fuse_page_text(text: str, profile_key: str = "deepseek-v4-flash") -> s
             {"role": "system", "content": PAGE_FUSION_PROMPT},
             {"role": "user", "content": f"请融合以下分块内容：\n\n{text[:8000]}"},
         ]
-        resp = await gateway_router.chat(messages, profile_key=profile_key)
+        resp = await timed_llm_chat(
+            logger=logger,
+            stage="legacy_page_fusion",
+            profile_key=profile_key,
+            messages=messages,
+            chat_func=gateway_router.chat,
+            document_id=document_id,
+            page=page,
+            extra={"source_chars": len(text), "prompt_text_chars": len(text[:8000])},
+        )
         result = resp.get("content", "")
         return result.strip() if result else text
     except Exception as e:
@@ -140,7 +172,11 @@ async def process_document_entities(
             continue
 
         # 每页抽取一次实体
-        result = await extract_entities_from_text(combined)
+        result = await extract_entities_from_text(
+            combined,
+            document_id=document_id,
+            page=page,
+        )
         all_entities.extend(result.get("entities", []))
         all_relationships.extend(result.get("relationships", []))
         processed_pages += 1
@@ -384,7 +420,11 @@ async def process_document_entities_from_fusions(
         if len(text) < 20:
             continue
 
-        result = await extract_entities_from_text(text)
+        result = await extract_entities_from_text(
+            text,
+            document_id=document_id,
+            page=pf.page,
+        )
         all_entities.extend(result.get("entities", []))
         all_relationships.extend(result.get("relationships", []))
         processed_pages += 1

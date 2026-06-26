@@ -4,6 +4,7 @@
 All operations go through this unified router.
 """
 import json
+import logging
 import os
 import tempfile
 from typing import Any, Optional
@@ -24,6 +25,8 @@ from .state.manager import (
     parse_addresses, empty_state,
     TEMP_DIR,
 )
+logger = logging.getLogger("v2.excel-engine")
+
 from .state.db_ops import (
     find_or_create_workbook, find_or_create_sheet,
     read_state_full, read_history, record_snapshot,
@@ -72,8 +75,8 @@ def _resolve_user_id(caller: str) -> int:
         if prefix == "user":
             return int(raw_id)
     except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
+        logger.debug("Failed to resolve user_id from caller: %s", caller)
+        raise PermissionDenied("Invalid caller")
 
 
 # ── Schema ──

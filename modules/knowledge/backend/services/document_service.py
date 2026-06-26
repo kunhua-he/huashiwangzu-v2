@@ -1,9 +1,9 @@
 """知识库文档管理服务：资料登记、解析入库、页级融合、索引状态。"""
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, delete as sa_delete, func
+from sqlalchemy import select, delete as sa_delete, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFound, ValidationError, AppException
@@ -19,6 +19,9 @@ SUPPORTED_EXTENSIONS = {
     "pdf", "docx", "pptx", "xlsx", "csv", "txt", "md",
     "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg",
 }
+
+# 安全清理阈值：文档创建超过此时间且 chunks=0 才考虑清理
+_ORPHAN_CLEANUP_MINUTES = 30
 
 
 def resolve_user_id(caller: str) -> int:
@@ -48,8 +51,10 @@ async def register_document(
     if ext not in SUPPORTED_EXTENSIONS:
         raise ValidationError(f"Unsupported file extension: {ext}")
 
-    # ── MD5 内容级去重预检 ──
+    # ── MD5 内容级去重预检（有有效 chunks 才算，否则清理空壳） ──
     if file.md5_hash:
+        from ..models import KbChunk
+
         md5_r = await db.execute(
             select(KbDocument).where(
                 KbDocument.md5_hash == file.md5_hash,
@@ -59,7 +64,47 @@ async def register_document(
         )
         md5_existing = md5_r.scalar_one_or_none()
         if md5_existing:
-            return document_payload(md5_existing)
+            chunk_cnt = await db.execute(
+                select(func.count()).select_from(KbChunk).where(
+                    KbChunk.document_id == md5_existing.id
+                )
+            )
+            if (chunk_cnt.scalar() or 0) > 0:
+                return document_payload(md5_existing)
+            # chunks=0：判断是真孤儿还是正在入库中
+            # 真孤儿：任一状态已是终态(done/error/failed)，说明管线已走过 chunk 产出阶段但没产出
+            # 入库中：所有状态均为 pending/processing（管线还没走到 chunk 产出步骤）
+            now = datetime.now(timezone.utc)
+            age = now - (md5_existing.created_at or now)
+            in_flight_statuses = {"pending", "parsing", "collecting", "running", "indexing"}
+            is_all_inflight = (
+                md5_existing.parse_status in in_flight_statuses
+                and md5_existing.raw_status in in_flight_statuses
+                and md5_existing.fusion_status in in_flight_statuses
+                and md5_existing.vector_status in in_flight_statuses
+            )
+            is_terminal = md5_existing.parse_status in ("done", "error") or md5_existing.raw_status in ("done", "failed") or md5_existing.fusion_status in ("done", "failed")
+            is_old_enough = age > timedelta(minutes=_ORPHAN_CLEANUP_MINUTES)
+            if not is_all_inflight or is_old_enough:
+                # 真孤儿：清理并允许重新入库
+                logger.info(
+                    "Cleaning orphan document_id=%d (md5 match, zero chunks, status=%s/%s/%s/%s, age=%ds)",
+                    md5_existing.id, md5_existing.parse_status, md5_existing.raw_status,
+                    md5_existing.fusion_status, md5_existing.vector_status, int(age.total_seconds()),
+                )
+                for tbl in ["kb_raw_data", "kb_page_fusions", "kb_chunk_entities",
+                            "kb_evidence", "kb_document_profiles", "kb_governance_candidates"]:
+                    await db.execute(text(f"DELETE FROM {tbl} WHERE document_id = :did"), {"did": md5_existing.id})
+                await db.execute(sa_delete(KbDocument).where(KbDocument.id == md5_existing.id))
+                await db.commit()
+            else:
+                # 入库中（管路在跑），不要碰
+                logger.info(
+                    "Skipping orphan cleanup for document_id=%d (in-flight: %s/%s/%s, age=%ds)",
+                    md5_existing.id, md5_existing.parse_status, md5_existing.raw_status,
+                    md5_existing.fusion_status, int(age.total_seconds()),
+                )
+                return document_payload(md5_existing)
 
     # 已登记则返回现有记录
     existing_r = await db.execute(
@@ -222,7 +267,11 @@ async def create_page_fusions(db: AsyncSession, document_id: int, owner_id: int,
     for page, texts in page_texts.items():
         combined = "\n\n".join(texts)
         # 小页直接拼接，大页用 LLM 融合（失败自动回退）
-        fused = await fuse_page_text(combined) if len(combined) > 1000 else combined
+        fused = (
+            await fuse_page_text(combined, document_id=document_id, page=page)
+            if len(combined) > 1000
+            else combined
+        )
         pf = KbPageFusion(
             document_id=document_id,
             owner_id=owner_id,

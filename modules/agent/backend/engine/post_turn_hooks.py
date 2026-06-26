@@ -695,7 +695,7 @@ def setup_global_hooks() -> None:
                     async with AsyncSessionLocal() as _db:
                         await _mark_maintenance_stopped(_db)
                 except Exception:
-                    pass
+                    logger.warning("Failed to mark maintenance stopped on cancel")
                 break
             except Exception:
                 logger.exception("Maintenance observer iteration failed (will retry)")

@@ -263,7 +263,7 @@ async def handle_admin_overview(db: AsyncSession, user) -> ApiResponse:
                             if "stuck_detector命中" in line:
                                 stuck_count += 1
                 except Exception:
-                    pass
+                    logger.debug("Failed to read log file: %s", log_file)
         result["sticky"] = {"stuck_detection_count": stuck_count}
     except Exception as e:
         logger.warning("Admin overview sticky query failed: %s", e)

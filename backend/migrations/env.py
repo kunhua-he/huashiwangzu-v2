@@ -32,6 +32,9 @@ from app.models import (  # noqa: F401 - ensure models are loaded
     RoleMatrix, DesktopState,
     FileJsonPackage, FileJsonVersion, FileJsonPatch, FileJsonTask,
     PromptCategory, PromptTemplate,
+    FileAsset, FileUploadSession,
+    WorkflowDefinition, WorkflowRunRecord, WorkflowStepRecord,
+    SystemTraceSpan,
 )
 target_metadata = Base.metadata
 

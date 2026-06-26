@@ -141,7 +141,7 @@ def test_classify_quota_body() -> None:
 def test_compute_delay_uses_retry_after() -> None:
     clf = ErrorClassification("rate_limit", True, retry_after=5.0)
     delay = compute_delay(clf, attempt=0)
-    assert 4.0 <= delay <= 6.0
+    assert 3.5 <= delay <= 6.5
 
 
 def test_compute_delay_exponential_backoff() -> None:

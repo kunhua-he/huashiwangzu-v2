@@ -61,7 +61,7 @@ async def handle_profile_evolve(params: dict) -> dict:
                 conversation_id=conversation_id, owner_id=owner_id,
             )
         except Exception:
-            pass
+            logger.warning("Failed to record failure diagnostics for profile_evolve")
         return {"error": str(exc), "owner_id": owner_id, "conversation_id": conversation_id}
 
 

@@ -2,11 +2,14 @@
 
 Generates XLSX files from state data using openpyxl.
 """
+import logging
 import re
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from typing import Any
+
+logger = logging.getLogger("v2.excel-engine.xlsx_generator")
 
 
 def _decode_ascii_escape(val: str) -> str:
@@ -115,14 +118,14 @@ def generate_xlsx(output_path: str, all_sheet_data: dict[str, Any], filename: st
             try:
                 ws.column_dimensions[col_letter].width = width / 7
             except KeyError:
-                pass
+                logger.debug("Column %s not found in worksheet dimensions", col_letter)
 
         # Row heights
         for row_str, height in row_heights.items():
             try:
                 ws.row_dimensions[int(row_str)].height = height / 4
             except (ValueError, KeyError):
-                pass
+                logger.debug("Row %s not found in worksheet dimensions", row_str)
 
     wb.save(output_path)
     return True

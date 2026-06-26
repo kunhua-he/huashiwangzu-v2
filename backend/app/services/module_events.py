@@ -111,7 +111,7 @@ async def emit_module_event(
         try:
             owner_id = int(caller.split(":", 1)[1])
         except (ValueError, IndexError):
-            pass
+            logger.debug("Could not parse caller owner_id from '%s'", caller)
 
     handlers = _event_handlers.get(event_name, [])
     if not handlers:

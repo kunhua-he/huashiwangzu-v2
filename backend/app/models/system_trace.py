@@ -5,7 +5,7 @@ from app.models.base import Base, TimestampMixin
 
 
 class SystemTraceSpan(Base, TimestampMixin):
-    __tablename__ = "system_trace_spans"
+    __tablename__ = "framework_system_trace_spans"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trace_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)

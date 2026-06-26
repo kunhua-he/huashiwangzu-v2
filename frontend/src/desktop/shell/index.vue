@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, ref, computed, unref, watch } from 'vue'
+import { defineAsyncComponent, ref, computed, unref, watch, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useContextMenu } from '@/desktop/context-menu/use-context-menu'
 import ContextMenu from '@/desktop/context-menu/context-menu.vue'
@@ -348,4 +348,12 @@ function handleSwitchWindow(id: string) {
     if (w.minimized || !w.isActive) { windowManager.activateWindow(id) } else { windowManager.toggleMinimized(id) }
   }
 }
+
+onUnmounted(() => {
+  if (uploadInputRef.value) {
+    uploadInputRef.value.removeEventListener('change', onUploadSelected)
+    uploadInputRef.value.remove()
+    uploadInputRef.value = null
+  }
+})
 </script>

@@ -30,10 +30,7 @@ class TestParseInlineToolCalls:
     def test_full_width_vertical_bar(self):
         content = '查一下｜invoke name="web-tools__fetch"><｜parameter name="url" string="true">https://example.com</｜parameter></｜invoke>'
         clean, calls = parse_inline_tool_calls(content)
-        # The full-width bar variant may or may not be parsed depending on exact regex
-        # Since the regex uses \w+\| which requires alphanumeric before the bar
-        # The ｜ alone before invoke might not match, but that's OK — try to match
-        assert clean == "查一下" or True  # we just care it doesn't crash
+        assert calls == []  # full-width ｜invoke is not matched by ASCII-only regex
 
     def test_string_false_converts_number(self):
         content = '<invoke name="terminal-tools__exec"><parameter name="command" string="true">ls</parameter><parameter name="timeout" string="false">30</parameter></invoke>'

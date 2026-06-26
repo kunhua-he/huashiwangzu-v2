@@ -139,7 +139,7 @@ async def call_capability(
       - timeout     : 用 asyncio.wait_for 打断超时 handler
       - retry_policy: 自动重试（可重试异常 + 指数退避）
       - circuit breaker: 按 module:action 维度熔断
-      - trace span  : 自动记录到 system_trace_spans 表
+      - trace span  : 自动记录到 framework_system_trace_spans 表
     """
     # ---- resolve trace_id from context if not passed ----
     ctx = trace_store.get_trace_ctx()
@@ -151,7 +151,7 @@ async def call_capability(
         try:
             owner_id = int(caller.split(":", 1)[1])
         except (ValueError, IndexError):
-            pass
+            logger.debug("Could not parse caller owner_id from '%s'", caller)
 
     entry = _CAPABILITIES.get(_key(target_module, action))
     if not entry:

@@ -20,6 +20,7 @@ from app.database import get_db
 from app.middleware.auth import require_permission
 from app.schemas.common import ApiResponse
 from app.schemas.platform_resource import ResourceType
+from app.core.exceptions import NotFound
 from app.models.platform_workflow import (
     WorkflowDefinition,
     WorkflowRunRecord,
@@ -77,7 +78,7 @@ async def get_definition(
 ):
     definition = await db.get(WorkflowDefinition, definition_id)
     if not definition:
-        return ApiResponse(success=False, error="Workflow definition not found")
+        raise NotFound("Workflow definition not found")
     return ApiResponse(data=_def_to_dict(definition))
 
 
@@ -118,7 +119,7 @@ async def get_run(
 ):
     run = await db.get(WorkflowRunRecord, run_id)
     if not run:
-        return ApiResponse(success=False, error="Workflow run not found")
+        raise NotFound("Workflow run not found")
     return ApiResponse(data=_run_to_dict(run))
 
 

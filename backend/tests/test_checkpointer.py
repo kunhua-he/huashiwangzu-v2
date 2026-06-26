@@ -97,9 +97,10 @@ async def test_unique_constraint():
 @pytest.mark.asyncio
 async def test_put_and_get_tuple():
     from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+    conv_id = uuid.uuid4().int >> 65
     async with AsyncSessionLocal() as db:
         saver = PostgresCheckpointSaver()
-        conv_id = 999001
         owner_id = 42
         cp_id = str(uuid.uuid4())
         channel_vals = {
@@ -119,13 +120,17 @@ async def test_put_and_get_tuple():
         assert fetched["step"] == 1
         assert fetched["channel_values"]["messages"][0]["content"] == "hi"
 
+        await db.execute(text("DELETE FROM agent_checkpoints WHERE conversation_id = :cid"), {"cid": conv_id})
+        await db.commit()
+
 
 @pytest.mark.asyncio
 async def test_get_latest():
     from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+    conv_id = uuid.uuid4().int >> 65
     async with AsyncSessionLocal() as db:
         saver = PostgresCheckpointSaver()
-        conv_id = 999002
         owner_id = 42
         cp1 = str(uuid.uuid4())
         cp2 = str(uuid.uuid4())
@@ -141,13 +146,17 @@ async def test_get_latest():
         assert latest["step"] == 2
         assert latest["channel_values"]["messages"][0]["r"] == 2
 
+        await db.execute(text("DELETE FROM agent_checkpoints WHERE conversation_id = :cid"), {"cid": conv_id})
+        await db.commit()
+
 
 @pytest.mark.asyncio
 async def test_list():
     from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+    conv_id = uuid.uuid4().int >> 65
     async with AsyncSessionLocal() as db:
         saver = PostgresCheckpointSaver()
-        conv_id = 999003
         owner_id = 42
         base = {"messages": [], "tool_events": [], "timeline": [],
                 "pending_events": [], "event_round": 0, "persisted_event_count": 0}
@@ -162,13 +171,17 @@ async def test_list():
         assert len(results) >= 3
         assert results[0]["step"] == 3
 
+        await db.execute(text("DELETE FROM agent_checkpoints WHERE conversation_id = :cid"), {"cid": conv_id})
+        await db.commit()
+
 
 @pytest.mark.asyncio
 async def test_owner_id_stored():
     from app.database import AsyncSessionLocal
+    from sqlalchemy import text
+    conv_id = uuid.uuid4().int >> 65
     async with AsyncSessionLocal() as db:
         saver = PostgresCheckpointSaver()
-        conv_id = 999004
         owner_id = 99
         cp_id = str(uuid.uuid4())
         await saver.put(db, conv_id, owner_id, cp_id, step=1,
@@ -178,6 +191,9 @@ async def test_owner_id_stored():
         fetched = await saver.get_tuple(db, conv_id, cp_id)
         assert fetched is not None
         assert fetched["owner_id"] == 99
+
+        await db.execute(text("DELETE FROM agent_checkpoints WHERE conversation_id = :cid"), {"cid": conv_id})
+        await db.commit()
 
 
 # ── Policy tests ────────────────────────────────────────────────────────────

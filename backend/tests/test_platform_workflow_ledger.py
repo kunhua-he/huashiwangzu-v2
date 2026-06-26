@@ -32,15 +32,11 @@ SEED_PASS = "admin123"
 logger = logging.getLogger("v2.test_platform_workflow")
 
 
-# Ensure the workflow tables exist (they may not have been created at backend startup).
 async def _ensure_tables():
     async with engine.begin() as conn:
         for table in (WorkflowDefinition.__table__, WorkflowRunRecord.__table__, WorkflowStepRecord.__table__):
             await conn.run_sync(table.create, checkfirst=True)
     logger.info("Workflow tables ensured")
-
-
-asyncio.run(_ensure_tables())
 
 
 async def _login(client: AsyncClient) -> str:
@@ -57,8 +53,9 @@ async def _do_cleanup():
         await db.commit()
 
 
-@pytest.fixture(scope="function")
-def _cleanup_workflow_tables():
+@pytest.fixture(scope="function", autouse=True)
+def _ensure_and_cleanup():
+    asyncio.run(_ensure_tables())
     yield
     asyncio.run(_do_cleanup())
 
@@ -119,7 +116,7 @@ class TestResourceIR:
 # ── Workflow Definition Tests ──────────────────────────────────────
 
 
-@pytest.mark.usefixtures("_cleanup_workflow_tables")
+@pytest.mark.usefixtures("_ensure_and_cleanup")
 class TestWorkflowDefinition:
     @pytest.mark.asyncio
     async def test_create_and_list_definitions(self):
@@ -171,7 +168,7 @@ class TestWorkflowDefinition:
 # ── Workflow Run Ledger Tests ──────────────────────────────────────
 
 
-@pytest.mark.usefixtures("_cleanup_workflow_tables")
+@pytest.mark.usefixtures("_ensure_and_cleanup")
 class TestWorkflowRunLedger:
     @pytest.mark.asyncio
     async def test_create_run_and_query(self):

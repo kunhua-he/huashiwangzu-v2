@@ -309,7 +309,7 @@ async def upload(file: UploadFile = FastAPIFile(...), folder_id: int = Form(0), 
     try:
         tmp_file_path.unlink(missing_ok=True)
     except Exception:
-        pass
+        logger.warning("Failed to clean up temp file: %s", tmp_file_path)
     # ── 上传完成，尽力而为通知各模块（不阻塞上传） ──
     try:
         from app.services.module_events import emit_module_event

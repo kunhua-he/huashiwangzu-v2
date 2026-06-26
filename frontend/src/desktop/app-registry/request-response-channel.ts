@@ -15,7 +15,7 @@ export function generateRequestId(): string {
   return `req_${Date.now()}_${requestIdCounter}`
 }
 
-emitter.on('app:response', (data: unknown) => {
+function onAppResponse(data: unknown) {
   const response = data as CrossAppActionResponse & { requestId?: string }
   if (!response.requestId) return
   const id = response.requestId
@@ -25,9 +25,9 @@ emitter.on('app:response', (data: unknown) => {
     pendingRequests.delete(id)
     pending.resolve(response)
   }
-})
+}
 
-emitter.on('app:request', async (data: unknown) => {
+async function onAppRequest(data: unknown) {
   const request = data as { targetAppId: string; action: string; params: Record<string, unknown>; requestId: string; sourceAppId?: string; sourceWindowId?: string }
   if (!request.requestId) return
   const result = await routeRequest(
@@ -37,7 +37,21 @@ emitter.on('app:request', async (data: unknown) => {
     { sourceAppId: request.sourceAppId || '', sourceWindowId: request.sourceWindowId || '', requestId: request.requestId }
   )
   emitter.emit('app:response', { ...result, requestId: request.requestId } as never)
-})
+}
+
+export function initChannel() {
+  emitter.on('app:response', onAppResponse)
+  emitter.on('app:request', onAppRequest)
+}
+
+export function disposeChannel() {
+  emitter.off('app:response', onAppResponse)
+  emitter.off('app:request', onAppRequest)
+  clearAllRequests()
+}
+
+// Auto-init at module load for backwards compatibility
+initChannel()
 
 export function registerPendingRequest(
   requestId: string,

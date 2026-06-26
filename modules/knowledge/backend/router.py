@@ -859,8 +859,11 @@ async def _cap_ingest(params: dict, caller: str) -> dict:
             logger.info("ingest skipped: unsupported extension '%s' for file_id=%d", ext, file_id)
             return {"skipped": True, "reason": f"unsupported extension '{ext}'"}
 
-        # ── MD5 内容级去重：全局查同内容是否已入库 ──
+        # ── MD5 内容级去重：全局查同内容是否已入库（有有效 chunks 才算） ──
         if file.md5_hash:
+            from .models import KbChunk
+            from sqlalchemy import delete as sa_delete, func as sa_func, text as sa_text
+            from datetime import datetime, timezone, timedelta
             content_r = await db.execute(
                 select(KbDocument).where(
                     KbDocument.md5_hash == file.md5_hash,
@@ -869,7 +872,44 @@ async def _cap_ingest(params: dict, caller: str) -> dict:
             )
             content_existing = content_r.scalar_one_or_none()
             if content_existing:
-                return {"document_id": content_existing.id, "enqueued": False, "reason": "content already indexed"}
+                chunk_cnt = await db.execute(
+                    select(sa_func.count()).select_from(KbChunk).where(
+                        KbChunk.document_id == content_existing.id
+                    )
+                )
+                if (chunk_cnt.scalar() or 0) > 0:
+                    return {"document_id": content_existing.id, "enqueued": False, "reason": "content already indexed"}
+                # chunks=0：判断是真孤儿还是正在入库中
+                # 真孤儿：任一状态已是终态(done/error/failed)，说明管线已走过 chunk 产出阶段但没产出
+                # 入库中：所有状态均为 pending/processing
+                now = datetime.now(timezone.utc)
+                age = now - (content_existing.created_at or now)
+                in_flight_statuses = {"pending", "parsing", "collecting", "running", "indexing"}
+                is_all_inflight = (
+                    content_existing.parse_status in in_flight_statuses
+                    and content_existing.raw_status in in_flight_statuses
+                    and content_existing.fusion_status in in_flight_statuses
+                    and content_existing.vector_status in in_flight_statuses
+                )
+                is_old_enough = age > timedelta(minutes=30)
+                if not is_all_inflight or is_old_enough:
+                    logger.info(
+                        "Cleaning orphan document_id=%d (md5 match, zero chunks, status=%s/%s/%s/%s, age=%ds)",
+                        content_existing.id, content_existing.parse_status, content_existing.raw_status,
+                        content_existing.fusion_status, content_existing.vector_status, int(age.total_seconds()),
+                    )
+                    for tbl in ["kb_raw_data", "kb_page_fusions", "kb_chunk_entities",
+                                "kb_evidence", "kb_document_profiles", "kb_governance_candidates"]:
+                        await db.execute(sa_text(f"DELETE FROM {tbl} WHERE document_id = :did"), {"did": content_existing.id})
+                    await db.execute(sa_delete(KbDocument).where(KbDocument.id == content_existing.id))
+                    await db.commit()
+                else:
+                    logger.info(
+                        "Skipping orphan cleanup for document_id=%d (in-flight: %s/%s/%s, age=%ds)",
+                        content_existing.id, content_existing.parse_status, content_existing.raw_status,
+                        content_existing.fusion_status, int(age.total_seconds()),
+                    )
+                    return {"document_id": content_existing.id, "enqueued": False, "reason": "in-flight, skipping"}
 
         # 已存在则返回现有记录
         existing_r = await db.execute(

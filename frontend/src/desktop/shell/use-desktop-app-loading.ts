@@ -5,6 +5,7 @@ import { loadDesktopState } from '@/desktop/window-manager/desktop-state-store'
 import { createWindowStateSync } from '@/desktop/window-manager/window-state-sync'
 import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import { useUserStore } from '@/platform/stores/user'
+import { fetchModuleSettings } from '@/shared/api/settings'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import type { Ref } from 'vue'
 
@@ -37,18 +38,21 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
     registryError.value = null
     loading.value = true
     try {
-      const allApps = await loadAppRegistry(currentRole.value)
+      const [allApps, moduleSettings] = await Promise.all([
+        loadAppRegistry(currentRole.value),
+        fetchModuleSettings(),
+      ])
       desktopAppList.value = allApps.filter(a => a.showOnDesktop)
       launcherAppList.value = allApps.filter(a => a.showInLauncher)
       sidebarAppList.value = allApps.filter(a => a.showInSidebar)
       trayAppList.value = allApps.filter(a => a.showInTray)
 
-      // 给模块 runtime 注入框架上下文（当前用户权限等）
+      // 给模块 runtime 注入框架上下文（当前用户权限、模块设置等）
       ;(window as unknown as { __HUASHI_RUNTIME__?: unknown }).__HUASHI_RUNTIME__ = {
         mode: 'framework',
         api_base_url: '/api',
         permissions: runtimePermissions(userStore.userInfo?.role),
-        module_settings: {},
+        module_settings: moduleSettings,
       }
 
       if (userStore.userInfo?.id) {

@@ -15,6 +15,7 @@ from app.gateway.router import gateway_router
 from app.services.task_worker import register_task_handler
 
 from ..models import KbDocument, KbPageFusion, KbRawData
+from .llm_diagnostics import timed_llm_chat
 
 logger = logging.getLogger("v2.knowledge").getChild("fusion")
 
@@ -93,8 +94,36 @@ def _compute_confidence(round_texts: dict[int, str], conflicts: list[dict]) -> f
         return 0.30
 
 
-async def _llm_fuse(round_texts: dict[int, str]) -> dict:
+def _first_non_empty_text(round_texts: dict[int, str]) -> str:
+    """Return the first non-empty round text in stable round order."""
+    for round_num in sorted(round_texts):
+        text = (round_texts.get(round_num) or "").strip()
+        if text:
+            return text
+    return ""
+
+
+async def _llm_fuse(
+    round_texts: dict[int, str],
+    *,
+    document_id: int | None = None,
+    page: int | None = None,
+) -> dict:
     """调用 LLM 进行交叉印证融合。"""
+    fallback_text = _first_non_empty_text(round_texts)
+    non_empty_rounds = [text for text in round_texts.values() if text and text.strip()]
+    if len(non_empty_rounds) <= 1:
+        return {
+            "fused_text": fallback_text,
+            "page_summary": fallback_text[:120] if fallback_text else "",
+            "page_title": None,
+            "entities": [],
+            "attributes": {},
+            "tags": [],
+            "conflicts": [],
+            "confidence": _compute_confidence(round_texts, []),
+        }
+
     user_message = f"""请交叉印证以下三轮采集结果，输出融合后的权威描述。
 
 === 第1轮：文本提取 ===
@@ -107,12 +136,23 @@ async def _llm_fuse(round_texts: dict[int, str]) -> dict:
 {round_texts.get(3, '(无)')[:4000]}"""
 
     try:
-        result = await gateway_router.chat(
-            messages=[
-                {"role": "system", "content": FUSION_SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
+        messages = [
+            {"role": "system", "content": FUSION_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ]
+        result = await timed_llm_chat(
+            logger=logger,
+            stage="page_fusion",
             profile_key="deepseek-v4-flash",
+            messages=messages,
+            chat_func=gateway_router.chat,
+            document_id=document_id,
+            page=page,
+            extra={
+                "round1_chars": len(round_texts.get(1, "") or ""),
+                "round2_chars": len(round_texts.get(2, "") or ""),
+                "round3_chars": len(round_texts.get(3, "") or ""),
+            },
         )
         content = (result.get("content") or "").strip()
         # 去除可能的 markdown 代码块标记
@@ -121,11 +161,16 @@ async def _llm_fuse(round_texts: dict[int, str]) -> dict:
             content = "\n".join(lines[1:]) if len(lines) > 1 else content
             if content.endswith("```"):
                 content = content[:-3].strip()
-        return json.loads(content)
+        fused = json.loads(content)
+        if not (fused.get("fused_text") or "").strip() and fallback_text:
+            fused["fused_text"] = fallback_text
+            fused["page_summary"] = fused.get("page_summary") or fallback_text[:120]
+            fused["confidence"] = min(float(fused.get("confidence") or 0.7), 0.75)
+        return fused
     except Exception as e:
         logger.warning("LLM fusion failed, using heuristic fallback: %s", e)
         return {
-            "fused_text": round_texts.get(1, "") or round_texts.get(2, "") or round_texts.get(3, ""),
+            "fused_text": fallback_text,
             "page_summary": "",
             "page_title": None,
             "entities": [],
@@ -169,7 +214,7 @@ async def fuse_page(
     simple_conflicts = _detect_simple_conflicts(round_texts)
 
     # 3. LLM 交叉印证融合
-    fusion_result = await _llm_fuse(round_texts)
+    fusion_result = await _llm_fuse(round_texts, document_id=document_id, page=page)
 
     # 4. 综合置信度（LLM 给的 + 启发式加权）
     llm_confidence = fusion_result.get("confidence", 0.7)
@@ -237,13 +282,17 @@ async def fuse_all_pages(
     df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
     doc = df.scalar_one_or_none()
     if not doc:
-        raise ValueError(f"Document {document_id} not found")
+        return {"document_id": document_id, "error": f"Document {document_id} not found"}
 
     total_pages = doc.total_pages or 1
 
-    # 更新状态
-    doc.fusion_status = "running"
-    await db.commit()
+    # 更新状态（可能文档已被删，忽略）
+    try:
+        doc.fusion_status = "running"
+        await db.commit()
+    except Exception:
+        logger.warning("Document %d was deleted before fusion status update, aborting", document_id)
+        return {"document_id": document_id, "pages_fused": 0, "results": [], "status": "aborted"}
 
     # 查询已完成页
     r = await db.execute(
@@ -277,7 +326,19 @@ async def fuse_all_pages(
                 await db.rollback()
 
     # 更新文档状态
-    await db.refresh(doc)
+    try:
+        await db.refresh(doc)
+    except Exception:
+        # 文档可能已被删除，尝试重新查询
+        doc = (await db.execute(select(KbDocument).where(KbDocument.id == document_id))).scalar_one_or_none()
+        if not doc:
+            logger.warning("Document %d was deleted during fusion, cannot finalize status", document_id)
+            return {
+                "document_id": document_id,
+                "pages_fused": len([r for r in results if "error" not in r or r.get("skipped")]),
+                "results": results,
+                "status": "aborted",
+            }
     doc.fusion_status = "done"
     await db.commit()
 
@@ -288,6 +349,11 @@ async def fuse_all_pages(
         logger.info("Indexed fusion layer to chunks: doc_id=%d chunks=%d", document_id, indexed)
     except Exception as e:
         logger.error("Index fusion to chunks failed for doc_id=%d (non-fatal): %s", document_id, e)
+        # 清理 session 状态，避免下游用同一 session 时报"rolled back due to previous exception"
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     return {
         "document_id": document_id,
@@ -332,8 +398,16 @@ async def index_fusions_to_chunks(db: AsyncSession, document_id: int, owner_id: 
     await db.execute(sa_delete(KbChunk).where(KbChunk.document_id == document_id))
     await db.commit()
 
-    chunks = await chunk_and_embed(document_id, owner_id, blocks, caller=f"fusion:{document_id}")
-    count = await store_chunks(db, chunks)
+    try:
+        chunks = await chunk_and_embed(document_id, owner_id, blocks, caller=f"fusion:{document_id}")
+        count = await store_chunks(db, chunks)
+    except Exception:
+        # store_chunks 内部已 commit/rollback, 这里只需将 session 恢复到干净状态
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
 
     # 回写文档向量状态
     df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))

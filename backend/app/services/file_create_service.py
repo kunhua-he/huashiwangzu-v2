@@ -131,7 +131,7 @@ async def create_file(
 
     # Check for existing content (dedup)
     existing_content = await db.execute(
-        select(File).where(File.md5_hash == md5_hash, File.deleted == False).limit(1)
+        select(File).where(File.md5_hash == md5_hash, File.deleted == False).limit(1).with_for_update()
     )
     existing_file = existing_content.scalar_one_or_none()
 

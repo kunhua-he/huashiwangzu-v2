@@ -15,10 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from mcp.server import Server, NotificationOptions
+from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 # ── 配置 ──────────────────────────────────────────────────────────────
 
@@ -540,15 +540,15 @@ async def _restart_backend() -> dict[str, Any]:
 
 async def _verify_tool_args() -> dict[str, Any]:
     """存入 tool_call 事件并投影, 验证 arguments 类型。"""
-    import asyncio as _asyncio
 
     result: dict[str, Any] = {"ok": False, "arguments_type": "unknown", "arguments": None}
 
     async def _inner():
         from app.database import AsyncSessionLocal
         from sqlalchemy import select
+
+        from modules.agent.backend.engine.event_store import project_to_messages, record_event
         from modules.agent.backend.models import AgentConversation
-        from modules.agent.backend.engine.event_store import record_event, project_to_messages
 
         async with AsyncSessionLocal() as db:
             conv = await db.scalar(
@@ -1170,8 +1170,14 @@ _ERROR_PAT = re.compile(
 )
 
 
-async def _log_errors(module: str = "backend", lines: int = 400) -> str:
+async def _log_errors(module: str = "backend", lines: int = 400,
+                      since_marker: str = "", time_range_hours: int = 0) -> str:
     """扫模块日志里被吞掉的异常/报错(Traceback/Exception/violation/错参/failed)。
+
+    支持三种过滤:
+      - module: 模块名
+      - since_marker: 从某个 marker 字符串之后开始扫描
+      - time_range_hours: 只扫描最近 N 小时内的日志行
 
     专治"执行 agent 报告通过、但异常被 try/except 吞成 WARNING、产物表 0 行"那类盲区。
     后台/异步动作做完后调一次：有命中=功能其实没跑通，别报通过。
@@ -1181,14 +1187,262 @@ async def _log_errors(module: str = "backend", lines: int = 400) -> str:
     if not path:
         return f"[未找到模块日志] {module}"
     text = _tail_file(path, lines)
-    # 跳过 INFO/DIAG 诊断行(含 error=False 这类正常字样), 只留真报错
+    log_lines = text.split("\n")
+
+    # 应用 marker 过滤
+    if since_marker:
+        marker_idx = next(
+            (i for i, ln in enumerate(log_lines) if since_marker in ln),
+            None,
+        )
+        if marker_idx is not None:
+            log_lines = log_lines[marker_idx + 1:]
+
+    # 应用 time range 过滤
+    if time_range_hours > 0:
+        import datetime as dt
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=time_range_hours)
+        filtered = []
+        for ln in log_lines:
+            # 尝试提取 ISO 时间戳
+            m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", ln)
+            if m:
+                try:
+                    ts = dt.datetime.fromisoformat(m.group(1))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=dt.timezone.utc)
+                    if ts >= cutoff:
+                        filtered.append(ln)
+                except ValueError:
+                    filtered.append(ln)
+            else:
+                filtered.append(ln)
+        log_lines = filtered
+
+    # 统计每类错误计数
     hits = [
-        ln for ln in text.split("\n")
+        ln for ln in log_lines
         if _ERROR_PAT.search(ln) and "[DIAG]" not in ln and " INFO " not in ln
     ]
     if not hits:
         return f"✅ {path.name} 最近 {lines} 行无异常/报错命中"
-    return f"⚠️ {path.name} 命中 {len(hits)} 条疑似吞掉的异常/报错:\n" + "\n".join(hits[-40:])
+
+    # Aggregated stats
+    from collections import Counter
+    error_types = Counter()
+    for h in hits:
+        for pat_name in ("Traceback", "Exception", "Error", "failed", "NoneType", "IntegrityError", "Violation"):
+            if pat_name in h:
+                error_types[pat_name] += 1
+
+    stats_summary = ", ".join(f"{k}={v}" for k, v in error_types.most_common(5))
+    return (
+        f"⚠️ {path.name} 命中 {len(hits)} 条疑似吞掉的异常/报错\n"
+        f"统计: {stats_summary}\n"
+        + "\n".join(hits[-40:])
+    )
+
+
+# ──────────────────── 工具: llm_probe ──────────────────────────────
+
+GATEWAY_TRACE_FILE = REPO_ROOT / "backend" / "data" / "runtime" / "gateway_traces.jsonl"
+
+
+async def _llm_probe(
+    profile_key: str = "deepseek-v4-flash",
+    prompt: str = "测试文本: 请用一句话回复。",
+    mode: str = "plain",
+    max_tokens: int = 1024,
+    stream: bool = False,
+    repeat: int = 3,
+    direct_provider: bool = False,
+) -> str:
+    """调用 LLM 并返回详细诊断信息，用于慢调用定位。
+
+    支持 plain/json 两种 prompt 模式、stream/non-stream、重复多次取均值。
+    direct_provider=True 则绕过 gateway 直接调 provider（需有效 api_url）。
+    """
+    results = []
+    for i in range(repeat):
+        token = await _ensure_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        messages = [{"role": "user", "content": prompt}]
+        if mode == "json":
+            messages.append({"role": "user", "content": "请以 JSON 格式回复：{\"answer\": \"...\"}"})
+
+        payload = {
+            "messages": messages,
+            "profile_key": profile_key,
+            "max_tokens": max_tokens,
+            "tools": None,
+        }
+
+        total_start = time.time()
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    f"{BACKEND_BASE}/api/gateway/chat",
+                    json=payload,
+                    headers=headers,
+                )
+                elapsed = (time.time() - total_start) * 1000
+                data = resp.json()
+                data_data = data.get("data", data) if isinstance(data, dict) else data
+                diag = data_data.get("diagnostics", {}) if isinstance(data_data, dict) else {}
+                content = data_data.get("content", "") if isinstance(data_data, dict) else str(data_data)
+                results.append({
+                    "run": i + 1,
+                    "status_code": resp.status_code,
+                    "total_elapsed_ms": round(elapsed, 1),
+                    "diagnostics": diag,
+                    "content_length": len(str(content)),
+                    "content_preview": str(content)[:200],
+                })
+        except Exception as exc:
+            results.append({
+                "run": i + 1,
+                "status_code": 0,
+                "error": str(exc),
+            })
+
+    # 聚合统计
+    successful = [r for r in results if r.get("status_code") == 200]
+    if successful:
+        elapsed_vals = [r.get("total_elapsed_ms", 0) for r in successful]
+        stats = {
+            "attempts": repeat,
+            "successful": len(successful),
+            "elapsed_ms_avg": round(sum(elapsed_vals) / len(elapsed_vals), 1),
+            "elapsed_ms_min": round(min(elapsed_vals), 1),
+            "elapsed_ms_max": round(max(elapsed_vals), 1),
+            "diag_samples": [r.get("diagnostics", {}) for r in successful[:3]],
+        }
+    else:
+        stats = {"attempts": repeat, "successful": 0, "errors": [r.get("error") for r in results]}
+
+    return json.dumps({
+        "profile_key": profile_key,
+        "mode": mode,
+        "max_tokens": max_tokens,
+        "stream": stream,
+        "results": results,
+        "stats": stats,
+    }, ensure_ascii=False, indent=2)
+
+
+async def _gateway_trace(limit: int = 20, profile_key: str = "") -> str:
+    """查询最近 gateway 调用 trace 记录。"""
+    if not GATEWAY_TRACE_FILE.exists():
+        return json.dumps({"traces": [], "total": 0}, ensure_ascii=False, indent=2)
+    try:
+        lines = GATEWAY_TRACE_FILE.read_text(encoding="utf-8").strip().split("\n")
+        traces = []
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if profile_key and entry.get("profile_key") != profile_key:
+                continue
+            traces.append(entry)
+            if len(traces) >= limit:
+                break
+        return json.dumps({"traces": traces, "total": len(traces)}, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2)
+
+
+async def _task_trace(document_id: int) -> str:
+    """查询知识库文档的完整任务溯源: pipeline 状态 + 每步产物 + 日志。"""
+    from collections import OrderedDict
+
+    # 1. 查 pipeline task
+    pipeline_info = {}
+    try:
+        rows = await _execute_sql(f"""
+            SELECT id, task_type, status, started_at, completed_at, result, error_message, parameters
+            FROM framework_system_task_queues
+            WHERE task_type = 'kb_pipeline' AND parameters LIKE '%{document_id}%'
+            ORDER BY id DESC LIMIT 1
+        """)
+        if rows:
+            r = rows[0]
+            pipeline_info = {
+                "task_id": r.get("col0"),
+                "task_type": r.get("col1"),
+                "status": r.get("col2"),
+                "started_at": r.get("col3"),
+                "completed_at": r.get("col4"),
+                "result": r.get("col5", "")[:500] if r.get("col5") else None,
+                "error": r.get("col6"),
+            }
+    except Exception as exc:
+        pipeline_info = {"error": str(exc)}
+
+    # 2. 查各步子任务
+    sub_tasks = []
+    try:
+        rows = await _execute_sql(f"""
+            SELECT id, task_type, status, started_at, completed_at, result, error_message
+            FROM framework_system_task_queues
+            WHERE task_type IN ('kb_profile', 'kb_graph', 'kb_relation')
+              AND parameters LIKE '%{document_id}%'
+            ORDER BY id
+        """)
+        for r in rows:
+            sub_tasks.append({
+                "task_id": r.get("col0"),
+                "type": r.get("col1"),
+                "status": r.get("col2"),
+                "started_at": r.get("col3"),
+                "completed_at": r.get("col4"),
+                "error": r.get("col6"),
+            })
+    except Exception as exc:
+        sub_tasks.append({"error": str(exc)})
+
+    # 3. DB 产物数量
+    tables = [
+        "kb_raw_data", "kb_page_fusions", "kb_document_profiles",
+        "kb_evidence", "kb_graph_nodes", "kb_graph_edges", "kb_file_relations",
+    ]
+    counts = OrderedDict()
+    for table in tables:
+        try:
+            rows = await _execute_sql(f"""
+                SELECT count(*) FROM {table} t
+                WHERE EXISTS (
+                    SELECT 1 FROM kb_documents d WHERE d.id = {document_id}
+                    AND (t.document_id = d.id OR t.owner_id = d.owner_id)
+                )
+            """)
+            counts[table] = int(rows[0].get("col0", 0)) if rows else 0
+        except Exception:
+            counts[table] = -1
+
+    # 4. 日志片段
+    log_fragment = ""
+    try:
+        log_path = LOG_DIR / "modules" / "knowledge.log"
+        if log_path.exists():
+            out = subprocess.run(
+                ["grep", "-i", str(document_id), str(log_path)],
+                capture_output=True, text=True, timeout=5,
+            )
+            log_lines = out.stdout.strip().split("\n")
+            log_fragment = "\n".join(log_lines[-30:]) if log_lines else ""
+    except Exception:
+        pass
+
+    return json.dumps({
+        "document_id": document_id,
+        "pipeline": pipeline_info,
+        "sub_tasks": sub_tasks,
+        "table_counts": counts,
+        "log_fragment": log_fragment[:2000],
+    }, ensure_ascii=False, indent=2, default=str)
 
 # ──────────────────── 工具 5: sql ────────────────────────────────────
 
@@ -1435,13 +1689,53 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="log_errors",
-            description="扫模块日志里被try/except吞掉的异常/报错(Traceback/Exception/violation/错参/failed). 后台/异步动作做完后调一次:有命中=功能其实没跑通,别报通过. 专治'报告通过但产物表0行'盲区.",
+            description="扫模块日志里被try/except吞掉的异常/报错(Traceback/Exception/violation/错参/failed). 支持模块/时间/标记过滤. 有命中=功能其实没跑通.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "module": {"type": "string", "description": "模块名(backend/agent/knowledge...)", "default": "backend"},
                     "lines": {"type": "number", "description": "扫描最近行数", "default": 400},
+                    "since_marker": {"type": "string", "description": "从某个 marker 字符串之后开始扫描", "default": ""},
+                    "time_range_hours": {"type": "number", "description": "只扫描最近 N 小时的日志行", "default": 0},
                 },
+            },
+        ),
+        Tool(
+            name="llm_probe",
+            description="调用 LLM 并返回详细诊断信息(attempts/elapsed/size/tokens), 用于慢调用定位. 支持 plain/json 模式、repeat、max_tokens 对比.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "profile_key": {"type": "string", "description": "模型 profile key", "default": "deepseek-v4-flash"},
+                    "prompt": {"type": "string", "description": "提示文本", "default": "测试文本: 请用一句话回复。"},
+                    "mode": {"type": "string", "description": "plain 或 json", "default": "plain"},
+                    "max_tokens": {"type": "number", "description": "最大 token 数", "default": 1024},
+                    "stream": {"type": "boolean", "description": "是否流式(暂不支持)", "default": False},
+                    "repeat": {"type": "number", "description": "重复次数", "default": 3},
+                    "direct_provider": {"type": "boolean", "description": "是否直接调 provider(绕过 gateway)", "default": False},
+                },
+            },
+        ),
+        Tool(
+            name="gateway_trace",
+            description="查询最近 gateway 调用 trace 记录(trace_id/attempts/elapsed/size).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "number", "description": "返回条数", "default": 20},
+                    "profile_key": {"type": "string", "description": "按 profile 过滤", "default": ""},
+                },
+            },
+        ),
+        Tool(
+            name="task_trace",
+            description="查询知识库文档的完整任务溯源: pipeline 状态、各步状态、产物数量、相关日志片段.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "number", "description": "文档 ID"},
+                },
+                "required": ["document_id"],
             },
         ),
         Tool(
@@ -1682,6 +1976,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await _log_errors(
                 module=arguments.get("module", "backend"),
                 lines=arguments.get("lines", 400),
+                since_marker=arguments.get("since_marker", ""),
+                time_range_hours=arguments.get("time_range_hours", 0),
             )
         elif name == "sql":
             result = await _sql(query=arguments["query"])
@@ -1738,6 +2034,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = json.dumps(_cleanup_knowledge_noise(), ensure_ascii=False, indent=2)
         elif name == "workspace_audit":
             result = json.dumps(await _workspace_audit(), ensure_ascii=False, indent=2)
+        elif name == "llm_probe":
+            result = await _llm_probe(
+                profile_key=arguments.get("profile_key", "deepseek-v4-flash"),
+                prompt=arguments.get("prompt", "测试文本: 请用一句话回复。"),
+                mode=arguments.get("mode", "plain"),
+                max_tokens=arguments.get("max_tokens", 1024),
+                stream=arguments.get("stream", False),
+                repeat=arguments.get("repeat", 3),
+                direct_provider=arguments.get("direct_provider", False),
+            )
+        elif name == "gateway_trace":
+            result = await _gateway_trace(
+                limit=arguments.get("limit", 20),
+                profile_key=arguments.get("profile_key", ""),
+            )
+        elif name == "task_trace":
+            result = await _task_trace(
+                document_id=int(arguments["document_id"]),
+            )
         elif name == "workspace_reset":
             result = json.dumps(
                 await _workspace_reset(

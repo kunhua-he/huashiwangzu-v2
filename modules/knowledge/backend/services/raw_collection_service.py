@@ -80,6 +80,14 @@ def _hash_content(content: str) -> str:
     return hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()
 
 
+def _block_belongs_to_page(block: dict, page: int) -> bool:
+    """Treat parser blocks without a page as page 1 for non-paged formats."""
+    block_page = block.get("page")
+    if block_page is None:
+        return page == 1
+    return block_page == page
+
+
 async def _exec_round_1_text(
     doc_id: int, file_id: int, owner_id: int,
     page: int, caller: str, ext: str = "pdf",
@@ -92,7 +100,7 @@ async def _exec_round_1_text(
             page_texts = [
                 (b.get("text") or "").strip()
                 for b in blocks
-                if b.get("page") == page and (b.get("text") or "").strip()
+                if _block_belongs_to_page(b, page) and (b.get("text") or "").strip()
             ]
             content = "\n\n".join(page_texts)
         except Exception as e:
@@ -250,7 +258,8 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
     df = await db.execute(select(KbDocument).where(KbDocument.id == doc_id))
     doc = df.scalar_one_or_none()
     if not doc:
-        raise ValueError(f"Document {doc_id} not found")
+        logger.warning("Document %d not found for raw collection, aborting", doc_id)
+        return {"document_id": doc_id, "total_pages": 0, "rounds": [], "status": "aborted"}
 
     ext = (doc.extension or "").lower()
     is_pdf = ext == "pdf"
@@ -264,10 +273,16 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
     else:
         total_pages = doc.total_pages or 1
 
-    # 更新文档状态
-    doc.raw_status = "collecting"
-    doc.total_pages = total_pages
-    await db.commit()
+    # 更新文档状态（可能文档已被删，忽略）
+    try:
+        doc.parse_status = "parsing"
+        doc.parse_error = None
+        doc.raw_status = "collecting"
+        doc.total_pages = total_pages
+        await db.commit()
+    except Exception:
+        logger.warning("Document %d was deleted before raw status update, aborting", doc_id)
+        return {"document_id": doc_id, "total_pages": 0, "rounds": [], "status": "aborted"}
 
     # 按文件类型决定采集轮次
     if is_pdf:
@@ -347,18 +362,28 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
             else:
                 all_results.append(r)
 
-    await db.refresh(doc)
     # Y3: 全部页（所有轮次）失败时标 failed，不静默 done
-    if tasks:
-        failed_count = sum(1 for r in results if isinstance(r, Exception))
-        if failed_count == len(tasks):
-            doc.raw_status = "failed"
-            logger.error("All raw collection tasks failed for doc_id=%d", doc_id)
+    # 先重新查询文档（可能在采集期间被删）
+    doc = (await db.execute(select(KbDocument).where(KbDocument.id == doc_id))).scalar_one_or_none()
+    if doc:
+        if tasks:
+            failed_count = sum(1 for r in results if isinstance(r, Exception))
+            if failed_count == len(tasks):
+                doc.raw_status = "failed"
+                doc.parse_status = "error"
+                doc.parse_error = "All raw collection tasks failed"
+                logger.error("All raw collection tasks failed for doc_id=%d", doc_id)
+            else:
+                doc.raw_status = "done"
+                doc.parse_status = "done"
+                doc.parse_error = None
         else:
             doc.raw_status = "done"
+            doc.parse_status = "done"
+            doc.parse_error = None
+        await db.commit()
     else:
-        doc.raw_status = "done"
-    await db.commit()
+        logger.warning("Document %d was deleted during raw collection", doc_id)
 
     return {
         "document_id": doc_id,

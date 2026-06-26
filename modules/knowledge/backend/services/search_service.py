@@ -12,6 +12,8 @@ from app.database import AsyncSessionLocal
 from app.services.model_services import get_embedding, rerank
 from app.gateway.router import gateway_router
 
+from .llm_diagnostics import timed_llm_chat
+
 logger = logging.getLogger("v2.knowledge").getChild("search")
 
 # RRF 常数
@@ -90,18 +92,6 @@ class EvidencePacket:
     timing_ms: float = 0.0
 
 
-def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
-    """计算两个向量的余弦相似度。"""
-    if not vec_a or not vec_b:
-        return 0.0
-    dot = sum(a * b for a, b in zip(vec_a, vec_b))
-    norm_a = math.sqrt(sum(a * a for a in vec_a))
-    norm_b = math.sqrt(sum(b * b for b in vec_b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
 async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int = 20) -> list[dict]:
     """关键词全文检索（ILIKE on text + keywords）。"""
     from ..models import KbChunk
@@ -172,9 +162,7 @@ async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int
 
 
 async def vector_search(db: AsyncSession, query: str, owner_id: int, top_k: int = 20) -> list[dict]:
-    """向量检索：用 query embedding 与已存储 chunk embedding 计算余弦相似度。"""
-    from ..models import KbChunk
-
+    """向量检索：用 pgvector <=> 在 DB 内计算余弦距离并返回 top-k。"""
     # 获取 query 向量
     try:
         query_emb = await get_embedding(query)
@@ -185,37 +173,45 @@ async def vector_search(db: AsyncSession, query: str, owner_id: int, top_k: int 
     if not query_emb:
         return []
 
-    # 查询有 embedding 的 chunk（移除硬上限，大文档也能召全）
-    stmt = (
-        select(KbChunk)
-        .where(KbChunk.owner_id == owner_id, KbChunk.embedding.isnot(None))
-    )
-    r = await db.execute(stmt)
-    chunks = r.scalars().all()
+    # 用 pgvector 原生算子：cosine distance = embedding <=> :query_emb
+    # 注意 CAST(:emb AS vector(1024)) 避免 ::vector 与命名参数冲突
+    stmt = text("""
+        SELECT
+            id AS chunk_id,
+            document_id,
+            page,
+            block_type,
+            text,
+            keywords,
+            1 - (embedding <=> CAST(:query_emb AS vector(1024))) AS score
+        FROM kb_chunks
+        WHERE owner_id = :owner_id AND embedding IS NOT NULL
+        ORDER BY score DESC
+        LIMIT :top_k
+    """)
+    r = await db.execute(stmt, {
+        "query_emb": str(query_emb),
+        "owner_id": owner_id,
+        "top_k": top_k,
+    })
+    rows = r.fetchall()
 
-    scored = []
-    for ch in chunks:
-        if not ch.embedding:
-            continue
-        sim = cosine_similarity(query_emb, ch.embedding)
-        if sim > 0.0:
-            scored.append({
-                "chunk_id": ch.id,
-                "document_id": ch.document_id,
-                "page": ch.page,
-                "block_type": ch.block_type,
-                "text": ch.text[:500],
-                "keywords": ch.keywords,
-                "score": round(sim, 4),
-                "rank": 0,
-                "source": "vector",
-            })
+    results = []
+    for i, row in enumerate(rows):
+        score = round(float(row.score), 4) if row.score is not None else 0.0
+        results.append({
+            "chunk_id": row.chunk_id,
+            "document_id": row.document_id,
+            "page": row.page,
+            "block_type": row.block_type,
+            "text": str(row.text)[:500] if row.text else "",
+            "keywords": row.keywords,
+            "score": score,
+            "rank": i + 1,
+            "source": "vector",
+        })
 
-    scored.sort(key=lambda x: -x["score"])
-    for i, item in enumerate(scored):
-        item["rank"] = i + 1
-
-    return scored[:top_k]
+    return results
 
 
 def rrf_fusion(keyword_results: list[dict], vector_results: list[dict], top_k: int = 10) -> list[dict]:
@@ -328,7 +324,14 @@ Rules:
 5. Return JSON only: {"rewritten": "...", "multi_hop": false, "reason": "..."}"""},
             {"role": "user", "content": f"Query: {query}"},
         ]
-        resp = await gateway_router.chat(messages, profile_key=profile_key)
+        resp = await timed_llm_chat(
+            logger=logger,
+            stage="search_query_rewrite",
+            profile_key=profile_key,
+            messages=messages,
+            chat_func=gateway_router.chat,
+            extra={"query_chars": len(query)},
+        )
         content = (resp.get("content") or "").strip()
         if content.startswith("```"):
             lines = content.splitlines()
@@ -371,7 +374,14 @@ async def _judge_answerability(
             {"role": "system", "content": EVIDENCE_SYSTEM_PROMPT},
             {"role": "user", "content": f"Query: {query}\n\nRetrieved results:\n{snippets}"},
         ]
-        resp = await gateway_router.chat(messages, profile_key=profile_key)
+        resp = await timed_llm_chat(
+            logger=logger,
+            stage="search_answerability",
+            profile_key=profile_key,
+            messages=messages,
+            chat_func=gateway_router.chat,
+            extra={"query_chars": len(query), "results": len(results)},
+        )
         content = (resp.get("content") or "").strip()
         if content.startswith("```"):
             lines = content.splitlines()

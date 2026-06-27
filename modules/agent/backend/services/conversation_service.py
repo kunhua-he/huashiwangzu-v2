@@ -65,10 +65,14 @@ async def delete_conversation(db: AsyncSession, owner_id: int, conversation_id: 
 
 # ── Messages ───────────────────────────────────────────────
 
-async def get_messages(db: AsyncSession, owner_id: int, conversation_id: int) -> list[AgentMessage]:
+async def get_messages(db: AsyncSession, owner_id: int, conversation_id: int, status: str = "active") -> list[AgentMessage]:
     r = await db.execute(
         select(AgentMessage)
-        .where(AgentMessage.owner_id == owner_id, AgentMessage.conversation_id == conversation_id)
+        .where(
+            AgentMessage.owner_id == owner_id,
+            AgentMessage.conversation_id == conversation_id,
+            AgentMessage.status == status,
+        )
         .order_by(AgentMessage.id)
     )
     return list(r.scalars().all())
@@ -107,12 +111,21 @@ async def add_message_meta(
     return meta
 
 
-async def list_message_meta(db: AsyncSession, owner_id: int, conversation_id: int) -> dict[int, AgentMessageMeta]:
+async def list_message_meta(db: AsyncSession, owner_id: int, conversation_id: int, status: str = "active") -> dict[int, AgentMessageMeta]:
     r = await db.execute(
         select(AgentMessageMeta)
-        .where(AgentMessageMeta.owner_id == owner_id, AgentMessageMeta.conversation_id == conversation_id)
+        .where(
+            AgentMessageMeta.owner_id == owner_id,
+            AgentMessageMeta.conversation_id == conversation_id,
+        )
     )
-    return {int(item.message_id): item for item in r.scalars().all()}
+    all_meta = {int(item.message_id): item for item in r.scalars().all()}
+    if status:
+        active_msg_ids = set(
+            m.id for m in await get_messages(db, owner_id, conversation_id, status=status)
+        )
+        return {k: v for k, v in all_meta.items() if k in active_msg_ids}
+    return all_meta
 
 
 async def get_messages_with_meta(db: AsyncSession, owner_id: int, conversation_id: int) -> list[dict]:
@@ -165,18 +178,115 @@ async def rollback_conversation(db: AsyncSession, owner_id: int, conversation_id
 
 
 async def count_conversation_messages(db: AsyncSession, owner_id: int, conversation_id: int) -> int:
-    """统计该对话的消息数（用于画像进化节流判断）。"""
+    """统计该对话的活跃消息数（用于画像进化节流判断）。"""
     r = await db.execute(
         select(AgentMessage)
         .where(
             AgentMessage.owner_id == owner_id,
             AgentMessage.conversation_id == conversation_id,
+            AgentMessage.status == "active",
         )
     )
     rows = r.scalars().all()
     # Count only user+assistant pairs
     user_count = sum(1 for m in rows if m.role == "user")
     return user_count
+
+
+# ── 编辑重跑（软分支） ─────────────────────────────────────
+
+async def archive_messages_after(db: AsyncSession, conversation_id: int, after_message_id: int) -> list[int]:
+    """Mark all messages after *after_message_id* as archived.
+    Returns the list of archived message IDs.
+    """
+    r = await db.execute(
+        select(AgentMessage)
+        .where(
+            AgentMessage.conversation_id == conversation_id,
+            AgentMessage.id > after_message_id,
+        )
+        .order_by(AgentMessage.id)
+    )
+    tail = list(r.scalars().all())
+    archived_ids = []
+    for msg in tail:
+        msg.status = "archived"
+        archived_ids.append(msg.id)
+    await db.commit()
+    return archived_ids
+
+
+async def invalidate_checkpoints_after(db: AsyncSession, conversation_id: int) -> None:
+    """Delete all checkpoints for the conversation (they reference old messages)."""
+    from sqlalchemy import text as _text
+    await db.execute(_text(
+        "DELETE FROM agent_checkpoints WHERE conversation_id = :conv_id"
+    ), {"conv_id": conversation_id})
+    await db.commit()
+
+
+async def edit_and_resubmit(
+    db: AsyncSession,
+    owner_id: int,
+    conversation_id: int,
+    message_id: int,
+    new_content: str,
+) -> AgentMessage | None:
+    """Edit a user message content and archive all tail messages.
+
+    Returns the updated AgentMessage, or None on validation failure.
+
+    1. Validates the message belongs to the user/conversation and is role='user'.
+    2. Updates the message content to *new_content*.
+    3. Archives all messages after this one (status='archived').
+    4. Deletes ALL events from this message onward (both the user_msg event
+       for this message and all subsequent events) so that context assembly
+       projects only pre-edit history + the new content as current input.
+    5. Invalidates old checkpoints.
+    6. Deletes message_meta for archived messages.
+    """
+    msg = await db.get(AgentMessage, message_id)
+    if not msg or msg.conversation_id != conversation_id or msg.owner_id != owner_id:
+        return None
+    if msg.role != "user":
+        return None
+    if not new_content or not new_content.strip():
+        return None
+
+    # Mark as branch root if not already
+    if not msg.branch_root_message_id:
+        msg.branch_root_message_id = message_id
+
+    # Archive tail messages
+    archived_ids = await archive_messages_after(db, conversation_id, message_id)
+
+    # Update content
+    msg.content = new_content
+    await db.commit()
+    await db.refresh(msg)
+
+    # Delete ALL events from this message's created_at onward (including
+    # the user_msg event for this message) so context assembly sees ONLY
+    # history before the edit point + the new content will be the
+    # current_input passed by the runtime.
+    from ..engine.event_store import delete_events_after
+    await delete_events_after(db, conversation_id, msg.created_at, inclusive=True)
+
+    # Delete message_meta for archived messages
+    if archived_ids:
+        from sqlalchemy import delete
+        await db.execute(
+            delete(AgentMessageMeta).where(
+                AgentMessageMeta.conversation_id == conversation_id,
+                AgentMessageMeta.message_id.in_(archived_ids),
+            )
+        )
+        await db.commit()
+
+    # Invalidate old checkpoints
+    await invalidate_checkpoints_after(db, conversation_id)
+
+    return msg
 
 
 # ── 三层提示词系统 ──────────────────────────────────────────

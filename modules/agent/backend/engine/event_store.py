@@ -191,13 +191,14 @@ async def run_event_migration(db: AsyncSession) -> None:
         logger.warning("Migration: agent_events table check failed: %s", e)
 
 
-async def delete_events_after(db: AsyncSession, conversation_id: int, after_created_at: object) -> None:
-    """Delete all events for *conversation_id* created after *after_created_at*."""
+async def delete_events_after(db: AsyncSession, conversation_id: int, after_created_at: object, inclusive: bool = False) -> None:
+    """Delete events for *conversation_id* with created_at >= (or >) *after_created_at*."""
     from sqlalchemy import delete
     from ..models import AgentEvent
+    condition = AgentEvent.created_at >= after_created_at if inclusive else AgentEvent.created_at > after_created_at
     await db.execute(
         delete(AgentEvent).where(
             AgentEvent.conversation_id == conversation_id,
-            AgentEvent.created_at > after_created_at,
+            condition,
         )
     )

@@ -101,6 +101,9 @@ class AgentMessage(Base, TimestampMixin):
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(String(16))  # user/assistant
     content: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="active", comment="active | archived")
+    edited_from_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="B'来源旧B的ID")
+    branch_root_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="编辑分叉点消息ID")
 
 
 class AgentMessageMeta(Base, TimestampMixin):

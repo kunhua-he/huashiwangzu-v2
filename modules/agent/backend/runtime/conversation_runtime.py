@@ -191,6 +191,120 @@ class ConversationRuntime:
 
         return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
+    async def execute_edit_resubmit(
+        self,
+        conversation_id: int,
+        message_id: int,
+        content: str,
+        profile_key: str,
+        db: AsyncSession,
+        user: User,
+    ) -> StreamingResponse:
+        """Execute a chat turn from an edited user message (soft-branch).
+
+        Instead of adding a new user message (as in the normal flow), this
+        method archives tail messages, edits the existing message in-place,
+        deletes stale events, then runs the tool loop with the edited
+        content as the current turn input.
+        """
+        profile_key = profile_key or "deepseek-v4-flash"
+        agent_code = "erp_chat"
+
+        # Edit message + archive tail + delete stale events
+        edited_msg = await conv_svc.edit_and_resubmit(
+            db, user.id, conversation_id, message_id, content,
+        )
+        if not edited_msg:
+            raise HTTPException(status_code=400, detail="Edit-resubmit validation failed")
+
+        # Assemble context — events before the edit point remain, so
+        # project_to_messages returns only pre-edit history.  The edited
+        # content is passed as current_input so the model sees it as the
+        # active turn.
+        messages, engine_diag = await assemble_context(
+            db, conversation_id, content,
+            profile_key, user.id, agent_code=agent_code,
+        )
+
+        # Record assembly diagnostic
+        try:
+            await record_event(
+                db, conversation_id, "assembly_diag",
+                {
+                    "total_estimated": engine_diag.get("total_estimated", 0),
+                    "budget": engine_diag.get("budget"),
+                    "system_tokens": engine_diag.get("system_tokens", 0),
+                    "input_tokens": engine_diag.get("input_tokens", 0),
+                    "recent_tokens": engine_diag.get("recent_tokens", 0),
+                    "experience_injection": engine_diag.get("experience_injection", ""),
+                    "experience_injected": engine_diag.get("experience_injected", []),
+                    "dropped_recent_count": engine_diag.get("dropped_recent_count", 0),
+                    "budget_exceeded": engine_diag.get("budget_exceeded", False),
+                    "is_unlimited": engine_diag.get("is_unlimited", False),
+                    "edit_resubmit": True,
+                    "edited_message_id": message_id,
+                },
+                llm_response_id=None,
+            )
+        except Exception as diag_exc:
+            logger.warning("Record edit-resubmit diag failed (non-fatal): %s", diag_exc)
+
+        # Understanding phase (same as normal flow)
+        understanding_packet = None
+        if self.policy.enable_understanding_loop and len(content) >= self.policy.understanding_min_chars:
+            try:
+                uloop = UnderstandingLoopOrchestrator(
+                    conversation_id=conversation_id,
+                    owner_id=user.id,
+                    profile_key=profile_key,
+                )
+                if await uloop.should_trigger(content):
+                    understanding_packet = await uloop.run(content)
+                    await record_event(
+                        db, conversation_id, "understanding_diag",
+                        {
+                            "triggered": True,
+                            "roles_executed": understanding_packet.get("roles_executed", []),
+                            "rounds_used": understanding_packet.get("rounds_used", 0),
+                            "intent": understanding_packet.get("intent", "")[:200],
+                            "summary": understanding_packet.get("summary", ""),
+                        },
+                    )
+                    if understanding_packet.get("intent") or understanding_packet.get("summary"):
+                        understanding_injection = self._build_understanding_injection(understanding_packet)
+                        if understanding_injection and messages:
+                            for msg in messages:
+                                if msg["role"] == "system":
+                                    msg["content"] += understanding_injection
+                                    break
+            except Exception as uloop_exc:
+                logger.warning("Understanding loop (edit-resubmit) failed (non-fatal): %s", uloop_exc)
+                await record_event(
+                    db, conversation_id, "understanding_diag",
+                    {"triggered": True, "error": str(uloop_exc)},
+                )
+
+        tools = tool_discovery.build_tools(user.role)
+
+        # Wire sub-runtimes
+        sink = RuntimeTaskSink(
+            conversation_id=conversation_id,
+            owner_id=user.id,
+            profile_key=profile_key,
+        )
+        loop = ToolLoopRuntime(
+            conversation_id=conversation_id,
+            owner_id=user.id,
+            profile_key=profile_key,
+            policy=self.policy,
+        )
+
+        async def _event_stream():
+            async for event in loop.run(messages, tools, sink):
+                yield event
+
+        return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
     def _build_understanding_injection(self, packet: dict) -> str:
         """Build a system-prompt injection from the understanding packet."""
         parts = []

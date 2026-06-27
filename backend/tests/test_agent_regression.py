@@ -30,6 +30,8 @@ ORCHESTRATOR_SRC = (ENGINE_DIR / "tool_orchestrator.py").read_text("utf-8")
 WORKFLOW_SRC = (ENGINE_DIR / "workflow_strategy.py").read_text("utf-8")
 HOOKS_SRC = (ENGINE_DIR / "post_turn_hooks.py").read_text("utf-8")
 BUDGET_SRC = (ENGINE_DIR / "budget_allocator.py").read_text("utf-8")
+MODELS_SRC = (AGENT_DIR / "models.py").read_text("utf-8")
+INIT_SRC = (AGENT_DIR / "init_db.py").read_text("utf-8")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -280,3 +282,70 @@ class TestMemoryQualityGovernance:
         layered_src = (ENGINE_DIR / "layered_memory.py").read_text("utf-8")
         assert "record_recall_quality" in layered_src
         assert "RecallQualityRecord(" in layered_src
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Edit-resubmit (soft-branch) — message inline edit
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestEditResubmitChain:
+    """Verify the edit-resubmit (soft branch) feature is wired correctly."""
+
+    CONV_SVC_SRC = (SERVICES_DIR / "conversation_service.py").read_text("utf-8")
+
+    def test_edit_and_resubmit_function_exists(self):
+        assert "async def edit_and_resubmit" in self.CONV_SVC_SRC
+
+    def test_archive_messages_after_exists(self):
+        assert "async def archive_messages_after" in self.CONV_SVC_SRC
+
+    def test_invalidate_checkpoints_after_exists(self):
+        assert "async def invalidate_checkpoints_after" in self.CONV_SVC_SRC
+
+    def test_get_messages_filters_by_status(self):
+        assert "AgentMessage.status == status" in self.CONV_SVC_SRC or 'status="active"' in self.CONV_SVC_SRC
+
+    def test_count_conversation_messages_filters_active(self):
+        assert 'AgentMessage.status == "active"' in self.CONV_SVC_SRC
+
+    def test_agent_message_has_status_field(self):
+        assert 'status: Mapped[str] = mapped_column(String(16), default="active"' in MODELS_SRC
+
+    def test_agent_message_has_edited_from_field(self):
+        assert "edited_from_message_id" in MODELS_SRC
+
+    def test_agent_message_has_branch_root_field(self):
+        assert "branch_root_message_id" in MODELS_SRC
+
+    def test_router_has_edit_resubmit_endpoint(self):
+        assert "edit-resubmit" in ROUTER_SRC
+        assert "edit_resubmit" in ROUTER_SRC
+
+    def test_router_uses_edit_resubmit_request(self):
+        assert "EditResubmitRequest" in ROUTER_SRC
+
+    def test_conversation_runtime_has_execute_edit_resubmit(self):
+        assert "async def execute_edit_resubmit" in CONVERSATION_RUNTIME_SRC
+
+    def test_conversation_runtime_calls_edit_and_resubmit(self):
+        assert "edit_and_resubmit" in CONVERSATION_RUNTIME_SRC
+
+    def test_event_store_delete_events_after_supports_inclusive(self):
+        assert "inclusive" in EVENT_STORE_SRC
+
+    def test_schemas_has_edit_resubmit_request(self):
+        schemas_src = (AGENT_DIR / "schemas.py").read_text("utf-8")
+        assert "class EditResubmitRequest" in schemas_src
+
+    def test_frontend_index_uses_new_endpoint(self):
+        frontend_src = (AGENT_DIR.parent / "frontend" / "index.vue").read_text("utf-8")
+        assert "edit-resubmit" in frontend_src
+
+    def test_frontend_has_shared_stream_processor(self):
+        frontend_src = (AGENT_DIR.parent / "frontend" / "index.vue").read_text("utf-8")
+        assert "processStreamResponse" in frontend_src
+
+    def test_init_db_has_message_status_migration(self):
+        assert "ensure_message_status_column" in INIT_SRC
+        assert "edited_from_message_id" in INIT_SRC or "ADD COLUMN IF NOT EXISTS status" in INIT_SRC

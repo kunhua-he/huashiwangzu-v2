@@ -15,7 +15,7 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 
-from .schemas import ChatRequest
+from .schemas import ChatRequest, EditResubmitRequest
 from .runtime import ConversationRuntime
 from .init_db import ensure_default_prompts, ensure_default_agent_prompts, ensure_timeline_column, ensure_user_profile, update_existing_prompts, ensure_event_table, ensure_processing_column, run_init
 from .services import conversation_service as conv_svc
@@ -187,6 +187,34 @@ async def rollback_conversation(
         return ApiResponse(success=False, error="message_id required")
     ok = await conv_svc.rollback_conversation(db, user.id, conversation_id, message_id)
     return ApiResponse(data={"rolled_back": ok})
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/edit-resubmit")
+async def edit_resubmit(
+    conversation_id: int,
+    message_id: int,
+    payload: EditResubmitRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    """Edit a user message in-place and re-run Agent from that point (soft branch).
+
+    Validates ownership and role='user', updates the message content,
+    archives messages after the edit point, deletes stale events, then
+    runs the tool loop with the edited content as current turn input.
+    Returns SSE stream identical to ``/api/agent/chat``.
+    """
+    if not payload.content or not payload.content.strip():
+        return ApiResponse(success=False, error="content is required")
+    runtime = ConversationRuntime()
+    return await runtime.execute_edit_resubmit(
+        conversation_id=conversation_id,
+        message_id=message_id,
+        content=payload.content,
+        profile_key=payload.profile_key or "deepseek-v4-flash",
+        db=db,
+        user=user,
+    )
 
 
 @router.get("/conversations/{conversation_id}/messages")

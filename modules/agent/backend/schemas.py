@@ -17,6 +17,11 @@ class ChatRequest(BaseModel):
     enable_checkpointer: bool | None = None
 
 
+class EditResubmitRequest(BaseModel):
+    content: str
+    profile_key: str | None = None
+
+
 class UpdatePromptRequest(BaseModel):
     content: str
 

@@ -142,18 +142,35 @@ function handleStartEdit(messageId: number, _content: string) {
 async function handleSubmitEdit(messageId: number, newContent: string) {
   if (!activeConvId.value || !newContent.trim()) return
   editingMessageId.value = null
+  // Remove old messages after the edited message from local view
+  const editIndex = messages.value.findIndex(m => m.id === messageId)
+  if (editIndex >= 0) {
+    messages.value = messages.value.slice(0, editIndex + 1)
+    // Update the edited message content locally
+    messages.value[editIndex].content = newContent
+  }
+  if (abortController) { abortController.abort() }
+  abortController = new AbortController()
+  clearIdleTimer()
+  sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
+  scrollToBottom()
   try {
-    const resp = await apiFetch<{ rolled_back: boolean }>(`/agent/conversations/${activeConvId.value}/rollback`, {
+    const resp = await apiFetchRaw(`/agent/conversations/${activeConvId.value}/messages/${messageId}/edit-resubmit`, {
       method: 'POST',
-      body: JSON.stringify({ message_id: messageId }),
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: newContent, profile_key: profileKey.value }),
+      signal: abortController.signal,
     })
-    if (!resp.rolled_back) { error.value = '回退失败'; return }
-    await selectConversation(activeConvId.value)
-    inputText.value = newContent
-    nextTick(() => inputAreaRef.value?.focus())
+    if (!resp.ok) { error.value = `编辑请求失败 (${resp.status})`; return }
+    await processStreamResponse(resp)
   } catch (e: unknown) {
-    error.value = '编辑失败: ' + String((e as Error).message || e)
+    if (e instanceof DOMException && e.name === 'AbortError') { console.warn('[Agent] edit-resubmit aborted') }
+    else { console.error('[Agent] edit-resubmit failed:', e); error.value = String((e as Error).message || e) }
+  } finally {
+    clearIdleTimer()
+    sending.value = false; streaming.value = false
+    abortController = null
+    // Do NOT focus the bottom input — the edit is in-place, not a new message
   }
 }
 
@@ -350,99 +367,101 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 	  scrollToBottom()
 	}
 	
-	async function sendMessage() {
-	  if (sending.value || !activeConvId.value) return
-	  const text = inputText.value.trim()
-	  if (!text) return
-	  if (abortController) { abortController.abort() }
-	  abortController = new AbortController()
-	  clearIdleTimer()
-	  inputText.value = ''
-	  sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
-	  messages.value.push({ id: 0, role: 'user', content: text, created_at: new Date().toISOString() })
-	  scrollToBottom()
-	  try {
-	    const resp = await apiFetchRaw('/agent/chat', {
-	      method: 'POST',
-	      headers: { 'Content-Type': 'application/json' },
-	      body: JSON.stringify({ conversation_id: activeConvId.value, content: text, profile_key: profileKey.value }),
-	      signal: abortController.signal,
-	    })
-	    if (!resp.ok) { error.value = `请求失败 (${resp.status})`; return }
-	    if (!resp.body) { error.value = '无响应体'; return }
-	    const reader = resp.body.getReader()
-	    const decoder = new TextDecoder()
-	    let finished = false
-	
-	    // 启动空闲超时定时器
-	    resetIdleTimer(() => {
-	      if (abortController) { abortController.abort() }
-	      error.value = '响应超时，请重试'
-	    })
-	
-	    while (!finished) {
-	      let done = false; let value: Uint8Array | undefined
-	      try { const r = await reader.read(); done = r.done; value = r.value } catch { break }
-	      if (done) {
-	        // 流自然结束（EOF）：也要 flush streamingText
-	        abortController = null
-	        streaming.value = false; sending.value = false
-	        flushStreamingAsMessage()
-	        finished = true
-	        break
-	      }
-	      // 收到数据 → 重置空闲计时
-	      resetIdleTimer(() => {
-	        if (abortController) { abortController.abort() }
-	        error.value = '响应超时，请重试'
-	      })
-	      const chunk = decoder.decode(value!, { stream: true })
-	      for (const line of chunk.split('\n')) {
-	        const trimmed = line.trim()
-	        if (!trimmed.startsWith('data: ')) continue
-	        const payload = trimmed.slice(6)
-	        if (payload === '[DONE]') {
-	          abortController = null
-	          streaming.value = false; sending.value = false
-	          flushStreamingAsMessage()
-	          finished = true
-	          reader.cancel().catch(() => {})
-	          break
-	        }
-	        let evt: { type?: string; content?: string; name?: string; result?: unknown }
-	        try { evt = JSON.parse(payload) } catch { continue }
-	        if (evt.type === 'content') {
-	          abortController = null
-	          streaming.value = false; sending.value = false
-	          messages.value.push({ id: 0, role: 'assistant', content: evt.content || '', created_at: new Date().toISOString() })
-	          finished = true
-	          reader.cancel().catch(() => {})
-	          break
-	        }
-		        else if (evt.type === 'thinking') {
-		          applyThinkingEvent(evt.content || '', messages.value, { isRestore: false })
-		        }
-		        else if (evt.type === 'tool_call') {
-		          applyToolCallEvent(evt.name || 'unknown', messages.value)
-		        }
-		        else if (evt.type === 'tool_result') {
-		          applyToolResultEvent(evt.name || 'unknown', evt.result, messages.value)
-		        }
-	        else if (evt.type === 'token') { streamingText.value += evt.content || '' }
-	        else if (evt.type === 'error') { streaming.value = false; sending.value = false; error.value = evt.content || '流式错误'; finished = true; reader.cancel().catch(() => {}); break }
-	        scrollToBottom()
-	      }
-	    }
-	  } catch (e: unknown) {
-	    if (e instanceof DOMException && e.name === 'AbortError') { console.warn('[Agent] fetch aborted (stop/timeout)') }
-	    else { console.error('[Agent] fetch failed:', e); error.value = String((e as Error).message || e) }
-	  } finally {
-	    clearIdleTimer()
-	    sending.value = false; streaming.value = false
-	    abortController = null
-	    inputAreaRef.value?.focus()
-	  }
-	}
+		/** 共享 SSE 流式处理核心：由 sendMessage 和 handleSubmitEdit 共用 */
+		async function processStreamResponse(resp: Response) {
+		  if (!resp.body) { error.value = '无响应体'; return }
+		  const reader = resp.body.getReader()
+		  const decoder = new TextDecoder()
+		  let finished = false
+
+		  resetIdleTimer(() => {
+		    if (abortController) { abortController.abort() }
+		    error.value = '响应超时，请重试'
+		  })
+
+		  while (!finished) {
+		    let done = false; let value: Uint8Array | undefined
+		    try { const r = await reader.read(); done = r.done; value = r.value } catch { break }
+		    if (done) {
+		      abortController = null
+		      streaming.value = false; sending.value = false
+		      flushStreamingAsMessage()
+		      finished = true
+		      break
+		    }
+		    resetIdleTimer(() => {
+		      if (abortController) { abortController.abort() }
+		      error.value = '响应超时，请重试'
+		    })
+		    const chunk = decoder.decode(value!, { stream: true })
+		    for (const line of chunk.split('\n')) {
+		      const trimmed = line.trim()
+		      if (!trimmed.startsWith('data: ')) continue
+		      const payload = trimmed.slice(6)
+		      if (payload === '[DONE]') {
+		        abortController = null
+		        streaming.value = false; sending.value = false
+		        flushStreamingAsMessage()
+		        finished = true
+		        reader.cancel().catch(() => {})
+		        break
+		      }
+		      let evt: { type?: string; content?: string; name?: string; result?: unknown }
+		      try { evt = JSON.parse(payload) } catch { continue }
+		      if (evt.type === 'content') {
+		        abortController = null
+		        streaming.value = false; sending.value = false
+		        messages.value.push({ id: 0, role: 'assistant', content: evt.content || '', created_at: new Date().toISOString() })
+		        finished = true
+		        reader.cancel().catch(() => {})
+		        break
+		      }
+		      else if (evt.type === 'thinking') {
+		        applyThinkingEvent(evt.content || '', messages.value, { isRestore: false })
+		      }
+		      else if (evt.type === 'tool_call') {
+		        applyToolCallEvent(evt.name || 'unknown', messages.value)
+		      }
+		      else if (evt.type === 'tool_result') {
+		        applyToolResultEvent(evt.name || 'unknown', evt.result, messages.value)
+		      }
+		      else if (evt.type === 'token') { streamingText.value += evt.content || '' }
+		      else if (evt.type === 'error') { streaming.value = false; sending.value = false; error.value = evt.content || '流式错误'; finished = true; reader.cancel().catch(() => {}); break }
+		      scrollToBottom()
+		    }
+		  }
+		}
+
+		async function sendMessage() {
+		  if (sending.value || !activeConvId.value) return
+		  const text = inputText.value.trim()
+		  if (!text) return
+		  if (abortController) { abortController.abort() }
+		  abortController = new AbortController()
+		  clearIdleTimer()
+		  inputText.value = ''
+		  sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
+		  messages.value.push({ id: 0, role: 'user', content: text, created_at: new Date().toISOString() })
+		  scrollToBottom()
+		  try {
+		    const resp = await apiFetchRaw('/agent/chat', {
+		      method: 'POST',
+		      headers: { 'Content-Type': 'application/json' },
+		      body: JSON.stringify({ conversation_id: activeConvId.value, content: text, profile_key: profileKey.value }),
+		      signal: abortController.signal,
+		    })
+		    if (!resp.ok) { error.value = `请求失败 (${resp.status})`; return }
+		    await processStreamResponse(resp)
+		  } catch (e: unknown) {
+		    if (e instanceof DOMException && e.name === 'AbortError') { console.warn('[Agent] fetch aborted (stop/timeout)') }
+		    else { console.error('[Agent] fetch failed:', e); error.value = String((e as Error).message || e) }
+		  } finally {
+		    clearIdleTimer()
+		    sending.value = false; streaming.value = false
+		    abortController = null
+		    inputAreaRef.value?.focus()
+		  }
+		}
 
 async function reloadMessages(convId: number) { try { const raw = await apiFetch<MsgItem[]>(`/agent/conversations/${convId}/messages`); messages.value = expandTimeline(raw) } catch { /* ignore */ } }
 

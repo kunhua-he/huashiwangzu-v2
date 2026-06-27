@@ -307,6 +307,28 @@ async def ensure_snapshot_table(db: AsyncSession) -> None:
         logger.warning("Migration: snapshot table check failed: %s", e)
 
 
+async def ensure_message_status_column(db: AsyncSession) -> None:
+    """无痛迁移：给 agent_messages 表加 status/edited_from_message_id/branch_root_message_id 列。"""
+    try:
+        await db.execute(text(
+            "ALTER TABLE agent_messages ADD COLUMN IF NOT EXISTS status "
+            "VARCHAR(16) DEFAULT 'active'"
+        ))
+        await db.execute(text(
+            "ALTER TABLE agent_messages ADD COLUMN IF NOT EXISTS edited_from_message_id "
+            "BIGINT DEFAULT NULL"
+        ))
+        await db.execute(text(
+            "ALTER TABLE agent_messages ADD COLUMN IF NOT EXISTS branch_root_message_id "
+            "BIGINT DEFAULT NULL"
+        ))
+        await db.commit()
+        logger.info("Migration: ensured status/edited_from/branch_root columns on agent_messages")
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Migration: message status columns check failed: %s", e)
+
+
 async def run_init(db: AsyncSession) -> None:
     """Agent 模块启动初始化入口。"""
     await ensure_migrated_tables(db)
@@ -314,5 +336,6 @@ async def run_init(db: AsyncSession) -> None:
     await ensure_processing_column(db)
     await ensure_event_table(db)
     await ensure_snapshot_table(db)
+    await ensure_message_status_column(db)
     await ensure_default_prompts(db)
     await update_existing_prompts(db)

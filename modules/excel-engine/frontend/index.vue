@@ -88,6 +88,14 @@ import HistoryPanel from './components/HistoryPanel.vue'
 import * as api from './components/api-service'
 import type { EditResult, SheetData, HistoryItem } from './components/api-service'
 
+// ── Props（桌面 Shell 通过 v-bind 传入） ──
+const props = defineProps<{
+  fileId?: number
+  fileName?: string
+  format?: string
+  mode?: string
+}>()
+
 // ── State ──
 const loading = ref(true)
 const errorMsg = ref('')
@@ -181,6 +189,11 @@ async function init() {
 }
 
 async function tryGetFilePayload(): Promise<{ fileId: number; fileName: string } | null> {
+  // 优先用桌面 Shell 传来的 props
+  if (props.fileId) {
+    return { fileId: props.fileId, fileName: props.fileName || '' }
+  }
+  // 其次读全局变量（旧协议兼容）
   try {
     const payload = (window as any).__MODULE_OPEN_FILE_PAYLOAD__
     if (payload?.fileId) {
@@ -562,7 +575,12 @@ function formatTime(isoStr: string): string {
   return isoStr.replace('T', ' ').substring(0, 16)
 }
 
-// Watch for file open payload
+// Watch for file open payload (props or global var)
+watch(() => props.fileId, (fid) => {
+  if (fid && props.fileName) {
+    openFile(fid, props.fileName || '')
+  }
+})
 watch(() => (window as any).__MODULE_OPEN_FILE_PAYLOAD__, (payload) => {
   if (payload?.fileId) {
     openFile(payload.fileId, payload.fileName || '')

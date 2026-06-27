@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -42,10 +43,130 @@ EMBEDDING_CACHE_PATH = REPO_ROOT / CONFIG["embedding_cache"]
 LOG_DIR = REPO_ROOT / CONFIG["log_dir"]
 DB_DSN = CONFIG["db_dsn"]
 UPLOADS_DIR = REPO_ROOT / "backend" / "data" / "uploads"
+_OUTPUT_TAIL_LIMIT = 8000
 MEMORY_NOISE_PATTERN = re.compile(
     r"(e2e-|smoke-|test-|test_|kb_test|kb-test|ui-e2e|audit-test|renamed-audit-test|docs-open验收|event_test|e2e_test|sample|to_del|验收|smoke)",
     re.IGNORECASE,
 )
+
+
+def _is_knowledge_noise_name(filename: str) -> bool:
+    """Check if a filename looks like a test/smoke/validation artifact."""
+    return bool(MEMORY_NOISE_PATTERN.search(filename))
+
+
+# ── 通用 helper ───────────────────────────────────────────────────────
+
+
+def _tail_text(text: str, limit: int = _OUTPUT_TAIL_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+def _repo_relative(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _resolve_repo_path(path: str, *, base_dir: Path | None = None) -> Path:
+    raw = Path(path).expanduser()
+    if raw.is_absolute():
+        resolved = raw.resolve()
+    else:
+        base = base_dir or REPO_ROOT
+        resolved = (base / raw).resolve()
+    if REPO_ROOT.resolve() not in resolved.parents and resolved != REPO_ROOT.resolve():
+        raise ValueError(f"路径必须在仓库内: {path}")
+    return resolved
+
+
+def _normalize_pytest_targets(target: str) -> list[str]:
+    backend_dir = REPO_ROOT / "backend"
+    normalized: list[str] = []
+    for raw_part in shlex.split(target):
+        path_part, sep, suffix = raw_part.partition("::")
+        if not path_part:
+            continue
+        try:
+            resolved = _resolve_repo_path(path_part, base_dir=backend_dir)
+        except ValueError:
+            normalized.append(raw_part)
+            continue
+        if resolved.exists():
+            try:
+                rel = resolved.relative_to(backend_dir)
+                normalized.append(str(rel) + (sep + suffix if sep else ""))
+                continue
+            except ValueError:
+                normalized.append(str(resolved) + (sep + suffix if sep else ""))
+                continue
+        if path_part.startswith("backend/"):
+            normalized.append(path_part.removeprefix("backend/") + (sep + suffix if sep else ""))
+        else:
+            normalized.append(raw_part)
+    return normalized
+
+
+async def _run_command_json(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    timeout: int = 120,
+) -> dict[str, Any]:
+    started = time.time()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return {
+            "success": False,
+            "timeout": True,
+            "timeout_seconds": timeout,
+            "command": cmd,
+            "cwd": str(cwd),
+            "duration_seconds": round(time.time() - started, 3),
+            "stdout": "",
+            "stderr": "",
+        }
+    out = stdout.decode(errors="replace")
+    err = stderr.decode(errors="replace")
+    return {
+        "success": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "command": cmd,
+        "cwd": str(cwd),
+        "duration_seconds": round(time.time() - started, 3),
+        "stdout": out,
+        "stderr": err,
+        "stdout_tail": _tail_text(out),
+        "stderr_tail": _tail_text(err),
+    }
+
+
+async def _git_status_summary() -> dict[str, Any]:
+    result = await _run_command_json(
+        ["git", "status", "--short", "--branch"],
+        cwd=REPO_ROOT,
+        timeout=10,
+    )
+    lines = [line for line in result.get("stdout", "").splitlines() if line.strip()]
+    branch = lines[0].removeprefix("## ") if lines else ""
+    changed = lines[1:]
+    return {
+        "branch": branch,
+        "is_main": branch.split("...")[0] in {"main", "master"},
+        "dirty_count": len(changed),
+        "sample": changed[:25],
+    }
+
 
 # 确保记忆目录存在
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,12 +176,12 @@ EMBEDDING_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 _token_cache: dict[str, dict[str, Any]] = {}  # role -> {"token": str, "expires_at": float}
 
-async def _ensure_token(role: str = "admin") -> str:
+async def _ensure_token(role: str = "admin", *, force_refresh: bool = False) -> str:
     if role not in ACCOUNTS:
         role = "admin"
     now = time.time()
     cached = _token_cache.get(role)
-    if cached and cached["expires_at"] > now + 60:
+    if not force_refresh and cached and cached["expires_at"] > now + 60:
         return cached["token"]
     acct = ACCOUNTS[role]
     async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10) as client:
@@ -69,13 +190,23 @@ async def _ensure_token(role: str = "admin") -> str:
             "password": acct["password"],
         })
         data = resp.json()
-        data = resp.json()
         token = data.get("data", data).get("access_token") or data.get("access_token")
         if not token:
             raise RuntimeError(f"登录失败 {role}: {data}")
-        # 缓存1小时(access_token 有效期通常更长)
         _token_cache[role] = {"token": token, "expires_at": now + 3600}
         return token
+
+
+async def _ensure_live_token(role: str = "admin") -> str:
+    token = await _ensure_token(role, force_refresh=True)
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10) as client:
+        resp = await client.get("/api/current-user", headers=headers)
+        if resp.status_code == 200:
+            return token
+    token = await _ensure_token(role, force_refresh=True)
+    _token_cache.pop(role, None)
+    return token
 
 # ── 嵌入服务 ──────────────────────────────────────────────────────────
 
@@ -235,13 +366,56 @@ def _tail_file(path: Path, lines: int) -> str:
         return f"[错误] {e}"
 
 
-def _is_knowledge_noise_name(name: str) -> bool:
-    return bool(MEMORY_NOISE_PATTERN.search(name))
+def _clear_file(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text("", encoding="utf-8")
+    tmp_path.replace(path)
 
 
-def _cleanup_knowledge_noise() -> dict[str, Any]:
-    removed_uploads: list[str] = []
-    removed_memory: list[str] = []
+def _resolve_log_paths(module: str, *, all_logs: bool = False) -> list[Path]:
+    if all_logs:
+        return sorted(path for path in LOG_DIR.rglob("*.log") if path.is_file())
+
+    module_key = module.strip().lower()
+    mapped = _LOG_MAP.get(module_key)
+    if mapped is None:
+        candidates = [
+            LOG_DIR / f"modules/{module_key}.log",
+            LOG_DIR / f"modules/{module_key.replace('-', '_')}.log",
+            LOG_DIR / f"modules/{module_key.replace('_', '-')}.log",
+        ]
+        return [path for path in candidates if path.exists()]
+    return [LOG_DIR / mapped]
+
+
+def _clear_log(module: str = "backend", all_logs: bool = False, keep_state: bool = True) -> dict[str, Any]:
+    cleared: list[str] = []
+    missing: list[str] = []
+
+    for path in _resolve_log_paths(module, all_logs=all_logs):
+        if path.exists() and path.is_file():
+            _clear_file(path)
+            cleared.append(str(path.relative_to(REPO_ROOT)))
+        else:
+            missing.append(str(path.relative_to(REPO_ROOT)))
+
+    preserved = []
+    if keep_state:
+        preserved = [
+            str((LOG_DIR / ".backend.port").relative_to(REPO_ROOT)),
+            str((LOG_DIR / ".watchdog.pid").relative_to(REPO_ROOT)),
+        ]
+
+    return {
+        "success": True,
+        "module": module,
+        "all": all_logs,
+        "keep_state": keep_state,
+        "cleared": cleared,
+        "missing": missing,
+        "preserved": preserved,
+    }
 
     if UPLOADS_DIR.exists():
         for path in UPLOADS_DIR.rglob("*"):
@@ -598,19 +772,17 @@ async def _verify_tool_args() -> dict[str, Any]:
 
 async def _snap_diff() -> dict[str, Any]:
     """输出未提交文件的 diff 快照。"""
-    files = []
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "diff", "--name-only",
+            "git", "status", "--short",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(REPO_ROOT),
         )
-        out, err = await proc.communicate()
-        files = [f.strip() for f in out.decode().split("\n") if f.strip()]
+        out, _ = await proc.communicate()
+        files = [line.strip() for line in out.decode().split("\n") if line.strip()]
+        return {"files": files, "count": len(files)}
     except Exception as e:
         return {"files": [], "count": 0, "error": str(e)}
-
-        return {"files": files, "count": len(files)}
 
 # ──────────────────── 工具 10: code_explore ──────────────────────────
 
@@ -661,20 +833,31 @@ async def _code_impact(path: str) -> str:
 
 _RUFF_CLI = str(REPO_ROOT / "backend" / ".venv" / "bin" / "ruff")
 
-async def _lint(path: str) -> str:
-    """用 ruff 静态检查 Python 文件."""
-    abs_path = path if path.startswith("/") else str(REPO_ROOT / path)
-    if not os.path.isfile(abs_path):
-        return json.dumps({"error": f"文件不存在: {abs_path}"}, ensure_ascii=False)
-    proc = await asyncio.create_subprocess_exec(
-        _RUFF_CLI, "check", abs_path,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    output = stdout.decode() + stderr.decode()
-    if not output.strip():
-        return json.dumps({"success": True, "message": "无 lint 错误"}, ensure_ascii=False)
-    return output
+async def _lint(path: str, diff: bool = False) -> str:
+    """用 ruff 静态检查 Python 文件，可选只返回可修复 diff。"""
+    try:
+        abs_path = _resolve_repo_path(path)
+    except ValueError as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+    if not abs_path.is_file():
+        return json.dumps({"success": False, "error": f"文件不存在: {abs_path}"}, ensure_ascii=False)
+    cmd = [_RUFF_CLI, "check"]
+    if diff:
+        cmd.extend(["--diff"])
+    cmd.append(str(abs_path))
+    result = await _run_command_json(cmd, cwd=REPO_ROOT, timeout=60)
+    output = (result.get("stdout") or "") + (result.get("stderr") or "")
+    payload = {
+        "success": result.get("success", False),
+        "path": _repo_relative(abs_path),
+        "diff": diff,
+        "command": result.get("command"),
+        "cwd": result.get("cwd"),
+        "duration_seconds": result.get("duration_seconds"),
+        "output": output or "All checks passed!",
+        "output_tail": _tail_text(output) if output else "All checks passed!",
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 # ──────────────────── 工具 12: routes ────────────────────────────────
 
@@ -798,27 +981,340 @@ async def _db_schema(table: str = "") -> str:
 
 # ──────────────────── 工具 15: run_test ──────────────────────────────
 
-async def _run_test(target: str) -> str:
-    """跑单个测试目标(文件或 文件::用例), 不跑全局."""
+async def _run_test(target: str, timeout: int = 120) -> str:
+    """Run a single pytest target and return structured JSON."""
+    normalized_targets = _normalize_pytest_targets(target)
     backend_dir = REPO_ROOT / "backend"
-    pytest = str(backend_dir / ".venv" / "bin" / "pytest")
-    # split target into args for proper subprocess handling
-    target_args = target.split()
-    cmd = [pytest, "-x", "-q"] + target_args
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(backend_dir),
+    cmd = [str(backend_dir / ".venv" / "bin" / "pytest"), *normalized_targets]
+    result = await _run_command_json(cmd, cwd=backend_dir, timeout=timeout)
+    return json.dumps({
+        "success": result.get("success", False),
+        "target": target,
+        "normalized_targets": normalized_targets,
+        "command": cmd,
+        "cwd": result.get("cwd"),
+        "duration_seconds": result.get("duration_seconds"),
+        "returncode": result.get("returncode"),
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+        "stdout_tail": result.get("stdout_tail", ""),
+        "stderr_tail": result.get("stderr_tail", ""),
+        "timeout": result.get("timeout", False),
+        "timeout_seconds": result.get("timeout_seconds"),
+    }, ensure_ascii=False, indent=2)
+
+
+async def _start_frontend() -> str:
+    """Start the frontend dev server from the frontend directory."""
+    frontend_dir = REPO_ROOT / "frontend"
+    proc = await asyncio.create_subprocess_exec(
+        "npm", "run", "dev",
+        cwd=str(frontend_dir),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await asyncio.sleep(1)
+    stdout = ""
+    stderr = ""
+    if proc.stdout is not None:
+        try:
+            stdout = (await asyncio.wait_for(proc.stdout.read(), timeout=0.5)).decode(errors="replace")
+        except Exception:
+            stdout = ""
+    if proc.stderr is not None:
+        try:
+            stderr = (await asyncio.wait_for(proc.stderr.read(), timeout=0.5)).decode(errors="replace")
+        except Exception:
+            stderr = ""
+    return json.dumps({
+        "success": proc.returncode is None,
+        "pid": proc.pid,
+        "command": "cd frontend && npm run dev",
+        "stdout": stdout,
+        "stderr": stderr,
+    }, ensure_ascii=False, indent=2)
+
+async def _sanity_check() -> str:
+    """Run a focused repo sanity check for common regression signals."""
+    results: list[dict[str, Any]] = []
+
+    frontend_port = await _run_command_json(
+        ["lsof", "-nP", "-iTCP:5173", "-sTCP:LISTEN"],
+        cwd=REPO_ROOT,
+        timeout=10,
+    )
+    results.append({
+        "check": "frontend_port_5173",
+        "success": frontend_port.get("success", False),
+        "details": frontend_port.get("stdout_tail") or frontend_port.get("stderr_tail") or "not listening",
+    })
+
+    backend_health = await _probe("GET", "/api/health")
+    results.append({
+        "check": "backend_health",
+        "success": '"status": "ok"' in backend_health,
+        "details": backend_health,
+    })
+
+    backend_tail = await _tail_log("backend", 80)
+    import_failures = [
+        line for line in backend_tail.splitlines()
+        if "Failed to load module router" in line or "MODEL_PROFILES" in line
+    ]
+    results.append({
+        "check": "backend_module_imports",
+        "success": not import_failures,
+        "details": import_failures[:20],
+    })
+
+    knowledge_tail = await _tail_log("knowledge", 80)
+    teardown_risks = [
+        line for line in knowledge_tail.splitlines()
+        if "renderer.dispose is not a function" in line or "Unhandled error during execution of unmounted hook" in line
+    ]
+    results.append({
+        "check": "knowledge_teardown",
+        "success": not teardown_risks,
+        "details": teardown_risks[:20],
+    })
+
+    payload = {
+        "success": all(item["success"] for item in results),
+        "results": results,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+async def _finish_task(
+    summary: str,
+    agent: str = "",
+    lint_paths: str = "",
+    test_targets: str = "",
+    module_key: str = "",
+    verification_summary: str = "",
+    risk_note: str = "",
+) -> str:
+    """收工检查: 汇总工作区 + 边界检查 + 可选 lint/test + 风险评估 + 留痕模板。"""
+    report: dict[str, Any] = {
+        "success": True,
+        "summary": summary,
+        "agent": agent,
+        "git": await _git_status_summary(),
+        "boundary_check": {},
+        "lint": [],
+        "tests": [],
+        "verification_summary": verification_summary or "(未填写验证结果)",
+        "risk_note": risk_note or "(未填写)",
+        "memory_write_template": {
+            "agent": agent,
+            "type": "task",
+            "title": summary[:80] or "task summary",
+            "body": "# 改了什么\n\n# 验证了什么\n\n# 是否还有残留风险\n\n# 关联 commit",
+            "tags": "",
+        },
+    }
+
+    # 边界检查: 模块任务校验改动只发生在允许目录
+    if module_key:
+        allowed_prefix = f"modules/{module_key}/"
+        diff_result = await _run_command_json(
+            ["git", "diff", "--name-only"],
+            cwd=REPO_ROOT, timeout=10,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-    except asyncio.TimeoutError:
-        return json.dumps({"error": "测试超时(>120s)"}, ensure_ascii=False)
-    output = stdout.decode()
-    if stderr.decode().strip():
-        output += "\n--- stderr ---\n" + stderr.decode()
-    return output or "(无输出)"
+        changed_files = [l.strip() for l in diff_result.get("stdout", "").splitlines() if l.strip()]
+        violations = [f for f in changed_files if not f.startswith(allowed_prefix)]
+        report["boundary_check"] = {
+            "module": module_key,
+            "allowed_prefix": allowed_prefix,
+            "changed_files": changed_files[:50],
+            "changed_count": len(changed_files),
+            "violations": violations[:20],
+            "violation_count": len(violations),
+            "passed": len(violations) == 0,
+        }
+        if violations:
+            report["success"] = False
+            report["risk_note"] = (report["risk_note"] + f" | [边界违规] 以下改动不在 {allowed_prefix} 内: {violations[:10]}")
+    else:
+        # 非模块任务: 只列出改动文件
+        diff_result = await _run_command_json(
+            ["git", "diff", "--name-only"],
+            cwd=REPO_ROOT, timeout=10,
+        )
+        changed_files = [l.strip() for l in diff_result.get("stdout", "").splitlines() if l.strip()]
+        report["boundary_check"] = {
+            "changed_files": changed_files[:50],
+            "changed_count": len(changed_files),
+            "note": "非模块任务，无路径约束",
+        }
+
+    for item in [p.strip() for p in re.split(r"[,\n]", lint_paths) if p.strip()]:
+        try:
+            lint_result = json.loads(await _lint(item))
+        except json.JSONDecodeError as exc:
+            lint_result = {"success": False, "path": item, "error": str(exc)}
+        report["lint"].append(lint_result)
+        if not lint_result.get("success"):
+            report["success"] = False
+    if test_targets.strip():
+        try:
+            test_result = json.loads(await _run_test(test_targets))
+        except json.JSONDecodeError as exc:
+            test_result = {"success": False, "target": test_targets, "error": str(exc)}
+        report["tests"].append(test_result)
+        if not test_result.get("success"):
+            report["success"] = False
+    return json.dumps(report, ensure_ascii=False, indent=2)
+
+
+# ──────────────────── 工作流: plan_task ──────────────────────────────
+
+
+def _build_evidence_checklist(task_type: str, module_key: str) -> list[dict]:
+    checklist = []
+    if task_type == "code_change":
+        checklist.append({"tool": "code_explore", "reason": "探索相关代码：符号/调用链/影响面", "required": True})
+        checklist.append({"tool": "code_node", "reason": "读取关键符号/文件定义", "required": True})
+        checklist.append({"tool": "code_impact", "reason": "查看改动影响面", "required": True})
+        if module_key:
+            checklist.append({"tool": "routes", "params": {"filter": module_key}, "reason": "查模块相关后端端点", "required": True})
+            checklist.append({"tool": "capabilities", "params": {"module": module_key}, "reason": "查模块注册能力", "required": True})
+            checklist.append({"tool": "db_schema", "reason": "查模块表结构", "required": True})
+    elif task_type == "investigation":
+        checklist.append({"tool": "code_explore", "reason": "探索问题相关代码", "required": True})
+        checklist.append({"tool": "tail_log", "reason": "查看日志排查问题", "required": True})
+        checklist.append({"tool": "probe", "reason": "接口验证", "required": False})
+    elif task_type == "test":
+        checklist.append({"tool": "run_test", "reason": "跑测试看结果", "required": True})
+        checklist.append({"tool": "probe", "reason": "接口验证", "required": False})
+    return checklist
+
+
+def _build_boundary(module_key: str) -> dict:
+    if not module_key:
+        return {
+            "type": "framework/global",
+            "note": "框架级改动需慎重，影响全部模块。",
+        }
+    return {
+        "type": "module",
+        "module": module_key,
+        "allowed_dirs": [f"modules/{module_key}/"],
+        "forbidden": [
+            "禁止直接 import 其他模块代码",
+            f"禁止直接读写其他模块的表（只能读写 {module_key}_* 表）",
+            "禁止修改 backend/app/、frontend/src/ 或其他模块",
+        ],
+        "cross_module_rule": "必须通过框架统一通路：runtime SDK 或 /api/modules/call + 能力注册表",
+        "validation_guard": f"验收：git diff --name-only 确认所有改动在 modules/{module_key}/ 内",
+    }
+
+
+def _build_verification_plan(task_type: str, module_key: str) -> dict:
+    steps = []
+    if task_type == "code_change":
+        steps.append({"step": "lint", "tool": "lint", "target": "改动过的 Python 文件", "reason": "ruff 静态检查"})
+        if module_key:
+            test_path = f"backend/tests/" if module_key == "framework" else f"modules/{module_key}/sandbox/"
+            steps.append({"step": "test", "tool": "run_test", "target": test_path, "reason": "模块测试", "auto": False})
+        steps.append({"step": "api_check", "tool": "probe", "target": "/api/health", "reason": "后端健康检查", "auto": True})
+        steps.append({"step": "log_check", "tool": "tail_log", "target": "backend", "reason": "确认无新增错误日志", "auto": True})
+    return {"steps": steps, "note": "后端改动默认跑测试和 lint；接口类问题优先 probe/call_capability；日志问题先 tail_log"}
+
+
+def _build_workflow(task_type: str, module_key: str) -> list[dict]:
+    steps = []
+    if task_type == "code_change":
+        steps = [
+            {"step": 1, "phase": "全景理解", "action": "调 brief() 了解项目全貌（如未调过）"},
+            {"step": 2, "phase": "证据收集", "action": "按 required_evidence checklist 逐一调工具收集证据"},
+            {"step": 3, "phase": "方案制定", "action": "基于证据确定具体改哪个文件、怎么改"},
+            {"step": 4, "phase": "执行修改", "action": "用 quick_fix_preview 预览 → quick_fix_patch 落盘（或 Read + Edit）"},
+            {"step": 5, "phase": "边界检查", "action": f"git diff --name-only 确认改动只在 modules/{module_key}/ 内" if module_key else "git diff 确认改动范围"},
+            {"step": 6, "phase": "验证", "action": "按 verification_plan 跑 lint + run_test + probe + tail_log"},
+            {"step": 7, "phase": "收尾留痕", "action": "finish_task(汇总+边界检查+风险评估) → memory_write(留痕)"},
+        ]
+    elif task_type == "investigation":
+        steps = [
+            {"step": 1, "phase": "问题确认", "action": "调 brief + tail_log 确认问题现象"},
+            {"step": 2, "phase": "排查", "action": "code_explore + probe + db_schema 排查根因"},
+            {"step": 3, "phase": "结论记录", "action": "memory_write(type='gotcha', ...) 记录排查结论"},
+        ]
+    elif task_type == "test":
+        steps = [
+            {"step": 1, "phase": "测试执行", "action": "run_test 跑测试"},
+            {"step": 2, "phase": "结果分析", "action": "分析失败原因，确认是否需改代码"},
+            {"step": 3, "phase": "结论记录", "action": "memory_write 记录测试结果"},
+        ]
+    return steps
+
+
+async def _plan_task(description: str, task_type: str = "code_change", module_key: str = "") -> str:
+    """
+    标准任务工作流入口.
+    任务开始前调此工具，自动做三件事:
+    1. 预采部分证据（模块能力 / 表结构）
+    2. 生成结构化计划（证据清单 / 边界 / 验证 / 工作流）
+    3. 输出分步工作流，agent 须严格按步骤执行
+    """
+    import time as _time
+    started = _time.time()
+
+    plan: dict[str, Any] = {
+        "metadata": {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "description": description,
+            "type": task_type,
+            "module": module_key or "(全局/框架)",
+            "duration_seconds": 0,
+        },
+        "problem_understanding": (
+            f"任务: {description}\n"
+            f"类型: {task_type}\n"
+            f"模块: {module_key or '(全局/框架)'}\n"
+            "---\n"
+            "1. 理解问题后再改代码，禁止猜测\n"
+            "2. 证据收集阶段必须调足 required_evidence 中的工具\n"
+            "3. 模块改动不可越界\n"
+        ),
+        "pre_gathered_evidence": {},
+        "required_evidence": _build_evidence_checklist(task_type, module_key),
+        "modification_boundary": _build_boundary(module_key),
+        "verification_plan": _build_verification_plan(task_type, module_key),
+        "rollback_and_risk": {
+            "rollback_method": "git diff 确认范围；git checkout 回退（如未提交）；memory_write 留痕追溯",
+            "risk_level": "medium" if task_type == "code_change" else "low",
+            "note": "改动前先 git status 确认工作区干净；模块任务只允许改 modules/{module_key}/ 内" if module_key else "框架级改动需慎重，确认影响全部模块",
+        },
+        "workflow": _build_workflow(task_type, module_key),
+    }
+
+    pre_gather: dict[str, Any] = {}
+    if module_key:
+        try:
+            capabilities_raw, db_schema_raw = await asyncio.gather(
+                _capabilities(module_key),
+                _db_schema(),
+            )
+            pre_gather["capabilities"] = json.loads(capabilities_raw) if isinstance(capabilities_raw, str) else capabilities_raw
+            pre_gather["db_schema_all"] = json.loads(db_schema_raw) if isinstance(db_schema_raw, str) else db_schema_raw
+        except Exception as exc:
+            pre_gather["error"] = str(exc)[:200]
+
+        # 从预采的 db_schema 中提取本模块相关表
+        if "db_schema_all" in pre_gather and isinstance(pre_gather["db_schema_all"], dict):
+            schema_data = pre_gather["db_schema_all"]
+            module_tables = {}
+            table_prefixes = [module_key, module_key.split("_")[0]] if "_" in module_key else [module_key]
+            for prefix in table_prefixes:
+                if prefix in schema_data:
+                    module_tables[prefix] = schema_data[prefix]
+            if module_tables:
+                pre_gather["db_schema_module"] = module_tables
+
+    plan["pre_gathered_evidence"] = pre_gather
+    plan["metadata"]["duration_seconds"] = round(_time.time() - started, 3)
+    return json.dumps(plan, ensure_ascii=False, indent=2)
+
 
 # ── MCP Server ───────────────────────────────────────────────────────
 
@@ -866,6 +1362,20 @@ async def _brief() -> str:
             first_line = letter.read_text(encoding="utf-8").strip().split("\n")[0].strip("# ").strip()
             titles.append(f"- {letter.stem}: {first_line}")
         parts.append("## 投递箱待处理\n" + "\n".join(titles) if titles else "## 投递箱待处理\n(空)")
+
+    # Git 工作区状态：让 agent 开工就知道是否在 main / 是否 dirty
+    try:
+        status = await _git_status_summary()
+        parts.append("## Git 工作区")
+        parts.append(f"- 当前分支: {status.get('branch', '')}")
+        parts.append(f"- 未提交条目: {status.get('dirty_count', 0)}")
+        if status.get("is_main"):
+            parts.append("- 提醒: 当前在 main/master，提交前应先切分支")
+        sample = status.get("sample") or []
+        if sample:
+            parts.append("- 变更样本: " + "；".join(sample[:12]))
+    except Exception:
+        pass
 
     # 最近活动: git commit + 项目记忆(带 agent)
     try:
@@ -921,7 +1431,7 @@ async def _brief() -> str:
 
 async def _probe(method: str, path: str, body: str | None = None, role: str = "admin") -> str:
     """打后端任意接口, 自动登录."""
-    token = await _ensure_token(role)
+    token = await _ensure_live_token(role)
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{BACKEND_BASE}{path}"
     async with httpx.AsyncClient(timeout=30) as client:
@@ -943,21 +1453,34 @@ async def _probe(method: str, path: str, body: str | None = None, role: str = "a
 
 async def _call_capability(module: str, action: str, params: str = "{}", role: str = "admin") -> str:
     """调模块能力(跨模块调用入口)."""
-    token = await _ensure_token(role)
-    headers = {"Authorization": f"Bearer {token}"}
+    token = await _ensure_live_token(role)
     body = {
         "target_module": module,
         "action": action,
         "parameters": json.loads(params),
     }
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=60) as client:
-        resp = await client.post("/api/modules/call", json=body, headers=headers)
-        try:
-            data = resp.json()
-        except Exception:
-            data = resp.text
-        result = {"status_code": resp.status_code, "data": data}
-        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    async def _post_with_token(token_value: str) -> httpx.Response:
+        headers = {"Authorization": f"Bearer {token_value}"}
+        async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=60) as client:
+            return await client.post("/api/modules/call", json=body, headers=headers)
+
+    resp = await _post_with_token(token)
+    if resp.status_code == 401:
+        token = await _ensure_token(role, force_refresh=True)
+        _token_cache.pop(role, None)
+        resp = await _post_with_token(token)
+
+    try:
+        data = resp.json()
+    except Exception:
+        data = resp.text
+    result = {
+        "status_code": resp.status_code,
+        "data": data,
+        "target": {"module": module, "action": action, "role": role},
+    }
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 # ──────────────────── 工具 4: tail_log ───────────────────────────────
 
@@ -1221,26 +1744,39 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="tail_log",
-            description="查看模块日志尾部(用于排查错误). module 支持: backend(主日志), agent, auth, knowledge, codemap 等.",
+            description="查看模块日志尾部。",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "module": {"type": "string", "description": "模块名", "default": "backend"},
-                    "lines": {"type": "number", "description": "行数", "default": 50},
+                    "module": {"type": "string", "description": "模块名, 为空则 backend", "default": "backend"},
+                    "lines": {"type": "number", "description": "尾部行数", "default": 50},
+                },
+            },
+        ),
+        Tool(
+            name="clear_log",
+            description="清空项目日志文件, 默认保留 .backend.port 和 .watchdog.pid 等状态文件。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "module": {"type": "string", "description": "模块名, 为空则 backend", "default": "backend"},
+                    "all": {"type": "boolean", "description": "是否清空所有 .log 文件", "default": False},
+                    "keep_state": {"type": "boolean", "description": "是否保留端口/守护进程状态文件", "default": True},
                 },
             },
         ),
         Tool(
             name="sql",
-            description="只读 SQL 查询. 强制只允许 SELECT/WITH/EXPLAIN, 写操作被拒绝.",
+            description="只读 SQL 查询(SELECT/WITH/EXPLAIN).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "SQL 查询语句"},
+                    "query": {"type": "string", "description": "只读 SQL"},
                 },
                 "required": ["query"],
             },
         ),
+
         Tool(
             name="web_read",
             description="读网页返回 markdown 正文. 优先 trafilatura, 降级简单 HTML 提取.",
@@ -1369,7 +1905,17 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name=    "smoke_all",
+            name="start_frontend",
+            description="启动前端开发服务器，等价 cd frontend && npm run dev。",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="sanity_check",
+            description="规范检查: 前端端口、后端健康、模块导入失败、知识图谱卸载风险。",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="smoke_all",
             description="一键全回归: 后端集测(probe/call_capability) + 前端UI(Playwright) + 红绿矩阵.",
             inputSchema={
                 "type": "object",
@@ -1380,11 +1926,12 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="lint",
-            description="用 ruff 静态检查 Python 文件(改后先查错, 不等运行时崩).",
+            description="用 ruff 静态检查 Python 文件。支持 diff=true 只预览可修复 diff，不写盘。",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Python 文件路径(绝对或相对仓库根)"},
+                    "diff": {"type": "boolean", "description": "只返回 ruff --diff 预览", "default": False},
                 },
                 "required": ["path"],
             },
@@ -1421,13 +1968,52 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="run_test",
-            description="跑单个测试目标(文件或 文件::用例), 不跑全局.",
+            description="跑单个测试目标，自动兼容 backend/tests、tests、绝对路径，返回结构化结果。",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string", "description": "测试目标, 如 tests/test_auth.py 或 tests/test_auth.py::test_login"},
+                    "target": {"type": "string", "description": "测试目标, 如 backend/tests/test_auth.py、tests/test_auth.py 或 tests/test_auth.py::test_login"},
+                    "timeout": {"type": "number", "description": "超时秒数", "default": 120},
                 },
                 "required": ["target"],
+            },
+        ),
+        Tool(
+            name="plan_task",
+            description=(
+                "【标准工作流入口】任务开始前调此工具，自动预采证据并生成结构化计划。"
+                "输出含：问题理解、required_evidence 清单、modification_boundary、verification_plan、workflow 步骤。"
+                "agent 须严格按 workflow 步骤执行。"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "任务描述"},
+                    "task_type": {
+                        "type": "string",
+                        "description": "任务类型: code_change(默认) / investigation / test / docs",
+                        "default": "code_change",
+                    },
+                    "module_key": {"type": "string", "description": "模块 key（如 knowledge、agent），框架/全局任务留空", "default": ""},
+                },
+                "required": ["description"],
+            },
+        ),
+        Tool(
+            name="finish_task",
+            description="【收工检查】汇总 Git dirty、边界检查(模块路径越界校验)、可选 lint/test、风险评估、生成 memory_write 留痕模板；不提交、不写记忆。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "本次任务一句话摘要"},
+                    "agent": {"type": "string", "description": "执行 agent 标识", "default": ""},
+                    "lint_paths": {"type": "string", "description": "逗号或换行分隔的 Python 文件路径", "default": ""},
+                    "test_targets": {"type": "string", "description": "pytest 目标，支持多个空格分隔", "default": ""},
+                    "module_key": {"type": "string", "description": "模块 key，用于边界校验", "default": ""},
+                    "verification_summary": {"type": "string", "description": "验证结果摘要", "default": ""},
+                    "risk_note": {"type": "string", "description": "残留风险评估", "default": ""},
+                },
+                "required": ["summary"],
             },
         ),
         Tool(
@@ -1500,6 +2086,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 module=arguments.get("module", "backend"),
                 lines=arguments.get("lines", 50),
             )
+        elif name == "clear_log":
+            result = json.dumps(
+                _clear_log(
+                    module=arguments.get("module", "backend"),
+                    all_logs=bool(arguments.get("all", False)),
+                    keep_state=bool(arguments.get("keep_state", True)),
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
         elif name == "sql":
             result = await _sql(query=arguments["query"])
         elif name == "web_read":
@@ -1553,20 +2149,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 ensure_ascii=False,
                 indent=2,
             )
-        elif name == "smoke_all":
-            skip_ui = arguments.get("skip_ui", False)
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, str(REPO_ROOT / "dev_toolkit" / "smoke.py"),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, "SMOKE_SKIP_UI": "1"} if skip_ui else None,
+        elif name == "start_frontend":
+            result = await _start_frontend()
+        elif name == "sanity_check":
+            result = await _sanity_check()
+        elif name == "plan_task":
+            result = await _plan_task(
+                description=arguments["description"],
+                task_type=arguments.get("task_type", "code_change"),
+                module_key=arguments.get("module_key", ""),
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-            output = stdout.decode()
-            if stderr.decode().strip():
-                output += "\n--- stderr ---\n" + stderr.decode()
-            result = output
-        elif name == "lint":
-            result = await _lint(path=arguments["path"])
+        elif name == "finish_task":
+            result = await _finish_task(
+                summary=arguments["summary"],
+                agent=arguments.get("agent", ""),
+                lint_paths=arguments.get("lint_paths", ""),
+                test_targets=arguments.get("test_targets", ""),
+                module_key=arguments.get("module_key", ""),
+                verification_summary=arguments.get("verification_summary", ""),
+                risk_note=arguments.get("risk_note", ""),
+            )
+        elif name == "knowledge_noise_report":
+            result = await _lint(path=arguments["path"], diff=bool(arguments.get("diff", False)))
         elif name == "routes":
             result = await _routes(filter_str=arguments.get("filter", ""))
         elif name == "capabilities":
@@ -1574,7 +2178,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "db_schema":
             result = await _db_schema(table=arguments.get("table", ""))
         elif name == "run_test":
-            result = await _run_test(target=arguments["target"])
+            result = await _run_test(
+                target=arguments["target"],
+                timeout=int(arguments.get("timeout", 120)),
+            )
+        elif name == "plan_task":
+            result = await _plan_task(
+                description=arguments["description"],
+                task_type=arguments.get("task_type", "code_change"),
+                module_key=arguments.get("module_key", ""),
+            )
+        elif name == "finish_task":
+            result = await _finish_task(
+                summary=arguments["summary"],
+                agent=arguments.get("agent", ""),
+                lint_paths=arguments.get("lint_paths", ""),
+                test_targets=arguments.get("test_targets", ""),
+                module_key=arguments.get("module_key", ""),
+                verification_summary=arguments.get("verification_summary", ""),
+                risk_note=arguments.get("risk_note", ""),
+            )
         elif name == "knowledge_noise_report":
             result = json.dumps(_knowledge_noise_report(), ensure_ascii=False, indent=2)
         elif name == "knowledge_cleanup_noise":

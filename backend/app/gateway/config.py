@@ -39,6 +39,12 @@ def _load_models_config() -> dict:
 
 _config = _load_models_config()
 MODEL_PROFILES: dict[str, dict] = _config.get("model_types", {}).get("llm", {}).get("profiles", {})
+# Backward-compatible alias for older imports that still expect the singular name.
+MODEL_PROFILE = MODEL_PROFILES
+
+
+def get_model_profiles() -> dict[str, dict]:
+    return MODEL_PROFILES
 
 
 def resolve_api_key(provider_cfg: dict) -> str:

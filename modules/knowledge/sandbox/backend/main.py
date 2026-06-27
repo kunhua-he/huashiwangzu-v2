@@ -7,7 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 BACKEND_ENV = PROJECT_ROOT / "backend" / ".env"
-KNOWLEDGE_BACKEND = Path(__file__).resolve().parents[2] / "backend"
+KNOWLEDGE_BACKEND = Path(__file__).resolve().parents[3] / "backend"
 
 
 def _load_backend_env() -> None:

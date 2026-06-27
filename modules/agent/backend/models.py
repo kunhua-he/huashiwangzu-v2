@@ -13,6 +13,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 class AgentUsageDaily(Base, TimestampMixin):
     """Daily aggregated model usage costs."""
     __tablename__ = "agent_usage_daily"
+    __table_args__ = {"extend_existing": True}
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     usage_date: Mapped[date] = mapped_column(Date, nullable=False)
     model_key: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -27,6 +29,7 @@ class AgentUsageDaily(Base, TimestampMixin):
 class ApprovalQueue(Base, TimestampMixin):
     """Sensitive operation approval queue."""
     __tablename__ = "agent_approval_queue"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     agent_code: Mapped[str] = mapped_column(String(64), default="")
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -42,6 +45,7 @@ class ApprovalQueue(Base, TimestampMixin):
 class AgentConfig(Base, TimestampMixin):
     """Per-agent configuration."""
     __tablename__ = "agent_configs"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     agent_code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     agent_name: Mapped[str] = mapped_column(String(128), default="")
@@ -71,6 +75,7 @@ class AgentConfig(Base, TimestampMixin):
 
 class AgentEvent(Base, TimestampMixin):
     __tablename__ = "agent_events"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -80,6 +85,7 @@ class AgentEvent(Base, TimestampMixin):
 
 class AgentFailureDiagnostic(Base, TimestampMixin):
     __tablename__ = "agent_failure_diagnostics"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
@@ -92,6 +98,7 @@ class AgentFailureDiagnostic(Base, TimestampMixin):
 
 class AgentConversation(Base, TimestampMixin):
     __tablename__ = "agent_conversations"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(String(256), default="新对话")
@@ -101,6 +108,7 @@ class AgentConversation(Base, TimestampMixin):
 
 class AgentMessage(Base, TimestampMixin):
     __tablename__ = "agent_messages"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -113,6 +121,7 @@ class AgentMessage(Base, TimestampMixin):
 
 class AgentMessageMeta(Base, TimestampMixin):
     __tablename__ = "agent_message_meta"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -129,6 +138,7 @@ class AgentMessageMeta(Base, TimestampMixin):
 class AgentSystemPrompt(Base, TimestampMixin):
     """全局 1 份：Agent 执行边界 / 人格 / 规则，管理员维护。"""
     __tablename__ = "agent_system_prompt"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -138,6 +148,7 @@ class AgentSystemPrompt(Base, TimestampMixin):
 class AgentEnterprisePrompt(Base, TimestampMixin):
     """全局 1 份：公司知识 / 规则 / 话术，管理员维护。"""
     __tablename__ = "agent_enterprise_prompt"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -147,6 +158,7 @@ class AgentEnterprisePrompt(Base, TimestampMixin):
 class AgentUserProfile(Base, TimestampMixin):
     """每用户 1 份：系统自动进化的个人画像（语气、禁忌、关注点、习惯）。"""
     __tablename__ = "agent_user_profile"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
     profile_data: Mapped[str] = mapped_column(Text, default="")  # JSON: tone/taboo/focus/habits
@@ -157,6 +169,7 @@ class AgentUserProfile(Base, TimestampMixin):
 
 class ContextSnapshot(Base, TimestampMixin):
     __tablename__ = "agent_context_snapshots"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     snapshot_type: Mapped[str] = mapped_column(String(32), nullable=False, comment="pre_compress / post_compress / periodic")
@@ -178,6 +191,7 @@ class ContextSnapshot(Base, TimestampMixin):
 class SkillRegistryItem(Base, TimestampMixin):
     """Skill registry: DB-side skill definition with governance metadata."""
     __tablename__ = "agent_skill_registry"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -200,6 +214,7 @@ class SkillRegistryItem(Base, TimestampMixin):
 class SkillApproval(Base, TimestampMixin):
     """Approval requests for skill changes."""
     __tablename__ = "agent_skill_approvals"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     skill_name: Mapped[str] = mapped_column(String(128), nullable=False)
     operation: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -216,6 +231,7 @@ class SkillApproval(Base, TimestampMixin):
 class SkillProvenance(Base, TimestampMixin):
     """Provenance trail for every skill change."""
     __tablename__ = "agent_skill_provenance"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     skill_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -227,6 +243,7 @@ class SkillProvenance(Base, TimestampMixin):
 class SkillUsage(Base, TimestampMixin):
     """Per-invocation usage tracking for skills."""
     __tablename__ = "agent_skill_usage"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     skill_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -242,6 +259,7 @@ class SkillUsage(Base, TimestampMixin):
 class ReviewTask(Base, TimestampMixin):
     """Background review fork task tracking."""
     __tablename__ = "agent_review_tasks"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -254,6 +272,7 @@ class ReviewTask(Base, TimestampMixin):
 class ReviewResult(Base, TimestampMixin):
     """A single structured proposal from a review fork."""
     __tablename__ = "agent_review_results"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     review_task_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -271,6 +290,7 @@ class ReviewResult(Base, TimestampMixin):
 class AgentCheckpoint(Base, TimestampMixin):
     """Agent execution checkpoint for recovery and replay."""
     __tablename__ = "agent_checkpoints"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -284,6 +304,7 @@ class AgentCheckpoint(Base, TimestampMixin):
 class AgentTrajectoryRecord(Base, TimestampMixin):
     """Lightweight trajectory trace for research and analysis."""
     __tablename__ = "agent_trajectory_records"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -308,6 +329,7 @@ class AgentTrajectoryRecord(Base, TimestampMixin):
 class AgentRoleProfile(Base, TimestampMixin):
     """Role/position profile: defines behavioral expectations per role."""
     __tablename__ = "agent_role_profiles"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     role_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     role_name: Mapped[str] = mapped_column(String(128), default="")
@@ -326,6 +348,7 @@ class AgentRoleProfile(Base, TimestampMixin):
 class AgentEnterpriseProfile(Base, TimestampMixin):
     """Enterprise-level profile: company-wide behavioral context."""
     __tablename__ = "agent_enterprise_profiles"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     enterprise_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, default="default")
     enterprise_name: Mapped[str] = mapped_column(String(256), default="")
@@ -342,6 +365,7 @@ class AgentEnterpriseProfile(Base, TimestampMixin):
 class AgentMarketProfile(Base, TimestampMixin):
     """Market/Product/Brand/Competitor profile."""
     __tablename__ = "agent_market_profiles"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     profile_type: Mapped[str] = mapped_column(String(32), nullable=False)
     key: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -359,6 +383,7 @@ class AgentProfileSignal(Base, TimestampMixin):
     """Profile signal pool: low-confidence observations that may
     eventually evolve into profile changes."""
     __tablename__ = "agent_profile_signals"
+    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     signal_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -372,4 +397,3 @@ class AgentProfileSignal(Base, TimestampMixin):
 
 
 from .models_prompt import AgentPrompt as AgentPrompt
-

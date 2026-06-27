@@ -19,3 +19,8 @@ declare global {
     }
   }
 }
+
+declare module 'element-plus/dist/locale/zh-cn.mjs' {
+  const zhCn: unknown
+  export default zhCn
+}

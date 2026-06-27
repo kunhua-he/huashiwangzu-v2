@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-from app.core.exceptions import PermissionDenied
 from app.services.module_registry import register_capability
+from app.services.file_reader import resolve_caller_user_id
 
 from .embed import _get_doc_type
 from .content import _read_content
@@ -22,7 +22,7 @@ async def _open_capability(params: dict, caller: str) -> dict:
     from app.models.file import File
     from app.services.file_service import check_file_access
 
-    user_id = _resolve_caller_user_id(caller)
+    user_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         file = await check_file_access(db, file_id, user_id)
         ext = (file.extension or "").lower().lstrip(".")
@@ -46,7 +46,7 @@ async def _get_content_capability(params: dict, caller: str) -> dict:
     from app.models.file import File
     from app.services.file_service import check_file_access
 
-    user_id = _resolve_caller_user_id(caller)
+    user_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         file = await check_file_access(db, file_id, user_id)
         ext = (file.extension or "").lower().lstrip(".")
@@ -57,21 +57,11 @@ async def _create_doc_capability(params: dict, caller: str) -> dict:
     title = params.get("title", "untitled")
     doc_type = params.get("type", "txt")
     from app.database import AsyncSessionLocal
-    user_id = _resolve_caller_user_id(caller)
+    user_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         from app.services import file_create_service
         result = await file_create_service.create_file(db, title, doc_type, user_id, None)
         return {"id": str(result["id"]), "title": title, "type": doc_type}
-
-
-def _resolve_caller_user_id(caller: str) -> int:
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
 
 
 # ── Register capabilities ──

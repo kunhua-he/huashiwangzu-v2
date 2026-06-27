@@ -22,6 +22,7 @@ from app.database import get_db, AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
 from app.config import get_settings
 from app.services.file_upload_service import upload_file
@@ -69,17 +70,11 @@ async def _save_file_bytes(
     }
 
 
-def _resolve_user_id(caller: str) -> int:
-    if caller.startswith("user:"):
-        return int(caller.split(":", 1)[1])
-    raise ValueError(f"Unknown caller format: {caller}")
-
-
 # =====================================================================
 # Capability: office-gen:docx
 # =====================================================================
 async def _cap_docx(params: dict, caller: str) -> dict:
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     filename = params.get("filename", "未命名文档")
     content = params.get("content", [])
     folder_id = params.get("folder_id")
@@ -94,7 +89,7 @@ async def _cap_docx(params: dict, caller: str) -> dict:
 # Capability: office-gen:xlsx
 # =====================================================================
 async def _cap_xlsx(params: dict, caller: str) -> dict:
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     filename = params.get("filename", "未命名表格")
     sheets = params.get("sheets", []) or params.get("工作表", [])
     folder_id = params.get("folder_id")
@@ -109,7 +104,7 @@ async def _cap_xlsx(params: dict, caller: str) -> dict:
 # Capability: office-gen:pptx
 # =====================================================================
 async def _cap_pptx(params: dict, caller: str) -> dict:
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     filename = params.get("filename", "未命名演示")
     slides = params.get("slides", []) or params.get("幻灯片", [])
     folder_id = params.get("folder_id")
@@ -124,7 +119,7 @@ async def _cap_pptx(params: dict, caller: str) -> dict:
 # Capability: office-gen:pdf
 # =====================================================================
 async def _cap_pdf(params: dict, caller: str) -> dict:
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     filename = params.get("filename", "未命名文档")
     content = params.get("content", [])
     folder_id = params.get("folder_id")
@@ -139,7 +134,7 @@ async def _cap_pdf(params: dict, caller: str) -> dict:
 # Capability: office-gen:convert
 # =====================================================================
 async def _cap_convert(params: dict, caller: str) -> dict:
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     file_id = params.get("file_id")
     target_format = params.get("target_format", "pdf")
 

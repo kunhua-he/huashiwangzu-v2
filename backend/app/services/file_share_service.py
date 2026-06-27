@@ -72,6 +72,8 @@ async def create_share(
         shared_by_owner_id=shared_by_user_id,
         shared_with_user_id=shared_with_user_id,
         permission=permission,
+        publish=False,
+        reshare=False,
     )
     db.add(share)
     await db.commit()

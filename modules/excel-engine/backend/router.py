@@ -18,6 +18,7 @@ from app.schemas.common import ApiResponse
 from app.core.exceptions import NotFound
 from app.services.file_service import check_file_access
 from app.services.module_registry import register_capability
+from app.services.file_reader import resolve_caller_user_id
 
 from .state.manager import (
     init_state, cell_set_text, cell_get_style_ref,
@@ -62,18 +63,6 @@ os.makedirs(_init_temp, exist_ok=True)
 init_state(_init_temp)
 
 router = APIRouter(prefix="/api/excel-engine", tags=["excel-engine"])
-
-
-def _resolve_user_id(caller: str) -> int:
-    from app.core.exceptions import PermissionDenied
-
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
 
 
 # ── Schema ──
@@ -650,7 +639,7 @@ async def _parse_capability(params: dict, caller: str) -> dict:
     from app.database import AsyncSessionLocal
     from app.core.exceptions import NotFound
 
-    user_id = _resolve_user_id(caller)
+    user_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         file = await check_file_access(db, file_id, user_id)
         ext = (file.extension or "").lower()

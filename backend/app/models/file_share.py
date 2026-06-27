@@ -1,6 +1,5 @@
-from sqlalchemy import String, Integer, ForeignKey, DateTime
+from sqlalchemy import String, Integer, ForeignKey, DateTime, Boolean, JSON, text
 from sqlalchemy.orm import Mapped, mapped_column
-from datetime import datetime, timezone
 from app.models.base import Base, TimestampMixin
 
 
@@ -12,6 +11,11 @@ class FileShare(Base, TimestampMixin):
     shared_by_owner_id: Mapped[int] = mapped_column(Integer, ForeignKey("framework_user_accounts.id"), nullable=False)
     shared_with_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("framework_user_accounts.id"), nullable=False)
     permission: Mapped[str] = mapped_column(String(16), default="read", comment="read | edit")
+    scope: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    expiry: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    publish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    reshare: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     def __repr__(self) -> str:
         return f"<FileShare id={self.id} file_id={self.file_id}>"

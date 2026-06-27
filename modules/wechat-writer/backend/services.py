@@ -9,6 +9,8 @@ from sqlalchemy import text as sa_text
 
 from app.database import AsyncSessionLocal
 from app.gateway.service import chat as gateway_chat
+from app.services.file_reader import resolve_caller_user_id as resolve_user_id
+from app.services.prompt_helpers import load_prompt_with_fallback
 
 from .models import WechatDraft, WechatPrompt
 
@@ -16,20 +18,6 @@ logger = logging.getLogger("v2.wechat_writer").getChild("services")
 
 MODULE_KEY = "wechat-writer"
 WRITING_PROFILE = "deepseek-v4-flash"
-
-
-def resolve_user_id(caller: str) -> int:
-    """caller: user:{id} → int user_id."""
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    from app.core.exceptions import PermissionDenied
-    raise PermissionDenied("Invalid caller")
-
-
 # ── Prompt helpers ──────────────────────────────────────────────
 
 async def get_prompt(db: AsyncSession, key: str, owner_id: int = 0) -> str | None:
@@ -45,15 +33,15 @@ async def get_prompt(db: AsyncSession, key: str, owner_id: int = 0) -> str | Non
 
 
 async def _load_prompt_with_fallback(db: AsyncSession, key: str, owner_id: int, **format_kwargs) -> str:
-    content = await get_prompt(db, key, owner_id)
-    if not content:
-        content = DEFAULT_FALLBACKS.get(key, "")
-    if format_kwargs:
-        try:
-            content = content.format(**format_kwargs)
-        except KeyError as exc:
-            logger.warning("Prompt format missing key: %s (prompt=%s, kwargs=%s)", exc, key, format_kwargs)
-    return content
+    return await load_prompt_with_fallback(
+        db,
+        key,
+        owner_id,
+        get_prompt,
+        DEFAULT_FALLBACKS,
+        logger=logger,
+        **format_kwargs,
+    )
 
 
 DEFAULT_FALLBACKS = {

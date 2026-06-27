@@ -6,6 +6,7 @@ from app.models.base import Base, TimestampMixin
 
 class AgentPrompt(Base, TimestampMixin):
     __tablename__ = "agent_prompts"
+    __table_args__ = {"extend_existing": True}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)

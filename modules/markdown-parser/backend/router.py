@@ -1,36 +1,19 @@
-"""FastAPI router for markdown-parser module.
-
-Properly parses Markdown into the unified Document IR with heading levels,
-code blocks, tables, lists, and embedded resource references.
-"""
-import os
 import re
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.file_reader import decode_text_bytes
 from app.services.module_registry import register_capability
+from app.services.uploaded_file_runner import run_uploaded_file_capability
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/markdown-parser", tags=["markdown-parser"])
 
 
 class ParseRequest(BaseModel):
     file_id: int
-
-
-def _resolve_user_id(caller: str) -> int:
-    from app.core.exceptions import PermissionDenied
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
@@ -45,42 +28,10 @@ IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
 async def _parse(params: dict, caller: str) -> dict:
-    file_id = int(params.get("file_id", 0))
-    if file_id <= 0:
-        raise ValueError("file_id must be a positive integer")
-
-    from app.config import get_settings
-    from app.core.exceptions import NotFound, ValidationError, AppException
-    from app.services.file_service import check_file_access
-    from pathlib import Path
-
     allowed = {"md", "markdown"}
-    user_id = _resolve_user_id(caller)
-    async with AsyncSessionLocal() as db:
-        file = await check_file_access(db, file_id, user_id)
-        ext = (file.extension or "").lower()
-        if ext not in allowed:
-            raise ValidationError(f"Unsupported format '{ext}'. Allowed: md, markdown")
-        if not file.storage_path:
-            raise NotFound("File storage path is empty")
-        upload_root = Path(get_settings().UPLOAD_DIR).resolve()
-        full_path = (upload_root / file.storage_path).resolve()
-        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
-            raise AppException("Unsafe file storage path", status_code=400)
-        if not full_path.exists() or not full_path.is_file():
-            raise NotFound("File on disk not found")
 
-        ALLOWED_ENCS = ["utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1"]
-        raw = full_path.read_bytes()
-        content = None
-        for enc in ALLOWED_ENCS:
-            try:
-                content = raw.decode(enc)
-                break
-            except (UnicodeDecodeError, LookupError):
-                continue
-        if content is None:
-            content = raw.decode("utf-8", errors="replace")
+    def parse_file(file_id, _file, full_path, _ext):
+        content = decode_text_bytes(full_path.read_bytes())
 
         content = content.replace("\r\n", "\n").replace("\r", "\n")
         lines = content.splitlines(keepends=False)
@@ -223,12 +174,14 @@ async def _parse(params: dict, caller: str) -> dict:
                 "text_desc": f"Markdown image: {url} ({alt_text})",
             })
 
-    return {
-        "file_id": file_id,
-        "format": "markdown",
-        "blocks": blocks,
-        "resources": resources,
-    }
+        return {
+            "file_id": file_id,
+            "format": "markdown",
+            "blocks": blocks,
+            "resources": resources,
+        }
+
+    return await run_uploaded_file_capability(params, caller, allowed, parse_file)
 
 
 @router.get("/health")

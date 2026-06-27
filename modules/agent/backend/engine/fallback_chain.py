@@ -2,16 +2,14 @@
 
 每次降级写日志 + 记 agent_events（批5 可观测）。
 流式：首包/探测失败可降级；已开始流式中途断，给清晰错误。"""
-import json
 import logging
 from typing import AsyncGenerator
 from app.gateway.router import gateway_router, MODEL_PROFILES
-from app.gateway.config import _load_models_config
+from app.gateway.config import get_fallback_chain
 
 logger = logging.getLogger("v2.agent").getChild("engine.fallback_chain")
 
-_config = _load_models_config()
-FALLBACK_CHAIN: list[str] = _config.get("model_types", {}).get("llm", {}).get("fallback_chain", [])
+FALLBACK_CHAIN: list[str] = get_fallback_chain("llm")
 
 # 用于记录 degradation 事件到 agent_events（无则跳过）
 _conversation_id: int | None = None

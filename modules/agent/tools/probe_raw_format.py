@@ -1,13 +1,17 @@
-"""Probe: capture raw API response before adapter strips tool_calls."""
-import asyncio, json, sys, os
+"""Probe: capture raw API response before adapter normalization."""
+
+import asyncio
+import json
+import os
+import sys
 from pathlib import Path
 
-BACKEND_DIR = Path(__file__).resolve().parents[2] / "backend"
+BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 os.environ.setdefault("APP_ENV", "development")
 
-from app.gateway.router import _call_with_retry, MODEL_PROFILES
-from app.gateway.opencode_provider import OpenCodeProvider
+from app.gateway.config import MODEL_PROFILES
+from app.gateway.openai_provider import OpenCodeProvider
 
 TOOLS = [
     {"type": "function", "function": {
@@ -27,13 +31,14 @@ TOOLS = [
     }},
 ]
 
-PROFILE = MODEL_PROFILES.get("deepseek-v4-flash", {})
+PROFILE_KEY = "deepseek-v4-flash"
+PROFILE = MODEL_PROFILES.get(PROFILE_KEY, {})
 provider = OpenCodeProvider()
 
 async def main():
-    print(f"Provider: opencode")
+    print("Provider: opencode")
     print(f"Model: {PROFILE.get('model')}")
-    print(f"URL: https://opencode.ai/zen/go/v1/chat/completions\n")
+    print(f"URL: {provider.api_url}\n")
 
     cases = [
         ("单工具-中文", [{"role": "user", "content": "今天北京天气怎么样？"}]),
@@ -45,10 +50,9 @@ async def main():
         print(f"{'='*60}")
         print(f"[{label}]")
         try:
-            raw = await _call_with_retry(
-                provider=provider,
+            raw = await provider.chat(
                 messages=messages,
-                model=PROFILE.get("model", "deepseek-v4-flash"),
+                model=PROFILE.get("model", PROFILE_KEY),
                 temperature=PROFILE.get("temperature", 0.7),
                 max_tokens=PROFILE.get("max_tokens", 8192),
                 tools=TOOLS,

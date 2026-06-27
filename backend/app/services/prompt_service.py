@@ -8,6 +8,22 @@ from app.models.prompt import PromptCategory, PromptTemplate
 logger = logging.getLogger("v2.prompt")
 
 
+def render_template_sync(template: dict, variables: dict | None = None) -> str:
+    content = template.get("content") or ""
+    if not variables:
+        return content
+
+    rendered = content
+    for key, value in variables.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
+    return rendered
+
+
+async def render_template(db: AsyncSession, template_name: str, variables: dict | None = None) -> str:
+    template = await get_template_by_name(db, template_name)
+    return render_template_sync(template, variables)
+
+
 def _category_to_dict(category: PromptCategory) -> dict:
     return {
         "id": category.id,
@@ -97,6 +113,14 @@ async def get_template(db: AsyncSession, template_id: int) -> dict:
     template = await db.get(PromptTemplate, template_id)
     if not template:
         raise NotFound(f"Prompt template '{template_id}' not found")
+    return _template_to_dict(template)
+
+
+async def get_template_by_name(db: AsyncSession, template_name: str) -> dict:
+    result = await db.execute(select(PromptTemplate).where(PromptTemplate.name == template_name))
+    template = result.scalar_one_or_none()
+    if not template:
+        raise NotFound(f"Prompt template '{template_name}' not found")
     return _template_to_dict(template)
 
 

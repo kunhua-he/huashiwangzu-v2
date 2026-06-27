@@ -12,28 +12,13 @@ from __future__ import annotations
 import json
 import logging
 
-from app.core.exceptions import PermissionDenied
-from app.services.module_registry import register_capability
 from app.services.file_reader import resolve_caller_user_id
+from app.services.module_registry import register_capability
 
 from ..services import conversation_service as conv_svc
 from ..services import tool_discovery
 
 logger = logging.getLogger("v2.agent").getChild("handlers.tool")
-
-
-# ── Helpers ──
-
-
-def _resolve_user_id(caller: str) -> int:
-    """caller: user:{id} → int user_id。"""
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
 
 
 # ── Capability: agent:get_system_prompt ──
@@ -81,7 +66,7 @@ async def _cap_update_enterprise_prompt(params: dict, caller: str) -> dict:
 async def _cap_get_my_profile(params: dict, caller: str) -> dict:
     """读取自己的个人画像。"""
     from app.database import AsyncSessionLocal
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         from ..init_db import ensure_user_profile
         profile = await ensure_user_profile(db, owner_id)
@@ -100,7 +85,7 @@ async def _cap_update_my_profile(params: dict, caller: str) -> dict:
     profile_data = params.get("profile_data")
     if not profile_data or not isinstance(profile_data, dict):
         return {"error": "profile_data (dict) is required"}
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         profile = await conv_svc.update_user_profile(db, owner_id, profile_data)
         return {
@@ -223,7 +208,7 @@ async def _cap_skill_manage(params: dict, caller: str) -> dict:
     from ..services import skill_governance_service as sgs
 
     async with AsyncSessionLocal() as db:
-        owner_id = _resolve_user_id(caller)
+        owner_id = resolve_caller_user_id(caller)
 
         if action == "list":
             scope = params.get("scope")
@@ -359,7 +344,7 @@ async def _cap_upsert_role_profile(params: dict, caller: str) -> dict:
     if not role_key:
         return {"error": "role_key is required"}
     async with AsyncSessionLocal() as db:
-        owner_id = _resolve_user_id(caller)
+        owner_id = resolve_caller_user_id(caller)
         return await upsert_role_profile(db, role_key, params, updated_by=owner_id)
 
 
@@ -381,7 +366,7 @@ async def _cap_upsert_enterprise_profile(params: dict, caller: str) -> dict:
 
     from ..services.profile_service import upsert_enterprise_profile
     async with AsyncSessionLocal() as db:
-        owner_id = _resolve_user_id(caller)
+        owner_id = resolve_caller_user_id(caller)
         return await upsert_enterprise_profile(db, params, updated_by=owner_id)
 
 
@@ -406,7 +391,7 @@ async def _cap_upsert_market_profile(params: dict, caller: str) -> dict:
     if not profile_type or not key:
         return {"error": "profile_type and key are required"}
     async with AsyncSessionLocal() as db:
-        owner_id = _resolve_user_id(caller)
+        owner_id = resolve_caller_user_id(caller)
         return await upsert_market_profile(db, profile_type, key, params, updated_by=owner_id)
 
 
@@ -419,7 +404,7 @@ async def _cap_record_profile_signal(params: dict, caller: str) -> dict:
     signal_data = params.get("signal_data", {})
     if not signal_type:
         return {"error": "signal_type is required"}
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         return await record_signal(
             db, owner_id=owner_id,
@@ -437,7 +422,7 @@ async def _cap_list_profile_signals(params: dict, caller: str) -> dict:
     from app.database import AsyncSessionLocal
 
     from ..services.profile_service import list_signals
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         signals = await list_signals(
             db, owner_id=owner_id,
@@ -454,7 +439,7 @@ async def _cap_record_trajectory(params: dict, caller: str) -> dict:
     from app.database import AsyncSessionLocal
 
     from ..services.trajectory_service import record_turn
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         return await record_turn(
             db,
@@ -481,7 +466,7 @@ async def _cap_list_trajectories(params: dict, caller: str) -> dict:
     from app.database import AsyncSessionLocal
 
     from ..services.trajectory_service import list_trajectories
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         records = await list_trajectories(
             db, owner_id=owner_id,

@@ -9,6 +9,7 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
 )
+logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
@@ -43,10 +44,10 @@ async def lifespan(app: FastAPI):
 
     async with AsyncSessionLocal() as db:
         result = await sync_apps_from_manifest(db)
-        logging.getLogger(__name__).info("App manifest sync completed: %s", result)
+        logger.info("App manifest sync completed: %s", result)
 
     start_worker()
-    logging.getLogger(__name__).info("Background task worker started")
+    logger.info("Background task worker started")
 
     # After modules are loaded, set up per-module file handlers
     from app.services.module_logger import setup_v2_loggers_for_modules
@@ -138,10 +139,9 @@ async def health_check():
     event_bus_ok = True
     try:
         from app.services.event_bus import get_event_log
-        recent_events = await get_event_log(limit=1)
+        await get_event_log(limit=1)
     except Exception:
         event_bus_ok = False
-        recent_events = []
 
     return ApiResponse(data={
         "status": "ok",

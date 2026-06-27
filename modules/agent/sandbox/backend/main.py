@@ -16,8 +16,8 @@ from app.models.user import User
 from app.middleware.auth import get_current_user  # 覆盖鉴权起点，比覆盖 require_permission 工厂可靠
 
 # 导入 agent 自己的 models（注册到 Base.metadata）和 router
-import models as agent_models  # noqa: F401  modules/agent/backend/models.py
-from router import router as agent_router  # modules/agent/backend/router.py
+from modules.agent.backend import models as agent_models  # noqa: F401
+from modules.agent.backend.router import router as agent_router
 
 app = FastAPI(title="Agent Sandbox Backend")
 app.include_router(agent_router)

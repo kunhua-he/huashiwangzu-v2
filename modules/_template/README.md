@@ -68,6 +68,19 @@ See `开发文档/03_模块开发文档/README.md` → 图标（Icon） for the 
 - The sandbox registers Element Plus globally to keep isolated local preview simple. The main framework still uses on-demand Element Plus imports and chunk splitting.
 - When development is complete, run `cd frontend && npm run build` to verify integration
 
+## Runtime Drift Check
+
+Most modules should keep `runtime/index.ts` byte-for-byte aligned with
+`modules/_template/runtime/index.ts`. If a module genuinely needs extra runtime APIs,
+keep the custom code local and register it as an intentional variant in
+`frontend/scripts/check-runtime-drift.js`.
+
+Run this after touching runtime code:
+
+```bash
+cd frontend && npm run check:runtime-drift
+```
+
 ## If the Sandbox Template Isn't Enough
 
 The sandbox is a minimal shell. If your module needs framework features that aren't available:

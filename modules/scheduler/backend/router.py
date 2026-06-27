@@ -12,6 +12,7 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.core.exceptions import NotFound, PermissionDenied, ValidationError, ConflictError
+from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
 from app.models.system import SystemTaskQueue
 
@@ -29,12 +30,6 @@ class CreateSchedulerRequest(BaseModel):
 
 class CancelSchedulerRequest(BaseModel):
     task_id: int
-
-
-def _parse_user_id(caller: str) -> int:
-    if caller and caller.startswith("user:"):
-        return int(caller.split(":", 1)[1])
-    return 0
 
 
 @router.post("/create")
@@ -126,7 +121,10 @@ async def http_cancel(
 async def _cap_create(params: dict, caller: str) -> dict:
     title = params.get("title", "")
     action_desc = params.get("action_description", "")
-    owner_id = _parse_user_id(caller)
+    try:
+        owner_id = resolve_caller_user_id(caller)
+    except PermissionDenied:
+        return {"success": False, "error": "无法解析调用者身份"}
     if not owner_id:
         return {"success": False, "error": "无法解析调用者身份"}
     scheduled_at_str = params.get("scheduled_at")
@@ -161,7 +159,10 @@ async def _cap_create(params: dict, caller: str) -> dict:
 
 
 async def _cap_list(params: dict, caller: str) -> dict:
-    owner_id = _parse_user_id(caller)
+    try:
+        owner_id = resolve_caller_user_id(caller)
+    except PermissionDenied:
+        return {"success": True, "data": []}
     async with AsyncSessionLocal() as db:
         stmt = select(SystemTaskQueue).where(
             and_(
@@ -182,7 +183,10 @@ async def _cap_list(params: dict, caller: str) -> dict:
 
 async def _cap_cancel(params: dict, caller: str) -> dict:
     task_id = params.get("task_id")
-    owner_id = _parse_user_id(caller)
+    try:
+        owner_id = resolve_caller_user_id(caller)
+    except PermissionDenied:
+        return {"success": False, "error": "无法解析调用者身份"}
     async with AsyncSessionLocal() as db:
         task = await db.get(SystemTaskQueue, task_id)
         if not task or task.module != "scheduler":
@@ -236,7 +240,7 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
                 elif conv_result.get("error"):
                     execute_result = f"执行错误: {conv_result['error']}"
                 else:
-                    execute_result = _j(conv_result)[:1000]
+                    execute_result = json.dumps(conv_result, ensure_ascii=False)[:1000]
             else:
                 execute_result = str(conv_result)[:1000]
 

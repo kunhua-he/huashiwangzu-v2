@@ -153,7 +153,7 @@ async def _persist_event(event_name: str, payload: dict, caller: str, caller_rol
                 text("""
                     INSERT INTO framework_event_log
                         (event_name, payload, caller, caller_role, status, max_retries)
-                    VALUES (:event_name, :payload::jsonb, :caller, :caller_role, 'pending', :max_retries)
+                    VALUES (:event_name, CAST(:payload AS jsonb), :caller, :caller_role, 'pending', :max_retries)
                     RETURNING id
                 """),
                 {
@@ -183,7 +183,7 @@ async def _update_event_log(log_id: int, results: list[dict]) -> None:
                 text("""
                     UPDATE framework_event_log
                     SET status = :status,
-                        module_results = :results::jsonb,
+                        module_results = CAST(:results AS jsonb),
                         completed_at = NOW()
                     WHERE id = :id
                 """),

@@ -7,6 +7,11 @@ import logging
 
 logger = logging.getLogger("v2.office-gen").getChild("generator")
 
+try:
+    from docx.shared import Cm
+except ImportError:
+    Cm = None
+
 
 # ── DOCX generator ──────────────────────────────────────────────────────
 
@@ -20,7 +25,6 @@ def generate_docx(params: dict) -> bytes:
         raise RuntimeError("python-docx is not installed. Run: pip install python-docx")
 
     doc = Document()
-    filename = params.get("filename", "未命名文档")
     content = params.get("content", [])
 
     for block in content:
@@ -67,6 +71,9 @@ def _set_alignment(paragraph, align: str):
 
 
 def _add_image_block(doc, block: dict):
+    if Cm is None:
+        raise RuntimeError("python-docx is not installed. Run: pip install python-docx")
+
     image_data = block.get("image_data")
     image_path = block.get("image_path")
     width = block.get("width", 14)

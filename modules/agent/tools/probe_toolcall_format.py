@@ -11,13 +11,11 @@ import os
 from pathlib import Path
 
 # Ensure backend is importable
-BACKEND_DIR = Path(__file__).resolve().parents[2] / "backend"
+BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 os.environ.setdefault("APP_ENV", "development")
 
-# Must set up Django-style env before importing app modules
-from app.config import get_settings
 from app.gateway.router import gateway_router
 
 TOOLS = [

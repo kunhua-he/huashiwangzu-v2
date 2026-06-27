@@ -1,8 +1,5 @@
-from .base import ModelAdapter
+from .base import GemmaAdapter, ModelAdapter, OpenAICompatAdapter, QwenAdapter
 from .deepseek import DeepSeekAdapter
-from .gemma import GemmaAdapter
-from .openai_compat import OpenAICompatAdapter
-from .qwen import QwenAdapter
 
 # ============================================================
 # 如何添加新模型（扩展接口说明）
@@ -27,9 +24,7 @@ from .qwen import QwenAdapter
 #
 # 常用字段映射：
 #   DeepSeek: message.reasoning_content → thinking
-#   Gemma:    无 thinking 字段 → thinking=""
-#   Qwen:     无 thinking 字段 → thinking=""
-#   OpenAI 兼容: choice.message.reasoning_content → thinking
+#   其他 OpenAI 兼容模型：使用同一个 OpenAICompatLikeAdapter
 # ============================================================
 
 _ADAPTER_CACHE: dict[str, ModelAdapter] = {}

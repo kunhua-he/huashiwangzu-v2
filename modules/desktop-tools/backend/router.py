@@ -16,6 +16,7 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability, call_capability
+from app.services.file_reader import resolve_caller_user_id
 
 router = APIRouter(prefix="/api/desktop-tools", tags=["desktop-tools"])
 
@@ -23,14 +24,6 @@ router = APIRouter(prefix="/api/desktop-tools", tags=["desktop-tools"])
 # ── Framework model imports (used inside handler functions) ──────────
 # These are imported lazily inside handlers to avoid circular imports
 # at module load time.
-
-
-# ── Helper: resolve caller user id ───────────────────────────────────
-def _resolve_user_id(caller: str) -> int:
-    """Extract user id from caller string like 'user:42'."""
-    if caller.startswith("user:"):
-        return int(caller.split(":", 1)[1])
-    raise ValueError(f"Unknown caller format: {caller}")
 
 
 # ── Helper: build flat file list items ───────────────────────────────
@@ -71,7 +64,7 @@ async def _list_files(params: dict, caller: str) -> dict:
     """List files in a folder (or root). Owner-isolated."""
     from app.models.file import Folder, File
 
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     folder_id = int(params.get("folder_id", 0))
     page = int(params.get("page", 1))
     page_size = int(params.get("page_size", 50))
@@ -116,7 +109,7 @@ async def _search_files(params: dict, caller: str) -> dict:
     """Search files by keyword / extension. Owner-isolated."""
     from app.models.file import File
 
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     keyword = params.get("keyword", "")
     extension = params.get("extension")
     page = int(params.get("page", 1))
@@ -182,7 +175,7 @@ async def _read_file(params: dict, caller: str) -> dict:
     """
     from app.services.file_service import check_file_access
 
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
     file_id = int(params.get("file_id", 0))
     if file_id <= 0:
         raise ValueError("file_id must be a positive integer")
@@ -280,7 +273,7 @@ async def _list_apps(params: dict, caller: str) -> dict:
     from app.models.app import App
     from app.services.app_service import can_user_access_app
 
-    owner_id = _resolve_user_id(caller)
+    owner_id = resolve_caller_user_id(caller)
 
     async with AsyncSessionLocal() as db:
         # We need the User model to check role-based access

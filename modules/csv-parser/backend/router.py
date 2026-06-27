@@ -1,37 +1,19 @@
-"""FastAPI router for csv-parser module.
-
-Parses CSV and TSV files into unified content blocks.
-Each row becomes a structured text block; column headers are preserved.
-"""
 import csv
-import io
-import os
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.file_reader import decode_text_bytes
 from app.services.module_registry import register_capability
+from app.services.uploaded_file_runner import run_uploaded_file_capability
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/csv-parser", tags=["csv-parser"])
 
 
 class ParseRequest(BaseModel):
     file_id: int
-
-
-def _resolve_user_id(caller: str) -> int:
-    from app.core.exceptions import PermissionDenied
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
 
 
 def _detect_delimiter(head: str) -> str:
@@ -43,42 +25,10 @@ def _detect_delimiter(head: str) -> str:
 
 
 async def _parse(params: dict, caller: str) -> dict:
-    file_id = int(params.get("file_id", 0))
-    if file_id <= 0:
-        raise ValueError("file_id must be a positive integer")
-
-    from app.config import get_settings
-    from app.core.exceptions import NotFound, ValidationError, AppException
-    from app.services.file_service import check_file_access
-    from pathlib import Path
-
     allowed = {"csv", "tsv"}
-    user_id = _resolve_user_id(caller)
-    async with AsyncSessionLocal() as db:
-        file = await check_file_access(db, file_id, user_id)
-        ext = (file.extension or "").lower()
-        if ext not in allowed:
-            raise ValidationError(f"Unsupported format '{ext}'. Allowed: csv, tsv")
-        if not file.storage_path:
-            raise NotFound("File storage path is empty")
-        upload_root = Path(get_settings().UPLOAD_DIR).resolve()
-        full_path = (upload_root / file.storage_path).resolve()
-        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
-            raise AppException("Unsafe file storage path", status_code=400)
-        if not full_path.exists() or not full_path.is_file():
-            raise NotFound("File on disk not found")
 
-        raw = full_path.read_bytes()
-        ALLOWED_ENCS = ["utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1"]
-        content = None
-        for enc in ALLOWED_ENCS:
-            try:
-                content = raw.decode(enc)
-                break
-            except (UnicodeDecodeError, LookupError):
-                continue
-        if content is None:
-            content = raw.decode("utf-8", errors="replace")
+    def parse_file(file_id, _file, full_path, ext):
+        content = decode_text_bytes(full_path.read_bytes())
 
         blocks = []
         lines = content.strip().splitlines()
@@ -117,12 +67,14 @@ async def _parse(params: dict, caller: str) -> dict:
             block_text = "\n".join(row_texts)
             blocks.append({"type": "表格", "text": block_text, "page": None, "resource_ref": None})
 
-    return {
-        "file_id": file_id,
-        "format": ext,
-        "blocks": blocks,
-        "resources": [],
-    }
+        return {
+            "file_id": file_id,
+            "format": ext,
+            "blocks": blocks,
+            "resources": [],
+        }
+
+    return await run_uploaded_file_capability(params, caller, allowed, parse_file)
 
 
 @router.get("/health")

@@ -59,7 +59,7 @@
         "filename": "Output file name (without extension)",
         "content": "Array of content blocks: {type, level?, text?, bold?, align?, table_header?, table_rows?}"
       },
-      "min_role": "viewer"
+      "min_role": "editor"
     },
     {
       "action": "xlsx",
@@ -68,7 +68,7 @@
         "filename": "Output file name (without extension)",
         "sheets": "Array of sheet objects with name, columns, rows"
       },
-      "min_role": "viewer"
+      "min_role": "editor"
     },
     {
       "action": "pptx",
@@ -77,7 +77,7 @@
         "filename": "Output file name (without extension)",
         "slides": "Array of slide objects with title, bullets, notes"
       },
-      "min_role": "viewer"
+      "min_role": "editor"
     },
     {
       "action": "pdf",
@@ -86,7 +86,7 @@
         "filename": "Output file name (without extension)",
         "content": "Array of content blocks: {type, level?, text?, bold?, align?}"
       },
-      "min_role": "viewer"
+      "min_role": "editor"
     },
     {
       "action": "convert",

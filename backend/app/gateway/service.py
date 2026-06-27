@@ -14,21 +14,17 @@ from typing import AsyncGenerator
 
 from .base import BaseProvider
 from .config import (
-    BUDGET_RATES,
     DEFAULT_MODEL,
-    DEFAULT_ROUTING_POLICY,
     MODEL_PROFILES,
     TEMPLATES,
     VariantTemplate,
-    _config,
-    list_routing_policies,
-    list_templates,
+    get_fallback_chain as get_config_fallback_chain,
+    get_provider_configs,
     resolve_api_key,
     resolve_template_for_role,
 )
 from .local import LocalProvider
-from .openai_provider import OpenAIProvider
-from .opencode_provider import OpenCodeProvider
+from .openai_provider import OpenAIProvider, OpenCodeProvider
 from .router import ModelGatewayRouter, RetryBudget
 
 logger = logging.getLogger("v2.gateway.service")
@@ -55,7 +51,7 @@ def get_model_profile_safe(profile_key: str) -> dict | None:
 
 
 def get_model_provider(provider_name: str) -> BaseProvider:
-    providers_config = _config.get("providers", {})
+    providers_config = get_provider_configs()
     cfg = providers_config.get(provider_name)
     if not cfg:
         if providers_config.get("local"):
@@ -79,11 +75,7 @@ def get_model_provider(provider_name: str) -> BaseProvider:
 
 
 def get_fallback_chain() -> list[str]:
-    return _config.get("model_types", {}).get("llm", {}).get("fallback_chain", [])
-
-
-def get_default_model() -> str:
-    return DEFAULT_MODEL
+    return get_config_fallback_chain("llm")
 
 
 def resolve_role_profile(role: str = "default",
@@ -179,13 +171,3 @@ async def chat_stream_with_role(
         tools=tools,
     ):
         yield event
-
-
-def get_routing_diagnostics() -> dict:
-    """Return current routing governance state for admin / observability."""
-    return {
-        "templates": list_templates(),
-        "policies": list_routing_policies(),
-        "budget_rates": {k: v for k, v in BUDGET_RATES.items()},
-        "default_policy": DEFAULT_ROUTING_POLICY.name,
-    }

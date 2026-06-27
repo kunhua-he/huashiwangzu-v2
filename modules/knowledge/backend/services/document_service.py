@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFound, ValidationError, AppException
 from app.services.file_service import check_file_access
+from app.services.file_reader import resolve_caller_user_id as resolve_user_id
 
 from .parsing_service import parse_document
 from .embedding_service import chunk_and_embed, store_chunks
@@ -20,21 +21,6 @@ SUPPORTED_EXTENSIONS = {
     "json", "yaml", "yml", "eml", "msg",
     "png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "svg",
 }
-
-
-def resolve_user_id(caller: str) -> int:
-    """caller: user:{id} → int user_id。"""
-    from app.core.exceptions import PermissionDenied
-
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
-
-
 async def register_document(
     db: AsyncSession,
     file_id: int,

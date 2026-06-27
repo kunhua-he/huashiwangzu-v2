@@ -6,12 +6,16 @@ from typing import AsyncGenerator
 
 import httpx
 
+from app.config import get_settings
+
 from .adapters import get_adapter
 from .base import BaseProvider
 from .contract import StreamEventType, stream_event_to_dict
 from .stream_parse import error_message, extract_stream_payload, format_error
 
 logger = logging.getLogger("v2.gateway.openai_compat")
+
+OPENCODE_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 
 
 class OpenAIProvider(BaseProvider):
@@ -103,3 +107,12 @@ async def _read_error_body(resp: httpx.Response) -> str:
         return body[:500] if len(body) > 500 else body
     except Exception:
         return "(无法读取响应体)"
+
+
+class OpenCodeProvider(OpenAIProvider):
+    def __init__(self, api_url: str = "", api_key: str = ""):
+        super().__init__(
+            api_url=api_url or OPENCODE_API_URL,
+            api_key=api_key or get_settings().DEEPSEEK_API_KEY,
+            provider_name="opencode",
+        )

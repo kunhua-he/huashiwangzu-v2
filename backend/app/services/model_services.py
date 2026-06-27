@@ -5,38 +5,19 @@ Reads the active endpoint from models.json — that's the single source of truth
 During development, configure the URL that works; the code doesn't auto-probe.
 """
 
-import json
 import logging
 from asyncio import to_thread
-from pathlib import Path
 
 import httpx
 
+from app.gateway.config import get_model_type_config
 from app.services.model_watchdog.watchdog import ensure_model
 
 logger = logging.getLogger("v2.model_services")
 
-# Path: backend/app/services/model_services.py → backend/data/config/models.json
-_MODELS_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent.parent
-    / "data" / "config" / "models.json"
-)
-
-_CONFIG_CACHE: dict | None = None
-
-
-def _get_config() -> dict:
-    global _CONFIG_CACHE
-    if _CONFIG_CACHE is not None:
-        return _CONFIG_CACHE
-    with open(_MODELS_CONFIG_PATH) as f:
-        _CONFIG_CACHE = json.load(f)
-    return _CONFIG_CACHE
-
 
 def _embedding_profile() -> dict:
-    cfg = _get_config()
-    emb = cfg["model_types"]["embedding"]
+    emb = get_model_type_config("embedding")
     pk = emb.get("primary", "")
     if not pk:
         raise RuntimeError("No primary embedding model in models.json")
@@ -44,8 +25,7 @@ def _embedding_profile() -> dict:
 
 
 def _rerank_profile() -> dict:
-    cfg = _get_config()
-    rr = cfg["model_types"]["rerank"]
+    rr = get_model_type_config("rerank")
     pk = rr.get("primary", "")
     if not pk:
         raise RuntimeError("No primary rerank model in models.json")
@@ -65,7 +45,6 @@ async def get_embedding(text: str) -> list[float]:
         raise RuntimeError(f"No server_url in embedding profile: {profile}")
 
     model = profile.get("model", "bge-m3")
-    adapter = profile.get("response_adapter", "openai_compat")
     url = f"{server_url.rstrip('/')}/v1/embeddings"
 
     async with httpx.AsyncClient(timeout=30) as client:

@@ -17,6 +17,7 @@ from app.core.workspace_security import (
     resolve_workspace_path as _resolve_workspace_path,
     ensure_user_workspace as _user_workspace,
 )
+from app.services.file_reader import resolve_caller_user_id
 
 logger = logging.getLogger("v2.terminal-tools")
 
@@ -38,13 +39,8 @@ def _get_workspace_base() -> Path:
 
 
 def _resolve_user_id(caller: str) -> int:
-    """Extract user id from caller string like 'user:42'."""
-    if caller.startswith("user:"):
-        try:
-            return int(caller.split(":", 1)[1])
-        except ValueError:
-            pass
-    raise ValueError(f"Unknown caller format: {caller}")
+    """Compatibility wrapper for older handlers."""
+    return resolve_caller_user_id(caller)
 
 
 # _user_workspace and _resolve_workspace_path are imported from app.core.workspace_security

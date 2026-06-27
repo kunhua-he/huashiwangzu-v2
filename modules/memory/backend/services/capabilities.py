@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.database import AsyncSessionLocal
 
-from huashiwangzu_modules.memory.models import MemoryRecord, MemoryLink, MemoryExperience, MemoryChunk, MemoryStableRule
+from huashiwangzu_modules.memory.models import MemoryChunk, MemoryRecord
 
 from . import memory_service, experience_service, embedding_service
 from .distill_service import _memory_to_dict
@@ -310,19 +310,19 @@ async def _cap_recall_chunk(params: dict, caller: str) -> dict:
         query_vec = await embedding_service._compute_embedding(query)
         if query_vec and len(query) > 3:
             vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
-            sql = text(f"""
+            sql = text("""
                 SELECT id, memory_record_id, owner_id, text, summary, source, provenance,
                        conversation_id, chunk_index, confidence,
                        start_char, end_char, created_at,
-                       (1 - (embedding <=> '{vec_literal}'::vector)) AS similarity
+                       (1 - (embedding <=> CAST(:query_vec AS vector))) AS similarity
                 FROM memory_chunks
                 WHERE owner_id = :owner_id
                   AND embedding IS NOT NULL
-                  AND (1 - (embedding <=> '{vec_literal}'::vector)) >= 0.3
+                  AND (1 - (embedding <=> CAST(:query_vec AS vector))) >= 0.3
                 ORDER BY similarity DESC
                 LIMIT :limit
             """)
-            r = await db.execute(sql, {"owner_id": owner_id, "limit": limit})
+            r = await db.execute(sql, {"owner_id": owner_id, "limit": limit, "query_vec": vec_literal})
             rows = r.mappings().all()
             items = []
             for row in rows:

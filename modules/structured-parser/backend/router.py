@@ -1,36 +1,20 @@
-"""FastAPI router for structured-parser module.
-
-Parses JSON and YAML files into unified content blocks.
-Flattens nested structures into readable text blocks.
-"""
 import json
-import os
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal, get_db
+from app.core.exceptions import ValidationError
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.file_reader import decode_text_bytes
 from app.services.module_registry import register_capability
+from app.services.uploaded_file_runner import run_uploaded_file_capability
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/structured-parser", tags=["structured-parser"])
 
 
 class ParseRequest(BaseModel):
     file_id: int
-
-
-def _resolve_user_id(caller: str) -> int:
-    from app.core.exceptions import PermissionDenied
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
 
 
 def _flatten_json(obj: object, prefix: str = "", depth: int = 0, max_depth: int = 10) -> list[str]:
@@ -57,42 +41,10 @@ def _flatten_json(obj: object, prefix: str = "", depth: int = 0, max_depth: int 
 
 
 async def _parse(params: dict, caller: str) -> dict:
-    file_id = int(params.get("file_id", 0))
-    if file_id <= 0:
-        raise ValueError("file_id must be a positive integer")
-
-    from app.config import get_settings
-    from app.core.exceptions import NotFound, ValidationError, AppException
-    from app.services.file_service import check_file_access
-    from pathlib import Path
-
     allowed = {"json", "yaml", "yml"}
-    user_id = _resolve_user_id(caller)
-    async with AsyncSessionLocal() as db:
-        file = await check_file_access(db, file_id, user_id)
-        ext = (file.extension or "").lower()
-        if ext not in allowed:
-            raise ValidationError(f"Unsupported format '{ext}'. Allowed: json, yaml, yml")
-        if not file.storage_path:
-            raise NotFound("File storage path is empty")
-        upload_root = Path(get_settings().UPLOAD_DIR).resolve()
-        full_path = (upload_root / file.storage_path).resolve()
-        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
-            raise AppException("Unsafe file storage path", status_code=400)
-        if not full_path.exists() or not full_path.is_file():
-            raise NotFound("File on disk not found")
 
-        raw = full_path.read_bytes()
-        ALLOWED_ENCS = ["utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1"]
-        content = None
-        for enc in ALLOWED_ENCS:
-            try:
-                content = raw.decode(enc)
-                break
-            except (UnicodeDecodeError, LookupError):
-                continue
-        if content is None:
-            content = raw.decode("utf-8", errors="replace")
+    def parse_file(file_id, _file, full_path, ext):
+        content = decode_text_bytes(full_path.read_bytes())
 
         blocks = []
         content = content.strip()
@@ -129,12 +81,14 @@ async def _parse(params: dict, caller: str) -> dict:
                     "resource_ref": None,
                 })
 
-    return {
-        "file_id": file_id,
-        "format": ext,
-        "blocks": blocks,
-        "resources": [],
-    }
+        return {
+            "file_id": file_id,
+            "format": ext,
+            "blocks": blocks,
+            "resources": [],
+        }
+
+    return await run_uploaded_file_capability(params, caller, allowed, parse_file)
 
 
 @router.get("/health")

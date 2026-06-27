@@ -14,11 +14,12 @@ from sqlalchemy import Column, DateTime, Integer, Text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base
 
-from app.core.exceptions import PermissionDenied, ValidationError
+from app.core.exceptions import ValidationError
 from app.database import AsyncSessionLocal, engine
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
 
 from .providers import (
@@ -85,20 +86,6 @@ def _ensure_tables():
 _ensure_tables()
 
 # ---------------------------------------------------------------------------
-# Caller helper
-# ---------------------------------------------------------------------------
-
-def _resolve_user_id(caller: str) -> int:
-    try:
-        prefix, raw_id = caller.split(":", 1)
-        if prefix == "user":
-            return int(raw_id)
-    except (TypeError, ValueError):
-        pass
-    raise PermissionDenied("Invalid caller")
-
-
-# ---------------------------------------------------------------------------
 # Translation helper
 # ---------------------------------------------------------------------------
 
@@ -138,7 +125,7 @@ async def _generate(params: dict, caller: str) -> dict:
     if not prompt:
         raise ValidationError("prompt is required")
 
-    user_id = _resolve_user_id(caller)
+    user_id = resolve_caller_user_id(caller)
 
     match = re.match(r"^(\d+)\s*[xX]\s*(\d+)$", size)
     if not match and not aspect_ratio:
@@ -319,7 +306,7 @@ async def _list_templates(params: dict, caller: str) -> dict:
 # ---------------------------------------------------------------------------
 
 async def _usage_history(params: dict, caller: str) -> dict:
-    user_id = _resolve_user_id(caller)
+    user_id = resolve_caller_user_id(caller)
     limit = min(int(params.get("limit", 20)), 100)
     try:
         async with AsyncSessionLocal() as db:

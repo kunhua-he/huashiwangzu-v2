@@ -9,6 +9,7 @@ python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.17
 httpx>=0.28.0
+tenacity>=9.0.0
 pgvector>=0.3.0
 psutil>=7.0.0
 bcrypt>=4.2.0

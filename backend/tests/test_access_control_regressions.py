@@ -2,10 +2,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from app.main import app
-
+from httpx import ASGITransport, AsyncClient
 
 SEED_PASS = "admin123"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -124,6 +122,30 @@ PARSER_CASES = [
         "/api/text-parser/parse",
         {"file_id": None},
         PROJECT_ROOT / "modules/text-parser/sandbox/samples/sample.txt",
+    ),
+    (
+        "markdown-parser",
+        "/api/markdown-parser/parse",
+        {"file_id": None},
+        PROJECT_ROOT / "modules/markdown-parser/sandbox/samples/sample.md",
+    ),
+    (
+        "csv-parser",
+        "/api/csv-parser/parse",
+        {"file_id": None},
+        PROJECT_ROOT / "modules/csv-parser/sandbox/samples/sample.csv",
+    ),
+    (
+        "structured-parser",
+        "/api/structured-parser/parse",
+        {"file_id": None},
+        PROJECT_ROOT / "modules/structured-parser/sandbox/samples/sample.json",
+    ),
+    (
+        "email-parser",
+        "/api/email-parser/parse",
+        {"file_id": None},
+        PROJECT_ROOT / "modules/email-parser/sandbox/samples/sample.eml",
     ),
     (
         "pdf-parser",

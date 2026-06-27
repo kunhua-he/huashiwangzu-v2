@@ -1,6 +1,6 @@
-import json
-from pathlib import Path
 from typing import Literal
+
+from app.gateway.config import get_models_config_path, get_watchdog_model_configs
 
 ModelType = Literal["local", "cloud"]
 ModelPurpose = str  # "embedding" | "rerank" | "vision" | "text" (English, from models.json)
@@ -45,28 +45,23 @@ class ModelRecord:
 
 _REGISTRY: dict[str, ModelRecord] = {}
 
-_MODELS_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent.parent.parent.parent
-    / "backend" / "data" / "config" / "models.json"
-)
-
 
 def _load_from_config() -> None:
     """Load watchdog_models from models.json (single source of truth)."""
-    if not _MODELS_CONFIG_PATH.exists():
+    config_path = get_models_config_path()
+    if not config_path.exists():
         raise FileNotFoundError(
-            f"models.json not found at {_MODELS_CONFIG_PATH}. "
+            f"models.json not found at {config_path}. "
             "Cannot initialize model registry."
         )
-    with open(_MODELS_CONFIG_PATH, "r") as f:
-        config = json.load(f)
 
-    watchdog_models = config.get("watchdog_models", {})
+    watchdog_models = get_watchdog_model_configs()
     if not watchdog_models:
         raise ValueError(
-            f"'watchdog_models' section missing or empty in {_MODELS_CONFIG_PATH}"
+            f"'watchdog_models' section missing or empty in {config_path}"
         )
 
+    _REGISTRY.clear()
     for name, info in watchdog_models.items():
         record = ModelRecord(
             name=name,

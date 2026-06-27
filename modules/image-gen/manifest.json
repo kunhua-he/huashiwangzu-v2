@@ -73,7 +73,7 @@
       "action": "usage_history",
       "description": "查询当前用户生图消耗记录",
       "parameters": {},
-      "min_role": "viewer"
+      "min_role": "editor"
     }
   ],
   "permission_declaration": {

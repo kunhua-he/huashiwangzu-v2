@@ -87,6 +87,15 @@ async def list_templates(
     return ApiResponse(data=await svc.list_templates(db))
 
 
+@router.get("/templates/by-name/{template_name}")
+async def get_template_by_name(
+    template_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    return ApiResponse(data=await svc.get_template_by_name(db, template_name))
+
+
 @router.post("/templates")
 async def create_template(
     body: PromptTemplateCreate,

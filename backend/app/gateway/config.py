@@ -39,12 +39,39 @@ def _load_models_config() -> dict:
 
 _config = _load_models_config()
 MODEL_PROFILES: dict[str, dict] = _config.get("model_types", {}).get("llm", {}).get("profiles", {})
-# Backward-compatible alias for older imports that still expect the singular name.
-MODEL_PROFILE = MODEL_PROFILES
+
+
+def get_models_config() -> dict:
+    """Return the cached raw models.json config."""
+    return _load_models_config()
+
+
+def get_models_config_path() -> Path:
+    return _MODELS_CONFIG_PATH
+
+
+def get_provider_configs() -> dict[str, dict]:
+    return get_models_config().get("providers", {})
+
+
+def get_model_type_config(model_type: str) -> dict:
+    return get_models_config().get("model_types", {}).get(model_type, {})
+
+
+def get_profiles_for_type(model_type: str) -> dict[str, dict]:
+    return get_model_type_config(model_type).get("profiles", {})
 
 
 def get_model_profiles() -> dict[str, dict]:
     return MODEL_PROFILES
+
+
+def get_fallback_chain(model_type: str = "llm") -> list[str]:
+    return list(get_model_type_config(model_type).get("fallback_chain", []))
+
+
+def get_watchdog_model_configs() -> dict[str, dict]:
+    return get_models_config().get("watchdog_models", {})
 
 
 def resolve_api_key(provider_cfg: dict) -> str:

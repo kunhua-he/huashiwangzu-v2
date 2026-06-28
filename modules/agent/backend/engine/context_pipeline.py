@@ -15,15 +15,11 @@ from .budget_allocator import estimate_tokens, get_context_budget
 from .compressor import compress_middle_with_snapshot as _compress_with_snapshot
 from .compressor import hard_truncate_tail as _hard_truncate_tail
 from .event_store import project_to_messages, read_events
-from .experience_memory import format_injection as _experience_format
-from .experience_memory import match_experience as _experience_match
-from .layered_memory import three_layer_recall as _three_layer_recall
 from .skills_loader import find_skills as _find_skills
 from .skills_loader import format_skills_for_prompt as _format_skills
 from .skills_loader import match_skills as _match_skills
 from .skills_loader import resolve_skill_priority as _resolve_skill_priority
 from .thinking_router import route_thinking_level
-from .workflow_strategy import apply_workflow_injection as _apply_workflow_injection
 
 logger = logging.getLogger("v2.agent").getChild("engine.pipeline")
 
@@ -288,48 +284,22 @@ async def _inject_context_layers(
     current_user_input: str,
     owner_id: int,
 ) -> tuple[list[dict], dict]:
-    """Apply three-layer memory, workflow strategy, and success experience injection."""
+    """Apply three-layer memory, workflow strategy, and success experience injection.
 
-    # ── 三层记忆注入（批5）：稳定规则 + chunk + 语义记忆 ──────────
-    try:
-        three_layer = await _three_layer_recall(owner_id, current_user_input)
-        if three_layer.get("injection") and messages:
-            for msg in messages:
-                if msg["role"] == "system":
-                    msg["content"] += "\n\n---\n\n" + three_layer["injection"]
-                    break
-            diagnosis["three_layer_memory"] = {
-                "stable_rules": len(three_layer.get("stable_rules", [])),
-                "chunks": len(three_layer.get("chunks", [])),
-                "semantic": len(three_layer.get("semantic", [])),
-            }
-    except Exception as e:
-        logger.warning("三层记忆注入失败（non-fatal）: %s", e)
-        diagnosis["three_layer_memory"] = f"降级: {e}"
+    Each injector follows the same contract: inject(messages, diagnosis, ...) → (messages, diagnosis).
+    New injectors can be added by importing a new module and calling it here.
+    """
+    from .context_injectors import experience as _exp
+    from .context_injectors import three_layer_memory
+    from .context_injectors import workflow as _wf
 
-    # ── 项目工作流约束注入（workflow_strategy） ──────────────────
-    wf_diag = _apply_workflow_injection(current_user_input, messages)
-    diagnosis["workflow_injected"] = wf_diag.get("workflow_injected", False)
-    if wf_diag.get("workflow_label"):
-        diagnosis["workflow_label"] = wf_diag["workflow_label"]
-
-    # ── 成功经验注入（批3） ─────────────────────────────────────
-    try:
-        matched = await _experience_match(current_user_input, limit=2, caller=f"user:{owner_id}")
-        injection = _experience_format(matched)
-        if injection and messages:
-            for msg in messages:
-                if msg["role"] == "system":
-                    msg["content"] += injection
-                    break
-            diagnosis["experience_injected"] = [e["id"] for e in matched if e.get("id")]
-            diagnosis["experience_injection"] = "成功注入" if injection else "无命中"
-        else:
-            diagnosis["experience_injection"] = "无命中"
-    except Exception as e:
-        logger.warning("经验注入失败（降级，不阻塞）: %s", e)
-        diagnosis["experience_injection"] = f"降级: {e}"
-
+    messages, diagnosis = await three_layer_memory.inject(
+        messages, diagnosis, owner_id=owner_id, current_user_input=current_user_input, logger=logger,
+    )
+    messages, diagnosis = _wf.inject(messages, diagnosis, current_user_input=current_user_input)
+    messages, diagnosis = await _exp.inject(
+        messages, diagnosis, current_user_input=current_user_input, owner_id=owner_id, logger=logger,
+    )
     return messages, diagnosis
 
 
@@ -359,6 +329,13 @@ async def run_pipeline(
 
     # Stage 2: Project events → model messages
     projected, all_events = await _project_history(db, conversation_id)
+
+    # Stage 2b: Reduce tool results (rule-based compression, preserves event store)
+    from .context_injectors.tool_result_reducer import reduce as _reduce_tool_results
+    projected, reduce_diag = _reduce_tool_results(projected)
+    logger.info("Tool result reducer: %d compressed, %d chars saved",
+                 reduce_diag.get("tool_results_compressed", 0),
+                 reduce_diag.get("total_chars_saved", 0))
 
     # Stage 3: Thinking routing
     thinking_diag, thinking_route = await _route_thinking(
@@ -393,6 +370,7 @@ async def run_pipeline(
     # Stage 7: Token budget assembly
     messages, diagnosis = _budget_assembly(projected, system_content, current_user_input, effective_profile_key)
     diagnosis.update(thinking_diag)
+    diagnosis.update(reduce_diag)
     diagnosis["agent_code"] = agent_code
     diagnosis["effective_profile_key"] = effective_profile_key
 

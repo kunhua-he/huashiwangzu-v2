@@ -335,6 +335,7 @@ function normalizeThinking(text: string): string {
 /** 处理 thinking 事件：合并到上一张卡，或新建。isRestore 控制初始折叠。 */
 /** 关闭上一张思考卡并设置耗时，新建时记录开始时间 */
 let _lastThinkingStart = 0
+let _lastRoundUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null
 function applyThinkingEvent(content: string, messages: MsgItem[], opts?: { isRestore?: boolean; durationMs?: number }) {
   const c = normalizeThinking(content)
   if (!c) return
@@ -450,7 +451,10 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 			  if (finalText) {
 			    // 兜底清洗：移除残留的 <invoke> XML 标记
 			    const cleanText = cleanXmlContent(finalText)
-			    messages.value.push({ id: 0, role: 'assistant', content: cleanText, created_at: new Date().toISOString() })
+			    const msg: MsgItem = { id: 0, role: 'assistant', content: cleanText, created_at: new Date().toISOString() }
+			    if (_lastRoundUsage) { msg.usage = _lastRoundUsage as UsageData }
+			    messages.value.push(msg)
+			    _lastRoundUsage = null
 			  }
 				  triggerDesktopRefresh()
 				  scrollToBottom()
@@ -621,16 +625,26 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 			          streamingText.value = replaceContent
 			        }
 			      }
-			      else if (etype === 'usage') {
-			        const wg = currentWorkGroup.value
-			        if (wg && evt.content) {
-			          try {
-			            const u = typeof evt.content === 'string' ? JSON.parse(evt.content) : evt
-			            const durMs = (u as Record<string, unknown>).work_duration_ms as number
-			            if (durMs) finishWorkGroup(durMs)
-			          } catch { /* ignore */ }
-			        }
-			      }
+				      else if (etype === 'usage') {
+				        const wg = currentWorkGroup.value
+				        if (wg && evt.content) {
+				          try {
+				            const u = typeof evt.content === 'string' ? JSON.parse(evt.content) : evt
+				            const durMs = (u as Record<string, unknown>).work_duration_ms as number
+				            if (durMs) finishWorkGroup(durMs)
+				          } catch { /* ignore */ }
+				        }
+				      }
+				      else if (etype === 'round_usage') {
+				        // 整轮累积 token 数：存到最近一条 assistant 消息的 usage 字段
+				        const u = evt as Record<string, unknown>
+				        const pt = Number(u.prompt_tokens) || 0
+				        const ct = Number(u.completion_tokens) || 0
+				        const tt = Number(u.total_tokens) || 0
+				        if (pt || ct || tt) {
+				          _lastRoundUsage = { prompt_tokens: pt, completion_tokens: ct, total_tokens: tt }
+				        }
+				      }
 			      else if (etype === 'thinking') {
 			        ensureWorkGroup()
 			        applyThinkingEvent(evt.content as string || '', currentWorkGroup.value?.items ?? messages.value, { isRestore: false })

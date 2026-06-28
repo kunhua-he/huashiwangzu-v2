@@ -126,6 +126,8 @@ class ToolLoopRuntime:
             budget_tracker.reset(_budget_session_key)
 
             _tool_round_tokens_before = 0
+            # Accumulate usage across all model calls in this turn
+            _accumulated_usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             emitter = StreamEmitter()
 
             for _round in range(_resume_from_step, self.policy.max_tool_rounds):
@@ -149,6 +151,13 @@ class ToolLoopRuntime:
                     self.profile_key,
                     bool(result.get("error")),
                 )
+
+                # ── Accumulate usage from each non-streaming call ──
+                _usage_res = result.get("usage") or {}
+                for _k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                    _v = _usage_res.get(_k, 0)
+                    if isinstance(_v, (int, float)):
+                        _accumulated_usage[_k] = (_accumulated_usage.get(_k, 0) or 0) + int(_v)
 
                 if result.get("error"):
                     error_msg = str(result["error"])
@@ -218,6 +227,13 @@ class ToolLoopRuntime:
                         )
                     else:
                         break
+
+                # ── Accumulate usage from streaming call ──────────
+                if emitter.usage_data:
+                    for _k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                        _v = emitter.usage_data.get(_k, 0)
+                        if isinstance(_v, (int, float)):
+                            _accumulated_usage[_k] = (_accumulated_usage.get(_k, 0) or 0) + int(_v)
 
                 # ── Record assistant turn in messages ───────────────
                 content_source = "".join(full) if full else (result.get("content") or "")
@@ -579,7 +595,7 @@ class ToolLoopRuntime:
             try:
                 logger.info("[DIAG] ToolLoopRuntime starting final persist")
                 async with AsyncSessionLocal() as s2:
-                    _usage = dict(emitter.usage_data) if emitter.usage_data else {}
+                    _usage = dict(_accumulated_usage) if _accumulated_usage.get("total_tokens") else (dict(emitter.usage_data) if emitter.usage_data else {})
                     work_duration_ms = round((time.time() - _work_start_time) * 1000)
                     _usage["work_duration_ms"] = work_duration_ms
                     _usage["work_duration_sec"] = round(work_duration_ms / 1000)
@@ -594,6 +610,10 @@ class ToolLoopRuntime:
                         "duration_ms": work_duration_ms,
                         "duration_sec": round(work_duration_ms / 1000, 3),
                     })
+
+                    # ── 发送整轮累积 token 数给前端 ────────────────
+                    if _accumulated_usage.get("total_tokens"):
+                        yield self._j_sse({"type": "round_usage", **dict(_accumulated_usage)})
 
                     # ── 计算每段思考耗时，写入 timeline ──────────
                     _work_end = time.time()

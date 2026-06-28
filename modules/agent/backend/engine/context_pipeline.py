@@ -174,16 +174,6 @@ async def _build_system_content(
     except Exception as e:
         logger.debug("Context vars injection failed (non-fatal): %s", e)
 
-    # ── 引用规范提示（减少幻觉） ──────────────────────────────
-    _cite_prompt = (
-        "\n## 回答规范\n"
-        "当你引用网络搜索、本地文件或知识库的内容时，请在回答正文中以 Markdown 链接格式标注出处。"
-        "例如：`[来源标题](来源URL)` 或 `[文件名.md]`。"
-    )
-    if total_chars < MAX_CHARS:
-        layers.append(_cite_prompt)
-        total_chars += len(_cite_prompt)
-
     # ── 工具调用指引（按 profile 差异化） ──────────────────────────
     if _profile and _profile.tool_usage_guide:
         guide = _profile.tool_usage_guide.strip()
@@ -202,6 +192,19 @@ async def _build_system_content(
                 "\n## 工具调用指引\n" + default_guide
             )
             total_chars += len(layers[-1])
+
+    # ── 引用规范提示（减少幻觉，放末尾以增加模型注意力） ────
+    _cite_prompt = (
+        "\n## 引用强制规则（必须遵守）\n"
+        "当你的回答引用了网络搜索结果时，必须在该句末尾附加 Markdown 链接：`[来源标题](完整URL)`。\n"
+        "当你的回答引用了本地文件时，必须标注文件名。\n"
+        "不允许在没有注明来源的情况下直接输出搜索结果或文件内容。\n"
+        "例如：正确 → \"根据巨量千川官方文档[营销创意榜](https://example.com)，可以找到对标视频。\"\n"
+        "错误 → \"根据搜索结果，可以找到对标视频。\"（缺少 URL）"
+    )
+    if total_chars < MAX_CHARS:
+        layers.append(_cite_prompt)
+        total_chars += len(_cite_prompt)
 
     return "\n\n".join(layers).strip()
 

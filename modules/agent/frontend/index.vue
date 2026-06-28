@@ -445,14 +445,21 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 				  for (const m of messages.value) {
 				    if (m.eventType === 'thinking') { m.collapsed = true; m.running = false }
 				  }
-				  const finalText = streamingText.value.trim()
-				  streamingText.value = ''
-				  if (finalText) {
-				    messages.value.push({ id: 0, role: 'assistant', content: finalText, created_at: new Date().toISOString() })
-				  }
+			  const finalText = streamingText.value.trim()
+			  streamingText.value = ''
+			  if (finalText) {
+			    // 兜底清洗：移除残留的 <invoke> XML 标记
+			    const cleanText = cleanXmlContent(finalText)
+			    messages.value.push({ id: 0, role: 'assistant', content: cleanText, created_at: new Date().toISOString() })
+			  }
 				  triggerDesktopRefresh()
 				  scrollToBottom()
 				}
+
+			/** 兜底清洗：移除内容中残留的 <invoke> XML 标记 */
+			function cleanXmlContent(text: string): string {
+			  return text.replace(/<\w*:?invoke[\s\S]*?<\/\w*:?invoke\s*>/gi, '').replace(/\n{3,}/g, '\n\n').trim()
+			}
 
 			/** 通知桌面 Shell 刷新文件列表 */
 			function triggerDesktopRefresh() {
@@ -589,7 +596,8 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 			      if (etype === 'content') {
 			        abortController = null
 			        streaming.value = false; sending.value = false
-			        messages.value.push({ id: 0, role: 'assistant', content: (evt.content as string) || '', created_at: new Date().toISOString() })
+			        const rawContent = (evt.content as string) || ''
+			        messages.value.push({ id: 0, role: 'assistant', content: cleanXmlContent(rawContent), created_at: new Date().toISOString() })
 			        finished = true
 			        reader.cancel().catch(() => {})
 			        break

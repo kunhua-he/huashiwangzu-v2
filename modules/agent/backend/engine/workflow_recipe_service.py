@@ -25,6 +25,90 @@ _SUCCESS_WEIGHT_SCALE = 20      # max success_weight before lowering boost
 _CONFIDENCE_MIN = 0.3            # below this: do not inject
 _TOP_N_INJECT = 2                # max recipes to inject per turn
 
+# Domain intent aliases for intranet/desktop agent tasks.
+# These are intentionally compact and rule-based. Embedding recall can be added later.
+_INTENT_ALIASES: dict[str, set[str]] = {
+    "desktop_file": {"桌面", "文件", "列表", "有什么", "打开", "查看", "xlsx", "docx", "excel", "word"},
+    "open_file": {"打开", "查看", "读取", "内容", "文件", "文档", "桌面", "预览"},
+    "generate_excel": {"excel", "xlsx", "表格", "生成", "导出", "输出", "汇总", "摘要"},
+    "replace_file": {"替换", "覆盖", "更新", "旧文件", "新文件", "桌面", "文件"},
+    "refresh_desktop": {"刷新", "桌面", "列表", "显示", "更新"},
+    "summarize_doc": {"总结", "摘要", "提炼", "概括", "文档", "内容", "分析"},
+    "search_knowledge": {"搜索", "查询", "知识库", "资料", "找一下", "检索"},
+    "create_doc": {"生成", "创建", "写", "文档", "docx", "word", "报告"},
+    "edit_doc": {"修改", "编辑", "改", "润色", "更新", "文档", "内容"},
+    "run_code": {"运行", "执行", "python", "脚本", "命令", "terminal", "终端"},
+}
+
+
+def _normalize_text(text: str) -> str:
+    return (text or "").lower().replace(" ", "").replace("　", "")
+
+
+def _char_ngrams(text: str, n: int = 2) -> set[str]:
+    text = _normalize_text(text)
+    if not text:
+        return set()
+    if len(text) <= n:
+        return {text}
+    return {text[i:i + n] for i in range(len(text) - n + 1)}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _keyword_score(query: str, target: str) -> float:
+    q = _normalize_text(query)
+    t = _normalize_text(target)
+    if not q or not t:
+        return 0.0
+    score = 0.0
+    if q in t or t in q:
+        score = max(score, 0.75)
+    score = max(score, _jaccard(_char_ngrams(q), _char_ngrams(t)))
+    return min(score, 1.0)
+
+
+def _intent_alias_score(query: str, target: str) -> float:
+    text = _normalize_text(query + target)
+    best = 0.0
+    for words in _INTENT_ALIASES.values():
+        q_hits = sum(1 for w in words if w in _normalize_text(query))
+        t_hits = sum(1 for w in words if w in _normalize_text(target))
+        if q_hits and t_hits:
+            best = max(best, min(1.0, (q_hits + t_hits) / (len(words) + 1)))
+        elif q_hits >= 2 and any(w in text for w in words):
+            best = max(best, min(0.6, q_hits / max(len(words), 1)))
+    return best
+
+
+def recipe_match_score(current_input: str, recipe: AgentWorkflowRecipe) -> float:
+    """Hybrid match score for workflow recipes.
+
+    Combines:
+      - exact/substring similarity
+      - Chinese character n-gram Jaccard
+      - domain alias overlap
+      - tool-name hints
+    """
+    targets = [
+        recipe.intent_label or "",
+        recipe.trigger_condition or "",
+        recipe.name or "",
+        recipe.description or "",
+        " ".join(str(t) for t in (recipe.tools_used or [])),
+    ]
+    best = 0.0
+    for target in targets:
+        if not target:
+            continue
+        best = max(best, _keyword_score(current_input, target))
+        best = max(best, _intent_alias_score(current_input, target))
+    return round(min(best, 1.0), 4)
+
 
 # =====================================================================
 # Scoring
@@ -206,22 +290,19 @@ async def match_recipes(
     if not recipes:
         return []
 
-    tokens = set(current_input.lower().split())
     scored: list[tuple[float, AgentWorkflowRecipe]] = []
 
     for r in recipes:
-        match_score = 0.0
-        label_tokens = set(r.intent_label.lower().split())
-        trigger_tokens = set(r.trigger_condition.lower().split())
-        name_tokens = set(r.name.lower().split())
+        match_score = recipe_match_score(current_input, r)
+        if match_score <= 0:
+            continue
 
-        overlap = tokens & (label_tokens | trigger_tokens | name_tokens)
-        if overlap:
-            match_score = len(overlap) / max(len(tokens), 1)
+        # Gate weak matches unless the recipe itself is very strong.
+        if match_score < 0.18 and (r.confidence or 0) < 0.6:
+            continue
 
-        if match_score > 0:
-            combined = match_score * 0.5 + r.confidence * 0.5
-            scored.append((combined, r))
+        combined = match_score * 0.6 + (r.confidence or 0) * 0.4
+        scored.append((combined, r))
 
     scored.sort(key=lambda x: x[0], reverse=True)
     return [r for _, r in scored[:top_n]]

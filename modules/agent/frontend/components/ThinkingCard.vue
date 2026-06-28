@@ -9,79 +9,24 @@
       </svg>
     </button>
     <div v-show="isOpen" class="th-body">
-      <span v-if="running && !displayedContent" class="th-waiting">思考中…</span>
-      <template v-else>{{ displayedContent }}<span v-if="running" class="th-cursor">|</span></template>
+      <span v-if="running && !normalizedContent" class="th-waiting">思考中…</span>
+      <template v-else>{{ normalizedContent }}<span v-if="running" class="th-cursor">|</span></template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = defineProps<{ content: string; running?: boolean; collapsed?: boolean; durationMs?: number }>()
 const isOpen = ref(!props.collapsed)
 
-let typeRaf: number | null = null
-const displayedContent = ref('')
-let targetContent = ''
-
+/** 去掉换行符，压缩连续空格，不引入新空格 */
 function normalize(text: string): string {
   return text.replace(/[\n\r]+/g, '').replace(/[ \t]{2,}/g, ' ').trim()
 }
 
-function startTyping() {
-  if (typeRaf) return
-  const step = () => {
-    const pos = displayedContent.value.length
-    if (pos < targetContent.length) {
-      displayedContent.value = targetContent.slice(0, pos + 1)
-      typeRaf = requestAnimationFrame(step)
-    } else {
-      typeRaf = null
-    }
-  }
-  typeRaf = requestAnimationFrame(step)
-}
-
-function stopTyping() {
-  if (typeRaf) { cancelAnimationFrame(typeRaf); typeRaf = null }
-}
-
-watch(
-  () => props.content,
-  (newVal) => {
-    const normalized = normalize(newVal || '')
-    if (normalized.length <= (targetContent || '').length) {
-      // 内容回缩（工具调用截断清洗）：直接跳到清洗后的内容
-      stopTyping()
-      targetContent = normalized
-      displayedContent.value = targetContent
-      return
-    }
-    targetContent = normalized
-    if (!props.running) {
-      stopTyping()
-      displayedContent.value = targetContent
-      return
-    }
-    // 流式追加
-    startTyping()
-  },
-  { immediate: true }
-)
-
-watch(
-  () => props.running,
-  (r) => {
-    if (!r) {
-      stopTyping()
-      displayedContent.value = targetContent || normalize(props.content || '')
-    }
-  }
-)
-
-onUnmounted(() => stopTyping())
-
+const normalizedContent = computed(() => normalize(props.content || ''))
 const durationText = computed(() => {
   if (props.running) return ''
   if (!props.durationMs) return ''

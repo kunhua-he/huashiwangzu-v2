@@ -283,8 +283,9 @@ async def _inject_context_layers(
     diagnosis: dict,
     current_user_input: str,
     owner_id: int,
+    db: AsyncSession,
 ) -> tuple[list[dict], dict]:
-    """Apply three-layer memory, workflow strategy, and success experience injection.
+    """Apply three-layer memory, workflow strategy, success experience, and workflow recipe injection.
 
     Each injector follows the same contract: inject(messages, diagnosis, ...) → (messages, diagnosis).
     New injectors can be added by importing a new module and calling it here.
@@ -292,6 +293,7 @@ async def _inject_context_layers(
     from .context_injectors import experience as _exp
     from .context_injectors import three_layer_memory
     from .context_injectors import workflow as _wf
+    from .context_injectors.workflow_recipe import inject as _recipe_inject
 
     messages, diagnosis = await three_layer_memory.inject(
         messages, diagnosis, owner_id=owner_id, current_user_input=current_user_input, logger=logger,
@@ -299,6 +301,9 @@ async def _inject_context_layers(
     messages, diagnosis = _wf.inject(messages, diagnosis, current_user_input=current_user_input)
     messages, diagnosis = await _exp.inject(
         messages, diagnosis, current_user_input=current_user_input, owner_id=owner_id, logger=logger,
+    )
+    messages, diagnosis = await _recipe_inject(
+        messages, diagnosis, db=db, owner_id=owner_id, current_input=current_user_input,
     )
     return messages, diagnosis
 
@@ -375,6 +380,6 @@ async def run_pipeline(
     diagnosis["effective_profile_key"] = effective_profile_key
 
     # Stage 8: Inject context layers
-    messages, diagnosis = await _inject_context_layers(messages, diagnosis, current_user_input, owner_id)
+    messages, diagnosis = await _inject_context_layers(messages, diagnosis, current_user_input, owner_id, db)
 
     return messages, diagnosis

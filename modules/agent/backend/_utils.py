@@ -26,43 +26,142 @@ def tool_calls_for_history(tool_calls: list[dict]) -> list[dict]:
     return normalized
 
 
+def _extract_web_search_refs(result: dict) -> list[dict]:
+    """Extract references from web-tools__search results."""
+    refs: list[dict] = []
+    results_list = result.get("results") if isinstance(result, dict) else []
+    if not isinstance(results_list, list):
+        return refs
+    for r in results_list:
+        if not isinstance(r, dict):
+            continue
+        title = r.get("title") or ""
+        url = r.get("url") or ""
+        snippet = r.get("snippet") or ""
+        if not title and not url:
+            continue
+        refs.append({
+            "type": "web",
+            "title": title or url,
+            "url": url,
+            "source": url,
+            "excerpt": snippet[:240] if snippet else "",
+        })
+    return refs
+
+
+def _extract_web_fetch_refs(result: dict) -> list[dict]:
+    """Extract references from web-tools__fetch results."""
+    if not isinstance(result, dict):
+        return []
+    title = result.get("title") or ""
+    url = result.get("url") or ""
+    text = result.get("text") or ""
+    if not url:
+        return []
+    return [{
+        "type": "web",
+        "title": title or url,
+        "url": url,
+        "source": url,
+        "excerpt": text[:240],
+    }]
+
+
+def _extract_knowledge_refs(result: dict) -> list[dict]:
+    """Extract references from knowledge__search results."""
+    refs: list[dict] = []
+    inner = result.get("data", result) if isinstance(result, dict) else {}
+    results_list = inner.get("results", []) if isinstance(inner, dict) else []
+    if not isinstance(results_list, list):
+        return refs
+    for r_item in results_list:
+        doc_name = r_item.get("document_name") or r_item.get("filename", "")
+        page = r_item.get("page")
+        excerpt = (r_item.get("text") or r_item.get("page_fusion", "") or "")[:240]
+        title_parts = []
+        if doc_name:
+            title_parts.append(doc_name)
+        if page is not None:
+            title_parts.append(f"第{page}页")
+        title = " ".join(title_parts) if title_parts else "知识库"
+        refs.append({
+            "type": "knowledge",
+            "title": title,
+            "source": doc_name or "知识库",
+            "excerpt": excerpt,
+        })
+    return refs
+
+
+def _extract_file_refs(name: str, result: dict) -> list[dict]:
+    """Extract references from file-reading tools (desktop-tools, docs-open, terminal-tools)."""
+    if not isinstance(result, dict):
+        return []
+    # desktop-tools__read_file
+    file_info = result.get("file")
+    if isinstance(file_info, dict):
+        filename = file_info.get("name") or ""
+        if filename:
+            return [{"type": "file", "title": filename, "source": filename, "excerpt": ""}]
+
+    # docs-open results
+    title = result.get("title") or ""
+    if title:
+        return [{"type": "file", "title": title, "source": title, "excerpt": ""}]
+
+    # terminal-tools__read_file
+    path = result.get("path") or ""
+    if path:
+        name_only = path.rsplit("/", 1)[-1]
+        return [{"type": "file", "title": name_only, "source": path, "excerpt": ""}]
+
+    return []
+
+
+# ── Tool-to-extractor dispatch table ───────────────────────────────
+_TOOL_EXTRACTORS: dict[str, callable] = {
+    "web-tools__search": _extract_web_search_refs,
+    "web-tools__fetch": _extract_web_fetch_refs,
+    "knowledge__search": _extract_knowledge_refs,
+}
+
+
 def references_from_tool_events(events: list[dict]) -> list[dict]:
     refs: list[dict] = []
     for event in events:
         if event.get("type") != "tool_result":
             continue
-        name = event.get("name", "tool") or ""
+        name = event.get("name", "") or ""
         result = event.get("result", {}) or {}
-        inner = result
-        if isinstance(inner, dict) and "data" in inner:
-            inner = inner["data"]
-        results_list = []
-        if isinstance(inner, dict):
-            results_list = inner.get("results", [])
-        elif isinstance(inner, list):
-            results_list = inner
-        if results_list:
-            for r_item in results_list:
-                doc_name = r_item.get("document_name") or r_item.get("filename", "")
-                page = r_item.get("page")
-                excerpt = (r_item.get("text") or r_item.get("page_fusion", "") or "")[:240]
-                title_parts = []
-                if doc_name:
-                    title_parts.append(doc_name)
-                if page is not None:
-                    title_parts.append(f"第{page}页")
-                title = " ".join(title_parts) if title_parts else "知识库"
-                refs.append({
-                    "type": "knowledge",
-                    "title": title,
-                    "source": doc_name or "知识库",
-                    "excerpt": excerpt,
-                })
-        else:
-            refs.append({
-                "type": "tool",
-                "title": name,
-                "source": name,
-                "excerpt": j(result)[:240],
-            })
+
+        # Dispatch by tool name prefix
+        extractor = _TOOL_EXTRACTORS.get(name)
+        if extractor:
+            extracted = extractor(result)
+            if extracted:
+                refs.extend(extracted)
+                continue
+
+        # File-reading tools (matched by prefix)
+        if name in ("desktop-tools__read_file",) or name.startswith("docs-open__") or name.startswith("terminal-tools__read_file"):
+            extracted = _extract_file_refs(name, result)
+            if extracted:
+                refs.extend(extracted)
+                continue
+
+        # Knowledge-related tools that return results in standard shape
+        # (knowledge__get_block, knowledge__get_page_fusion, etc.)
+        knowledge_refs = _extract_knowledge_refs(result)
+        if knowledge_refs:
+            refs.extend(knowledge_refs)
+            continue
+
+        # Generic fallback
+        refs.append({
+            "type": "tool",
+            "title": name,
+            "source": name,
+            "excerpt": j(result)[:240],
+        })
     return refs

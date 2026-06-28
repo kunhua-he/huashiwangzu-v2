@@ -32,7 +32,12 @@
             <path d="M6 4L2 8l4 4M10 4l4 4-4 4"/>
           </svg>
         </div>
-        <strong class="ref-card-title">{{ r.title || r.source }}</strong>
+        <strong class="ref-card-title">
+          <template v-if="r.type === 'web' && r.url">
+            <a :href="r.url" target="_blank" rel="noopener" class="ref-card-link" @click.stop>{{ r.title || r.url }}</a>
+          </template>
+          <template v-else>{{ r.title || r.source }}</template>
+        </strong>
         <p class="ref-card-excerpt" v-if="r.excerpt">{{ r.excerpt }}</p>
       </article>
     </div>
@@ -49,7 +54,7 @@
    select: [ref: RefItem]
  }>()
 
- interface RefItem { type: string; title: string; source: string; excerpt: string }
+ interface RefItem { type: string; title: string; source: string; excerpt: string; url?: string }
 </script>
 
 <style scoped>
@@ -159,6 +164,11 @@
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-  overflow: hidden;
+	  overflow: hidden;
+	}
+.ref-card-link {
+  color: var(--ag-primary);
+  text-decoration: none;
 }
+.ref-card-link:hover { text-decoration: underline; }
 </style>

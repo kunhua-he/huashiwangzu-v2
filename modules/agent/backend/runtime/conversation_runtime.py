@@ -210,6 +210,7 @@ class ConversationRuntime:
             profile_key=profile_key,
             policy=self.policy,
             suppress_thinking=(engine_diag.get("thinking_level") == "none") if not channel_values else False,
+            user_role=user.role,
         )
 
         async def _event_stream():
@@ -357,6 +358,7 @@ class ConversationRuntime:
             profile_key=profile_key,
             policy=self.policy,
             suppress_thinking=engine_diag.get("thinking_level") == "none",
+            user_role=user.role,
         )
 
         async def _event_stream():

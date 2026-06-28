@@ -75,12 +75,14 @@ class ToolLoopRuntime:
         profile_key: str = "deepseek-v4-flash",
         policy: RuntimePolicy | None = None,
         suppress_thinking: bool = False,
+        user_role: str = "viewer",
     ) -> None:
         self.conversation_id = conversation_id
         self.owner_id = owner_id
         self.profile_key = profile_key
         self.policy = policy or RuntimePolicy.default()
         self.suppress_thinking = suppress_thinking
+        self.user_role = user_role
 
     async def run(
         self,
@@ -319,7 +321,7 @@ class ToolLoopRuntime:
                         tool_name=tool["slow_name"],
                         skill_args=tool["args"],
                         caller=f"user:{self.owner_id}",
-                        caller_role="viewer",  # pragmatic default
+                        caller_role=self.user_role,
                     )
                     tool_result = {
                         "background": True,
@@ -404,17 +406,18 @@ class ToolLoopRuntime:
                             return await tool_discovery.handle_skill_use(
                                 tool["args"],
                                 caller=f"user:{self.owner_id}",
-                                caller_role="admin",
+                                caller_role=self.user_role,
                             )
                         else:
                             from app.services.module_registry import call_capability
                             module_key, action = tool_discovery.parse_tool_name(
                                 tool["name"],
                             )
+                            caller = f"user:{self.owner_id}" if self.owner_id else "system:tool-loop"
                             return await call_capability(
-                                module_key, action, tool["args"],
-                                caller=f"user:{self.owner_id}",
-                                caller_role="admin",
+                                module_key, action, tool.get("args") or tool.get("arguments", {}),
+                                caller=caller,
+                                caller_role=self.user_role,
                             )
 
                     orchestrator_tools = [

@@ -40,7 +40,7 @@
           <WorkTraceGroup v-if="m.eventType === 'work_group'" :message="m" />
           <ToolCallCard v-else-if="m.eventType === 'tool_call' || m.eventType === 'tool_result'" :message="m" />
           <ThinkingCard v-else-if="m.eventType === 'thinking'" :content="m.content" :running="m.running" :collapsed="m.collapsed" :durationMs="m.durationMs" />
-          <MessageBubble v-else :message="m" :editingId="editingMessageId" @edit="handleStartEdit" @submitEdit="handleSubmitEdit" />
+          <MessageBubble v-else :message="m" :editingId="editingMessageId" @edit="handleStartEdit" @submitEdit="handleSubmitEdit" @showReferences="(refs: RefItem[]) => focusReference(refs)" />
         </template>
 
         <!-- 流式输出指示器 -->
@@ -94,7 +94,7 @@ import './components/style-variables.css'
 // ── 类型 ──
 interface ConvItem { id: number; title: string; status?: string }
 interface ModelProfile { key: string; name: string; provider: string; model: string }
-interface RefItem { type: string; title: string; source: string; excerpt: string }
+interface RefItem { type: string; title: string; source: string; excerpt: string; url?: string }
 interface ApiBody<T> { success: boolean; data: T; error?: string | null }
 interface UsageData { work_duration_ms?: number; work_duration_sec?: number; [key: string]: unknown }
 interface MsgItem {
@@ -243,8 +243,13 @@ function scrollToBottom() {
   nextTick(() => { if (msgArea.value) msgArea.value.scrollTop = msgArea.value.scrollHeight })
 }
 
-function focusReference(ref: RefItem) {
-  activeReference.value = ref; showReferencePanel.value = true
+function focusReference(ref: RefItem | RefItem[]) {
+  if (Array.isArray(ref)) {
+    activeReference.value = ref[0] || null
+    showReferencePanel.value = true
+  } else {
+    activeReference.value = ref; showReferencePanel.value = true
+  }
 }
 
 /** 按 timeline 展开历史消息：还原思考↔工具↔回复的真实交错顺序，并用工作组包裹 */

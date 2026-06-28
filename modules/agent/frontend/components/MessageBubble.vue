@@ -57,6 +57,9 @@
         <span v-if="message.usage" class="msg-usage">
           <span>入{{ message.usage.prompt_tokens }} 出{{ message.usage.completion_tokens }} 总计{{ message.usage.total_tokens }}</span>
         </span>
+        <button v-if="message.references?.length" class="msg-ref-btn" title="查看来源" @click="$emit('showReferences', message.references)">
+          📎 {{ message.references.length }} 个来源
+        </button>
         <span class="msg-actions">
           <button class="msg-action-btn" title="复制" @click="copyContent">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><rect x="4" y="4" width="10" height="10" rx="1"/><path d="M12 4V3a1 1 0 00-1-1H3a1 1 0 00-1 1v8a1 1 0 001 1h1"/></svg>
@@ -83,6 +86,7 @@ interface UsageInfo {
   work_duration_sec?: number
   work_duration_ms?: number
 }
+interface RefItem { type: string; title: string; source: string; excerpt: string; url?: string }
 interface MsgItem {
   id: number
   role: string
@@ -91,10 +95,11 @@ interface MsgItem {
   thinking?: string
   tool_events?: unknown[]
   usage?: UsageInfo | null
+  references?: RefItem[]
 }
-
+	
 const props = defineProps<{ message: MsgItem; editingId?: number | null }>()
-const emit = defineEmits<{ edit: [messageId: number, content: string]; submitEdit: [messageId: number, content: string] }>()
+const emit = defineEmits<{ edit: [messageId: number, content: string]; submitEdit: [messageId: number, content: string]; showReferences: [refs: RefItem[]] }>()
 
 const isEditing = computed(() => props.message.role === 'user' && props.message.id === props.editingId && !!props.editingId)
 const editText = ref('')
@@ -478,4 +483,14 @@ function formatTime(iso?: string | null): string {
 }
 .msg-edit-ok:hover { color: var(--ag-primary); border-color: var(--ag-primary); }
 .msg-edit-cancel:hover { color: var(--ag-error); border-color: var(--ag-error); }
+
+.msg-ref-btn {
+  border: none; background: none; cursor: pointer;
+  font-size: var(--ag-font-size-xs);
+  color: var(--ag-primary);
+  padding: 0 2px;
+  transition: opacity var(--ag-transition-fast);
+  white-space: nowrap;
+}
+.msg-ref-btn:hover { opacity: 0.8; text-decoration: underline; }
 </style>

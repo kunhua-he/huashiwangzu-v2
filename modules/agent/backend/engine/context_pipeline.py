@@ -174,6 +174,15 @@ async def _build_system_content(
     except Exception as e:
         logger.debug("Context vars injection failed (non-fatal): %s", e)
 
+    # ── 引用规范提示（减少幻觉） ──────────────────────────────
+    _cite_prompt = (
+        "\n## 回答规范\n"
+        "当你回答来自搜索、文件或知识库的内容时，请在末尾标注【来源：xxx】。"
+    )
+    if total_chars < MAX_CHARS:
+        layers.append(_cite_prompt)
+        total_chars += len(_cite_prompt)
+
     # ── 工具调用指引（按 profile 差异化） ──────────────────────────
     if _profile and _profile.tool_usage_guide:
         guide = _profile.tool_usage_guide.strip()

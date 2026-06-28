@@ -303,7 +303,7 @@ function expandTimeline(msgs: MsgItem[]): MsgItem[] {
 
     const content = textBuf.trim() || m.content
     if (content) {
-      out.push({ id: m.id, role: m.role, content, created_at: m.created_at, thinking: '', tool_events: [], references: m.references } as MsgItem)
+      out.push({ id: m.id, role: m.role, content, created_at: m.created_at, thinking: '', tool_events: [], references: m.references, usage: m.usage } as MsgItem)
     }
   }
   return out

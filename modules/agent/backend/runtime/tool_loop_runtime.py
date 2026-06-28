@@ -221,19 +221,24 @@ class ToolLoopRuntime:
                             yield chunk
                     if inline_from_stream:
                         tool_calls = inline_from_stream
+                        # ── Accumulate usage for inline case too ──
+                        if emitter.usage_data:
+                            for _k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                                _v = emitter.usage_data.get(_k, 0)
+                                if isinstance(_v, (int, float)):
+                                    _accumulated_usage[_k] = (_accumulated_usage.get(_k, 0) or 0) + int(_v)
                         logger.info(
                             "[DIAG] ToolLoopRuntime re-entering with %d inline calls",
                             len(tool_calls),
                         )
                     else:
+                        # ── Accumulate usage BEFORE break ──────────
+                        if emitter.usage_data:
+                            for _k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                                _v = emitter.usage_data.get(_k, 0)
+                                if isinstance(_v, (int, float)):
+                                    _accumulated_usage[_k] = (_accumulated_usage.get(_k, 0) or 0) + int(_v)
                         break
-
-                # ── Accumulate usage from streaming call ──────────
-                if emitter.usage_data:
-                    for _k in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                        _v = emitter.usage_data.get(_k, 0)
-                        if isinstance(_v, (int, float)):
-                            _accumulated_usage[_k] = (_accumulated_usage.get(_k, 0) or 0) + int(_v)
 
                 # ── Record assistant turn in messages ───────────────
                 content_source = "".join(full) if full else (result.get("content") or "")

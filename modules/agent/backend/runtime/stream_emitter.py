@@ -17,7 +17,6 @@ import time
 
 from ..engine.engine import chat_stream_with_degradation_chain
 from ..engine.failure_diagnostics import record_failure
-from ..services.model_client import parse_inline_tool_calls
 
 logger = logging.getLogger("v2.agent").getChild("runtime.stream_emitter")
 
@@ -87,9 +86,11 @@ class StreamEmitter:
                     event_count, event_type, len(content),
                 )
                 if event_type == "thinking" and content and not suppress_thinking:
-                    thinking_parts.append(content)
-                    tl.append({"type": "thinking", "content": content, "started_at": time.time()})
-                    yield self._sse("thinking", content)
+                    from ..services.model_client import parse_inline_tool_calls
+                    clean, _ = parse_inline_tool_calls(content)
+                    thinking_parts.append(clean)
+                    tl.append({"type": "thinking", "content": clean, "started_at": time.time()})
+                    yield self._sse("thinking", clean)
                 elif event_type in ("token", "content") and content:
                     full.append(content)
                     tl.append({"type": "text", "content": content, "started_at": time.time()})

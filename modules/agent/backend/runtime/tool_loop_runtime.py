@@ -161,7 +161,9 @@ class ToolLoopRuntime:
                     clean_thinking, _ = parse_inline_tool_calls(thinking)
                     thinking_parts.append(clean_thinking)
                     timeline.append({"type": "thinking", "content": clean_thinking, "started_at": time.time()})
-                    yield self._sse("thinking", clean_thinking)
+                    # 拆为小块分帧发送，前端自然拼接产生流式效果（无延时、不限速）
+                    for i in range(0, len(clean_thinking), 10):
+                        yield self._sse("thinking", clean_thinking[i:i + 10])
                 elif self.suppress_thinking and (result.get("tool_calls") or result.get("finish_reason") == "tool_calls"):
                     # 思考被省略时，仍发一个占位提示，避免工作组空荡荡
                     placeholder = "（思考已省略）"
@@ -742,8 +744,10 @@ class ToolLoopRuntime:
                 timeline.append({"type": "text", "content": content})
                 yield self._sse("token", content)
             elif event_type == "thinking" and content:
-                timeline.append({"type": "thinking", "content": content})
-                yield self._sse("thinking", content)
+                from ..services.model_client import parse_inline_tool_calls
+                clean, _ = parse_inline_tool_calls(content)
+                timeline.append({"type": "thinking", "content": clean})
+                yield self._sse("thinking", clean)
             elif event_type == "error" and content:
                 yield self._sse("error", content)
             elif event_type == "done":

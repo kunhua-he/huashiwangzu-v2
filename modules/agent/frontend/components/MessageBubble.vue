@@ -49,7 +49,7 @@
 
       <div class="msg-footer">
         <time class="msg-time">{{ formatTime(message.created_at) }}</time>
-        <span v-if="message.usage" class="msg-usage">
+        <span v-if="message.usage && message.content.trim()" class="msg-usage">
           <span class="token-badge token-in" title="输入（完整上下文）">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="10" height="10"><path d="M8 2v8M4 7l4 4 4-4M2 13h12"/></svg>
             {{ message.usage.prompt_tokens?.toLocaleString() }}

@@ -413,35 +413,44 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 		}
 
 			/** 将 streamingText 落成 assistant 消息 + 折叠工作组 */
-				function flushStreamingAsMessage() {
-				  stopWorkTimer()
-				  closeLastThinking()
-				  const wg = currentWorkGroup.value
-				  if (wg) { wg.running = false; wg.collapsed = true }
-				  // 也折叠工作组内的思考和工具条目
-				  if (wg?.items) {
-				    for (const item of wg.items) {
-				      if (item.eventType === 'thinking') { item.collapsed = true; item.running = false }
-				    }
-				  }
-				  for (const m of messages.value) {
-				    if (m.eventType === 'thinking') { m.collapsed = true; m.running = false }
-				  }
+			function flushStreamingAsMessage() {
+			  stopWorkTimer()
+			  closeLastThinking()
+			  const wg = currentWorkGroup.value
+			  if (wg) { wg.running = false; wg.collapsed = true }
+			  // 也折叠工作组内的思考和工具条目
+			  if (wg?.items) {
+			    for (const item of wg.items) {
+			      if (item.eventType === 'thinking') { item.collapsed = true; item.running = false }
+			    }
+			  }
+			  for (const m of messages.value) {
+			    if (m.eventType === 'thinking') { m.collapsed = true; m.running = false }
+			  }
 			  const finalText = streamingText.value.trim()
 			  streamingText.value = ''
-			  if (finalText) {
-			    // 兜底清洗：移除残留的 <invoke> XML 标记
-			    const cleanText = cleanXmlContent(finalText)
-			    const msg: MsgItem = { id: 0, role: 'assistant', content: cleanText, created_at: new Date().toISOString() }
-			    if (_lastRoundUsage) { msg.usage = _lastRoundUsage as UsageData }
-			    messages.value.push(msg)
-			    _lastRoundUsage = null
-			  }
-				  triggerDesktopRefresh()
-				  scrollToBottom()
-				}
+			  commitAssistantMessage({ content: finalText, usage: _lastRoundUsage })
+			  _lastRoundUsage = null
+			  triggerDesktopRefresh()
+			  scrollToBottom()
+			}
 
-				/** 兜底清洗：移除内容中残留的工具调用标记 */
+			/** 统一 assistant 消息提交：清洗内容、判空、挂 usage */
+			function commitAssistantMessage(opts: { content: string; usage?: UsageData | null; references?: RefItem[]; createdAt?: string }) {
+			  const cleanText = cleanXmlContent(opts.content)
+			  if (!cleanText) return
+			  const msg: MsgItem = {
+			    id: 0,
+			    role: 'assistant',
+			    content: cleanText,
+			    created_at: opts.createdAt || new Date().toISOString(),
+			  }
+			  if (opts.usage) { msg.usage = opts.usage }
+			  if (opts.references?.length) { msg.references = opts.references }
+			  messages.value.push(msg)
+			}
+
+			/** 兜底清洗：移除内容中残留的工具调用标记 */
 				function cleanXmlContent(text: string): string {
 				  const normalized = text
 				    .replace(/<｜｜DSML｜｜/g, '<')
@@ -590,7 +599,7 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 			        abortController = null
 			        streaming.value = false; sending.value = false
 			        const rawContent = (evt.content as string) || ''
-			        messages.value.push({ id: 0, role: 'assistant', content: cleanXmlContent(rawContent), created_at: new Date().toISOString() })
+			        commitAssistantMessage({ content: rawContent, createdAt: new Date().toISOString() })
 			        finished = true
 			        reader.cancel().catch(() => {})
 			        break
@@ -610,9 +619,7 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 			          const rp = typeof evt.content === 'string' ? JSON.parse(evt.content) : evt
 			          replaceContent = (rp as Record<string, unknown>).content as string || ''
 			        } catch { replaceContent = (evt.content as string) || '' }
-			        if (replaceContent) {
-			          streamingText.value = replaceContent
-			        }
+			        streamingText.value = replaceContent  // 即使是空字符串也要覆盖清空
 			      }
 				      else if (etype === 'usage') {
 				        const wg = currentWorkGroup.value

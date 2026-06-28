@@ -646,9 +646,7 @@ class ToolLoopRuntime:
                         "duration_sec": round(work_duration_ms / 1000, 3),
                     })
 
-                    # ── 发送整轮累积 token 数给前端 ────────────────
-                    if _accumulated_usage.get("total_tokens"):
-                        yield self._j_sse({"type": "round_usage", **dict(_accumulated_usage)})
+                    # round_usage 下移到 persist_assistant 判断后（只在 msg_id 存在时下发）
 
                     # ── 计算每段思考耗时，写入 timeline ──────────
                     _work_end = time.time()
@@ -687,8 +685,14 @@ class ToolLoopRuntime:
                         thinking_parts, tool_events, timeline,
                         usage=_usage,
                     )
-                    if msg_id and _round_references:
-                        yield self._j_sse({"type": "references", "references": _round_references})
+
+                    if msg_id:
+                        if _accumulated_usage.get("total_tokens"):
+                            yield self._j_sse({"type": "round_usage", **dict(_accumulated_usage)})
+                        if _round_references:
+                            yield self._j_sse({"type": "references", "references": _round_references})
+                    else:
+                        yield self._j_sse({"type": "assistant_empty", "reason": "empty_after_clean"})
 
                     # Ensure assistant_msg event for final content
                     if msg_id and full:

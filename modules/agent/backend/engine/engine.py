@@ -1,20 +1,16 @@
 """engine编排壳：暴露装配上下文()等给 router。批4：compressor、fallback_chain接入。批5：工具编排、三层记忆、快照、skills注入。"""
 import json
 import logging
-import os
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..services import conversation_service as conv_svc
-from .budget_allocator import DiminishingBudgetTracker, estimate_tokens, get_context_budget
-from .budget_allocator import assemble_context as _budget_assemble_context
+from .budget_allocator import DiminishingBudgetTracker
 from .compressor import compress_middle_with_snapshot as _compress_with_snapshot
 from .compressor import hard_truncate_tail as _hard_truncate_tail
-from .event_store import project_to_messages, read_events
+from .event_store import read_events
 from .experience_memory import experience_feedback as _experience_feedback
-from .experience_memory import format_injection as _experience_format
-from .experience_memory import match_experience as _experience_match
 from .experience_memory import save_experience as _experience_save
 from .fallback_chain import chat_stream_with_fallback as _chat_stream_with_fallback
 from .fallback_chain import chat_with_fallback as _chat_with_fallback
@@ -23,15 +19,8 @@ from .layered_memory import fuse as _layered_memory_fuse
 from .layered_memory import read_static_memory_files as _read_static_memory_files
 from .layered_memory import recall as _layered_memory_recall
 from .layered_memory import record as _layered_memory_record
-from .layered_memory import three_layer_recall as _three_layer_recall
 from .post_turn_hooks import PostTurnHooks
-from .skills_loader import find_skills as _find_skills
-from .skills_loader import format_skills_for_prompt as _format_skills
-from .skills_loader import match_skills as _match_skills
-from .skills_loader import resolve_skill_priority as _resolve_skill_priority
-from .thinking_router import route_thinking_level
 from .tool_orchestrator import ToolOrchestrator
-from .workflow_strategy import apply_workflow_injection as _apply_workflow_injection
 
 logger = logging.getLogger("v2.agent").getChild("engine.engine")
 
@@ -48,157 +37,13 @@ async def assemble_context(
     owner_id: int,
     agent_code: str = "erp_chat",
 ) -> tuple[list[dict], dict]:
-    # Read agent config for parameter overrides
-    agent_cfg = None
-    try:
-        agent_cfg = await read_agent_config(db, agent_code)
-    except Exception as e:
-        logger.warning("读取 agent config 失败: %s", e)
+    """Context assembly pipeline. Delegates to context_pipeline.run_pipeline().
 
-    # Resolve effective profile_key: agent config model > caller profile_key > default
-    effective_profile_key = profile_key
-    if agent_cfg and agent_cfg.get("model"):
-        effective_profile_key = agent_cfg["model"]
+    Each stage is independently testable. See context_pipeline.py for stage details.
+    """
+    from .context_pipeline import run_pipeline
+    return await run_pipeline(db, conversation_id, current_user_input, profile_key, owner_id, agent_code)
 
-    try:
-        projected = await project_to_messages(db, conversation_id)
-        all_events = await read_events(db, conversation_id) if projected else []
-    except Exception as e:
-        logger.warning("投影事件失败，回退空投影: %s", e)
-        projected = []
-        all_events = []
-
-    # ── 批4：预算超限时调compressor ──────────────────────────────────────────
-    try:
-        thinking_route = await route_thinking_level(
-            db,
-            current_user_input,
-            owner_id=owner_id,
-            conversation_id=conversation_id,
-            profile_key=effective_profile_key,
-            agent_code=agent_code,
-        )
-    except Exception as e:
-        logger.warning("Thinking routing failed（non-fatal）: %s", e)
-        thinking_route = None
-
-    try:
-        system_content = await _build_system_content(db, owner_id, conversation_id, agent_code, profile_key=effective_profile_key)
-    except Exception as e:
-        logger.warning("构建系统提示词失败: %s", e)
-        system_content = "You are a helpful AI assistant."
-
-    if thinking_route:
-        thinking_diag = {
-            "thinking_level": thinking_route.level,
-            "thinking_source": thinking_route.source,
-            "thinking_confidence": thinking_route.confidence,
-            "thinking_reason": thinking_route.reason,
-        }
-        if thinking_route.level and thinking_route.level != "medium":
-            system_content += f"\n\n【思考深度建议】建议思考等级：{thinking_route.level}"
-    else:
-        thinking_diag = {
-            "thinking_level": "medium",
-            "thinking_source": "fallback",
-            "thinking_confidence": 0.0,
-            "thinking_reason": "routing unavailable",
-        }
-
-    budget = get_context_budget(effective_profile_key)
-    projected_tokens = sum(
-        max(estimate_tokens([m]), 0) for m in projected[-100:]
-    ) if projected else 0
-    system_tokens = max(len(system_content) // 2, 0)
-    input_tokens = max(len(current_user_input) // 2, 0)
-    estimated_total = system_tokens + input_tokens + projected_tokens + 4096
-
-    if budget is not None and estimated_total > budget + _COMPRESSION_TOKEN_HEADROOM and len(all_events) > 30:
-        try:
-            logger.info("预算超限(est=%d > budget=%d), 触发压缩(含快照)", estimated_total, budget)
-            result = await _compress_with_snapshot(db, conversation_id, all_events, projected, effective_profile_key)
-            if result.get("status") == "compressed":
-                projected = await project_to_messages(db, conversation_id)
-                logger.info("压缩后投影完毕, 事件数=%d", len(projected))
-        except Exception as e:
-            logger.warning("压缩失败（降级到硬截断）: %s", e)
-            try:
-                await _hard_truncate_tail(db, conversation_id, all_events)
-                projected = await project_to_messages(db, conversation_id)
-            except Exception as e2:
-                logger.warning("硬截断也失败: %s", e2)
-
-    # ── 批5：skills注入（带scope优先级解析） ──────────────────────
-    try:
-        skill_base = os.environ.get("SKILLS_DIR", "data/skills")
-        all_skills = _find_skills(skill_base, scope="global")
-        workspace_path = os.environ.get("CURRENT_PATH", "")
-        if workspace_path:
-            workspace_skills_dir = os.path.join(workspace_path, ".agent-skills")
-            if os.path.isdir(workspace_skills_dir):
-                ws_skills = _find_skills(workspace_skills_dir, scope="workspace")
-                all_skills.extend(ws_skills)
-        # Deduplicate by priority (workspace > project > global, then explicit priority)
-        all_skills = _resolve_skill_priority(all_skills)
-        matched = _match_skills(all_skills, workspace_path)
-        skill_injection = _format_skills(matched)
-        if skill_injection and system_content:
-            system_content += "\n\n---\n\n<available_skills>\n" + skill_injection + "\n</available_skills>"
-    except Exception as e:
-        logger.warning("skills注入失败（non-fatal）: %s", e)
-
-    try:
-        messages, diagnosis = _budget_assemble_context(projected, system_content, current_user_input, effective_profile_key)
-    except Exception as e:
-        logger.warning("预算装配失败，回退原始投影+截尾: %s", e)
-        messages = [{"role": "system", "content": system_content}]
-        messages.extend(projected[-48:] if len(projected) > 48 else projected)
-        diagnosis = {"error": str(e), "fallback": "原始投影截尾"}
-    diagnosis.update(thinking_diag)
-    diagnosis["agent_code"] = agent_code
-    diagnosis["effective_profile_key"] = effective_profile_key
-
-    # ── 三层记忆注入（批5）：稳定规则 + chunk + 语义记忆 ──────────
-    try:
-        three_layer = await _three_layer_recall(owner_id, current_user_input)
-        if three_layer.get("injection") and messages:
-            for msg in messages:
-                if msg["role"] == "system":
-                    msg["content"] += "\n\n---\n\n" + three_layer["injection"]
-                    break
-            diagnosis["three_layer_memory"] = {
-                "stable_rules": len(three_layer.get("stable_rules", [])),
-                "chunks": len(three_layer.get("chunks", [])),
-                "semantic": len(three_layer.get("semantic", [])),
-            }
-    except Exception as e:
-        logger.warning("三层记忆注入失败（non-fatal）: %s", e)
-        diagnosis["three_layer_memory"] = f"降级: {e}"
-
-    # ── 项目工作流约束注入（workflow_strategy）：检测项目关键词，注入工作流指引 ──
-    wf_diag = _apply_workflow_injection(current_user_input, messages)
-    diagnosis["workflow_injected"] = wf_diag.get("workflow_injected", False)
-    if wf_diag.get("workflow_label"):
-        diagnosis["workflow_label"] = wf_diag["workflow_label"]
-
-    # ── 成功经验注入（批3）：语义匹配当前输入，注入 known success path ──
-    try:
-        matched = await _experience_match(current_user_input, limit=2, caller=f"user:{owner_id}")
-        injection = _experience_format(matched)
-        if injection and messages:
-            for msg in messages:
-                if msg["role"] == "system":
-                    msg["content"] += injection
-                    break
-            diagnosis["experience_injected"] = [e["id"] for e in matched if e.get("id")]
-            diagnosis["experience_injection"] = "成功注入" if injection else "无命中"
-        else:
-            diagnosis["experience_injection"] = "无命中"
-    except Exception as e:
-        logger.warning("经验注入失败（降级，不阻塞）: %s", e)
-        diagnosis["experience_injection"] = f"降级: {e}"
-
-    return messages, diagnosis
 
 
 async def read_agent_config(db: AsyncSession, agent_code: str) -> dict | None:

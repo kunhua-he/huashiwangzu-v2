@@ -1,0 +1,402 @@
+"""上下文管线编排壳：将 Agent 上下文组装拆为显式 stage。
+
+Phase 1 目标：在保持 behavior 完全一致的前提下，用 stage 标记替代 flat function。
+后续 phase 将每个 stage 逐步抽到独立文件中。
+"""
+import logging
+import os
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..services import conversation_service as conv_svc
+from .budget_allocator import assemble_context as _budget_assemble_context
+from .budget_allocator import estimate_tokens, get_context_budget
+from .compressor import compress_middle_with_snapshot as _compress_with_snapshot
+from .compressor import hard_truncate_tail as _hard_truncate_tail
+from .event_store import project_to_messages, read_events
+from .experience_memory import format_injection as _experience_format
+from .experience_memory import match_experience as _experience_match
+from .layered_memory import three_layer_recall as _three_layer_recall
+from .skills_loader import find_skills as _find_skills
+from .skills_loader import format_skills_for_prompt as _format_skills
+from .skills_loader import match_skills as _match_skills
+from .skills_loader import resolve_skill_priority as _resolve_skill_priority
+from .thinking_router import route_thinking_level
+from .workflow_strategy import apply_workflow_injection as _apply_workflow_injection
+
+logger = logging.getLogger("v2.agent").getChild("engine.pipeline")
+
+_COMPRESSION_TOKEN_HEADROOM = 5000
+
+
+async def read_agent_config(db: AsyncSession, agent_code: str) -> dict | None:
+    """Read agent config from agent_configs table.
+
+    Returns None if no config found for the given agent_code.
+    """
+    try:
+        from ..models import AgentConfig
+        r = await db.execute(
+            select(AgentConfig).where(AgentConfig.agent_code == agent_code)
+        )
+        c = r.scalar_one_or_none()
+        if not c:
+            return None
+        return {
+            "agent_code": c.agent_code,
+            "agent_name": c.agent_name,
+            "provider": c.provider,
+            "model": c.model,
+            "system_prompt": c.system_prompt,
+            "enabled": c.enabled,
+            "temperature": c.temperature,
+            "top_p": c.top_p,
+            "max_tokens": c.max_tokens,
+            "timeout_ms": c.timeout_ms,
+            "fallback_model": c.fallback_model,
+            "fallback_enabled": c.fallback_enabled,
+            "max_concurrency": c.max_concurrency,
+            "cooldown_seconds": c.cooldown_seconds,
+            "retry_count": c.retry_count,
+            "daily_call_limit": c.daily_call_limit,
+            "daily_budget": c.daily_budget,
+            "monthly_budget": c.monthly_budget,
+            "response_format": c.response_format,
+            "log_prompt_enabled": c.log_prompt_enabled,
+            "log_response_enabled": c.log_response_enabled,
+            "sensitive_action_policy": c.sensitive_action_policy,
+            "updated_by": c.updated_by,
+        }
+    except Exception as e:
+        logger.warning("Failed to read agent config for '%s': %s", agent_code, e)
+        return None
+
+
+# =====================================================================
+# Stage 1: Resolve agent config and effective profile key
+# =====================================================================
+def _resolve_effective_profile(agent_cfg: dict | None, profile_key: str) -> str:
+    if agent_cfg and agent_cfg.get("model"):
+        return agent_cfg["model"]
+    return profile_key
+
+
+# =====================================================================
+# Stage 2: Project events → model messages
+# =====================================================================
+async def _project_history(
+    db: AsyncSession,
+    conversation_id: int,
+) -> tuple[list[dict], list[dict]]:
+    projected: list[dict] = []
+    all_events: list[dict] = []
+    try:
+        projected = await project_to_messages(db, conversation_id)
+        all_events = await read_events(db, conversation_id) if projected else []
+    except Exception as e:
+        logger.warning("投影事件失败，回退空投影: %s", e)
+    return projected, all_events
+
+
+# =====================================================================
+# Stage 3: Thinking routing
+# =====================================================================
+async def _route_thinking(
+    db: AsyncSession,
+    current_user_input: str,
+    owner_id: int,
+    conversation_id: int,
+    profile_key: str,
+    agent_code: str,
+) -> tuple[dict, dict | None]:
+    thinking_route = None
+    try:
+        thinking_route = await route_thinking_level(
+            db,
+            current_user_input,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            profile_key=profile_key,
+            agent_code=agent_code,
+        )
+    except Exception as e:
+        logger.warning("Thinking routing failed（non-fatal）: %s", e)
+
+    if thinking_route:
+        diag = {
+            "thinking_level": thinking_route.level,
+            "thinking_source": thinking_route.source,
+            "thinking_confidence": thinking_route.confidence,
+            "thinking_reason": thinking_route.reason,
+        }
+    else:
+        diag = {
+            "thinking_level": "medium",
+            "thinking_source": "fallback",
+            "thinking_confidence": 0.0,
+            "thinking_reason": "routing unavailable",
+        }
+    return diag, thinking_route
+
+
+# =====================================================================
+# Stage 4: Build system content (wraps _build_system_content)
+# =====================================================================
+async def _build_system_content(
+    db: AsyncSession,
+    owner_id: int,
+    conversation_id: int,
+    agent_code: str = "erp_chat",
+    profile_key: str = "",
+) -> str:
+    """Build the system prompt from profile, thinking suggestion, skills, context vars."""
+    from ..models import AgentConversation
+    from .context_vars import format_context_vars_section
+
+    try:
+        _profile = conv_svc.get_profile_by_key(db, profile_key) if profile_key else None
+    except Exception:
+        _profile = None
+
+    layers: list[str] = []
+    total_chars = 0
+    MAX_CHARS = 6000
+
+    if _profile and _profile.system_prompt:
+        layers.append(_profile.system_prompt.strip())
+        total_chars += len(layers[-1])
+
+    # ── 上下文变量注入（来自之前工具调用的提炼） ──────────────
+    try:
+        _conv = await db.get(AgentConversation, conversation_id)
+        if _conv and _conv.context_vars:
+            _cv_section = format_context_vars_section(_conv.context_vars)
+            if _cv_section and total_chars < MAX_CHARS:
+                layers.append(_cv_section)
+                total_chars += len(_cv_section)
+    except Exception as e:
+        logger.debug("Context vars injection failed (non-fatal): %s", e)
+
+    # ── 工具调用指引（按 profile 差异化） ──────────────────────────
+    if _profile and _profile.tool_usage_guide:
+        guide = _profile.tool_usage_guide.strip()
+        if guide and total_chars < MAX_CHARS:
+            layers.append(
+                "\n## 工具调用指引\n" + guide
+            )
+            total_chars += len(layers[-1])
+    else:
+        default_guide = (
+            "请优先使用 skill (技能) 来满足用户的需求。"
+            "技能是封装好的能力，输入参数即可完成复杂任务。"
+        )
+        if total_chars < MAX_CHARS:
+            layers.append(
+                "\n## 工具调用指引\n" + default_guide
+            )
+            total_chars += len(layers[-1])
+
+    return "\n\n".join(layers).strip()
+
+
+# =====================================================================
+# Stage 5: Compress if budget exceeded
+# =====================================================================
+async def _compress_context(
+    db: AsyncSession,
+    conversation_id: int,
+    all_events: list[dict],
+    projected: list[dict],
+    estimated_total: int,
+    effective_profile_key: str,
+) -> list[dict]:
+    budget = get_context_budget(effective_profile_key)
+    if (
+        budget is not None
+        and estimated_total > budget + _COMPRESSION_TOKEN_HEADROOM
+        and len(all_events) > 30
+    ):
+        try:
+            logger.info("预算超限(est=%d > budget=%d), 触发压缩(含快照)", estimated_total, budget)
+            result = await _compress_with_snapshot(
+                db, conversation_id, all_events, projected, effective_profile_key
+            )
+            if result.get("status") == "compressed":
+                projected = await project_to_messages(db, conversation_id)
+                logger.info("压缩后投影完毕, 事件数=%d", len(projected))
+        except Exception as e:
+            logger.warning("压缩失败（降级到硬截断）: %s", e)
+            try:
+                await _hard_truncate_tail(db, conversation_id, all_events)
+                projected = await project_to_messages(db, conversation_id)
+            except Exception as e2:
+                logger.warning("硬截断也失败: %s", e2)
+    return projected
+
+
+# =====================================================================
+# Stage 6: Inject skills into system content
+# =====================================================================
+def _inject_skills(system_content: str) -> str:
+    try:
+        skill_base = os.environ.get("SKILLS_DIR", "data/skills")
+        all_skills = _find_skills(skill_base, scope="global")
+        workspace_path = os.environ.get("CURRENT_PATH", "")
+        if workspace_path:
+            workspace_skills_dir = os.path.join(workspace_path, ".agent-skills")
+            if os.path.isdir(workspace_skills_dir):
+                ws_skills = _find_skills(workspace_skills_dir, scope="workspace")
+                all_skills.extend(ws_skills)
+        all_skills = _resolve_skill_priority(all_skills)
+        matched = _match_skills(all_skills, workspace_path)
+        skill_injection = _format_skills(matched)
+        if skill_injection and system_content:
+            system_content += "\n\n---\n\n<available_skills>\n" + skill_injection + "\n</available_skills>"
+    except Exception as e:
+        logger.warning("skills注入失败（non-fatal）: %s", e)
+    return system_content
+
+
+# =====================================================================
+# Stage 7: Token budget assembly
+# =====================================================================
+def _budget_assembly(
+    projected: list[dict],
+    system_content: str,
+    current_user_input: str,
+    effective_profile_key: str,
+) -> tuple[list[dict], dict]:
+    try:
+        messages, diagnosis = _budget_assemble_context(
+            projected, system_content, current_user_input, effective_profile_key
+        )
+    except Exception as e:
+        logger.warning("预算装配失败，回退原始投影+截尾: %s", e)
+        messages = [{"role": "system", "content": system_content}]
+        messages.extend(projected[-48:] if len(projected) > 48 else projected)
+        diagnosis = {"error": str(e), "fallback": "原始投影截尾"}
+    return messages, diagnosis
+
+
+# =====================================================================
+# Stage 8: Inject context layers into the first system message
+# =====================================================================
+async def _inject_context_layers(
+    messages: list[dict],
+    diagnosis: dict,
+    current_user_input: str,
+    owner_id: int,
+) -> tuple[list[dict], dict]:
+    """Apply three-layer memory, workflow strategy, and success experience injection."""
+
+    # ── 三层记忆注入（批5）：稳定规则 + chunk + 语义记忆 ──────────
+    try:
+        three_layer = await _three_layer_recall(owner_id, current_user_input)
+        if three_layer.get("injection") and messages:
+            for msg in messages:
+                if msg["role"] == "system":
+                    msg["content"] += "\n\n---\n\n" + three_layer["injection"]
+                    break
+            diagnosis["three_layer_memory"] = {
+                "stable_rules": len(three_layer.get("stable_rules", [])),
+                "chunks": len(three_layer.get("chunks", [])),
+                "semantic": len(three_layer.get("semantic", [])),
+            }
+    except Exception as e:
+        logger.warning("三层记忆注入失败（non-fatal）: %s", e)
+        diagnosis["three_layer_memory"] = f"降级: {e}"
+
+    # ── 项目工作流约束注入（workflow_strategy） ──────────────────
+    wf_diag = _apply_workflow_injection(current_user_input, messages)
+    diagnosis["workflow_injected"] = wf_diag.get("workflow_injected", False)
+    if wf_diag.get("workflow_label"):
+        diagnosis["workflow_label"] = wf_diag["workflow_label"]
+
+    # ── 成功经验注入（批3） ─────────────────────────────────────
+    try:
+        matched = await _experience_match(current_user_input, limit=2, caller=f"user:{owner_id}")
+        injection = _experience_format(matched)
+        if injection and messages:
+            for msg in messages:
+                if msg["role"] == "system":
+                    msg["content"] += injection
+                    break
+            diagnosis["experience_injected"] = [e["id"] for e in matched if e.get("id")]
+            diagnosis["experience_injection"] = "成功注入" if injection else "无命中"
+        else:
+            diagnosis["experience_injection"] = "无命中"
+    except Exception as e:
+        logger.warning("经验注入失败（降级，不阻塞）: %s", e)
+        diagnosis["experience_injection"] = f"降级: {e}"
+
+    return messages, diagnosis
+
+
+# =====================================================================
+# Main pipeline orchestrator
+# =====================================================================
+async def run_pipeline(
+    db: AsyncSession,
+    conversation_id: int,
+    current_user_input: str,
+    profile_key: str,
+    owner_id: int,
+    agent_code: str = "erp_chat",
+) -> tuple[list[dict], dict]:
+    """New context assembly pipeline: stage-by-stage orchestrator.
+
+    Behavior is identical to the original assemble_context().
+    Each stage is a separate callable for independent testing.
+    """
+    # Stage 1: Resolve agent config
+    agent_cfg = None
+    try:
+        agent_cfg = await read_agent_config(db, agent_code)
+    except Exception as e:
+        logger.warning("读取 agent config 失败: %s", e)
+    effective_profile_key = _resolve_effective_profile(agent_cfg, profile_key)
+
+    # Stage 2: Project events → model messages
+    projected, all_events = await _project_history(db, conversation_id)
+
+    # Stage 3: Thinking routing
+    thinking_diag, thinking_route = await _route_thinking(
+        db, current_user_input, owner_id, conversation_id, effective_profile_key, agent_code,
+    )
+
+    # Stage 4: Build system content
+    system_content = await _build_system_content(
+        db, owner_id, conversation_id, agent_code, profile_key=effective_profile_key,
+    )
+
+    if thinking_route and thinking_route.level and thinking_route.level != "medium":
+        system_content += f"\n\n【思考深度建议】建议思考等级：{thinking_route.level}"
+
+    # Stage 5: Compress if budget exceeded
+    projected_tokens = (
+        sum(max(estimate_tokens([m]), 0) for m in projected[-100:])
+        if projected
+        else 0
+    )
+    system_tokens = max(len(system_content) // 2, 0)
+    input_tokens = max(len(current_user_input) // 2, 0)
+    estimated_total = system_tokens + input_tokens + projected_tokens + 4096
+
+    projected = await _compress_context(
+        db, conversation_id, all_events, projected, estimated_total, effective_profile_key,
+    )
+
+    # Stage 6: Inject skills into system content
+    system_content = _inject_skills(system_content)
+
+    # Stage 7: Token budget assembly
+    messages, diagnosis = _budget_assembly(projected, system_content, current_user_input, effective_profile_key)
+    diagnosis.update(thinking_diag)
+    diagnosis["agent_code"] = agent_code
+    diagnosis["effective_profile_key"] = effective_profile_key
+
+    # Stage 8: Inject context layers
+    messages, diagnosis = await _inject_context_layers(messages, diagnosis, current_user_input, owner_id)
+
+    return messages, diagnosis

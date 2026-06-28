@@ -1,41 +1,25 @@
-"""Tests for StreamEmitter guardrails."""
+"""Tests for StreamEmitter guardrails.
+
+Note: the guard functions (looks_like_unfinished_tool_intent, TOOL_INTENT_RETRY_MESSAGE)
+now live in content_gate.py. We import from there directly to avoid deep import chains.
+"""
 
 import importlib.util
 import sys
-import types
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parents[3]
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
 
-engine_module = types.ModuleType("modules.agent.backend.engine.engine")
-
-
-async def _empty_stream(*_args, **_kwargs):
-    if False:
-        yield {}
-
-
-engine_module.chat_stream_with_degradation_chain = _empty_stream
-failure_module = types.ModuleType("modules.agent.backend.engine.failure_diagnostics")
-
-
-async def _record_failure(*_args, **_kwargs):
-    return None
-
-
-failure_module.record_failure = _record_failure
-sys.modules["modules.agent.backend.engine.engine"] = engine_module
-sys.modules["modules.agent.backend.engine.failure_diagnostics"] = failure_module
-
-STREAM_EMITTER_PATH = REPO_DIR / "modules/agent/backend/runtime/stream_emitter.py"
-spec = importlib.util.spec_from_file_location("modules.agent.backend.runtime.stream_emitter", STREAM_EMITTER_PATH)
+CONTENT_GATE_PATH = REPO_DIR / "modules/agent/backend/runtime/content_gate.py"
+spec = importlib.util.spec_from_file_location("modules.agent.backend.runtime.content_gate", CONTENT_GATE_PATH)
 assert spec and spec.loader
-stream_emitter = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(stream_emitter)
-looks_like_unfinished_tool_intent = stream_emitter.looks_like_unfinished_tool_intent
-TOOL_INTENT_RETRY_MESSAGE = stream_emitter.TOOL_INTENT_RETRY_MESSAGE
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+
+looks_like_unfinished_tool_intent = gate.looks_like_unfinished_tool_intent
+TOOL_INTENT_RETRY_MESSAGE = gate.TOOL_INTENT_RETRY_MESSAGE
 
 
 def test_detects_unfinished_search_intent_reply():

@@ -335,6 +335,25 @@ class ToolLoopRuntime:
                     timeline.append(call_event)
                     yield self._j_sse(call_event)
 
+                # ── ToolGate: validate tool names before execution ──
+                from .tool_gate import format_retry_message, validate_tool_calls
+                _valid_tools, _invalid_names = validate_tool_calls(parsed_tools, tools)
+                if _invalid_names:
+                    logger.warning(
+                        "[ToolGate] %d invalid tool(s) rejected: %s",
+                        len(_invalid_names), _invalid_names,
+                    )
+                    messages.append({
+                        "role": "user",
+                        "content": format_retry_message(_invalid_names),
+                    })
+                    yield self._sse(
+                        "tool_gate_retry",
+                        format_retry_message(_invalid_names),
+                    )
+                    continue  # next tool round with retry message
+                parsed_tools = _valid_tools
+
                 # ── Phase 2: slow tools → background queue ──────────
                 from ..handlers.tasks import _submit_slow_tool_task
                 has_slow = False

@@ -22,8 +22,8 @@ from .._utils import references_from_tool_events
 from ..engine.engine import get_hooks
 from ..engine.event_store import record_event as _record_event
 from ..engine.failure_diagnostics import record_failure as _record_failure
+from ..runtime.content_gate import final_clean_content
 from ..services import conversation_service as conv_svc
-from ..services.model_client import final_clean_content
 
 logger = logging.getLogger("v2.agent").getChild("runtime.task_sink")
 

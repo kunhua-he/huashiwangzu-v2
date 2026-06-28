@@ -812,6 +812,19 @@ class ToolLoopRuntime:
             elif event_type == "done":
                 break
 
+        # ── Clean inline XML from final summary content ────────────
+        if full:
+            from ..services.model_client import parse_inline_tool_calls
+            raw = "".join(full)
+            clean, _ = parse_inline_tool_calls(raw)
+            if clean != raw:
+                full.clear()
+                full.append(clean)
+                logger.info(
+                    "[DIAG] Final summary cleaned: %d chars → %d chars",
+                    len(raw), len(clean),
+                )
+
     @staticmethod
     def _sse(event_type: str, content: str) -> bytes:
         """Format an SSE data: frame."""

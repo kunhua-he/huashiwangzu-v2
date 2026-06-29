@@ -1,36 +1,9 @@
 """Tests for model_client inline DSML tool-call fallback."""
 
-import importlib
-import sys
-import types
-from pathlib import Path
-
-SERVICE_DIR = Path(__file__).resolve().parent / "services"
-if str(SERVICE_DIR) not in sys.path:
-    sys.path.insert(0, str(SERVICE_DIR))
-
-app_module = types.ModuleType("app")
-gateway_package = types.ModuleType("app.gateway")
-gateway_router_module = types.ModuleType("app.gateway.router")
-gateway_router_module.gateway_router = object()
-original_modules = {
-    name: sys.modules.get(name)
-    for name in ("app", "app.gateway", "app.gateway.router")
-}
-sys.modules["app"] = app_module
-sys.modules["app.gateway"] = gateway_package
-sys.modules["app.gateway.router"] = gateway_router_module
-try:
-    model_client = importlib.import_module("model_client")
-finally:
-    for name, module in original_modules.items():
-        if module is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = module
-final_clean_content = model_client.final_clean_content
-parse_inline_tool_calls = model_client.parse_inline_tool_calls
-
+from modules.agent.backend.services.model_client import (
+    final_clean_content,
+    parse_inline_tool_calls,
+)
 
 DSML_TOOL_CALL = (
     '<｜｜DSML｜｜tool_calls>\n'

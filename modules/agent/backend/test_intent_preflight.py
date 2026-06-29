@@ -1,30 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
-import os
-import sys
-from pathlib import Path
-
 import pytest
 
-os.environ.setdefault("JWT_SECRET", "test-secret")
-
-REPO_DIR = Path(__file__).resolve().parents[3]
-BACKEND_DIR = REPO_DIR / "backend"
-for path in (REPO_DIR, BACKEND_DIR):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
-
-PREFLIGHT_PATH = REPO_DIR / "modules/agent/backend/runtime/intent_preflight.py"
-spec = importlib.util.spec_from_file_location("modules.agent.backend.runtime.intent_preflight", PREFLIGHT_PATH)
-assert spec and spec.loader
-preflight = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(preflight)
-
-IntentPreflightRunner = preflight.IntentPreflightRunner
-_parse_json_object = preflight._parse_json_object
-_rule_classify = preflight._rule_classify
-
+from modules.agent.backend.runtime.intent_preflight import IntentPreflightRunner, _parse_json_object, _rule_classify
 from modules.agent.backend.runtime.runtime_policy import RuntimePolicy
 
 

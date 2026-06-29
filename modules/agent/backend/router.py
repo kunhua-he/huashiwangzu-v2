@@ -1,15 +1,12 @@
 import json
 import logging
 
-logger = logging.getLogger("v2.agent").getChild("router")
-
 from app.database import get_db
 from app.gateway.router import gateway_router
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .init_db import (
@@ -17,10 +14,23 @@ from .init_db import (
     run_init,
 )
 from .runtime import ConversationRuntime
-from .schemas import ChatRequest, EditResubmitRequest
+from .schemas import (
+    AgentConfigCreate,
+    AgentConfigUpdate,
+    ApprovalDecision,
+    ChatRequest,
+    CreateConvRequest,
+    EditResubmitRequest,
+    PromptItemCreate,
+    PromptItemUpdate,
+    RenameConvRequest,
+    UpdatePromptRequest,
+)
 from .services import agent_config_service, tool_discovery
 from .services import conversation_service as conv_svc
 from .services import prompt_service as prompt_svc
+
+logger = logging.getLogger("v2.agent").getChild("router")
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -35,43 +45,6 @@ def _j(obj) -> str:
 
 def _conversation_payload(item) -> dict:
     return {"id": item.id, "title": item.title, "status": item.status}
-
-
-# ── Request Schemas ──
-
-class CreateConvRequest(BaseModel):
-    title: str = "新对话"
-
-
-class RenameConvRequest(BaseModel):
-    title: str
-
-
-class UpdatePromptRequest(BaseModel):
-    content: str
-
-
-class ApprovalDecision(BaseModel):
-    decision: str  # "approved" | "rejected"
-    reason: str | None = None
-
-
-class PromptItemCreate(BaseModel):
-    key: str = ""
-    title: str
-    category: str
-    content: str
-    is_active: bool = True
-    status: str = "draft"
-
-
-class PromptItemUpdate(BaseModel):
-    key: str | None = None
-    title: str | None = None
-    category: str | None = None
-    content: str | None = None
-    is_active: bool | None = None
-    status: str | None = None
 
 
 # ── Health / Profiles / Tools ──
@@ -341,56 +314,6 @@ async def resolve_approval_endpoint(
 
 
 # ── Agent Config CRUD (migrated from framework) ──
-
-class AgentConfigCreate(BaseModel):
-    agent_code: str
-    agent_name: str = ""
-    provider: str = ""
-    model: str = ""
-    system_prompt: str = ""
-    purpose: str = ""
-    enabled: bool = True
-    temperature: float | None = None
-    top_p: float | None = None
-    max_tokens: int | None = None
-    timeout_ms: int | None = None
-    fallback_model: str | None = None
-    fallback_enabled: bool = False
-    max_concurrency: int | None = None
-    cooldown_seconds: int | None = None
-    retry_count: int = 3
-    daily_call_limit: int | None = None
-    daily_budget: float | None = None
-    monthly_budget: float | None = None
-    response_format: str = "text"
-    log_prompt_enabled: bool = True
-    log_response_enabled: bool = True
-    sensitive_action_policy: str = "confirm"
-
-
-class AgentConfigUpdate(BaseModel):
-    agent_name: str | None = None
-    provider: str | None = None
-    model: str | None = None
-    system_prompt: str | None = None
-    purpose: str | None = None
-    enabled: bool | None = None
-    temperature: float | None = None
-    top_p: float | None = None
-    max_tokens: int | None = None
-    timeout_ms: int | None = None
-    fallback_model: str | None = None
-    fallback_enabled: bool | None = None
-    max_concurrency: int | None = None
-    cooldown_seconds: int | None = None
-    retry_count: int | None = None
-    daily_call_limit: int | None = None
-    daily_budget: float | None = None
-    monthly_budget: float | None = None
-    response_format: str | None = None
-    log_prompt_enabled: bool | None = None
-    log_response_enabled: bool | None = None
-    sensitive_action_policy: str | None = None
 
 
 @router.get("/configs")

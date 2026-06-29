@@ -32,6 +32,7 @@ class ApprovalDecision(BaseModel):
 
 
 class PromptItemCreate(BaseModel):
+    key: str = ""
     title: str
     category: str
     content: str
@@ -40,6 +41,7 @@ class PromptItemCreate(BaseModel):
 
 
 class PromptItemUpdate(BaseModel):
+    key: str | None = None
     title: str | None = None
     category: str | None = None
     content: str | None = None

@@ -59,7 +59,7 @@
           </svg>
           <input
             v-if="editingId === c.id"
-            ref="editInputRef"
+            :ref="setEditInputRef(c.id)"
             v-model="editTitle"
             class="conv-title-edit"
             @keydown.enter="finishEdit(c)"
@@ -114,6 +114,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 
 const props = defineProps<{
   conversations: ConvItem[]
@@ -137,12 +138,22 @@ interface ConvItem { id: number; title: string; status?: string }
 
 const editingId = ref<number | null>(null)
 const editTitle = ref('')
-const editInputRef = ref<HTMLInputElement | null>(null)
+const editInputRefs = new Map<number, HTMLInputElement>()
+
+function setEditInputRef(id: number) {
+  return (el: Element | ComponentPublicInstance | null) => {
+    if (el instanceof HTMLInputElement) {
+      editInputRefs.set(id, el)
+    } else {
+      editInputRefs.delete(id)
+    }
+  }
+}
 
 function startEdit(c: ConvItem) {
   editingId.value = c.id
   editTitle.value = c.title
-  nextTick(() => editInputRef.value?.focus())
+  nextTick(() => editInputRefs.get(c.id)?.focus())
 }
 
 function finishEdit(c: ConvItem) {

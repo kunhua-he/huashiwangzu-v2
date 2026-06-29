@@ -12,14 +12,14 @@
 """
 import json
 import logging
-import os
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from app.services.module_registry import call_capability
+
+from .file_state_lock import read_json_locked, update_json_locked
 
 logger = logging.getLogger("v2.agent").getChild("engine.layered_memory")
 
@@ -69,13 +69,8 @@ class RecallQualityRecord:
 def _read_recall_quality_file() -> list[dict]:
     """Read all records from the persisted quality file."""
     path = Path(_RECALL_QUALITY_FILE)
-    if not path.exists():
-        return []
     try:
-        raw = path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return []
-        data = json.loads(raw)
+        data = read_json_locked(path, [])
         if isinstance(data, list):
             return data[-_RECALL_QUALITY_MAX_ENTRIES:]
         return []
@@ -87,25 +82,24 @@ def _read_recall_quality_file() -> list[dict]:
 def _write_recall_quality_file(records: list[dict]) -> None:
     """Atomically write records to the quality file (temp+rename)."""
     path = Path(_RECALL_QUALITY_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd, tmp_path_str = tempfile.mkstemp(
-            suffix=".json", prefix="recall_quality_", dir=str(path.parent),
-        )
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False)
-        os.replace(tmp_path_str, str(path))
+        update_json_locked(path, [], lambda _current: records)
     except OSError as exc:
         logger.warning("Failed to write recall quality file: %s", exc)
 
 
 def record_recall_quality(record: RecallQualityRecord) -> None:
     """Record a recall quality metric for governance (persisted)."""
-    records = _read_recall_quality_file()
-    records.append(record.to_dict())
-    if len(records) > _RECALL_QUALITY_MAX_ENTRIES:
-        records = records[-_RECALL_QUALITY_MAX_ENTRIES:]
-    _write_recall_quality_file(records)
+    path = Path(_RECALL_QUALITY_FILE)
+
+    def _mutate(records: list[dict]) -> list[dict]:
+        records.append(record.to_dict())
+        return records[-_RECALL_QUALITY_MAX_ENTRIES:]
+
+    try:
+        update_json_locked(path, [], _mutate)
+    except OSError as exc:
+        logger.warning("Failed to record recall quality: %s", exc)
 
 
 def get_recall_quality_summary() -> dict:

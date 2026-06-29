@@ -1,6 +1,7 @@
 import logging
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from sqlalchemy import text
 
@@ -12,9 +13,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
 from app.config import get_settings
-from app.database import init_db, dispose_db
 from app.core.handlers import register_exception_handlers
+from app.database import dispose_db, init_db
 from app.middleware.logging_middleware import RequestLoggingMiddleware
 from app.routers.registry import register_routers
 
@@ -36,8 +38,8 @@ async def lifespan(app: FastAPI):
 
     from app.database import AsyncSessionLocal
     from app.services.app_service import sync_apps_from_manifest
-    from app.services.task_worker import start_worker, stop_worker
     from app.services.private_module_service import set_app_instance
+    from app.services.task_worker import start_worker, stop_worker
 
     # Register private module service app reference
     set_app_instance(app)
@@ -54,8 +56,9 @@ async def lifespan(app: FastAPI):
     setup_v2_loggers_for_modules()
 
     # Initialize event bus (create event_log table, start retry scheduler)
-    from app.services.event_bus import _ensure_event_log_table, retry_failed_events
     import asyncio
+
+    from app.services.event_bus import _ensure_event_log_table, retry_failed_events
     await _ensure_event_log_table()
     await retry_failed_events()
 
@@ -102,14 +105,17 @@ app.add_middleware(RequestLoggingMiddleware)
 
 # ── Module self-heal (intercepts requests to broken modules, tries to recover) ──
 from app.middleware.module_self_heal import ModuleSelfHealMiddleware
+
 app.add_middleware(ModuleSelfHealMiddleware, fastapi_app=app)
 
 # ── Request timeout (SSE endpoints exempt) ──
 from app.middleware.timeout_middleware import TimeoutMiddleware
+
 app.add_middleware(TimeoutMiddleware)
 
 # ── Request ID (per-request UUID, injected into all logs) ──
 from app.middleware.request_id import RequestIdMiddleware
+
 app.add_middleware(RequestIdMiddleware)
 
 # Exception handlers
@@ -122,14 +128,36 @@ register_routers(app)
 @app.get("/api/health")
 async def health_check():
     from app.database import engine
-    from app.schemas.common import ApiResponse
     from app.routers.registry import get_module_load_errors
+    from app.schemas.common import ApiResponse
     from app.services.task_worker import worker_health
 
     database_status = "ok"
+    task_queue_summary = None
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+            task_rows = await conn.execute(text("""
+                SELECT status, count(*)
+                FROM framework_system_task_queues
+                WHERE status IN ('pending', 'running', 'failed')
+                GROUP BY status
+            """))
+            task_counts = {row[0]: int(row[1]) for row in task_rows.fetchall()}
+            semantic_failed_completed = await conn.execute(text("""
+                SELECT count(*)
+                FROM framework_system_task_queues
+                WHERE status = 'completed'
+                  AND completed_at >= NOW() - INTERVAL '24 hours'
+                  AND result IS NOT NULL
+                  AND (result ILIKE '%"error"%' OR result ILIKE '%"status": "failed"%')
+            """))
+            task_queue_summary = {
+                "pending": task_counts.get("pending", 0),
+                "running": task_counts.get("running", 0),
+                "failed": task_counts.get("failed", 0),
+                "semantic_failed_completed_24h": int(semantic_failed_completed.scalar() or 0),
+            }
     except Exception:
         database_status = "unreachable"
 
@@ -143,13 +171,20 @@ async def health_check():
     except Exception:
         event_bus_ok = False
 
+    worker = worker_health()
+    event_bus_status = "ok" if event_bus_ok else "error"
+    status = "ok"
+    if database_status != "ok" or module_errors or not worker.get("running") or event_bus_status != "ok":
+        status = "degraded" if database_status == "ok" else "error"
+
     return ApiResponse(data={
-        "status": "ok",
+        "status": status,
         "version": "2.0.0",
         "database": database_status,
         "module_errors": module_errors if module_errors else None,
-        "worker": worker_health(),
-        "event_bus": "ok" if event_bus_ok else "error",
+        "worker": worker,
+        "event_bus": event_bus_status,
+        "task_queue": task_queue_summary,
     })
 
 

@@ -6,10 +6,10 @@ FOR UPDATE SKIP LOCKED. Modules register handlers by task_type.
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
-from sqlalchemy import select, update, and_, or_
+from sqlalchemy import and_, or_, select
 
 from app.database import AsyncSessionLocal
 from app.models.system import SystemTaskQueue
@@ -80,39 +80,37 @@ async def _recover_stale_tasks(db) -> None:
 
 
 async def _recover_orphan_running_tasks() -> None:
-    """Startup recovery: reset all running tasks to pending+retry.
+    """Startup recovery: reclaim only timed-out running tasks.
 
-    Called once when the worker starts.  Any task still marked 'running'
-    at this point is guaranteed to be an orphan from a dead process.
+    In multi-worker deployments another worker may legitimately be executing a
+    fresh ``running`` task while this worker starts. Treating every running task
+    as orphaned causes duplicate retries, so startup recovery uses the same
+    timeout + row-lock path as periodic stale recovery.
     """
     try:
         async with AsyncSessionLocal() as db:
-            now = datetime.now(timezone.utc)
-            result = await db.execute(
-                select(SystemTaskQueue)
-                .where(SystemTaskQueue.status == "running")
-                .with_for_update(skip_locked=True)
-            )
-            orphans = list(result.scalars().all())
-            for task in orphans:
-                await _reconcile_one_orphan(task, now)
-            await db.commit()
-            failed_count = sum(
-                1 for t in orphans
-                if t.retry_count >= (t.max_retries or 3) and t.status == "failed"
-            )
-            logger.info(
-                "Orphan recovery: reset %d running tasks (retry_count incremented, "
-                "%d marked failed)",
-                len(orphans), failed_count,
-            )
+            await _recover_stale_tasks(db)
     except Exception as exc:
         logger.error("Orphan recovery failed: %s", exc)
 
 
+def _result_is_semantic_failure(result: dict | None) -> tuple[bool, str | None]:
+    """Return whether a handler result is a business failure contract."""
+    if not isinstance(result, dict):
+        return False, None
+    if result.get("success") is False:
+        return True, str(result.get("error") or "Task result success=false")
+    status = result.get("status")
+    if isinstance(status, str) and status.lower() in {"failed", "error"}:
+        return True, str(result.get("error") or f"Task result status={status}")
+    if result.get("error") not in (None, "") and result.get("success") is not True:
+        return True, str(result.get("error"))
+    return False, None
+
+
 async def _claim_one_task(db) -> SystemTaskQueue | None:
     """原子抢占一条 pending 任务（FOR UPDATE SKIP LOCKED 防多 worker 抢同一条）。
-    
+
     即时任务(scheduled_at IS NULL)照旧立即执行；
     定时任务(scheduled_at <= now())到点才被取。
     """
@@ -152,6 +150,9 @@ async def _run_handler(task: SystemTaskQueue) -> tuple[bool, dict | None, str | 
         return False, None, f"Invalid parameters JSON: {exc}"
     try:
         result = await handler(params)
+        failed, error = _result_is_semantic_failure(result)
+        if failed:
+            return False, result, error
         return True, result, None
     except Exception as exc:
         logger.error("Task %s (%s) handler failed: %s", task.id, task.task_type, exc)

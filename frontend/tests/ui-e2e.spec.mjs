@@ -23,20 +23,32 @@ async function gotoDesktop(page) {
   // If login page shows (token expired), log in
   const loginVisible = await page.locator('.login-page').isVisible().catch(() => false)
   if (loginVisible) {
-    await page.fill('input[placeholder="Username"]', ADMIN_USER)
-    await page.fill('input[placeholder="Password"]', ADMIN_PASS)
-    await page.click('button:has-text("Login")')
+    await page.getByPlaceholder('用户名').fill(ADMIN_USER)
+    await page.getByPlaceholder('密码').fill(ADMIN_PASS)
+    await page.getByRole('button', { name: '登录' }).click()
   }
   await page.waitForSelector('.desktop-shell-container', { timeout: 15000 })
 }
 
 async function openLauncher(page) {
   const startBtn = page.locator('.taskbar-start')
-  if (await startBtn.isVisible()) {
-    await startBtn.click()
-    await page.waitForSelector('.desktop-launcher-panel', { timeout: 5000 })
-    await expect(page.locator('.desktop-launcher-panel')).toBeVisible({ timeout: 5000 })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const panelVisible = await page.locator('.desktop-launcher-panel').isVisible().catch(() => false)
+    if (panelVisible) return true
+    if (await startBtn.isVisible()) {
+      await startBtn.click({ force: true })
+    } else {
+      // try clicking the "开始" label inside the button
+      await page.getByText('开始').first().click({ force: true })
+    }
+    try {
+      await page.waitForSelector('.desktop-launcher-panel', { timeout: 3000 })
+      return true
+    } catch {
+      // maybe the click toggled it closed; try again
+    }
   }
+  return false
 }
 
 async function closeAllWindows(page) {

@@ -9,13 +9,18 @@ that the target file is valid JSON and contains all expected records.
 This complements ``test_agent_regression.py`` which tests structural contracts.
 """
 
-import json
-import os
+import sys
 import tempfile
 import threading
 from pathlib import Path
 
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from modules.agent.backend.engine.file_state_lock import update_json_locked
 
 
 class TestConcurrentFileWrites:
@@ -35,23 +40,19 @@ class TestConcurrentFileWrites:
 
         def _writer(worker_id: int):
             try:
-                fd, tmp = tempfile.mkstemp(
-                    suffix=".json", prefix=".budget_", dir=str(_temp_dir),
-                )
-                with os.fdopen(fd, "w") as f:
-                    json.dump({
-                        "rounds": {
-                            f"conv_{worker_id}": [
-                                {
-                                    "turn_index": 0,
-                                    "token_count_before": 100,
-                                    "token_count_after": 200,
-                                    "net_gain_tokens": 100,
-                                }
-                            ]
+                def _mutate(state: dict) -> dict:
+                    rounds = state.setdefault("rounds", {})
+                    rounds[f"conv_{worker_id}"] = [
+                        {
+                            "turn_index": 0,
+                            "token_count_before": 100,
+                            "token_count_after": 200,
+                            "net_gain_tokens": 100,
                         }
-                    }, f, ensure_ascii=False)
-                os.replace(tmp, str(target_file))
+                    ]
+                    return state
+
+                update_json_locked(target_file, {"rounds": {}}, _mutate)
             except Exception as e:
                 with lock:
                     errors.append(f"Worker {worker_id}: {e}")
@@ -63,10 +64,11 @@ class TestConcurrentFileWrites:
             t.join()
 
         assert not errors, f"Write errors: {errors}"
-        raw = target_file.read_text(encoding="utf-8")
-        data = json.loads(raw)
+        import json
+        data = json.loads(target_file.read_text(encoding="utf-8"))
         assert isinstance(data, dict), "File must be valid JSON dict"
         assert "rounds" in data, "File must contain 'rounds' key"
+        assert set(data["rounds"].keys()) == {f"conv_{i}" for i in range(n_writers)}
 
     def test_stuck_detector_concurrent_writes(self, _temp_dir: Path):
         target_file = _temp_dir / "stuck_rounds.json"
@@ -76,12 +78,11 @@ class TestConcurrentFileWrites:
 
         def _writer(i: int):
             try:
-                fd, tmp = tempfile.mkstemp(
-                    suffix=".json", prefix=".stuck_", dir=str(_temp_dir),
-                )
-                with os.fdopen(fd, "w") as f:
-                    json.dump({f"session_{i}": [{"tool_name": "test", "is_empty": False}]}, f)
-                os.replace(tmp, str(target_file))
+                def _mutate(state: dict) -> dict:
+                    state[f"session_{i}"] = [{"tool_name": "test", "is_empty": False}]
+                    return state
+
+                update_json_locked(target_file, {}, _mutate)
             except Exception as e:
                 errors.append(f"Writer {i}: {e}")
 
@@ -92,6 +93,7 @@ class TestConcurrentFileWrites:
             t.join()
 
         assert not errors, f"Write errors: {errors}"
-        raw = target_file.read_text(encoding="utf-8")
-        data = json.loads(raw)
+        import json
+        data = json.loads(target_file.read_text(encoding="utf-8"))
         assert isinstance(data, dict)
+        assert set(data.keys()) == {f"session_{i}" for i in range(n_writers)}

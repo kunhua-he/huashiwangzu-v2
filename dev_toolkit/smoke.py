@@ -7,11 +7,9 @@ smoke_all — 一键全回归
 
 import asyncio
 import io
-import json
 import os
 import re
 import struct
-import subprocess
 import sys
 import time
 import zlib
@@ -37,7 +35,7 @@ results = []
 
 async def _ensure_token(role: str = "admin") -> str:
     acct = ACCOUNTS.get(role, ACCOUNTS["admin"])
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10) as client:
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
         resp = await client.post("/api/login", json={
             "username": acct["username"],
             "password": acct["password"],
@@ -50,7 +48,7 @@ async def _ensure_token(role: str = "admin") -> str:
 
 async def _upload_file(filename: str, content: bytes, mime: str, folder_id: str = "0") -> dict:
     token = await _ensure_token()
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=30) as client:
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=30, trust_env=False) as client:
         resp = await client.post(
             "/api/files/upload",
             files={"file": (filename, content, mime)},
@@ -89,7 +87,7 @@ def _make_png() -> bytes:
 async def probe(method: str, path: str, body: dict | None = None, role: str = "admin") -> dict:
     token = await _ensure_token(role)
     headers = {"Authorization": f"Bearer {token}"}
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=30) as client:
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=30, trust_env=False) as client:
         resp = await client.request(method, path, json=body, headers=headers)
         try:
             data = resp.json()
@@ -105,7 +103,7 @@ async def call_capability(module: str, action: str, params: dict | None = None, 
         "action": action,
         "parameters": params or {},
     }
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=60) as client:
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=60, trust_env=False) as client:
         resp = await client.post("/api/modules/call", json=body, headers=headers)
         try:
             data = resp.json()
@@ -127,7 +125,7 @@ async def test_a():
     for role in ("admin", "editor", "viewer"):
         try:
             t = await _ensure_token(role)
-            add_result(f"A1 登录 {role}", bool(t), f"token 签发成功")
+            add_result(f"A1 登录 {role}", bool(t), "token 签发成功")
         except Exception as e:
             add_result(f"A1 登录 {role}", False, str(e))
 
@@ -347,9 +345,9 @@ async def test_e():
         r = await probe("GET", "/api/im/conversations")
         convs = r.get("data", {}).get("data", [])
         if not convs:
-            r2 = await probe("POST", "/api/im/conversations", {"title": f"smoke-{TS}"})
+            r2 = await probe("POST", "/api/im/messages", {"target_user_id": 3, "content": f"smoke bootstrap {TS}"})
             convs2 = r2.get("data", {})
-            conv_id = convs2.get("data", {}).get("id") if convs2.get("success") else None
+            conv_id = convs2.get("data", {}).get("conversation_id") if convs2.get("success") else None
         else:
             conv_id = convs[0]["id"]
         if conv_id:
@@ -395,7 +393,7 @@ async def test_ui():
         add_result("UI 集测 (Playwright)", passed, f"exit={proc.returncode}, passed={passed_count}, failed={failed_count}, skipped={did_not_run}")
         if not passed:
             lines = output.split("\n")
-            fail_lines = [l for l in lines if "FAIL" in l or "failed" in l.lower() or "✘" in l]
+            fail_lines = [line for line in lines if "FAIL" in line or "failed" in line.lower() or "✘" in line]
             for fl in fail_lines[-5:]:
                 print(f"    {fl.strip()}")
     except asyncio.TimeoutError:
@@ -419,7 +417,7 @@ async def health_check():
         add_result("后端 health", False, str(e))
 
     try:
-        async with httpx.AsyncClient(timeout=5) as cli:
+        async with httpx.AsyncClient(timeout=5, trust_env=False) as cli:
             r = await cli.get("http://127.0.0.1:30000/health")
             ok = r.status_code == 200
             add_result("bge-m3 嵌入服务", ok, f"status={r.status_code}")
@@ -429,18 +427,27 @@ async def health_check():
 # ── 主函数 ────────────────────────────────────────────────────────────
 
 async def main():
-    print(f"smoke_all — 一键全回归")
+    print("smoke_all — 一键全回归")
     print(f"时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print(f"后端: {BACKEND_BASE}  前端: {FRONTEND_BASE}")
 
-    await health_check()
-    await test_a()
-    await test_b()
-    await test_c()
-    await test_d()
-    await test_e()
+    for group_name, group in [
+        ("健康检查", health_check),
+        ("A. 框架主链路", test_a),
+        ("B. 知识库 + 解析器", test_b),
+        ("C. Agent 全链路", test_c),
+        ("D. 查看器", test_d),
+        ("E. 工具/生成类", test_e),
+    ]:
+        try:
+            await group()
+        except Exception as exc:
+            add_result(group_name, False, f"group crashed: {exc}")
     if not os.environ.get("SMOKE_SKIP_UI"):
-        await test_ui()
+        try:
+            await test_ui()
+        except Exception as exc:
+            add_result("UI 集测 (Playwright)", False, f"group crashed: {exc}")
 
     # ── 汇总 ──
     print("\n" + "=" * 60)

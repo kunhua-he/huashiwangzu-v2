@@ -7,11 +7,15 @@ Hash 驱动的过时检测，从 Draftpaper-loop 的模式提炼。
 import hashlib
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
+from app.config import get_settings
+from app.core.exceptions import NotFound, ValidationError
+from app.services.file_service import check_file_access
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import KbPipelineStale
+from ..models import KbDocument, KbPipelineStale
 
 logger = logging.getLogger("v2.knowledge").getChild("stale")
 
@@ -37,6 +41,34 @@ def _sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+async def _source_file_sha256(
+    db: AsyncSession,
+    document_id: int,
+    source_file_id: int,
+) -> str:
+    doc_r = await db.execute(
+        select(KbDocument).where(
+            KbDocument.id == document_id,
+            KbDocument.deleted.is_(False),
+        )
+    )
+    doc = doc_r.scalar_one_or_none()
+    if not doc:
+        raise NotFound(f"Knowledge document {document_id} not found")
+
+    file = await check_file_access(db, source_file_id, doc.owner_id)
+    if not file.storage_path:
+        raise ValidationError(f"File {source_file_id} has no storage path")
+
+    upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+    full_path = (upload_root / file.storage_path).resolve()
+    if upload_root not in full_path.parents and full_path != upload_root:
+        raise ValidationError(f"File {source_file_id} storage path escapes upload root")
+    if not full_path.exists() or not full_path.is_file():
+        raise ValidationError(f"File {source_file_id} content is missing on disk")
+    return _sha256_of(full_path.read_bytes())
+
+
 async def record_artifact_hash(
     db: AsyncSession,
     document_id: int,
@@ -50,9 +82,7 @@ async def record_artifact_hash(
     返回计算出的 hash 值。
     """
     if stage == "source_file" and source_file_id:
-        from app.services.file_service import get_file_storage_path
-        fpath = get_file_storage_path(source_file_id)
-        content_hash = _sha256_of(fpath.read_bytes()) if fpath and fpath.exists() else ""
+        content_hash = await _source_file_sha256(db, document_id, source_file_id)
     else:
         content_hash = _sha256_of(
             f"{stage}:{document_id}:{datetime.now(timezone.utc).isoformat()}".encode()
@@ -101,9 +131,7 @@ async def detect_stale_stages(
 
     # 1. 检查 source_file 是否变了
     if source_file_id:
-        from app.services.file_service import get_file_storage_path
-        fpath = get_file_storage_path(source_file_id)
-        current_hash = _sha256_of(fpath.read_bytes()) if fpath and fpath.exists() else ""
+        current_hash = await _source_file_sha256(db, document_id, source_file_id)
         old_hash = records.get("source_file", "")
         if current_hash != old_hash:
             changed.add("source_file")

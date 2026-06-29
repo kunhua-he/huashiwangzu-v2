@@ -11,12 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
-import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
-
-from sqlalchemy import select, desc
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 
@@ -29,6 +25,7 @@ _event_handlers: dict[str, list[dict]] = {}
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 10
+PROCESSING_TIMEOUT_SECONDS = 1200
 
 
 def register_module_event_handler(
@@ -72,8 +69,13 @@ async def _ensure_event_log_table():
                     next_retry_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     completed_at TIMESTAMPTZ,
+                    processing_started_at TIMESTAMPTZ,
                     module_results JSONB DEFAULT '[]'::jsonb
                 )
+            """))
+            await db.execute(text("""
+                ALTER TABLE framework_event_log
+                ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ
             """))
             await db.execute(text("""
                 CREATE INDEX IF NOT EXISTS ix_framework_event_log_status
@@ -108,7 +110,8 @@ async def emit_module_event(
         logger.debug("No handlers registered for event '%s'", event_name)
         return []
 
-    # Persist the event
+    # Persist the event as processing so retry workers cannot replay normal
+    # first delivery while handlers are still running.
     log_id = None
     if persist:
         log_id = await _persist_event(event_name, payload, caller, caller_role)
@@ -152,8 +155,8 @@ async def _persist_event(event_name: str, payload: dict, caller: str, caller_rol
             r = await db.execute(
                 text("""
                     INSERT INTO framework_event_log
-                        (event_name, payload, caller, caller_role, status, max_retries)
-                    VALUES (:event_name, CAST(:payload AS jsonb), :caller, :caller_role, 'pending', :max_retries)
+                        (event_name, payload, caller, caller_role, status, max_retries, processing_started_at)
+                    VALUES (:event_name, CAST(:payload AS jsonb), :caller, :caller_role, 'processing', :max_retries, NOW())
                     RETURNING id
                 """),
                 {
@@ -178,18 +181,25 @@ async def _update_event_log(log_id: int, results: list[dict]) -> None:
         async with AsyncSessionLocal() as db:
             from sqlalchemy import text
             has_failures = any(not r.get("success") for r in results)
-            status = "completed_with_errors" if has_failures else "completed"
+            status = "pending" if has_failures else "completed"
+            next_retry_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAY_SECONDS)
+                if has_failures else None
+            )
             await db.execute(
                 text("""
                     UPDATE framework_event_log
                     SET status = :status,
                         module_results = CAST(:results AS jsonb),
-                        completed_at = NOW()
+                        completed_at = CASE WHEN :status = 'completed' THEN NOW() ELSE NULL END,
+                        next_retry_at = :next_retry_at,
+                        processing_started_at = NULL
                     WHERE id = :id
                 """),
                 {
                     "status": status,
                     "results": json.dumps(results, ensure_ascii=False, default=str),
+                    "next_retry_at": next_retry_at,
                     "id": log_id,
                 },
             )
@@ -250,24 +260,52 @@ async def get_event_log(
         ]
 
 
+def _failed_modules(module_results: object) -> set[str]:
+    if not isinstance(module_results, list):
+        return set()
+    return {
+        str(row.get("module_key"))
+        for row in module_results
+        if isinstance(row, dict) and row.get("success") is not True and row.get("module_key")
+    }
+
+
 async def retry_failed_events() -> int:
     """Retry all events that are due for retry. Called by scheduler."""
     retried = 0
     async with AsyncSessionLocal() as db:
         from sqlalchemy import text
 
+        await db.execute(
+            text("""
+                UPDATE framework_event_log
+                SET status = 'pending', processing_started_at = NULL,
+                    last_error = COALESCE(last_error, 'Processing lease expired')
+                WHERE status = 'processing'
+                  AND processing_started_at < NOW() - (:timeout_seconds * INTERVAL '1 second')
+            """),
+            {"timeout_seconds": PROCESSING_TIMEOUT_SECONDS},
+        )
         r = await db.execute(
             text("""
-                SELECT id, event_name, payload, caller, caller_role, retry_count
-                FROM framework_event_log
-                WHERE status = 'pending'
-                  AND retry_count < max_retries
-                  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                ORDER BY id ASC
-                LIMIT 20
+                UPDATE framework_event_log
+                SET status = 'processing', processing_started_at = NOW()
+                WHERE id IN (
+                    SELECT id
+                    FROM framework_event_log
+                    WHERE status = 'pending'
+                      AND retry_count < max_retries
+                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                    ORDER BY id ASC
+                    LIMIT 20
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id, event_name, payload, caller, caller_role, retry_count,
+                          max_retries, module_results
             """),
         )
         rows = r.all()
+        await db.commit()
 
         for row in rows:
             log_id = row[0]
@@ -276,17 +314,41 @@ async def retry_failed_events() -> int:
             caller = row[3]
             caller_role = row[4]
             retry_count = row[5]
+            max_retries = row[6]
+            module_results = row[7]
 
             handlers = _event_handlers.get(event_name, [])
             all_success = True
             last_error = None
+            failed_modules = _failed_modules(module_results)
+            retry_results = list(module_results or []) if isinstance(module_results, list) else []
 
             for entry in handlers:
+                if failed_modules and entry["module_key"] not in failed_modules:
+                    continue
                 try:
-                    await entry["handler"](payload, caller, caller_role)
+                    handler_result = await entry["handler"](payload, caller, caller_role)
+                    retry_results = [
+                        item for item in retry_results
+                        if not (isinstance(item, dict) and item.get("module_key") == entry["module_key"])
+                    ]
+                    retry_results.append({
+                        "module_key": entry["module_key"],
+                        "success": True,
+                        "result": handler_result,
+                    })
                 except Exception as exc:
                     all_success = False
                     last_error = str(exc)
+                    retry_results = [
+                        item for item in retry_results
+                        if not (isinstance(item, dict) and item.get("module_key") == entry["module_key"])
+                    ]
+                    retry_results.append({
+                        "module_key": entry["module_key"],
+                        "success": False,
+                        "error": last_error,
+                    })
                     logger.warning("Retry %d for event '%s' handler '%s' failed: %s",
                                    retry_count + 1, event_name, entry["module_key"], exc)
 
@@ -297,34 +359,45 @@ async def retry_failed_events() -> int:
                         UPDATE framework_event_log
                         SET status = 'completed', retry_count = :retry_count,
                             last_error = NULL, next_retry_at = NULL,
-                            completed_at = NOW()
+                            completed_at = NOW(), processing_started_at = NULL,
+                            module_results = CAST(:results AS jsonb)
                         WHERE id = :id
                     """),
-                    {"retry_count": new_retry_count, "id": log_id},
+                    {
+                        "retry_count": new_retry_count,
+                        "results": json.dumps(retry_results, ensure_ascii=False, default=str),
+                        "id": log_id,
+                    },
                 )
                 retried += 1
             else:
                 next_retry = datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAY_SECONDS * (2 ** new_retry_count))
-                if new_retry_count >= MAX_RETRIES:
+                if new_retry_count >= max_retries:
                     await db.execute(
                         text("""
                             UPDATE framework_event_log
                             SET status = 'failed', retry_count = :retry_count,
-                                last_error = :last_error, next_retry_at = NULL
+                                last_error = :last_error, next_retry_at = NULL,
+                                processing_started_at = NULL,
+                                module_results = CAST(:results AS jsonb)
                             WHERE id = :id
                         """),
-                        {"retry_count": new_retry_count, "last_error": last_error, "id": log_id},
+                        {"retry_count": new_retry_count, "last_error": last_error,
+                         "results": json.dumps(retry_results, ensure_ascii=False, default=str), "id": log_id},
                     )
                 else:
                     await db.execute(
                         text("""
                             UPDATE framework_event_log
                             SET status = 'pending', retry_count = :retry_count,
-                                last_error = :last_error, next_retry_at = :next_retry
+                                last_error = :last_error, next_retry_at = :next_retry,
+                                processing_started_at = NULL,
+                                module_results = CAST(:results AS jsonb)
                             WHERE id = :id
                         """),
                         {"retry_count": new_retry_count, "last_error": last_error,
-                         "next_retry": next_retry, "id": log_id},
+                         "next_retry": next_retry,
+                         "results": json.dumps(retry_results, ensure_ascii=False, default=str), "id": log_id},
                     )
         await db.commit()
 

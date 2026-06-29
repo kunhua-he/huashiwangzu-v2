@@ -21,8 +21,6 @@ interval to enforce retention policies across all conversations.
 import asyncio
 import json
 import logging
-import os
-import tempfile
 import time
 from pathlib import Path
 
@@ -31,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import AgentEvent, ContextSnapshot
 from .context_snapshot import take_snapshot
+from .file_state_lock import read_json_locked, update_json_locked
 
 logger = logging.getLogger("v2.agent").getChild("engine.post_turn_hooks")
 
@@ -58,13 +57,8 @@ _HOOK_RUN_HISTORY_MAX = 200
 
 def _read_hook_runs_file() -> list[dict]:
     path = Path(_HOOK_RUN_FILE)
-    if not path.exists():
-        return []
     try:
-        raw = path.read_text(encoding="utf-8")
-        if not raw.strip():
-            return []
-        data = json.loads(raw)
+        data = read_json_locked(path, [])
         return data[-_HOOK_RUN_HISTORY_MAX:] if isinstance(data, list) else []
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to read hook runs file: %s", exc)
@@ -73,14 +67,8 @@ def _read_hook_runs_file() -> list[dict]:
 
 def _write_hook_runs_file(records: list[dict]) -> None:
     path = Path(_HOOK_RUN_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd, tmp_path_str = tempfile.mkstemp(
-            suffix=".json", prefix="hook_runs_", dir=str(path.parent),
-        )
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False)
-        os.replace(tmp_path_str, str(path))
+        update_json_locked(path, [], lambda _current: records)
     except OSError as exc:
         logger.warning("Failed to write hook runs file: %s", exc)
 
@@ -102,17 +90,22 @@ def get_hook_lifecycle_state() -> dict:
 
 def _record_hook_run(name: str, success: bool, duration_ms: float, detail: str = "") -> None:
     """Record a hook run for lifecycle observability (persisted)."""
-    records = _read_hook_runs_file()
-    records.append({
-        "hook_name": name,
-        "success": success,
-        "duration_ms": round(duration_ms, 1),
-        "detail": detail[:200],
-        "timestamp": time.time(),
-    })
-    if len(records) > _HOOK_RUN_HISTORY_MAX:
-        records = records[-_HOOK_RUN_HISTORY_MAX:]
-    _write_hook_runs_file(records)
+    path = Path(_HOOK_RUN_FILE)
+
+    def _mutate(records: list[dict]) -> list[dict]:
+        records.append({
+            "hook_name": name,
+            "success": success,
+            "duration_ms": round(duration_ms, 1),
+            "detail": detail[:200],
+            "timestamp": time.time(),
+        })
+        return records[-_HOOK_RUN_HISTORY_MAX:]
+
+    try:
+        update_json_locked(path, [], _mutate)
+    except OSError as exc:
+        logger.warning("Failed to record hook run: %s", exc)
 
 
 async def _get_turn_count(db: AsyncSession, conversation_id: int) -> int:

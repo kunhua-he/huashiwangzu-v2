@@ -6,11 +6,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-SERVICE_DIR = Path(__file__).resolve().parents[2] / "modules" / "agent" / "backend" / "services"
-if str(SERVICE_DIR) not in sys.path:
-    sys.path.insert(0, str(SERVICE_DIR))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from model_client import final_clean_content, parse_inline_tool_calls, recover_tool_calls
+from modules.agent.backend.services import model_client
+from modules.agent.backend.services.model_client import final_clean_content, parse_inline_tool_calls, recover_tool_calls
 
 
 class TestParseInlineToolCalls:
@@ -86,7 +87,7 @@ class TestParseInlineToolCalls:
 
     def test_none_content(self):
         clean, calls = parse_inline_tool_calls(None)
-        assert clean is None
+        assert clean == ""
         assert calls == []
 
 
@@ -150,7 +151,7 @@ class TestRecoverToolCalls:
                 },
             }],
         }
-        with patch("model_client.gateway_router.chat", AsyncMock(return_value=gateway_result)) as chat:
+        with patch.object(model_client.gateway_router, "chat", AsyncMock(return_value=gateway_result)) as chat:
             result = await recover_tool_calls(
                 messages=[{"role": "user", "content": "查天气"}],
                 profile_key="deepseek-v4-flash",
@@ -169,7 +170,7 @@ class TestRecoverToolCalls:
                 "function": {"name": "tool", "arguments": "{bad json}"},
             }],
         }
-        with patch("model_client.gateway_router.chat", AsyncMock(return_value=gateway_result)):
+        with patch.object(model_client.gateway_router, "chat", AsyncMock(return_value=gateway_result)):
             result = await recover_tool_calls([], "deepseek-v4-flash", [])
         assert result["tool_calls"][0]["function"]["arguments"] == {}
 

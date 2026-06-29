@@ -7,6 +7,7 @@ from app.gateway.adapters import (
     list_adapters,
 )
 from app.gateway.contract import ModelResponse, StreamEvent, StreamEventType
+from app.gateway.tool_call_accumulator import StreamingToolCallAccumulator
 
 
 class TestDeepSeekAdapter:
@@ -151,9 +152,13 @@ class TestDeepSeekAdapter:
             }],
         }
         event = self.adapter.adapt_stream_chunk(chunk, provider="opencode")
-        assert event is not None
-        assert event.type == StreamEventType.TOKEN
-        assert len(event.tool_calls) == 1
+        assert event is None
+
+        accumulator = StreamingToolCallAccumulator()
+        accumulator.add_delta_tool_calls(chunk["choices"][0]["delta"]["tool_calls"])
+        completed = accumulator.completed_tool_calls()
+        assert len(completed) == 1
+        assert completed[0].function["name"] == "get_weather"
 
 
 class TestGemmaAdapter:

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument
+from .document_service import parse_and_index_document
 from .pipeline_orchestrator import run_pipeline as _run_orchestrated
 
 logger = logging.getLogger("v2.knowledge").getChild("pipeline")
@@ -26,6 +27,15 @@ async def _run_pipeline(
     force_fusion: bool = False,
 ) -> dict:
     """委托给 PipelineOrchestrator。"""
+    doc = await db.scalar(select(KbDocument).where(KbDocument.id == document_id))
+    if doc and (doc.parse_status != "done" or doc.vector_status != "done"):
+        await parse_and_index_document(
+            db,
+            document_id=document_id,
+            owner_id=owner_id,
+            caller=f"user:{user_id}",
+            extract_graph=False,
+        )
     return await _run_orchestrated(
         db, document_id, owner_id, file_id, user_id,
         force_raw=force_raw, force_fusion=force_fusion,

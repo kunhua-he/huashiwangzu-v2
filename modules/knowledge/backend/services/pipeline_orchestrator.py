@@ -140,7 +140,7 @@ async def run_pipeline(
         try:
             fn_kwargs: dict[str, Any] = {"db": db, "document_id": document_id, "owner_id": owner_id}
             if step_name == "raw":
-                fn_kwargs.update(file_id=file_id, user_id=user_id)
+                fn_kwargs = {"db": db, "doc_id": document_id, "owner_id": owner_id, "file_id": file_id, "user_id": user_id}
             # profile/graph 只需要 db + document_id + owner_id
             # relations 只需要 db + document_id + owner_id
             steps[step_name] = await stage_def.fn(**fn_kwargs)

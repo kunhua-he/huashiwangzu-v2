@@ -2,11 +2,13 @@
 import json
 import logging
 import math
-import os
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+
 from app.gateway.config import get_model_profiles
+
+from .file_state_lock import read_json_locked, update_json_locked
+
 logger = logging.getLogger("v2.agent").getChild("engine.budget_allocator")
 SAFETY_MAX_TOKENS = 120000
 RESERVED_OUTPUT_TOKENS = 4096
@@ -17,30 +19,18 @@ _BUDGET_DATA_FILE = _BUDGET_DATA_DIR / "budget_tracker.json"
 
 
 def _load_budget_state() -> dict:
-    if _BUDGET_DATA_FILE.exists():
-        try:
-            with open(_BUDGET_DATA_FILE, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("budget_tracker: failed to load state: %s", e)
-    return {}
+    try:
+        data = read_json_locked(_BUDGET_DATA_FILE, {})
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("budget_tracker: failed to load state: %s", e)
+        return {}
 
 
 def _save_budget_state(state: dict) -> None:
     try:
-        _BUDGET_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(dir=str(_BUDGET_DATA_DIR), prefix=".budget_", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(state, f, ensure_ascii=False)
-            os.replace(tmp_path, str(_BUDGET_DATA_FILE))
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-    except OSError as e:
+        update_json_locked(_BUDGET_DATA_FILE, {}, lambda _current: state)
+    except (OSError, TypeError) as e:
         logger.warning("budget_tracker: failed to save state: %s", e)
 
 
@@ -90,23 +80,23 @@ class DiminishingBudgetTracker:
         tokens_after: int,
     ) -> DiminishingReturnRecord:
         """Record a tool round's token counts and compute net gain."""
-        self._load()
-        records = self._rounds.setdefault(session_key, [])
-        net_gain = max(tokens_after - tokens_before, 0)
-        turn_index = len(records)
-        rec = DiminishingReturnRecord(
-            turn_index=turn_index,
-            token_count_before=tokens_before,
-            token_count_after=tokens_after,
-            net_gain_tokens=net_gain,
-        )
-        records.append({
-            "turn_index": turn_index,
-            "token_count_before": tokens_before,
-            "token_count_after": tokens_after,
-            "net_gain_tokens": net_gain,
-        })
-        self._save()
+        def _mutate(state: dict) -> dict:
+            rounds = state.setdefault("rounds", {})
+            records = rounds.setdefault(session_key, [])
+            net_gain = max(tokens_after - tokens_before, 0)
+            turn_index = len(records)
+            records.append({
+                "turn_index": turn_index,
+                "token_count_before": tokens_before,
+                "token_count_after": tokens_after,
+                "net_gain_tokens": net_gain,
+            })
+            return state
+
+        state = update_json_locked(_BUDGET_DATA_FILE, {"rounds": {}}, _mutate)
+        self._rounds = state.get("rounds", {})
+        record = self._rounds[session_key][-1]
+        rec = DiminishingReturnRecord(**record)
         return rec
 
     def should_stop(self, session_key: str) -> tuple[bool, str]:
@@ -162,9 +152,13 @@ class DiminishingBudgetTracker:
 
     def reset(self, session_key: str) -> None:
         """Clear tracking for a given session."""
-        self._load()
-        self._rounds.pop(session_key, None)
-        self._save()
+        def _mutate(state: dict) -> dict:
+            rounds = state.setdefault("rounds", {})
+            rounds.pop(session_key, None)
+            return state
+
+        state = update_json_locked(_BUDGET_DATA_FILE, {"rounds": {}}, _mutate)
+        self._rounds = state.get("rounds", {})
 
 
 def get_context_budget(profile_key: str) -> int | None:

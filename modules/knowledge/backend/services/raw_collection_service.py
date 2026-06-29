@@ -15,15 +15,16 @@ import hashlib
 import io
 import logging
 
-from sqlalchemy import select, delete as sa_delete
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.database import AsyncSessionLocal
 from app.services.task_worker import register_task_handler
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..ir_models import to_legacy_dict
 from ..models import KbDocument, KbRawData
-from .parsing_service import parse_document, IMAGE_FORMATS
-from .pdf_render_service import render_page_to_image, get_pdf_page_count
+from .parsing_service import IMAGE_FORMATS, parse_document
+from .pdf_render_service import get_pdf_page_count, render_page_to_image
 
 logger = logging.getLogger("v2.knowledge").getChild("raw_collection")
 
@@ -87,7 +88,7 @@ async def _exec_round_1_text(
     """第1轮：文本提取。独立 DB 会话，单独 commit。"""
     async with AsyncSessionLocal() as task_db:
         try:
-            parsed = await parse_document(file_id, ext, caller)
+            parsed = to_legacy_dict(await parse_document(file_id, ext, caller))
             blocks = parsed.get("blocks", [])
             page_texts = [
                 (b.get("text") or "").strip()
@@ -305,6 +306,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
     elif is_image and (2 in rounds_for_type or 3 in rounds_for_type):
         # 图片文件：读原始字节一次
         from pathlib import Path
+
         from app.config import get_settings
         from app.services.file_service import check_file_access as _check_fa
         try:
@@ -414,7 +416,7 @@ async def get_ocr_words(
         select(KbDocument).where(
             KbDocument.file_id == file_id,
             KbDocument.owner_id == owner_id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     doc = dr.scalar_one_or_none()

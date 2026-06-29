@@ -3,16 +3,18 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, delete as sa_delete, func
+from app.core.exceptions import AppException, NotFound, ValidationError
+from app.services.file_reader import resolve_caller_user_id as resolve_user_id  # noqa: F401
+from app.services.file_service import check_file_access
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFound, ValidationError, AppException
-from app.services.file_service import check_file_access
-from app.services.file_reader import resolve_caller_user_id as resolve_user_id
-
-from .parsing_service import parse_document
+from ..ir_models import to_legacy_dict
 from .embedding_service import chunk_and_embed, store_chunks
-from .entity_service import process_document_entities, fuse_page_text
+from .entity_service import fuse_page_text, process_document_entities
+from .parsing_service import parse_document
 
 logger = logging.getLogger("v2.knowledge").getChild("document")
 
@@ -35,12 +37,17 @@ async def register_document(
     if ext not in SUPPORTED_EXTENSIONS:
         raise ValidationError(f"Unsupported file extension: {ext}")
 
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:owner_id, :file_id)"),
+        {"owner_id": owner_id, "file_id": file_id},
+    )
+
     # 已登记则返回现有记录
     existing_r = await db.execute(
         select(KbDocument).where(
             KbDocument.file_id == file_id,
             KbDocument.owner_id == owner_id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     existing = existing_r.scalar_one_or_none()
@@ -61,8 +68,21 @@ async def register_document(
         fusion_status="pending",
     )
     db.add(doc)
-    await db.commit()
-    await db.refresh(doc)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        existing_r = await db.execute(
+            select(KbDocument).where(
+                KbDocument.file_id == file_id,
+                KbDocument.owner_id == owner_id,
+                KbDocument.deleted.is_(False),
+            )
+        )
+        existing = existing_r.scalar_one_or_none()
+        if existing:
+            return document_payload(existing)
+        raise
 
     # ── 自动入队 kb_pipeline 后台任务（上传即开始分析） ──
     from app.models.system import SystemTaskQueue
@@ -81,6 +101,7 @@ async def register_document(
     )
     db.add(task)
     await db.commit()
+    await db.refresh(doc)
     logger.info("Auto-enqueued kb_pipeline for document_id=%d (file_id=%d)", doc.id, file_id)
 
     return document_payload(doc)
@@ -121,8 +142,8 @@ async def list_documents(
     """列出知识库文档。"""
     from ..models import KbDocument
 
-    stmt = select(KbDocument).where(KbDocument.owner_id == owner_id, KbDocument.deleted == False)
-    count_stmt = select(func.count(KbDocument.id)).where(KbDocument.owner_id == owner_id, KbDocument.deleted == False)
+    stmt = select(KbDocument).where(KbDocument.owner_id == owner_id, KbDocument.deleted.is_(False))
+    count_stmt = select(func.count(KbDocument.id)).where(KbDocument.owner_id == owner_id, KbDocument.deleted.is_(False))
     if catalog_id is not None:
         stmt = stmt.where(KbDocument.catalog_id == catalog_id)
         count_stmt = count_stmt.where(KbDocument.catalog_id == catalog_id)
@@ -150,7 +171,7 @@ async def get_document(db: AsyncSession, document_id: int, owner_id: int) -> dic
         select(KbDocument).where(
             KbDocument.id == document_id,
             KbDocument.owner_id == owner_id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     doc = r.scalar_one_or_none()
@@ -167,7 +188,7 @@ async def soft_delete_document(db: AsyncSession, document_id: int, owner_id: int
         select(KbDocument).where(
             KbDocument.id == document_id,
             KbDocument.owner_id == owner_id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     doc = r.scalar_one_or_none()
@@ -219,14 +240,14 @@ async def parse_and_index_document(
     注意：实体/图谱抽取建议通过后台任务 kb_pipeline 完成（process_document_entities_from_fusions），
     本方法仅提供基础的解析/分块/向量化能力。extract_graph 默认为 False。
     """
-    from ..models import KbDocument, KbChunk, KbPageFusion
+    from ..models import KbChunk, KbDocument, KbPageFusion
 
     # 查询文档并抢占任务状态，防多 worker 重复处理
     r = await db.execute(
         select(KbDocument).where(
             KbDocument.id == document_id,
             KbDocument.owner_id == owner_id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     doc = r.scalar_one_or_none()
@@ -248,7 +269,8 @@ async def parse_and_index_document(
     await db.commit()
 
     try:
-        parsed = await parse_document(doc.file_id, doc.extension, caller)
+        parsed_ir = await parse_document(doc.file_id, doc.extension, caller)
+        parsed = to_legacy_dict(parsed_ir)
         blocks = parsed.get("blocks", [])
         if not blocks:
             raise ValidationError("Parser returned no content blocks")

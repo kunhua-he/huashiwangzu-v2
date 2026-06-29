@@ -100,6 +100,44 @@
         "properties": {}
       },
       "min_role": "viewer"
+    },
+    {
+      "action": "replace_file",
+      "description": "Soft-delete an existing file entry and create a replacement file entry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "old_file_id": {
+            "type": "integer",
+            "description": "Existing file ID to replace"
+          },
+          "new_filename": {
+            "type": "string",
+            "description": "New file name with extension"
+          },
+          "new_content": {
+            "type": "string",
+            "description": "New file content as plain text"
+          },
+          "new_bytes_base64": {
+            "type": "string",
+            "description": "New file content as base64-encoded bytes"
+          }
+        },
+        "required": [
+          "old_file_id"
+        ]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "refresh",
+      "description": "Trigger desktop file list refresh.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "min_role": "viewer"
     }
   ],
   "permission_declaration": {

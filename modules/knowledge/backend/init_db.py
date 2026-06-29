@@ -1,8 +1,9 @@
 """知识库模块表初始化：确保知识库表在数据库中存在，支持无痛列补齐。"""
 import logging
+
+from app.models.base import Base
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.base import Base
 
 logger = logging.getLogger("v2.knowledge").getChild("init_db")
 
@@ -21,6 +22,7 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_kb_documents_owner ON kb_documents(owner_id) WHERE NOT deleted",
     "CREATE INDEX IF NOT EXISTS idx_kb_documents_catalog ON kb_documents(catalog_id) WHERE NOT deleted",
     "CREATE INDEX IF NOT EXISTS idx_kb_documents_status ON kb_documents(parse_status)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_documents_owner_file_active ON kb_documents(owner_id, file_id) WHERE NOT deleted",
     "CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(document_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_chunks_owner ON kb_chunks(owner_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_page_fusions_doc_page ON kb_page_fusions(document_id, page)",
@@ -65,12 +67,24 @@ _MIGRATION_STATEMENTS = [
 async def ensure_kb_tables(db: AsyncSession) -> None:
     """确保所有 kb_* 表已创建。"""
     from .models import (  # noqa: F401 注册到 Base.metadata
-        KbCatalog, KbDocument, KbChunk, KbPageFusion, KbRawData,
-        KbDocumentProfile, KbFileRelation,
-        KbEntityDictionary, KbEntityAlias, KbDisambiguation,
-        KbGraphNode, KbGraphEdge, KbChunkEntity,
-        KbEvidence, KbConclusionEvidence, KbEntityMergeLog,
-        KbGovernanceCandidate, KbPipelineStale,
+        KbCatalog,
+        KbChunk,
+        KbChunkEntity,
+        KbConclusionEvidence,
+        KbDisambiguation,
+        KbDocument,
+        KbDocumentProfile,
+        KbEntityAlias,
+        KbEntityDictionary,
+        KbEntityMergeLog,
+        KbEvidence,
+        KbFileRelation,
+        KbGovernanceCandidate,
+        KbGraphEdge,
+        KbGraphNode,
+        KbPageFusion,
+        KbPipelineStale,
+        KbRawData,
     )
     kb_tables = [t for n, t in Base.metadata.tables.items() if n.startswith("kb_")]
     # 用原始连接执行建表（SQLAlchemy async 兼容）

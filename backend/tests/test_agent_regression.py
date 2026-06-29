@@ -28,6 +28,9 @@ CONVERSATION_RUNTIME_SRC = (RUNTIME_DIR / "conversation_runtime.py").read_text("
 TOOL_LOOP_RUNTIME_SRC = (RUNTIME_DIR / "tool_loop_runtime.py").read_text("utf-8")
 ORCHESTRATOR_SRC = (ENGINE_DIR / "tool_orchestrator.py").read_text("utf-8")
 WORKFLOW_SRC = (ENGINE_DIR / "workflow_strategy.py").read_text("utf-8")
+THREE_LAYER_MEMORY_SRC = (ENGINE_DIR / "context_injectors" / "three_layer_memory.py").read_text("utf-8")
+WORKFLOW_INJECTOR_SRC = (ENGINE_DIR / "context_injectors" / "workflow.py").read_text("utf-8")
+FILE_STATE_LOCK_SRC = (ENGINE_DIR / "file_state_lock.py").read_text("utf-8")
 HOOKS_SRC = (ENGINE_DIR / "post_turn_hooks.py").read_text("utf-8")
 BUDGET_SRC = (ENGINE_DIR / "budget_allocator.py").read_text("utf-8")
 MODELS_SRC = (AGENT_DIR / "models.py").read_text("utf-8")
@@ -62,14 +65,15 @@ class TestChatToolMemoryChain:
         assert "run_post_turn_hooks" in TOOL_LOOP_RUNTIME_SRC
 
     def test_assemble_context_injects_memory(self):
-        assert "three_layer_recall" in ENGINE_SRC
+        assert "three_layer_recall" in THREE_LAYER_MEMORY_SRC
+        assert "async def inject" in THREE_LAYER_MEMORY_SRC
 
     def test_record_turn_saves_memory(self):
         assert "_layered_memory_record" in ENGINE_SRC
 
     def test_engine_imports_workflow_strategy(self):
-        assert "workflow_strategy" in ENGINE_SRC
-        assert "apply_workflow_injection" in ENGINE_SRC
+        assert "workflow_strategy" in WORKFLOW_INJECTOR_SRC
+        assert "apply_workflow_injection" in WORKFLOW_INJECTOR_SRC
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -175,7 +179,8 @@ class TestHookMaintenanceChain:
     def test_stuck_detector_file_persisted(self):
         stuck_src = (ENGINE_DIR / "stuck_detector.py").read_text("utf-8")
         assert "_SAVE_PATH" in stuck_src or "_STUCK_DATA_FILE" in stuck_src
-        assert "tempfile.mkstemp" in stuck_src
+        assert "update_json_locked" in stuck_src
+        assert "fcntl.flock" in FILE_STATE_LOCK_SRC
 
     def test_hook_lifecycle_admin_endpoint(self):
         assert "handle_admin_hook_lifecycle" in ADMIN_SRC

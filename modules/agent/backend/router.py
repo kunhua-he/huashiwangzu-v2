@@ -133,7 +133,7 @@ async def update_enterprise_prompt(
 @router.get("/user-profile")
 async def get_my_profile(db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     """获取当前用户的个人画像。"""
-    from init_db import ensure_user_profile
+    from .init_db import ensure_user_profile
     profile = await ensure_user_profile(db, user.id)
     return ApiResponse(data={
         "owner_id": profile.owner_id,

@@ -1,8 +1,10 @@
 """知识库模块业务表。表名 kb_* 前缀，不加外键到框架表/其他模块表。"""
 from datetime import datetime
-from sqlalchemy import Boolean, Integer, JSON, String, Text, BigInteger, DateTime, Float, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base, TimestampMixin
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
 
 
 class KbCatalog(Base, TimestampMixin):
@@ -59,8 +61,7 @@ class KbChunk(Base, TimestampMixin):
     chunk_index: Mapped[int] = mapped_column(Integer, default=0)
     block_type: Mapped[str] = mapped_column(String(32), default="段落")  # 段落/标题/表格/图片/代码
     text: Mapped[str] = mapped_column(Text, default="")
-    # 向量（JSON 数组存储 1024 维 float，pgvector 可用时切换原生列）
-    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
     resource_ref: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 关键词（用于全文检索）
     keywords: Mapped[str | None] = mapped_column(Text, nullable=True)

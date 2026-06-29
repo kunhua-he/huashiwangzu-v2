@@ -417,6 +417,11 @@ def _clear_log(module: str = "backend", all_logs: bool = False, keep_state: bool
         "preserved": preserved,
     }
 
+
+def _cleanup_knowledge_noise() -> dict[str, Any]:
+    removed_uploads: list[str] = []
+    removed_memory: list[str] = []
+
     if UPLOADS_DIR.exists():
         for path in UPLOADS_DIR.rglob("*"):
             if not path.is_file():
@@ -859,6 +864,39 @@ async def _lint(path: str, diff: bool = False) -> str:
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
+
+async def _smoke_all(skip_ui: bool = False) -> str:
+    """Run dev_toolkit/smoke.py and return its complete red/green matrix output."""
+    env = os.environ.copy()
+    if skip_ui:
+        env["SMOKE_SKIP_UI"] = "1"
+    started = time.time()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(REPO_ROOT / "dev_toolkit" / "smoke.py"),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=360)
+    except asyncio.TimeoutError:
+        return json.dumps({"success": False, "timeout": True, "timeout_seconds": 360}, ensure_ascii=False, indent=2)
+    output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+    return json.dumps(
+        {
+            "success": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "skip_ui": skip_ui,
+            "duration_seconds": round(time.time() - started, 3),
+            "output": output,
+            "output_tail": _tail_text(output, 20000),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
 # ──────────────────── 工具 12: routes ────────────────────────────────
 
 async def _routes(filter_str: str = "") -> str:
@@ -1120,7 +1158,7 @@ async def _finish_task(
             ["git", "diff", "--name-only"],
             cwd=REPO_ROOT, timeout=10,
         )
-        changed_files = [l.strip() for l in diff_result.get("stdout", "").splitlines() if l.strip()]
+        changed_files = [line.strip() for line in diff_result.get("stdout", "").splitlines() if line.strip()]
         violations = [f for f in changed_files if not f.startswith(allowed_prefix)]
         report["boundary_check"] = {
             "module": module_key,
@@ -1140,7 +1178,7 @@ async def _finish_task(
             ["git", "diff", "--name-only"],
             cwd=REPO_ROOT, timeout=10,
         )
-        changed_files = [l.strip() for l in diff_result.get("stdout", "").splitlines() if l.strip()]
+        changed_files = [line.strip() for line in diff_result.get("stdout", "").splitlines() if line.strip()]
         report["boundary_check"] = {
             "changed_files": changed_files[:50],
             "changed_count": len(changed_files),
@@ -1214,7 +1252,7 @@ def _build_verification_plan(task_type: str, module_key: str) -> dict:
     if task_type == "code_change":
         steps.append({"step": "lint", "tool": "lint", "target": "改动过的 Python 文件", "reason": "ruff 静态检查"})
         if module_key:
-            test_path = f"backend/tests/" if module_key == "framework" else f"modules/{module_key}/sandbox/"
+            test_path = "backend/tests/" if module_key == "framework" else f"modules/{module_key}/sandbox/"
             steps.append({"step": "test", "tool": "run_test", "target": test_path, "reason": "模块测试", "auto": False})
         steps.append({"step": "api_check", "tool": "probe", "target": "/api/health", "reason": "后端健康检查", "auto": True})
         steps.append({"step": "log_check", "tool": "tail_log", "target": "backend", "reason": "确认无新增错误日志", "auto": True})
@@ -2153,35 +2191,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await _start_frontend()
         elif name == "sanity_check":
             result = await _sanity_check()
-        elif name == "plan_task":
-            result = await _plan_task(
-                description=arguments["description"],
-                task_type=arguments.get("task_type", "code_change"),
-                module_key=arguments.get("module_key", ""),
-            )
-        elif name == "finish_task":
-            result = await _finish_task(
-                summary=arguments["summary"],
-                agent=arguments.get("agent", ""),
-                lint_paths=arguments.get("lint_paths", ""),
-                test_targets=arguments.get("test_targets", ""),
-                module_key=arguments.get("module_key", ""),
-                verification_summary=arguments.get("verification_summary", ""),
-                risk_note=arguments.get("risk_note", ""),
-            )
-        elif name == "knowledge_noise_report":
+        elif name == "smoke_all":
+            result = await _smoke_all(skip_ui=bool(arguments.get("skip_ui", False)))
+        elif name == "lint":
             result = await _lint(path=arguments["path"], diff=bool(arguments.get("diff", False)))
-        elif name == "routes":
-            result = await _routes(filter_str=arguments.get("filter", ""))
-        elif name == "capabilities":
-            result = await _capabilities(module=arguments.get("module", ""))
-        elif name == "db_schema":
-            result = await _db_schema(table=arguments.get("table", ""))
-        elif name == "run_test":
-            result = await _run_test(
-                target=arguments["target"],
-                timeout=int(arguments.get("timeout", 120)),
-            )
         elif name == "plan_task":
             result = await _plan_task(
                 description=arguments["description"],
@@ -2200,6 +2213,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "knowledge_noise_report":
             result = json.dumps(_knowledge_noise_report(), ensure_ascii=False, indent=2)
+        elif name == "routes":
+            result = await _routes(filter_str=arguments.get("filter", ""))
+        elif name == "capabilities":
+            result = await _capabilities(module=arguments.get("module", ""))
+        elif name == "db_schema":
+            result = await _db_schema(table=arguments.get("table", ""))
+        elif name == "run_test":
+            result = await _run_test(
+                target=arguments["target"],
+                timeout=int(arguments.get("timeout", 120)),
+            )
         elif name == "knowledge_cleanup_noise":
             result = json.dumps(_cleanup_knowledge_noise(), ensure_ascii=False, indent=2)
         elif name == "workspace_audit":

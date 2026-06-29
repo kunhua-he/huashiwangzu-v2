@@ -23,9 +23,9 @@ async function globalSetup() {
 
     await page.goto('/')
     await page.waitForSelector('.login-page', { timeout: 10000 })
-    await page.fill('input[placeholder="Username"]', acct.username)
-    await page.fill('input[placeholder="Password"]', acct.password)
-    await page.click('button:has-text("Login")')
+    await page.getByPlaceholder('用户名').fill(acct.username)
+    await page.getByPlaceholder('密码').fill(acct.password)
+    await page.getByRole('button', { name: '登录' }).click()
     await page.waitForSelector('.desktop-shell-container', { timeout: 15000 })
 
     await context.storageState({ path: path.join(AUTH_DIR, acct.storageFile) })

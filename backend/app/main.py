@@ -163,11 +163,24 @@ async def health_check():
 
     module_errors = get_module_load_errors()
 
-    # Event bus health
+    # Event bus health: verify connectivity AND no stuck processing events
     event_bus_ok = True
+    event_bus_stuck_processing = 0
     try:
-        from app.services.event_bus import get_event_log
+        from app.services.event_bus import PROCESSING_TIMEOUT_SECONDS, get_event_log
         await get_event_log(limit=1)
+        # Detect events that are stuck in processing beyond the lease timeout
+        async with engine.connect() as conn:
+            stuck = await conn.execute(text(f"""
+                SELECT count(*)
+                FROM framework_event_log
+                WHERE status = 'processing'
+                  AND processing_started_at IS NOT NULL
+                  AND processing_started_at < NOW() - ({PROCESSING_TIMEOUT_SECONDS} * INTERVAL '1 second')
+            """))
+            event_bus_stuck_processing = int(stuck.scalar() or 0)
+            if event_bus_stuck_processing > 0:
+                event_bus_ok = False
     except Exception:
         event_bus_ok = False
 
@@ -184,6 +197,7 @@ async def health_check():
         "module_errors": module_errors if module_errors else None,
         "worker": worker,
         "event_bus": event_bus_status,
+        "event_bus_stuck_processing": event_bus_stuck_processing,
         "task_queue": task_queue_summary,
     })
 

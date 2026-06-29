@@ -186,19 +186,21 @@ async def _update_event_log(log_id: int, results: list[dict]) -> None:
                 datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAY_SECONDS)
                 if has_failures else None
             )
+            completed_at = datetime.now(timezone.utc) if status == "completed" else None
             await db.execute(
                 text("""
                     UPDATE framework_event_log
-                    SET status = :status,
+                    SET status = :new_status,
                         module_results = CAST(:results AS jsonb),
-                        completed_at = CASE WHEN :status = 'completed' THEN NOW() ELSE NULL END,
+                        completed_at = :completed_at,
                         next_retry_at = :next_retry_at,
                         processing_started_at = NULL
                     WHERE id = :id
                 """),
                 {
-                    "status": status,
+                    "new_status": status,
                     "results": json.dumps(results, ensure_ascii=False, default=str),
+                    "completed_at": completed_at,
                     "next_retry_at": next_retry_at,
                     "id": log_id,
                 },

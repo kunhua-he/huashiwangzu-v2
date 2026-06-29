@@ -43,8 +43,10 @@ class RuntimePolicy:
     slow_skill_names: set[str] = field(default_factory=lambda: set(SLOW_SKILL_NAMES))
     stuck_consecutive_threshold: int = 3
     diminishing_budget_threshold: float = 0.15
-    allow_inline_tool_recovery: bool = True
+    allow_inline_tool_recovery: bool = False
     allow_final_summary_fallback: bool = True
+    enable_single_pass_streaming_tools: bool = True
+    llm_stop_decision_enabled: bool = False
 
     # ── Checkpointer (crash recovery) ──────────────────────────────
 
@@ -53,9 +55,20 @@ class RuntimePolicy:
 
     # ── Understanding loop precision handles ───────────────────────
 
-    enable_understanding_loop: bool = True
+    enable_understanding_loop: bool = False
     understanding_max_rounds: int = 2
     understanding_min_chars: int = 20
+
+    # ── Generic intent preflight ─────────────────────────────────────
+
+    intent_preflight_enabled: bool = True
+    intent_preflight_mode: str = "rules"
+    intent_preflight_min_confidence: float = 0.75
+    intent_preflight_max_llm_calls: int = 0
+    intent_preflight_use_verifier: bool = False
+    intent_preflight_allow_short_circuit: bool = False
+    intent_preflight_force_for_evidence_sensitive: bool = True
+    intent_preflight_force_for_operation_path: bool = True
 
     # ── Convenience factory ────────────────────────────────────────
 

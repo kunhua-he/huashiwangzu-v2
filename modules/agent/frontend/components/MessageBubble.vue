@@ -31,7 +31,9 @@
             <button class="msg-edit-cancel" @click="cancelEdit">取消</button>
           </div>
         </div>
-        <div v-else-if="message.role === 'assistant'" class="msg-md" v-html="renderedContent" @click="onMsgMdClick"></div>
+        <div v-else-if="message.role === 'assistant'" class="msg-md" @click="onMsgMdClick">
+          <span v-html="renderedContent"></span><span v-if="streaming" class="streaming-cursor">|</span>
+        </div>
         <div v-else class="msg-text">{{ message.content }}</div>
       </div>
 
@@ -112,7 +114,7 @@ interface MsgItem {
   usage?: UsageInfo | null
 }
 	
-const props = defineProps<{ message: MsgItem; editingId?: number | null }>()
+const props = defineProps<{ message: MsgItem; editingId?: number | null; streaming?: boolean }>()
 const emit = defineEmits<{
   edit: [messageId: number, content: string]
   submitEdit: [messageId: number, content: string]
@@ -393,6 +395,13 @@ function formatTime(iso?: string | null): string {
 .msg-bubble.user .msg-md :deep(code:not(pre code)) { background: rgba(255,255,255,0.15); }
 .msg-bubble.user .msg-md :deep(th) { background: rgba(255,255,255,0.1); }
 .msg-bubble.user .msg-md :deep(th), .msg-bubble.user .msg-md :deep(td) { border-color: rgba(255,255,255,0.2); }
+.streaming-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--ag-primary);
+  animation: cursorBlink 1s steps(2, start) infinite;
+}
+@keyframes cursorBlink { 50% { opacity: 0; } }
 
 /* Plain text */
 .msg-text {

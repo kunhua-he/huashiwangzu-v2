@@ -33,6 +33,9 @@ COMPRESSION_SUMMARY_KEY = "agent.compression.summary"
 SUBAGENT_SYSTEM_KEY = "agent.subagent.system"
 FINAL_SUMMARY_KEY = "agent.runtime.final_summary"
 STOP_DECISION_KEY = "agent.runtime.stop_decision"
+INTENT_PREFLIGHT_KEY = "agent.runtime.intent_preflight"
+INTENT_VERIFIER_KEY = "agent.runtime.intent_verifier"
+TOOL_STRATEGY_INJECTION_KEY = "agent.runtime.tool_strategy_injection"
 UNDERSTANDING_INTENT_KEY = "agent.understanding.intent_clarifier"
 UNDERSTANDING_CONCERN_KEY = "agent.understanding.concern_miner"
 UNDERSTANDING_PLAN_KEY = "agent.understanding.plan_critic"
@@ -123,6 +126,66 @@ STOP_DECISION_PROMPT = (
     "stop = tools have done enough, stop and reply to the user."
 )
 
+INTENT_PREFLIGHT_PROMPT = (
+    "你是通用 Agent 意图预检器。你的任务不是回答用户，而是把用户输入转换成稳定 JSON 契约，"
+    "用于后续工具选择和证据策略。禁止针对具体品牌、平台、行业写特殊规则；用户原文中的领域词只能作为 domain_terms 和检索线索。\n\n"
+    "只输出 JSON，不要 Markdown，不要解释。字段必须完整：\n"
+    "{\n"
+    '  "intent_summary": "一句话概括用户真正目标",\n'
+    '  "task_category": "operation_path|factual_lookup|internal_knowledge|external_research|document_analysis|planning|creation|coding|troubleshooting|smalltalk|other",\n'
+    '  "answer_shape": "menu_path|fact|comparison|plan|code|summary|clarification|direct_answer|exact_number|legal_or_policy_claim|source_dependent_fact",\n'
+    '  "domain_terms": ["从原文抽取的领域词/对象名/系统名"],\n'
+    '  "known_constraints": ["用户已给出的限制条件"],\n'
+    '  "missing_slots": ["高置信回答仍缺的信息"],\n'
+    '  "confidence": 0.0,\n'
+    '  "evidence_policy": {\n'
+    '    "prefer_success_experience": true,\n'
+    '    "needs_internal_knowledge": false,\n'
+    '    "needs_external_web": false,\n'
+    '    "needs_file_context": false,\n'
+    '    "can_answer_from_general_knowledge": true,\n'
+    '    "should_ask_clarification": false\n'
+    "  },\n"
+    '  "tool_strategy": {\n'
+    '    "first_actions": ["match_experience|internal_retrieval|external_research|file_context|clarify|direct_answer"],\n'
+    '    "avoid_actions": ["通用风险动作，如 do_not_guess_specific_paths_without_evidence"],\n'
+    '    "suggested_queries": ["泛化后的检索 query"]\n'
+    "  },\n"
+    '  "risk_policy": {\n'
+    '    "hallucination_risk": "low|medium|high",\n'
+    '    "requires_citation": false,\n'
+    '    "must_not_overclaim": true,\n'
+    '    "if_no_evidence": "ask_clarification|say_uncertain|search_more|answer_with_caveat"\n'
+    "  }\n"
+    "}\n\n"
+    "通用判断原则：操作路径/菜单入口/具体事实/数值/政策/来源依赖事实，若无证据，风险较高；"
+    "创作类通常可直接回答；内部企业事实优先内部知识；外部最新公开信息需要联网来源；信息不足时应追问。"
+)
+
+INTENT_VERIFIER_PROMPT = (
+    "你是通用回答风险复核器。输入包含 user_input 和 intent preflight JSON。"
+    "你不回答用户，只判断后续若给出确定性答案是否安全。禁止业务硬编码。只输出 JSON：\n"
+    "{\n"
+    '  "safe_to_answer": true,\n'
+    '  "reason": "判断理由",\n'
+    '  "next_action": "search_more|ask_clarification|answer_with_caveat|direct_answer",\n'
+    '  "forbidden_claims": ["不能无证据断言的内容类型"],\n'
+    '  "required_disclaimer": "需要附带的不确定性说明，没有则空字符串"\n'
+    "}\n"
+)
+
+TOOL_STRATEGY_INJECTION_PROMPT = (
+    "\n\n---\n\n【本轮意图预检】\n"
+    "以下 JSON 是内部决策契约，不要原样展示给用户。你必须据此选择证据与工具策略：\n"
+    "{{preflight_json}}\n\n"
+    "执行规则：\n"
+    "1. matched_experiences 非空时，它们是优先证据；若与当前问题不冲突，应优先复用，避免重复探索。\n"
+    "2. first_actions 使用抽象动作：match_experience=参考已匹配经验；internal_retrieval=用知识库/内部检索；external_research=联网搜索/读网页；file_context=读用户文件；clarify=追问；direct_answer=直接答。\n"
+    "3. 对 menu_path、exact_number、legal_or_policy_claim、source_dependent_fact 等证据敏感答案，缺证据时不能装作确定。\n"
+    "4. risk_policy.must_not_overclaim 为 true 时，必须避免过度断言；if_no_evidence 指定无证据时追问、继续搜索或带不确定性回答。\n"
+    "5. 不要重复 skill_list；如果已有明确工具方向，直接用 skill_use 调用合适技能。\n"
+)
+
 UNDERSTANDING_PROMPTS = {
     UNDERSTANDING_INTENT_KEY: (
         "你是一个意图澄清专家。你的任务是从用户输入中识别出核心意图和关键目标。\n\n"
@@ -185,6 +248,9 @@ AGENT_PROMPT_SEEDS: tuple[AgentPromptSeed, ...] = (
     AgentPromptSeed(SUBAGENT_SYSTEM_KEY, "子 Agent 系统提示词", "runtime", SUBAGENT_SYSTEM_PROMPT),
     AgentPromptSeed(FINAL_SUMMARY_KEY, "最终摘要提示词", "runtime", FINAL_SUMMARY_PROMPT),
     AgentPromptSeed(STOP_DECISION_KEY, "工具轮次停止决策", "runtime", STOP_DECISION_PROMPT),
+    AgentPromptSeed(INTENT_PREFLIGHT_KEY, "通用意图预检", "runtime", INTENT_PREFLIGHT_PROMPT),
+    AgentPromptSeed(INTENT_VERIFIER_KEY, "通用意图风险复核", "runtime", INTENT_VERIFIER_PROMPT),
+    AgentPromptSeed(TOOL_STRATEGY_INJECTION_KEY, "工具策略注入模板", "runtime", TOOL_STRATEGY_INJECTION_PROMPT),
     AgentPromptSeed(UNDERSTANDING_INTENT_KEY, "理解环：意图澄清", "understanding", UNDERSTANDING_PROMPTS[UNDERSTANDING_INTENT_KEY]),
     AgentPromptSeed(UNDERSTANDING_CONCERN_KEY, "理解环：关注点挖掘", "understanding", UNDERSTANDING_PROMPTS[UNDERSTANDING_CONCERN_KEY]),
     AgentPromptSeed(UNDERSTANDING_PLAN_KEY, "理解环：计划评审", "understanding", UNDERSTANDING_PROMPTS[UNDERSTANDING_PLAN_KEY]),

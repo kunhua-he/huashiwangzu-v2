@@ -40,23 +40,8 @@
           <WorkTraceGroup v-if="m.eventType === 'work_group'" :message="m" />
           <ToolCallCard v-else-if="m.eventType === 'tool_call' || m.eventType === 'tool_result'" :message="m" />
           <ThinkingCard v-else-if="m.eventType === 'thinking'" :content="m.content" :running="m.running" :collapsed="m.collapsed" :durationMs="m.durationMs" />
-          <MessageBubble v-else :message="m" :editingId="editingMessageId" @edit="handleStartEdit" @submitEdit="handleSubmitEdit" @rollback="handleRollback" />
+          <MessageBubble v-else :message="m" :editingId="editingMessageId" :streaming="m.streaming" @edit="handleStartEdit" @submitEdit="handleSubmitEdit" @rollback="handleRollback" />
         </template>
-
-        <!-- 流式输出指示器 -->
-        <div v-if="streaming" class="msg-row streaming">
-          <div class="streaming-ai">
-            <div class="msg-avatar assistant">
-              <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-                <path d="M10 2C5.58 2 2 4.46 2 7.5c0 1.86 1.18 3.5 3 4.5v3l3.34-2.01c.52.14 1.08.22 1.66.22 4.42 0 8-2.46 8-5.5S14.42 2 10 2z"/>
-              </svg>
-            </div>
-            <div class="streaming-content">
-              <div class="streaming-text">{{ streamingText || '思考中...' }}</div>
-              <span class="streaming-cursor">|</span>
-            </div>
-          </div>
-        </div>
       </div>
 
       <InputArea ref="inputAreaRef" v-model="inputText" :sending="sending" @send="sendMessage" @stop="stopGeneration" />
@@ -87,7 +72,14 @@ interface ConvItem { id: number; title: string; status?: string }
 interface ModelProfile { key: string; name: string; provider: string; model: string }
 interface RefItem { type: string; title: string; source: string; excerpt: string; url?: string }
 interface ApiBody<T> { success: boolean; data: T; error?: string | null }
-interface UsageData { work_duration_ms?: number; work_duration_sec?: number; [key: string]: unknown }
+interface UsageData {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+  work_duration_ms?: number
+  work_duration_sec?: number
+  [key: string]: unknown
+}
 interface MsgItem {
   id: number
   role: string
@@ -106,6 +98,8 @@ interface MsgItem {
   durationMs?: number
   startedAt?: number
   items?: MsgItem[]
+  streaming?: boolean
+  streamId?: string
 }
 
 interface SanitizedMessage {
@@ -133,6 +127,7 @@ const inputText = ref('')
 const sending = ref(false)
 const streaming = ref(false)
 const streamingText = ref('')
+const activeAssistantStreamId = ref<string | null>(null)
 const loading = ref(false)
 const error = ref('')
 	const sidebarCollapsed = ref(false)
@@ -165,9 +160,10 @@ async function handleSubmitEdit(messageId: number, newContent: string) {
   }
   if (abortController) { abortController.abort() }
   abortController = new AbortController()
-		clearIdleTimer()
-		sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
-		_pendingReferences = []
+			clearIdleTimer()
+			sending.value = true; streaming.value = true; streamingText.value = ''; activeAssistantStreamId.value = null; error.value = ''
+			_pendingReferences = []
+
 		// 编辑重发也立刻创建工作组
 
 	  currentWorkGroup.value = null
@@ -439,8 +435,10 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 				  if (abortController) { abortController.abort(); abortController = null }
 				  sending.value = false
 				  streaming.value = false
-				  streamingText.value = ''
-				  _pendingReferences = []
+                      streamingText.value = ''
+                      activeAssistantStreamId.value = null
+                      _pendingReferences = []
+
 				}
 
 
@@ -448,7 +446,57 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 		  if (workLiveTimer.value) { clearInterval(workLiveTimer.value); workLiveTimer.value = null }
 		}
 
-			/** 将 streamingText 落成 assistant 消息 + 折叠工作组 */
+function findAssistantStream(segmentId?: string): MsgItem | undefined {
+  const id = segmentId || activeAssistantStreamId.value || ''
+  return messages.value.find(m => m.role === 'assistant' && m.streaming && (!id || m.streamId === id))
+}
+
+function startAssistantStream(segmentId: string) {
+  activeAssistantStreamId.value = segmentId
+  if (findAssistantStream(segmentId)) return
+  messages.value.push({
+    id: 0,
+    role: 'assistant',
+    content: '',
+    created_at: new Date().toISOString(),
+    streaming: true,
+    streamId: segmentId,
+  })
+}
+
+function appendAssistantStream(segmentId: string, content: string) {
+  if (!content) return
+  if (!findAssistantStream(segmentId)) startAssistantStream(segmentId)
+  const msg = findAssistantStream(segmentId)
+  if (msg) msg.content += content
+}
+
+function rollbackAssistantStream(segmentId: string) {
+  messages.value = messages.value.filter(m => !(m.role === 'assistant' && m.streaming && m.streamId === segmentId))
+  if (activeAssistantStreamId.value === segmentId || !segmentId) activeAssistantStreamId.value = null
+}
+
+function commitAssistantStream(segmentId: string) {
+  const msg = findAssistantStream(segmentId)
+  if (!msg) return
+  const sanitized = sanitizeAssistantMessage(msg.content)
+  if (!sanitized.content) {
+    rollbackAssistantStream(segmentId)
+    return
+  }
+  msg.content = sanitized.content
+  msg.streaming = false
+  msg.eventType = undefined
+  const refs = uniqueRefs([..._pendingReferences, ...(msg.references || []), ...sanitized.references])
+  if (refs.length) msg.references = refs
+  if (_lastRoundUsage) msg.usage = _lastRoundUsage
+  _pendingReferences = []
+  _lastRoundUsage = null
+  if (activeAssistantStreamId.value === segmentId || !segmentId) activeAssistantStreamId.value = null
+}
+
+/** 将 streamingText 落成 assistant 消息 + 折叠工作组 */
+
 			function flushStreamingAsMessage() {
 			  stopWorkTimer()
 			  closeLastThinking()
@@ -464,15 +512,52 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 			    if (m.eventType === 'thinking') { m.collapsed = true; m.running = false }
 			  }
 			  const finalText = streamingText.value.trim()
-				  streamingText.value = ''
-				  commitAssistantMessage({ content: finalText, usage: _lastRoundUsage })
+                  streamingText.value = ''
+                  activeAssistantStreamId.value = null
+                  commitAssistantMessage({ content: finalText, usage: _lastRoundUsage })
+
 
 			  _lastRoundUsage = null
 			  triggerDesktopRefresh()
 			  scrollToBottom()
 			}
 
-				/** 统一 assistant 消息提交：清洗内容、判空、挂 usage */
+				function normalizeUsagePayload(evt: Record<string, unknown>): UsageData | null {
+				  let source: Record<string, unknown> = evt
+				  if (typeof evt.content === 'string' && evt.content.trim()) {
+				    try {
+				      const parsed = JSON.parse(evt.content) as Record<string, unknown>
+				      source = { ...parsed, ...evt }
+				    } catch { /* keep top-level event */ }
+				  }
+				  const promptTokens = Number(source.prompt_tokens) || 0
+				  const completionTokens = Number(source.completion_tokens) || 0
+				  const totalTokens = Number(source.total_tokens) || (promptTokens + completionTokens)
+				  if (!promptTokens && !completionTokens && !totalTokens) return null
+				  const usage: UsageData = {
+				    prompt_tokens: promptTokens,
+				    completion_tokens: completionTokens,
+				    total_tokens: totalTokens,
+				  }
+				  const workDurationMs = Number(source.work_duration_ms) || 0
+				  const workDurationSec = Number(source.work_duration_sec) || 0
+				  if (workDurationMs) usage.work_duration_ms = workDurationMs
+				  if (workDurationSec) usage.work_duration_sec = workDurationSec
+				  return usage
+				}
+
+				function attachUsageToLatestAssistant(usage: UsageData): boolean {
+				  for (let i = messages.value.length - 1; i >= 0; i--) {
+				    const msg = messages.value[i]
+				    if (msg.role === 'assistant' && msg.content.trim()) {
+				      msg.usage = usage
+				      return true
+				    }
+				  }
+				  return false
+				}
+
+					/** 统一 assistant 消息提交：清洗内容、判空、挂 usage */
 				function commitAssistantMessage(opts: { content: string; usage?: UsageData | null; references?: RefItem[]; createdAt?: string }) {
 				  const sanitized = sanitizeAssistantMessage(opts.content)
 				  if (!sanitized.content) return
@@ -681,29 +766,43 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 				    }
 				    if (!payloadLines.length) return false
 				    const payload = payloadLines.join('\n')
-				    if (payload === '[DONE]') {
-				      abortController = null
-				      streaming.value = false; sending.value = false
-				      flushStreamingAsMessage()
-				      void reader.cancel().catch(() => {})
-				      return true
-				    }
+                      if (payload === '[DONE]') {
+                          abortController = null
+                          streaming.value = false; sending.value = false
+                          if (activeAssistantStreamId.value) commitAssistantStream(activeAssistantStreamId.value)
+                          else flushStreamingAsMessage()
+                          void reader.cancel().catch(() => {})
+                          return true
+                        }
+
 
 				    let evt: Record<string, unknown>
 				    try { evt = JSON.parse(payload) } catch { return false }
 				    const etype = evt.type as string | undefined
 
-				    if (etype === 'content') {
-				      abortController = null
-				      streaming.value = false; sending.value = false
-				      const rawContent = (evt.content as string) || ''
-				      commitAssistantMessage({ content: rawContent, createdAt: new Date().toISOString(), usage: _lastRoundUsage })
-				      _lastRoundUsage = null
-				      void reader.cancel().catch(() => {})
-				      return true
-				    }
+                    if (etype === 'content') {
+                      abortController = null
+                      streaming.value = false; sending.value = false
+                      const rawContent = (evt.content as string) || ''
+                      commitAssistantMessage({ content: rawContent, createdAt: new Date().toISOString(), usage: _lastRoundUsage })
+                      _lastRoundUsage = null
+                      void reader.cancel().catch(() => {})
+                      return true
+                    }
 
-				    if (etype === 'work_start') {
+                    if (etype === 'assistant_stream_start') {
+                      startAssistantStream((evt.segment_id as string) || `stream_${Date.now()}`)
+                    } else if (etype === 'assistant_stream_delta') {
+                      appendAssistantStream((evt.segment_id as string) || '', (evt.content as string) || '')
+                    } else if (etype === 'assistant_stream_rollback') {
+                      rollbackAssistantStream((evt.segment_id as string) || '')
+                      const replacement = (evt.replacement as string) || ''
+                      streamingText.value = evt.reason === 'summary_cleaned' ? replacement : ''
+                      ensureWorkGroup()
+                    } else if (etype === 'assistant_stream_commit') {
+                      commitAssistantStream((evt.segment_id as string) || '')
+                    } else if (etype === 'work_start') {
+
 				      ensureWorkGroup()
 				    } else if (etype === 'work_done') {
 				      const durMs = (evt.duration_ms as number) || 0
@@ -715,22 +814,18 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 				        replaceContent = (rp.content as string) || ''
 				      } catch { replaceContent = (evt.content as string) || '' }
 				      streamingText.value = replaceContent
-				    } else if (etype === 'usage') {
-				      const wg = currentWorkGroup.value
-				      if (wg && evt.content) {
-				        try {
-				          const u = typeof evt.content === 'string' ? JSON.parse(evt.content) as Record<string, unknown> : evt
-				          const durMs = u.work_duration_ms as number
-				          if (durMs) finishWorkGroup(durMs)
-				        } catch { /* ignore */ }
+				    } else if (etype === 'usage' || etype === 'round_usage') {
+				      const usage = normalizeUsagePayload(evt)
+				      if (usage) {
+				        _lastRoundUsage = usage
+				        if (attachUsageToLatestAssistant(usage)) {
+				          _lastRoundUsage = null
+				        }
 				      }
-				    } else if (etype === 'round_usage') {
-				      const pt = Number(evt.prompt_tokens) || 0
-				      const ct = Number(evt.completion_tokens) || 0
-				      const tt = Number(evt.total_tokens) || 0
-				      if (pt || ct || tt) {
-				        _lastRoundUsage = { prompt_tokens: pt, completion_tokens: ct, total_tokens: tt }
-				      }
+				      const durMs = Number(evt.duration_ms) || Number(usage?.work_duration_ms) || 0
+				      if (durMs) finishWorkGroup(durMs)
+
+
 								    } else if (etype === 'references') {
 				      const refs = Array.isArray(evt.references) ? evt.references as RefItem[] : []
 				      if (refs.length) {
@@ -756,9 +851,14 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 				    } else if (etype === 'tool_result') {
 				      ensureWorkGroup()
 				      applyToolResultEvent(evt.name as string || 'unknown', evt.result, currentWorkGroup.value?.items ?? messages.value, evt.duration_ms as number | undefined)
-				    } else if (etype === 'token') {
-				      streamingText.value += evt.content as string || ''
-				    } else if (etype === 'error') {
+                    } else if (etype === 'token') {
+                      if (activeAssistantStreamId.value) {
+                        appendAssistantStream(activeAssistantStreamId.value, (evt.content as string) || '')
+                      } else {
+                        streamingText.value += evt.content as string || ''
+                      }
+                    } else if (etype === 'error') {
+
 				      streaming.value = false; sending.value = false
 				      finishWorkGroupOnError()
 				      error.value = userSafeStreamError((evt.content as string) || '')
@@ -779,10 +879,12 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 				        finished = handleSseBlock(sseBuffer)
 				      }
 				      if (!finished) {
-				        abortController = null
-				        streaming.value = false; sending.value = false
-				        flushStreamingAsMessage()
-				        finished = true
+                        abortController = null
+                        streaming.value = false; sending.value = false
+                        if (activeAssistantStreamId.value) commitAssistantStream(activeAssistantStreamId.value)
+                        else flushStreamingAsMessage()
+                        finished = true
+
 				      }
 				      break
 				    }
@@ -811,7 +913,7 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
 			  abortController = new AbortController()
 			  clearIdleTimer()
 			  inputText.value = ''
-				  sending.value = true; streaming.value = true; streamingText.value = ''; error.value = ''
+				  sending.value = true; streaming.value = true; streamingText.value = ''; activeAssistantStreamId.value = null; error.value = ''
 				  _pendingReferences = []
 				  messages.value.push({ id: 0, role: 'user', content: text, created_at: new Date().toISOString() })
 

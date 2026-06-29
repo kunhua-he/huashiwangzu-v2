@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from uuid import uuid4
 
+from app.database import AsyncSessionLocal
 from app.models.user import User
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -25,6 +28,7 @@ from ..schemas import ChatRequest
 from ..services import conversation_service as conv_svc
 from ..services import tool_discovery
 from .checkpointer import PostgresCheckpointSaver
+from .intent_preflight import IntentPreflightRunner
 from .runtime_policy import RuntimePolicy
 from .task_sink import RuntimeTaskSink
 from .tool_loop_runtime import ToolLoopRuntime
@@ -198,22 +202,44 @@ class ConversationRuntime:
 
             tools = tool_discovery.build_tools(user.role)
 
-        # ── Wire sub-runtimes ───────────────────────────────────────
-        sink = RuntimeTaskSink(
-            conversation_id=payload.conversation_id,
-            owner_id=user.id,
-            profile_key=profile_key,
-        )
-        loop = ToolLoopRuntime(
-            conversation_id=payload.conversation_id,
-            owner_id=user.id,
-            profile_key=profile_key,
-            policy=self.policy,
-            suppress_thinking=(engine_diag.get("thinking_level") == "none") if not channel_values else False,
-            user_role=user.role,
-        )
-
+        # ── Wire sub-runtimes lazily inside the SSE stream so preflight does not block the HTTP response ──
         async def _event_stream():
+            stream_preflight = None
+            if not channel_values and self.policy.intent_preflight_enabled:
+                async with AsyncSessionLocal() as stream_db:
+                    stream_preflight = await self._run_intent_preflight(
+                        db=stream_db,
+                        conversation_id=payload.conversation_id,
+                        owner_id=user.id,
+                        user_role=user.role,
+                        profile_key=profile_key,
+                        user_input=payload.content,
+                        messages=messages,
+                    )
+            sink = RuntimeTaskSink(
+                conversation_id=payload.conversation_id,
+                owner_id=user.id,
+                profile_key=profile_key,
+                user_input=payload.content,
+                intent_preflight=stream_preflight.to_dict() if stream_preflight else None,
+            )
+            if self._should_preflight_clarify(stream_preflight):
+                async for event in self._yield_preflight_clarification(
+                    sink=sink,
+                    text=self._clarification_text(stream_preflight),
+                    usage=stream_preflight.usage if stream_preflight else {},
+                ):
+                    yield event
+                return
+            loop = ToolLoopRuntime(
+                conversation_id=payload.conversation_id,
+                owner_id=user.id,
+                profile_key=profile_key,
+                policy=self.policy,
+                suppress_thinking=(engine_diag.get("thinking_level") == "none") if not channel_values else False,
+                user_role=user.role,
+                initial_usage=stream_preflight.usage if stream_preflight else None,
+            )
             async for event in loop.run(messages, tools, sink, channel_values=channel_values):
                 yield event
 
@@ -346,26 +372,160 @@ class ConversationRuntime:
 
         tools = tool_discovery.build_tools(user.role)
 
-        # Wire sub-runtimes
-        sink = RuntimeTaskSink(
-            conversation_id=conversation_id,
-            owner_id=user.id,
-            profile_key=profile_key,
-        )
-        loop = ToolLoopRuntime(
-            conversation_id=conversation_id,
-            owner_id=user.id,
-            profile_key=profile_key,
-            policy=self.policy,
-            suppress_thinking=engine_diag.get("thinking_level") == "none",
-            user_role=user.role,
-        )
-
+        # Wire sub-runtimes lazily inside the SSE stream so preflight does not block the HTTP response.
         async def _event_stream():
+            stream_preflight = None
+            if self.policy.intent_preflight_enabled:
+                async with AsyncSessionLocal() as stream_db:
+                    stream_preflight = await self._run_intent_preflight(
+                        db=stream_db,
+                        conversation_id=conversation_id,
+                        owner_id=user.id,
+                        user_role=user.role,
+                        profile_key=profile_key,
+                        user_input=content,
+                        messages=messages,
+                    )
+            sink = RuntimeTaskSink(
+                conversation_id=conversation_id,
+                owner_id=user.id,
+                profile_key=profile_key,
+                user_input=content,
+                intent_preflight=stream_preflight.to_dict() if stream_preflight else None,
+            )
+            if self._should_preflight_clarify(stream_preflight):
+                async for event in self._yield_preflight_clarification(
+                    sink=sink,
+                    text=self._clarification_text(stream_preflight),
+                    usage=stream_preflight.usage if stream_preflight else {},
+                ):
+                    yield event
+                return
+            loop = ToolLoopRuntime(
+                conversation_id=conversation_id,
+                owner_id=user.id,
+                profile_key=profile_key,
+                policy=self.policy,
+                suppress_thinking=engine_diag.get("thinking_level") == "none",
+                user_role=user.role,
+                initial_usage=stream_preflight.usage if stream_preflight else None,
+            )
             async for event in loop.run(messages, tools, sink):
                 yield event
 
         return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+    async def _run_intent_preflight(
+        self,
+        *,
+        db: AsyncSession,
+        conversation_id: int,
+        owner_id: int,
+        user_role: str,
+        profile_key: str,
+        user_input: str,
+        messages: list[dict],
+    ):
+        """Run generic intent preflight and append its strategy to the system prompt."""
+        if not self.policy.intent_preflight_enabled:
+            return
+        try:
+            runner = IntentPreflightRunner(
+                conversation_id=conversation_id,
+                owner_id=owner_id,
+                profile_key=profile_key,
+                policy=self.policy,
+            )
+            result = await runner.run(user_input)
+            injection = await runner.build_injection(result)
+            if injection:
+                for msg in messages:
+                    if msg.get("role") == "system":
+                        msg["content"] = str(msg.get("content") or "") + injection
+                        break
+            await record_event(
+                db,
+                conversation_id,
+                "intent_preflight_diag",
+                {
+                    "triggered": result.triggered,
+                    "task_category": result.task_category,
+                    "answer_shape": result.answer_shape,
+                    "confidence": result.confidence,
+                    "intent_summary": result.intent_summary[:300],
+                    "first_actions": result.tool_strategy.first_actions,
+                    "suggested_queries": result.tool_strategy.suggested_queries[:5],
+                    "matched_experience_count": len(result.matched_experiences),
+                    "verifier": result.verifier,
+                    "error": result.error,
+                    "user_role": user_role,
+                },
+                llm_response_id=None,
+            )
+            return result
+        except Exception as exc:
+            logger.warning("Intent preflight hook failed (non-fatal): %s", exc)
+            await record_event(
+                db,
+                conversation_id,
+                "intent_preflight_diag",
+                {"triggered": True, "error": str(exc), "user_role": user_role},
+                llm_response_id=None,
+            )
+            return None
+
+    def _should_preflight_clarify(self, result) -> bool:
+        if not self.policy.intent_preflight_allow_short_circuit:
+            return False
+        if not result or result.error:
+            return False
+        if result.answer_shape != "clarification":
+            return False
+        actions = result.tool_strategy.first_actions or []
+        return actions == ["clarify"] and result.evidence_policy.should_ask_clarification
+
+    def _clarification_text(self, result) -> str:
+        missing = result.missing_slots[:3] if result and result.missing_slots else []
+        verifier = result.verifier if result and isinstance(result.verifier, dict) else {}
+        reason = str(verifier.get("reason") or "当前信息不足，直接给确定答案可能不可靠。")
+        reason = reason.replace("预检测", "当前信息").replace("预检", "当前信息")
+        questions = "、".join(missing) if missing else "具体对象、范围或版本"
+        return f"我需要先确认一些信息，否则容易给出不可靠的具体答案。{reason}\n\n请补充：{questions}。"
+
+    async def _yield_preflight_clarification(self, sink: RuntimeTaskSink, text: str, usage: dict | None = None):
+        work_start = time.time()
+        segment_id = f"assistant_{uuid4().hex}"
+        yield self._j_sse({"type": "work_start", "started_at": work_start})
+        yield self._j_sse({"type": "assistant_stream_start", "segment_id": segment_id, "role": "assistant"})
+        for idx in range(0, len(text), 12):
+            yield self._j_sse({"type": "assistant_stream_delta", "segment_id": segment_id, "content": text[idx:idx + 12]})
+        yield self._j_sse({"type": "assistant_stream_commit", "segment_id": segment_id})
+        duration_ms = round((time.time() - work_start) * 1000)
+        yield self._j_sse({"type": "work_done", "duration_ms": duration_ms, "duration_sec": round(duration_ms / 1000, 3)})
+        usage_data = dict(usage or {})
+        usage_data["work_duration_ms"] = duration_ms
+        usage_data["work_duration_sec"] = round(duration_ms / 1000)
+        if usage_data.get("prompt_tokens") or usage_data.get("completion_tokens") or usage_data.get("total_tokens"):
+            yield self._j_sse({"type": "round_usage", **usage_data})
+        try:
+            async with AsyncSessionLocal() as persist_db:
+                await sink.persist_assistant(
+                    persist_db,
+                    text,
+                    thinking_parts=[],
+                    tool_events=[],
+                    timeline=[{"type": "text", "content": text, "started_at": time.time()}],
+                    usage=usage_data,
+                )
+        except Exception as exc:
+            logger.warning("Persist preflight clarification failed (non-fatal): %s", exc)
+        yield b"data: [DONE]\n\n"
+
+    @staticmethod
+    def _j_sse(obj: dict) -> bytes:
+        return (
+            f"data: {json.dumps(obj, ensure_ascii=False, default=str)}\n\n"
+        ).encode("utf-8")
 
     def _build_understanding_injection(self, packet: dict) -> str:
         """Build a system-prompt injection from the understanding packet."""

@@ -10,9 +10,10 @@ from app.config import get_settings
 
 from .adapters import get_adapter
 from .base import BaseProvider
-from .contract import StreamEventType, stream_event_to_dict
+from .contract import StreamEvent, StreamEventType, stream_event_to_dict
 from .protocol import normalize_openai_payload
 from .stream_parse import error_message, extract_stream_payload, format_error
+from .tool_call_accumulator import StreamingToolCallAccumulator
 
 logger = logging.getLogger("v2.gateway.openai_compat")
 
@@ -69,6 +70,7 @@ class OpenAIProvider(BaseProvider):
         max_tokens: int = 4096, tools: list[dict] | None = None,
     ) -> AsyncGenerator[dict, None]:
         adapter = get_adapter(model)
+        accumulator = StreamingToolCallAccumulator()
         payload = self._build_payload(messages, model, temperature, max_tokens, True, tools)
         try:
             async with httpx.AsyncClient(timeout=300) as client:
@@ -90,6 +92,18 @@ class OpenAIProvider(BaseProvider):
                         if "error" in data:
                             yield {"type": "error", "content": format_error(data["error"])}
                             return
+                        choices = data.get("choices") or []
+                        choice = choices[0] if choices else {}
+                        delta = choice.get("delta") or {}
+                        accumulator.add_delta_tool_calls(delta.get("tool_calls"))
+                        if choice.get("finish_reason") == "tool_calls" and accumulator.has_calls():
+                            yield stream_event_to_dict(
+                                StreamEvent(
+                                    type=StreamEventType.TOOL_CALL,
+                                    tool_calls=accumulator.completed_tool_calls(),
+                                )
+                            )
+                            continue
                         event = adapter.adapt_stream_chunk(data, provider=self.provider_name)
                         if event:
                             yield stream_event_to_dict(event)

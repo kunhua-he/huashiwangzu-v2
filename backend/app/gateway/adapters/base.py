@@ -138,11 +138,7 @@ class OpenAICompatLikeAdapter(ModelAdapter):
             content = msg.get("content", "")
             tool_calls = msg.get("tool_calls")
             if tool_calls:
-                return StreamEvent(
-                    type=StreamEventType.TOKEN,
-                    content=content or "",
-                    tool_calls=_extract_ollama_tool_calls(chunk),
-                )
+                return _build_stream_event(StreamEventType.TOOL_CALL, tool_calls=_extract_ollama_tool_calls(chunk))
             if content:
                 return _build_stream_event(StreamEventType.TOKEN, content)
             return None
@@ -152,11 +148,7 @@ class OpenAICompatLikeAdapter(ModelAdapter):
         thinking = delta.get("reasoning_content", "")
         tool_calls = delta.get("tool_calls")
         if tool_calls:
-            return StreamEvent(
-                type=StreamEventType.TOKEN,
-                content=content or "",
-                tool_calls=_extract_openai_tool_calls(choice),
-            )
+            return None
         if choice.get("finish_reason"):
             usage = _extract_usage(chunk)
             return _build_stream_event(StreamEventType.DONE, usage=usage)

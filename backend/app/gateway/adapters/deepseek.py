@@ -1,4 +1,4 @@
-from app.gateway.contract import ModelResponse, StreamEvent, StreamEventType, ToolCall
+from app.gateway.contract import ModelResponse, StreamEvent, StreamEventType
 
 from .base import (
     ModelAdapter,
@@ -52,14 +52,7 @@ class DeepSeekAdapter(ModelAdapter):
         thinking = delta.get("reasoning_content", "")
         tool_calls = delta.get("tool_calls")
         if tool_calls:
-            tool_calls_list = _extract_openai_tool_calls(choice)
-            if not tool_calls_list:
-                tool_calls_list = _extract_delta_tool_calls(delta)
-            return StreamEvent(
-                type=StreamEventType.TOKEN,
-                content=content or "",
-                tool_calls=tool_calls_list,
-            )
+            return None
         if choice.get("finish_reason"):
             usage = _extract_usage(chunk)
             return _build_stream_event(StreamEventType.DONE, usage=usage)
@@ -68,23 +61,3 @@ class DeepSeekAdapter(ModelAdapter):
         if content:
             return _build_stream_event(StreamEventType.TOKEN, content)
         return None
-
-
-def _extract_delta_tool_calls(delta: dict) -> list[ToolCall]:
-    raw_calls = delta.get("tool_calls") or []
-    result = []
-    for tc in raw_calls:
-        fn = tc.get("function", {})
-        args = fn.get("arguments", "")
-        if isinstance(args, str):
-            import json
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                args = {}
-        result.append(ToolCall(
-            id=tc.get("id", ""),
-            type="function",
-            function={"name": fn.get("name", ""), "arguments": args},
-        ))
-    return result

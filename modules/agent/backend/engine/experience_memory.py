@@ -2,6 +2,7 @@
 走框架跨模块通路，不直读 memory 表。"""
 import json
 import logging
+
 from app.services.module_registry import call_capability
 
 logger = logging.getLogger("v2.agent").getChild("engine.experience_memory")
@@ -109,6 +110,7 @@ def format_injection(experiences: list[dict]) -> str | None:
         )
     if not segments:
         return None
-    return "\n\n---\n\n💡相关成功经验参考：\n" + "\n".join(segments) + (
-        "\n（执行多步流程前，可参考注入的已知成功路径；没有就正常摸索。）"
+    return "\n\n---\n\n💡本轮已命中成功经验（优先证据）：\n" + "\n".join(segments) + (
+        "\n使用规则：若经验与当前问题不冲突，应优先沿用，避免重复探索；"
+        "若不适用，先说明冲突原因，再选择新的证据路径。"
     )

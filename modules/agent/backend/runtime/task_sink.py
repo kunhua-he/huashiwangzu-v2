@@ -48,10 +48,14 @@ class RuntimeTaskSink:
         conversation_id: int,
         owner_id: int,
         profile_key: str = "deepseek-v4-flash",
+        user_input: str = "",
+        intent_preflight: dict | None = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.owner_id = owner_id
         self.profile_key = profile_key
+        self.user_input = user_input
+        self.intent_preflight = intent_preflight or {}
 
     async def persist_assistant(
         self,
@@ -73,8 +77,9 @@ class RuntimeTaskSink:
             try:
                 from ..engine.experience_memory import save_experience
                 await save_experience(
-                    trigger_condition=clean_content[:300] or "assistant_success_path",
-                    steps=success_path,
+                    trigger_condition=self._experience_trigger(clean_content),
+                    steps=self._experience_steps(success_path, tool_events),
+                    tools_used=self._tools_used(tool_events),
                     source_conversation_id=self.conversation_id,
                     caller=f"user:{self.owner_id}" if self.owner_id else "system:agent",
                 )
@@ -110,6 +115,52 @@ class RuntimeTaskSink:
             json.dumps(usage) if usage else "None",
         )
         return msg.id
+
+    def _experience_trigger(self, clean_content: str) -> str:
+        parts = []
+        if self.user_input:
+            parts.append(f"用户原始问题：{self.user_input[:300]}")
+        intent = str(self.intent_preflight.get("intent_summary") or "")
+        if intent:
+            parts.append(f"意图摘要：{intent[:300]}")
+        task_category = str(self.intent_preflight.get("task_category") or "")
+        answer_shape = str(self.intent_preflight.get("answer_shape") or "")
+        if task_category or answer_shape:
+            parts.append(f"任务类型：{task_category}/{answer_shape}")
+        if not parts:
+            parts.append(clean_content[:300] or "assistant_success_path")
+        return "\n".join(parts)[:1000]
+
+    def _experience_steps(self, success_path: str, tool_events: list[dict]) -> str:
+        try:
+            parsed = json.loads(success_path)
+            if isinstance(parsed, list):
+                return json.dumps(parsed, ensure_ascii=False, default=str)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        steps: list[dict] = []
+        task_category = self.intent_preflight.get("task_category")
+        if task_category:
+            steps.append({"type": "intent", "task_category": task_category, "summary": self.intent_preflight.get("intent_summary", "")})
+        for event in tool_events:
+            if event.get("type") == "tool_call":
+                steps.append({"type": "tool", "tool_name": event.get("name", "")})
+        steps.append({"type": "success_path", "text": success_path})
+        return json.dumps(steps, ensure_ascii=False, default=str)
+
+    @staticmethod
+    def _tools_used(tool_events: list[dict]) -> str | None:
+        names: list[str] = []
+        seen: set[str] = set()
+        for event in tool_events:
+            if event.get("type") != "tool_call":
+                continue
+            name = str(event.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return json.dumps(names, ensure_ascii=False) if names else None
 
     async def persist_pending_events(
         self,

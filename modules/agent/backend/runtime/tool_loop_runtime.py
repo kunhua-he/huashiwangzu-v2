@@ -29,18 +29,35 @@ from ..engine.engine import (
 )
 from ..engine.stuck_detector import detect_stuck
 from ..engine.stuck_detector import reset as reset_stuck
-from ..services import tool_discovery
 from ..prompt_seeds import FINAL_SUMMARY_KEY, STOP_DECISION_KEY
+from ..services import tool_discovery
 from ..services.action_policy import check_action_allowed
 from ..services.model_client import final_clean_content, parse_inline_tool_calls, recover_tool_calls
 from ..services.runtime_prompt_provider import get_system_prompt as get_runtime_system_prompt
 from .checkpointer import PostgresCheckpointSaver
-from .content_gate import user_safe_error_message
+from .content_gate import TOOL_INTENT_RETRY_MESSAGE, looks_like_unfinished_tool_intent, user_safe_error_message
 from .runtime_policy import RuntimePolicy
 from .stream_emitter import StreamEmitter
+from .stream_proxy import StreamProxy, StreamSegment
 from .task_sink import RuntimeTaskSink
 
 logger = logging.getLogger("v2.agent").getChild("runtime.tool_loop")
+
+
+_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def _merge_usage(target: dict, usage: dict | None) -> None:
+    if not isinstance(usage, dict):
+        return
+    for key in _USAGE_KEYS:
+        value = usage.get(key, 0)
+        if isinstance(value, (int, float)):
+            target[key] = int(target.get(key, 0) or 0) + int(value)
+
+
+def _has_token_usage(usage: dict | None) -> bool:
+    return bool(isinstance(usage, dict) and any(int(usage.get(key, 0) or 0) for key in _USAGE_KEYS))
 
 
 def detect_tool_round_stuck(tool_calls: list[dict], session_key: str) -> dict:
@@ -79,6 +96,7 @@ class ToolLoopRuntime:
         policy: RuntimePolicy | None = None,
         suppress_thinking: bool = False,
         user_role: str = "viewer",
+        initial_usage: dict | None = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.owner_id = owner_id
@@ -86,6 +104,7 @@ class ToolLoopRuntime:
         self.policy = policy or RuntimePolicy.default()
         self.suppress_thinking = suppress_thinking
         self.user_role = user_role
+        self.initial_usage = initial_usage or {}
 
     async def run(
         self,
@@ -134,6 +153,7 @@ class ToolLoopRuntime:
             _tool_intent_retry_count = 0
             # Accumulate usage across all model calls in this turn
             _accumulated_usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            _merge_usage(_accumulated_usage, self.initial_usage)
             emitter = StreamEmitter()
 
             for _round in range(_resume_from_step, self.policy.max_tool_rounds):
@@ -144,14 +164,29 @@ class ToolLoopRuntime:
                     _round + 1, self.policy.max_tool_rounds,
                 )
 
-                # ── Non-streaming model call for tool decisions ─────
+                # ── Streaming model call for tool decisions ─────────
                 _decision_t0 = time.monotonic()
-                result = await chat_with_degradation_chain(
-                    messages,
-                    self.profile_key,
-                    tools,
-                    conversation_id=self.conversation_id,
-                )
+                if self.policy.enable_single_pass_streaming_tools:
+                    result = {}
+                    async for stream_item in self._stream_until_tool_or_done(
+                        messages,
+                        tools,
+                        full,
+                        thinking_parts,
+                        timeline,
+                        emitter,
+                    ):
+                        if isinstance(stream_item, dict) and stream_item.get("type") == "_stream_result":
+                            result = stream_item.get("result") or {}
+                        else:
+                            yield stream_item
+                else:
+                    result = await chat_with_degradation_chain(
+                        messages,
+                        self.profile_key,
+                        tools,
+                        conversation_id=self.conversation_id,
+                    )
                 _decision_ms = round((time.monotonic() - _decision_t0) * 1000)
                 logger.info(
                     "[DIAG] ToolLoopRuntime chat returned tool_calls=%s profile=%s error=%s decision_ms=%d",
@@ -161,12 +196,8 @@ class ToolLoopRuntime:
                     _decision_ms,
                 )
 
-                # ── Accumulate usage from each non-streaming call ──
-                _usage_res = result.get("usage") or {}
-                for _k in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                    _v = _usage_res.get(_k, 0)
-                    if isinstance(_v, (int, float)):
-                        _accumulated_usage[_k] = (_accumulated_usage.get(_k, 0) or 0) + int(_v)
+                # ── Accumulate usage from each model call ─────────────
+                _merge_usage(_accumulated_usage, result.get("usage") or {})
 
                 if result.get("error"):
                     error_msg = str(result["error"])
@@ -213,6 +244,8 @@ class ToolLoopRuntime:
 
                 # ── No tool calls → stream final content ────────────
                 if not tool_calls:
+                    if self.policy.enable_single_pass_streaming_tools:
+                        break
                     retry_tool_intent = None
                     inline_from_stream = None
                     async for chunk in emitter.yield_final_stream(
@@ -470,9 +503,14 @@ class ToolLoopRuntime:
                     AGENT_CODE = "erp_chat"
 
                     async def _tool_execute_fn(tool: dict) -> dict:
+                        effective_name = (
+                            str((tool.get("args") or {}).get("name") or tool["name"])
+                            if tool["name"] == "skill_use"
+                            else tool["name"]
+                        )
                         async with AsyncSessionLocal() as _pol_db:
                             pol = await check_action_allowed(
-                                _pol_db, tool["name"], AGENT_CODE,
+                                _pol_db, effective_name, AGENT_CODE,
                                 self.owner_id, self.conversation_id,
                             )
                         if not pol.get("allowed"):
@@ -484,11 +522,11 @@ class ToolLoopRuntime:
                             }
                         if tool["name"] == "skill_list":
                             return await tool_discovery.handle_skill_list(
-                                tool["args"], "admin",
+                                tool["args"], self.user_role,
                             )
                         elif tool["name"] == "skill_describe":
                             return await tool_discovery.handle_skill_describe(
-                                tool["args"], "admin",
+                                tool["args"], self.user_role,
                             )
                         elif tool["name"] == "skill_use":
                             return await tool_discovery.handle_skill_use(
@@ -631,11 +669,12 @@ class ToolLoopRuntime:
                             )
                     except Exception:
                         logger.debug("Failed to record diminishing_stop event")
-                    action = await self._decide_stop_action(messages)
-                    logger.info("[DIAG] LLM stop decision: %s", action)
-                    if action == "continue":
-                        budget_tracker.reset(_budget_session_key)
-                        continue
+                    if self.policy.llm_stop_decision_enabled:
+                        action = await self._decide_stop_action(messages)
+                        logger.info("[DIAG] LLM stop decision: %s", action)
+                        if action == "continue":
+                            budget_tracker.reset(_budget_session_key)
+                            continue
                     async for chunk in self._generate_final_summary(messages, tool_events, timeline, full):
                         yield chunk
                     break
@@ -697,7 +736,7 @@ class ToolLoopRuntime:
             try:
                 logger.info("[DIAG] ToolLoopRuntime starting final persist")
                 async with AsyncSessionLocal() as s2:
-                    _usage = dict(_accumulated_usage) if _accumulated_usage.get("total_tokens") else (dict(emitter.usage_data) if emitter.usage_data else {})
+                    _usage = dict(_accumulated_usage) if _has_token_usage(_accumulated_usage) else (dict(emitter.usage_data) if emitter.usage_data else {})
                     work_duration_ms = round((time.time() - _work_start_time) * 1000)
                     _usage["work_duration_ms"] = work_duration_ms
                     _usage["work_duration_sec"] = round(work_duration_ms / 1000)
@@ -754,8 +793,8 @@ class ToolLoopRuntime:
                     )
 
                     if msg_id:
-                        if _accumulated_usage.get("total_tokens"):
-                            yield self._j_sse({"type": "round_usage", **dict(_accumulated_usage)})
+                        if _has_token_usage(_usage):
+                            yield self._j_sse({"type": "round_usage", **_usage})
                         if _round_references:
                             yield self._j_sse({"type": "references", "references": _round_references})
                     else:
@@ -774,7 +813,7 @@ class ToolLoopRuntime:
                             event_round += 1
                             pending_events.append({
                                 "event_type": "assistant_msg",
-                                "payload": {"content": clean_content},
+                                "payload": {"content": clean_content, "usage": _usage},
                                 "llm_response_id": _final_rid,
                             })
                     await sink.persist_pending_events(
@@ -814,6 +853,143 @@ class ToolLoopRuntime:
             except GeneratorExit:
                 logger.debug("GeneratorExit during final SSE yield (client disconnected)")
         logger.info("[DIAG] ToolLoopRuntime EXIT")
+
+    async def _stream_until_tool_or_done(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        full: list[str],
+        thinking_parts: list[str],
+        timeline: list[dict],
+        emitter: StreamEmitter,
+    ):
+        """Stream one model turn until it finishes or emits complete tool calls."""
+        proxy = StreamProxy(emitter)
+        segment: StreamSegment | None = None
+        content_parts: list[str] = []
+        thinking_text = ""
+        usage_data: dict | None = None
+        finish_reason = "stop"
+
+        async for event in chat_stream_with_degradation_chain(
+            messages,
+            self.profile_key,
+            tools,
+            conversation_id=self.conversation_id,
+        ):
+            event_type = event.get("type")
+            content = str(event.get("content") or "")
+            if event_type in ("token", "content") and content:
+                if segment is None:
+                    segment = proxy.new_segment("assistant")
+                    start_event = proxy.start(segment)
+                    if start_event:
+                        yield start_event
+                content_parts.append(content)
+                full.append(content)
+                timeline.append({"type": "text", "content": content, "started_at": time.time()})
+                delta_event = proxy.delta(segment, content)
+                if delta_event:
+                    yield delta_event
+            elif event_type == "thinking" and content:
+                from ..services.model_client import parse_inline_tool_calls
+                clean, _ = parse_inline_tool_calls(content)
+                thinking_text += clean
+                if not self.suppress_thinking:
+                    thinking_parts.append(clean)
+                    timeline.append({"type": "thinking", "content": clean, "started_at": time.time()})
+                    yield self._sse("thinking", clean)
+            elif event_type == "tool_call":
+                if segment is not None:
+                    rollback_event = proxy.rollback(segment, "tool_call_detected")
+                    if rollback_event:
+                        yield rollback_event
+                    full.clear()
+                yield {
+                    "type": "_stream_result",
+                    "result": {
+                        "content": "".join(content_parts),
+                        "thinking": thinking_text,
+                        "tool_calls": event.get("tool_calls") or [],
+                        "finish_reason": "tool_calls",
+                        "usage": usage_data or {},
+                    },
+                }
+                return
+            elif event_type == "usage":
+                data = event.get("data") or event.get("usage") or {}
+                if isinstance(data, dict):
+                    usage_data = data
+                    emitter.usage_data = data
+            elif event_type == "degradation" and content:
+                yield self._sse("thinking", content)
+            elif event_type == "error" and content:
+                yield {"type": "_stream_result", "result": {"error": content, "content": content}}
+                return
+            elif event_type == "done":
+                done_usage = event.get("usage")
+                if isinstance(done_usage, dict):
+                    usage_data = done_usage
+                    emitter.usage_data = done_usage
+                finish_reason = event.get("finish_reason") or finish_reason
+                break
+
+        raw_content = "".join(content_parts)
+        try:
+            clean_content, inline_calls = parse_inline_tool_calls(raw_content)
+        except Exception as exc:
+            logger.warning("parse_inline_tool_calls failed during streaming decision: %s", exc)
+            clean_content, inline_calls = raw_content, []
+        if inline_calls:
+            if segment is not None:
+                rollback_event = proxy.rollback(segment, "inline_tool_call_detected", replacement=clean_content)
+                if rollback_event:
+                    yield rollback_event
+                full.clear()
+                if clean_content:
+                    full.append(clean_content)
+            yield {
+                "type": "_stream_result",
+                "result": {
+                    "content": clean_content,
+                    "thinking": thinking_text,
+                    "tool_calls": inline_calls,
+                    "finish_reason": "tool_calls",
+                    "usage": usage_data or {},
+                },
+            }
+            return
+
+        if looks_like_unfinished_tool_intent(clean_content):
+            if segment is not None:
+                rollback_event = proxy.rollback(segment, "unfinished_tool_intent")
+                if rollback_event:
+                    yield rollback_event
+            full.clear()
+            yield {
+                "type": "_stream_result",
+                "result": {
+                    "content": clean_content,
+                    "error": TOOL_INTENT_RETRY_MESSAGE,
+                    "usage": usage_data or {},
+                },
+            }
+            return
+
+        if segment is not None:
+            commit_event = proxy.commit(segment)
+            if commit_event:
+                yield commit_event
+        yield {
+            "type": "_stream_result",
+            "result": {
+                "content": clean_content,
+                "thinking": thinking_text,
+                "tool_calls": [],
+                "finish_reason": finish_reason,
+                "usage": usage_data or {},
+            },
+        }
 
     async def _decide_stop_action(self, messages: list[dict]) -> str:
         """Ask the LLM whether to continue tool calls or reply to the user.
@@ -873,6 +1049,9 @@ class ToolLoopRuntime:
             "content": final_summary_prompt,
         }]
         summary_parts: list[str] = []
+        emitter = StreamEmitter()
+        proxy = StreamProxy(emitter)
+        segment: StreamSegment | None = None
         async for event in chat_stream_with_degradation_chain(
             summary_messages, self.profile_key, tools=None,
             conversation_id=self.conversation_id,
@@ -881,6 +1060,14 @@ class ToolLoopRuntime:
             content = str(event.get("content") or "")
             if event_type in ("token", "content") and content:
                 summary_parts.append(content)
+                if segment is None:
+                    segment = proxy.new_segment("assistant")
+                    start_event = proxy.start(segment)
+                    if start_event:
+                        yield start_event
+                delta_event = proxy.delta(segment, content)
+                if delta_event:
+                    yield delta_event
             elif event_type == "thinking" and content:
                 from ..services.model_client import parse_inline_tool_calls
                 clean, _ = parse_inline_tool_calls(content)
@@ -898,7 +1085,6 @@ class ToolLoopRuntime:
 
         # ── Clean inline XML from final summary content before display ──
         if summary_parts:
-            from ..services.model_client import parse_inline_tool_calls
             raw = "".join(summary_parts)
             clean, inline_calls = parse_inline_tool_calls(raw)
             if clean != raw:
@@ -906,13 +1092,23 @@ class ToolLoopRuntime:
                     "[DIAG] Final summary cleaned: %d chars → %d chars",
                     len(raw), len(clean),
                 )
+                if segment is not None:
+                    rollback_event = proxy.rollback(segment, "summary_cleaned", replacement=clean)
+                    if rollback_event:
+                        yield rollback_event
             final_text = clean.strip()
+
             if not final_text and inline_calls:
                 final_text = self._fallback_answer_from_tool_events(tool_events)
             if final_text:
                 full.append(final_text)
                 timeline.append({"type": "text", "content": final_text})
-                yield self._sse("token", final_text)
+                if segment is not None and not segment.closed:
+                    commit_event = proxy.commit(segment)
+                    if commit_event:
+                        yield commit_event
+                elif segment is None:
+                    yield self._sse("token", final_text)
 
     def _fallback_answer_from_tool_events(self, tool_events: list[dict]) -> str:
         """Build a minimal user-visible answer when final summary emits only tool calls."""

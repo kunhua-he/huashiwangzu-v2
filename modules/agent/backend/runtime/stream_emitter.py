@@ -167,6 +167,37 @@ class StreamEmitter:
                 "error", user_safe_error_message(exc),
             )
 
+    def assistant_stream_start(self, segment_id: str, message_id: int | None = None, role: str = "assistant") -> bytes:
+        payload: dict = {"type": "assistant_stream_start", "segment_id": segment_id, "role": role}
+        if message_id is not None:
+            payload["message_id"] = message_id
+        return self._json_sse(payload)
+
+    def assistant_stream_delta(self, segment_id: str, text: str) -> bytes:
+        return self._json_sse({"type": "assistant_stream_delta", "segment_id": segment_id, "content": text})
+
+    def assistant_stream_rollback(self, segment_id: str, reason: str, replacement: str = "") -> bytes:
+        return self._json_sse({
+            "type": "assistant_stream_rollback",
+            "segment_id": segment_id,
+            "reason": reason,
+            "replacement": replacement,
+        })
+
+    def assistant_stream_commit(self, segment_id: str, message_id: int | None = None, meta: dict | None = None) -> bytes:
+        payload: dict = {"type": "assistant_stream_commit", "segment_id": segment_id}
+        if message_id is not None:
+            payload["message_id"] = message_id
+        if meta:
+            payload["meta"] = meta
+        return self._json_sse(payload)
+
+    @staticmethod
+    def _json_sse(payload: dict) -> bytes:
+        return (
+            f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+        ).encode("utf-8")
+
     @staticmethod
     def _sse(event_type: str, content: str) -> bytes:
         """Format a single SSE ``data:`` frame."""

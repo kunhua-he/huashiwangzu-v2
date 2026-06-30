@@ -1,0 +1,55 @@
+{
+  "key": "github-search",
+  "name": "GitHub 搜索",
+  "icon": "Search",
+  "icon_asset": "",
+  "category": "tools",
+  "component_key": "",
+  "route_prefix": "/api/github-search",
+  "permissions": [
+    "viewer",
+    "editor",
+    "admin"
+  ],
+  "sort_order": 700,
+  "default_width": 800,
+  "default_height": 600,
+  "singleton": true,
+  "show_in_launcher": false,
+  "show_on_desktop": false,
+  "show_in_tray": false,
+  "show_in_sidebar": false,
+  "window_type": "background-service",
+  "allow_multiple": false,
+  "supported_formats": [],
+  "editable_formats": [],
+  "creatable_formats": [],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "public_actions": [
+    {
+      "action": "search",
+      "description": "搜索 GitHub 开源项目，按活跃度和质量排序。输入关键词即可，自动过滤归档和不活跃项目。",
+      "parameters": {
+        "query": "搜索关键词，支持 GitHub 搜索语法（如 language:python stars:>100）",
+        "limit": "返回结果数量（默认5，最大10）",
+        "search_code": "是否同时搜索仓库内代码（默认false）"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "search_code",
+      "description": "在 GitHub 上搜索代码片段。返回包含匹配代码的文件路径和仓库信息。",
+      "parameters": {
+        "query": "代码搜索关键词",
+        "language": "编程语言（可选，如 python）",
+        "limit": "返回结果数量（默认5，最大10）"
+      },
+      "min_role": "viewer"
+    }
+  ],
+  "backend": {
+    "enabled": true,
+    "router": "backend/router.py"
+  }
+}

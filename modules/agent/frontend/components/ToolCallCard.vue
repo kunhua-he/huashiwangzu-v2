@@ -4,14 +4,14 @@
       <span class="tool-dot" :class="{ calling: message.eventType === 'tool_call', done: message.eventType === 'tool_result' }"></span>
       <template v-if="message.eventType === 'tool_call'">
         <span>正在调用</span>
-        <span class="tool-name">{{ message.toolName }}</span>
+        <span class="tool-name" :title="message.toolName">{{ displayToolName }}</span>
         <span class="tool-calling-dots">
           <span class="cdot"></span><span class="cdot"></span><span class="cdot"></span>
         </span>
       </template>
 	      <template v-else>
 	        <span>工具记录</span>
-	        <span class="tool-name">{{ message.toolName }}</span>
+	        <span class="tool-name" :title="message.toolName">{{ displayToolName }}</span>
 	        <span v-if="durationText" class="tool-duration">{{ durationText }}</span>
 	        <svg class="tool-chevron" :class="{ rotated: isOpen }" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" width="10" height="10">
           <path d="M4 3l4 3-4 3"/>
@@ -49,6 +49,23 @@ const props = defineProps<{
 }>()
 
 const isOpen = ref(false)
+
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  skill_list: '查看技能列表',
+  skill_describe: '查看技能说明',
+  skill_use: '调用技能',
+  'docs-open__open': '打开文档',
+  'docs-open__get_content': '获取文档内容',
+  'docs-open__create_doc': '创建文档',
+  'media-asr__extract_audio': '提取视频音频',
+  'media-asr__transcribe_audio': '音频转文字',
+  'media-asr__transcribe_video': '视频转文字',
+}
+
+const displayToolName = computed(() => {
+  const name = props.message.toolName || ''
+  return TOOL_DISPLAY_NAMES[name] || name || '未知工具'
+})
 
 const durationText = computed(() => {
   if (props.message.eventType !== 'tool_result') return ''

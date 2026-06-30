@@ -282,7 +282,31 @@ async def test_render_appends_global_and_user_guidance(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_skill_describe_includes_tool_guidance(monkeypatch):
+async def test_skill_list_returns_display_name(monkeypatch):
+    monkeypatch.setattr(
+        tool_discovery,
+        "list_capabilities",
+        lambda role=None: [{
+            "module": "media-asr",
+            "action": "transcribe_video",
+            "description": "Transcribe video",
+            "brief": "视频转文字",
+            "parameters": {},
+            "min_role": "editor",
+        }],
+    )
+
+    result = await tool_discovery.handle_skill_list({}, "editor")
+
+    assert result["skills"] == [{
+        "display_name": "视频转文字",
+        "name": "media-asr__transcribe_video",
+        "brief": "视频转文字",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_skill_describe_returns_display_name(monkeypatch):
     monkeypatch.setattr(
         tool_discovery,
         "list_capabilities",
@@ -323,6 +347,7 @@ async def test_skill_describe_includes_tool_guidance(monkeypatch):
         agent_code="erp_chat",
     )
     assert result["name"] == "terminal-tools__publish"
+    assert result["display_name"] == "Publish file"
     assert result["tool_guidance"] == "PUBLISH GUIDANCE"
 
 

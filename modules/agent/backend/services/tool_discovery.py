@@ -15,7 +15,7 @@ def build_tools(role: str) -> list[dict]:
             "type": "function",
             "function": {
                 "name": "skill_list",
-                "description": "查看当前角色可用的全部技能（名称+一句话简述）",
+                "description": "查看当前角色可用的全部技能。返回 display_name（给用户看的中文名）和 name（skill_use 调用用的英文内部名）。向用户展示技能列表时优先展示 display_name，不要把 name 当作用户可见名称。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -38,7 +38,7 @@ def build_tools(role: str) -> list[dict]:
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "技能名称（如 image-gen__generate），见 skill_list 返回的 name",
+                            "description": "技能内部调用名（如 image-gen__generate），见 skill_list 返回的 name；展示给用户时用 display_name",
                         },
                     },
                     "required": ["name"],
@@ -55,7 +55,7 @@ def build_tools(role: str) -> list[dict]:
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "技能名称（如 image-gen__generate）",
+                            "description": "技能内部调用名（如 image-gen__generate），必须使用 skill_list 返回的 name",
                         },
                         "args": {
                             "type": "object",
@@ -78,8 +78,12 @@ def parse_tool_name(name: str) -> tuple[str, str]:
     return module, action
 
 
+def _display_name(cap: dict) -> str:
+    return cap.get("brief") or cap.get("description", "")[:20] or f"{cap.get('module', '')}{SEP}{cap.get('action', '')}"
+
+
 async def handle_skill_list(params: dict, role: str) -> dict:
-    """返回当前角色可用能力的紧凑清单（name + brief）。"""
+    """返回当前角色可用能力的紧凑清单（display_name + name + brief）。"""
     category = (params.get("category") or "").strip().lower()
     caps = list_capabilities(role=role)
     items = []
@@ -87,8 +91,8 @@ async def handle_skill_list(params: dict, role: str) -> dict:
         if category and cap["module"].lower() != category and f"{cap['module']}__{cap['action']}" != category:
             continue
         name = f"{cap['module']}{SEP}{cap['action']}"
-        brief = cap.get("brief") or cap.get("description", "")[:20]
-        items.append({"name": name, "brief": brief})
+        display_name = _display_name(cap)
+        items.append({"display_name": display_name, "name": name, "brief": display_name})
     return {"skills": items, "total": len(items)}
 
 
@@ -108,6 +112,7 @@ async def handle_skill_describe(
         if cap["module"] == module and cap["action"] == action:
             result = {
                 "name": f"{module}{SEP}{action}",
+                "display_name": _display_name(cap),
                 "module": module,
                 "action": action,
                 "description": cap.get("description", ""),

@@ -17,7 +17,7 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 | 前端入口 | `frontend/src/main.ts`，Vue 3 + Vite + Pinia + Element Plus（按需导入，chunk 拆分） |
 | 桌面壳 | 窗口系统、任务栏、启动器、托盘、右键菜单、应用注册表、文件关联调度器 |
 | 后端入口 | `backend/app/main.py`，25 个平台 router，统一响应 `{success, data, error}` |
-| 数据库 | 21 张 `framework_*` 表，干净基线迁移 `v2_clean_framework_baseline` |
+| 数据库 | 25 张 `framework_*` 表，干净基线迁移 `v2_clean_framework_baseline` |
 | 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容（含 MiMo VLM 云视觉），指数退避重试 + 降级链 |
 | 模块模板 | `modules/_template/`，含 sandbox 开发环境 + runtime SDK 壳 |
 | 业务模块 | 25 个业务模块（详见总索引模块地图），不逐一列出——框架接口不随模块膨胀 |
@@ -81,10 +81,11 @@ modules/    被框架加载的业务模块（物理隔离、sandbox 独立开发
 
 | 表 | 用途 |
 |----|------|
-| `framework_file_json_packages` | JSON 包 |
-| `framework_file_json_versions` | 版本记录 |
-| `framework_file_json_patches` | 补丁记录 |
-| `framework_file_json_tasks` | 文档任务 |
+| `framework_content_packages` | 内容包（素材的 JSON 结构化表达） |
+| `framework_content_package_versions` | 内容包版本记录 |
+| `framework_artifacts` | 制品（版本输出的产物快照） |
+| `framework_artifact_versions` | 制品版本记录 |
+| `framework_artifact_operations` | 制品操作补丁记录 |
 
 ### 模块公开接口
 

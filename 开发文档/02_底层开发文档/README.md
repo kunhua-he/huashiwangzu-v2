@@ -12,7 +12,7 @@
 | 平台 router | 25 个（auth/desktop/files/file_shares/recycle/users/roles/system/logs/dashboard/settings/backup/tasks/notifications/feedback/office/editors/app_manager/menu/gateway/modules 等） |
 | 模块事件总线 | `backend/app/services/module_events.py`：`register_module_event_handler(event, handler, module_key)` + `emit_module_event(event, payload, caller)`。框架不硬编码业务模块——如上传成功发 `file.uploaded`，knowledge 订阅入库（替代原硬编码 call knowledge:ingest）。单 handler 失败不阻塞其他 |
 | 成本治理 | 网关每次调用按 token×单价记 `agent_usage_daily`（逐 agent 日用量）|
-| 数据库 | PostgreSQL + SQLAlchemy async + Alembic，21 张 `framework_*` 表 + pgvector 扩展 |
+| 数据库 | PostgreSQL + SQLAlchemy async + Alembic，25 张 `framework_*` 表 + pgvector 扩展 |
 | 模型网关 | `backend/app/gateway/`，DeepSeek/OpenCode/OpenAI 兼容协议，含降级链（primary → backup → cheap → echo）和视觉描述（MiMo VLM）。配置：模型档案/provider 在 `backend/data/config/models.json`；API key 在 `backend/.env`（opencode go 用 `DEEPSEEK_API_KEY`）|
 | 模型看门狗 | `backend/app/services/model_watchdog/` |
 | 模块代码 | 平台层已清空（AI 助手/知识库服务及 router 已删除） |
@@ -76,7 +76,7 @@
 | 用户与权限 | `framework_user_accounts` `framework_role_matrices` |
 | 应用 | `framework_app_registry` `framework_desktop_states` |
 | 文件 | `framework_file_folders` `framework_file_items` `framework_file_recycle_items` `framework_file_shares` |
-| Office | `framework_file_json_packages` `framework_file_json_versions` `framework_file_json_patches` `framework_file_json_tasks` |
+| Office | `framework_content_packages` `framework_content_package_versions` `framework_artifacts` `framework_artifact_versions` `framework_artifact_operations` |
 | 系统 | `framework_system_logs` `framework_system_notifications` `framework_system_notification_reads` `framework_system_feedbacks` `framework_system_tasks` `framework_system_settings` `framework_system_task_queues` |
 | Prompt | `framework_prompt_categories` `framework_prompt_templates` |
 

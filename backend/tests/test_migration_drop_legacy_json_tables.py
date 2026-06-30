@@ -5,8 +5,6 @@ import os
 import subprocess
 import sys
 
-import pytest
-
 from app.models.base import Base
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -104,7 +102,7 @@ def _psql(sql: str, db: str | None = None) -> list[str]:
         f"psql failed:\n  cmd: {' '.join(cmd)}\n"
         f"  stderr: {result.stderr}"
     )
-    return [l for l in result.stdout.split("\n") if l.strip()]
+    return [line for line in result.stdout.split("\n") if line.strip()]
 
 
 def _alembic_upgrade(db: str) -> None:

@@ -1,6 +1,7 @@
 import json
 import logging
 
+from app.core.exceptions import ValidationError
 from app.database import get_db
 from app.gateway.router import gateway_router
 from app.middleware.auth import require_permission
@@ -159,7 +160,7 @@ async def rollback_conversation(
 ):
     message_id = payload.get("message_id")
     if not message_id:
-        return ApiResponse(success=False, error="message_id required")
+        raise ValidationError("message_id required")
     ok = await conv_svc.rollback_conversation(db, user.id, conversation_id, message_id)
     return ApiResponse(data={"rolled_back": ok})
 
@@ -180,7 +181,7 @@ async def edit_resubmit(
     Returns SSE stream identical to ``/api/agent/chat``.
     """
     if not payload.content or not payload.content.strip():
-        return ApiResponse(success=False, error="content is required")
+        raise ValidationError("content is required")
     runtime = ConversationRuntime()
     return await runtime.execute_edit_resubmit(
         conversation_id=conversation_id,
@@ -514,7 +515,7 @@ async def rollback_tool_guide(
     from .services import tool_guidance_service as tgs
     version = body.get("version")
     if not version:
-        return ApiResponse(success=False, error="version is required")
+        raise ValidationError("version is required")
     guide = await tgs.rollback_guide(db, guide_id, int(version), rolled_back_by=user.id)
     return ApiResponse(data={"guide": guide})
 

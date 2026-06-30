@@ -26,6 +26,7 @@ import importlib.util
 import logging
 from pathlib import Path
 
+from app.core.exceptions import ValidationError
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
@@ -97,7 +98,7 @@ class CloseRequest(BaseModel):
 
 def _browser_response(result: dict):
     if isinstance(result, dict) and result.get("error"):
-        return ApiResponse(success=False, error=str(result["error"]))
+        raise ValidationError(str(result["error"]))
     if isinstance(result, dict) and "success" in result and "data" in result:
         return ApiResponse(data=result.get("data"))
     return ApiResponse(data=result)

@@ -431,8 +431,31 @@ async def api_search(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    result = await hybrid_search(db, payload.query, user.id, payload.top_k, payload.use_rerank)
-    return ApiResponse(data={"query": payload.query, "results": result})
+    results = await hybrid_search(db, payload.query, user.id, payload.top_k, payload.use_rerank)
+    # Enrich with content_package_id and block_id
+    from .models import KbDocument, KbChunk
+    enriched = []
+    doc_cache: dict[int, dict] = {}
+    for r in results:
+        doc_id = r.get("document_id")
+        chunk_id = r.get("chunk_id")
+        if doc_id and doc_id not in doc_cache:
+            dr = await db.execute(select(KbDocument).where(KbDocument.id == doc_id, KbDocument.owner_id == user.id))
+            doc = dr.scalar_one_or_none()
+            doc_cache[doc_id] = {
+                "name": doc.filename if doc else "",
+                "content_package_id": doc.content_package_id if doc and hasattr(doc, "content_package_id") else None,
+            }
+        doc_info = doc_cache.get(doc_id, {})
+        r["document_name"] = doc_info.get("name", "")
+        r["content_package_id"] = doc_info.get("content_package_id")
+        if chunk_id:
+            cr = await db.execute(select(KbChunk.block_id).where(KbChunk.id == chunk_id))
+            r["block_id"] = cr.scalar_one_or_none()
+        else:
+            r["block_id"] = None
+        enriched.append(r)
+    return ApiResponse(data={"query": payload.query, "results": enriched})
 
 @router.get("/documents/{document_id}/chunks")
 async def api_document_chunks(
@@ -596,20 +619,32 @@ async def _cap_search(params: dict, caller: str) -> dict:
         results = await hybrid_search(db, query, owner_id, top_k=top_k, use_rerank=False)
         # 为每个结果补充页级融合内容和文档名称
         from .services.entity_service import get_page_fusion as _get_page_fusion
-        from .models import KbDocument
+        from .models import KbDocument, KbChunk
         enriched = []
-        doc_cache: dict[int, str] = {}
+        doc_cache: dict[int, dict] = {}
         for r in results:
             doc_id = r.get("document_id")
             page = r.get("page")
+            chunk_id = r.get("chunk_id")
             if doc_id and page:
                 fusion = await _get_page_fusion(db, doc_id, page)
                 r["page_fusion"] = fusion
             if doc_id and doc_id not in doc_cache:
                 dr = await db.execute(select(KbDocument).where(KbDocument.id == doc_id, KbDocument.owner_id == owner_id))
                 doc = dr.scalar_one_or_none()
-                doc_cache[doc_id] = doc.filename if doc else ""
-            r["document_name"] = doc_cache.get(doc_id, "")
+                doc_cache[doc_id] = {
+                    "name": doc.filename if doc else "",
+                    "content_package_id": doc.content_package_id if doc and hasattr(doc, "content_package_id") else None,
+                }
+            doc_info = doc_cache.get(doc_id, {})
+            r["document_name"] = doc_info.get("name", "")
+            r["content_package_id"] = doc_info.get("content_package_id")
+            # Look up block_id from chunk
+            if chunk_id:
+                cr = await db.execute(select(KbChunk.block_id).where(KbChunk.id == chunk_id))
+                r["block_id"] = cr.scalar_one_or_none()
+            else:
+                r["block_id"] = None
             enriched.append(r)
         return {"query": query, "results": enriched}
 

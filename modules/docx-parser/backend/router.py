@@ -15,6 +15,7 @@ class ParseRequest(BaseModel):
 
 async def _parse(params: dict, caller: str) -> dict:
     from docx import Document as DocxDocument
+    import base64
 
     allowed = {"docx"}
 
@@ -29,7 +30,7 @@ async def _parse(params: dict, caller: str) -> dict:
             if not text:
                 continue
             style_name = str(para.style.name) if para.style else ""
-            block_type = "标题" if ("heading" in style_name.lower() or "标题" in style_name) else "段落"
+            block_type = "heading" if ("heading" in style_name.lower() or "标题" in style_name) else "paragraph"
             blocks.append({"type": block_type, "text": text, "page": None, "resource_ref": None})
 
         for table in doc.tables:
@@ -39,17 +40,24 @@ async def _parse(params: dict, caller: str) -> dict:
                 rows.append(" | ".join(cells))
             table_text = "\n".join(rows)
             if table_text.strip():
-                blocks.append({"type": "表格", "text": table_text, "page": None, "resource_ref": None})
+                blocks.append({"type": "table", "text": table_text, "page": None, "resource_ref": None})
 
         for rel in doc.part.rels.values():
             if "image" in str(rel.reltype or "").lower():
                 resource_counter += 1
-                blocks.append({"type": "图片", "text": "", "page": None, "resource_ref": resource_counter})
+                img_bytes = b""
+                try:
+                    img_bytes = rel.target_part.blob
+                except Exception:
+                    pass
+                blocks.append({"type": "image", "text": "", "page": None, "resource_ref": resource_counter})
                 resources.append({
                     "id": resource_counter,
-                    "type": "图片",
-                    "file_storage_id": None,
-                    "text_desc": f"DOCX embedded image ({rel.target_ref})",
+                    "type": "image",
+                    "mime_type": rel.target_part.content_type if hasattr(rel, "target_part") and hasattr(rel.target_part, "content_type") else "image/png",
+                    "filename": rel.target_ref.split("/")[-1] if "/" in (rel.target_ref or "") else "image.png",
+                    "description": f"DOCX embedded image ({rel.target_ref})",
+                    "_bytes_b64": base64.b64encode(img_bytes).decode("ascii") if img_bytes else "",
                 })
 
         return {
@@ -59,7 +67,28 @@ async def _parse(params: dict, caller: str) -> dict:
             "resources": resources,
         }
 
-    return await run_uploaded_file_capability(params, caller, allowed, parse_file)
+    result = await run_uploaded_file_capability(params, caller, allowed, parse_file)
+
+    from app.services.module_registry import call_capability
+    for res in result.get("resources", []):
+        data_b64 = res.pop("_bytes_b64", "")
+        if data_b64:
+            try:
+                await call_capability(
+                    "content", "store_resource",
+                    {
+                        "data_b64": data_b64,
+                        "resource_type": "image",
+                        "mime_type": res.get("mime_type", "image/png"),
+                        "filename": res.get("filename", "resource.png"),
+                        "description": res.get("description", ""),
+                    },
+                    caller,
+                )
+            except Exception:
+                pass
+
+    return result
 
 
 @router.get("/health")

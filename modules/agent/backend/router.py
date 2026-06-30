@@ -426,6 +426,119 @@ async def delete_agent_prompt(
     return ApiResponse(data=data)
 
 
+# ── Tool Guidance HTTP endpoints ──
+
+
+@router.get("/tool-guides")
+async def list_tool_guides(
+    owner_id: int | None = None,
+    agent_code: str | None = None,
+    tool_name: str | None = None,
+    scope: str | None = None,
+    status: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    from .services import tool_guidance_service as tgs
+    guides = await tgs.list_guides(
+        db, owner_id=owner_id, agent_code=agent_code,
+        tool_name=tool_name, scope=scope, status=status,
+    )
+    return ApiResponse(data={"guides": guides, "total": len(guides)})
+
+
+@router.get("/tool-guides/{guide_id}")
+async def get_tool_guide(
+    guide_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    from .services import tool_guidance_service as tgs
+    guide = await tgs.get_guide(db, guide_id)
+    return ApiResponse(data={"guide": guide})
+
+
+@router.post("/tool-guides/propose")
+async def propose_tool_guide(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("editor")),
+):
+    from .services import tool_guidance_service as tgs
+    candidate = await tgs.propose_guide(
+        db,
+        owner_id=body.get("owner_id"),
+        agent_code=body.get("agent_code", "default"),
+        tool_name=body.get("tool_name", ""),
+        scope=body.get("scope", "agent"),
+        title=body.get("title", ""),
+        guide_text=body.get("guide_text", ""),
+        failure_policy=body.get("failure_policy"),
+        acceptance_policy=body.get("acceptance_policy"),
+        source=body.get("source", "manual"),
+        proposed_by=user.id,
+        source_trajectory_id=body.get("source_trajectory_id"),
+    )
+    return ApiResponse(data={"candidate": candidate})
+
+
+@router.post("/tool-guides/{guide_id}/activate")
+async def activate_tool_guide(
+    guide_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .services import tool_guidance_service as tgs
+    guide = await tgs.activate_guide(db, guide_id, activated_by=user.id)
+    return ApiResponse(data={"guide": guide})
+
+
+@router.post("/tool-guides/{guide_id}/disable")
+async def disable_tool_guide(
+    guide_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .services import tool_guidance_service as tgs
+    guide = await tgs.disable_guide(db, guide_id, disabled_by=user.id)
+    return ApiResponse(data={"guide": guide})
+
+
+@router.post("/tool-guides/{guide_id}/rollback")
+async def rollback_tool_guide(
+    guide_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    from .services import tool_guidance_service as tgs
+    version = body.get("version")
+    if not version:
+        return ApiResponse(success=False, error="version is required")
+    guide = await tgs.rollback_guide(db, guide_id, int(version), rolled_back_by=user.id)
+    return ApiResponse(data={"guide": guide})
+
+
+@router.post("/render-tool-guidance")
+async def render_tool_guidance(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    from .services import tool_guidance_service as tgs
+    guidance = await tgs.render_tool_guidance(
+        db,
+        owner_id=user.id,
+        agent_code=body.get("agent_code", "default"),
+        tool_names=body.get("tool_names", []),
+        max_tokens=body.get("max_tokens", 2048),
+    )
+    return ApiResponse(data={"guidance": guidance, "tool_names": body.get("tool_names", [])})
+
+
 # Import capabilities to register them at module load
 # noinspection PyUnresolvedReferences
-from .handlers import tool  # noqa: F401, E402
+from .handlers import (
+    tool,  # noqa: F401, E402
+    tool_guidance,  # noqa: F401, E402
+)

@@ -54,6 +54,36 @@ async def register_document(
     if existing:
         return document_payload(existing)
 
+    # Look up existing content package for this file
+    content_package_id = None
+    try:
+        from app.models.content import ContentPackage
+        cp_r = await db.execute(
+            select(ContentPackage).where(
+                ContentPackage.source_file_id == file_id,
+                ContentPackage.deleted.is_(False),
+            ).order_by(ContentPackage.created_at.desc()).limit(1)
+        )
+        cp = cp_r.scalar_one_or_none()
+        if cp:
+            content_package_id = cp.id
+        else:
+            # No content package exists — trigger content pipeline
+            try:
+                from app.services.module_registry import call_capability
+                caller_str = f"user:{owner_id}"
+                pipeline_result = await call_capability("content", "pipeline", {"file_id": file_id}, caller_str)
+                if pipeline_result and pipeline_result.get("package_id"):
+                    content_package_id = pipeline_result["package_id"]
+                elif pipeline_result and isinstance(pipeline_result, dict):
+                    pkg_data = pipeline_result.get("data", {})
+                    if pkg_data and pkg_data.get("package_id"):
+                        content_package_id = pkg_data["package_id"]
+            except Exception as e:
+                logger.warning("Content pipeline auto-trigger failed for file_id=%d: %s", file_id, e)
+    except Exception:
+        pass
+
     doc = KbDocument(
         owner_id=owner_id,
         catalog_id=catalog_id,
@@ -62,6 +92,7 @@ async def register_document(
         extension=ext,
         file_size=file.size or 0,
         mime_type=file.mime_type or "",
+        content_package_id=content_package_id,
         parse_status="pending",
         vector_status="pending",
         raw_status="pending",
@@ -126,6 +157,7 @@ def document_payload(doc) -> dict:
         "total_chunks": doc.total_chunks,
         "total_pages": doc.total_pages,
         "summary": doc.summary,
+        "content_package_id": doc.content_package_id if hasattr(doc, "content_package_id") else None,
         "created_at": doc.created_at,
         "updated_at": doc.updated_at,
     }
@@ -269,9 +301,61 @@ async def parse_and_index_document(
     await db.commit()
 
     try:
-        parsed_ir = await parse_document(doc.file_id, doc.extension, caller)
-        parsed = to_legacy_dict(parsed_ir)
-        blocks = parsed.get("blocks", [])
+        # First try to get blocks from Content Package (framework canonical source)
+        blocks = []
+        content_package_id = getattr(doc, "content_package_id", None)
+        if content_package_id:
+            try:
+                from app.models.content import ContentPackageVersion
+                cpv_r = await db.execute(
+                    select(ContentPackageVersion).where(
+                        ContentPackageVersion.package_id == content_package_id,
+                    ).order_by(ContentPackageVersion.version_no.desc()).limit(1)
+                )
+                cpv = cpv_r.scalar_one_or_none()
+                if cpv and cpv.content_json:
+                    import json
+                    content_ir = json.loads(cpv.content_json)
+
+                    def _flatten_cp_blocks(node_list: list[dict], page: int | None = None):
+                        result = []
+                        for b in node_list:
+                            bt = b.get("type", "paragraph")
+                            legacy_type = bt
+                            if bt == "heading":
+                                legacy_type = "标题"
+                            elif bt == "paragraph":
+                                legacy_type = "段落"
+                            elif bt == "table":
+                                legacy_type = "表格"
+                            elif bt == "image":
+                                legacy_type = "图片"
+                            elif bt == "code":
+                                legacy_type = "代码"
+                            result.append({
+                                "type": legacy_type,
+                                "text": b.get("text", ""),
+                                "page": b.get("page") or page,
+                                "resource_ref": None,
+                                "block_id": b.get("id"),
+                            })
+                            if b.get("children"):
+                                result.extend(_flatten_cp_blocks(
+                                    b["children"],
+                                    page=b.get("page") or page,
+                                ))
+                        return result
+
+                    raw_blocks = content_ir.get("blocks", [])
+                    blocks = _flatten_cp_blocks(raw_blocks)
+            except Exception as e:
+                logger.warning("Failed to read from Content Package document_id=%d: %s", document_id, e)
+
+        if not blocks:
+            parsed_ir = await parse_document(doc.file_id, doc.extension, caller)
+            parsed = to_legacy_dict(parsed_ir)
+            blocks = parsed.get("blocks", [])
+
         if not blocks:
             raise ValidationError("Parser returned no content blocks")
 

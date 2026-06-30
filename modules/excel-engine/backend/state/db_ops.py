@@ -1,12 +1,22 @@
 """Database operations for state persistence - 1:1 from old state_* traits."""
 import json
-from typing import Any, Optional
 from datetime import datetime
-from sqlalchemy import text, select
+from typing import Optional
+
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import ExcelWorkbook, ExcelSheet, ExcelCell, ExcelColWidth, ExcelRowHeight, ExcelHistory, ExcelRedoStack, ExcelVersion
-from ..tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS, AUTO_SAVE_INTERVAL
+from ..models import (
+    ExcelCell,
+    ExcelColWidth,
+    ExcelHistory,
+    ExcelRedoStack,
+    ExcelRowHeight,
+    ExcelSheet,
+    ExcelVersion,
+    ExcelWorkbook,
+)
+from ..tool.config import AUTO_SAVE_INTERVAL, DEFAULT_TOTAL_COLS, DEFAULT_TOTAL_ROWS
 from .manager import build_snapshot
 
 
@@ -128,6 +138,9 @@ async def undo_operation(db: AsyncSession, state: dict, state_key: str) -> bool:
     state['row_heights'] = snapshot.get('row_heights', {})
     state['total_rows'] = snapshot.get('total_rows', DEFAULT_TOTAL_ROWS)
     state['total_cols'] = snapshot.get('total_cols', DEFAULT_TOTAL_COLS)
+    await sync_cells(db, sheet_id, state['cells'], state['styles'], state['merges'])
+    await sync_col_widths(db, sheet_id, state['col_widths'])
+    await sync_row_heights(db, sheet_id, state['row_heights'])
     return True
 
 
@@ -152,6 +165,9 @@ async def redo_operation(db: AsyncSession, state: dict, state_key: str) -> bool:
     state['row_heights'] = snapshot.get('row_heights', {})
     state['total_rows'] = snapshot.get('total_rows', DEFAULT_TOTAL_ROWS)
     state['total_cols'] = snapshot.get('total_cols', DEFAULT_TOTAL_COLS)
+    await sync_cells(db, sheet_id, state['cells'], state['styles'], state['merges'])
+    await sync_col_widths(db, sheet_id, state['col_widths'])
+    await sync_row_heights(db, sheet_id, state['row_heights'])
     return True
 
 

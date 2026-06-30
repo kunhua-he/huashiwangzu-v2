@@ -16,6 +16,7 @@ class ParseRequest(BaseModel):
 async def _parse(params: dict, caller: str) -> dict:
     """Parse PDF file into unified content blocks. Called via cross-module capability."""
     import pdfplumber
+    import base64
 
     allowed = {"pdf"}
 
@@ -33,7 +34,7 @@ async def _parse(params: dict, caller: str) -> dict:
                 if lines:
                     block_text = "\n".join(lines).strip()
                     if block_text:
-                        block_type = "标题" if pno == 1 and len(lines) <= 5 else "段落"
+                        block_type = "heading" if pno == 1 and len(lines) <= 5 else "paragraph"
                         blocks.append({"type": block_type, "text": block_text, "page": pno, "resource_ref": None})
 
                 tables = page.extract_tables()
@@ -46,17 +47,32 @@ async def _parse(params: dict, caller: str) -> dict:
                         rows.append(" | ".join(cells))
                     table_text = "\n".join(rows)
                     if table_text.strip():
-                        blocks.append({"type": "表格", "text": table_text, "page": pno, "resource_ref": None})
+                        blocks.append({"type": "table", "text": table_text, "page": pno, "resource_ref": None})
 
                 for img in page.images:
                     resource_counter += 1
                     xref = img.get("xref") or img.get("name", "")
-                    blocks.append({"type": "图片", "text": "", "page": pno, "resource_ref": resource_counter})
+                    blocks.append({"type": "image", "text": "", "page": pno, "resource_ref": resource_counter})
+
+                    img_bytes = b""
+                    try:
+                        import fitz
+                        pdf_doc = fitz.open(str(full_path))
+                        try:
+                            pix = pdf_doc[page_idx].get_pixmap()
+                            img_bytes = pix.tobytes("png")
+                        finally:
+                            pdf_doc.close()
+                    except ImportError:
+                        pass
+
                     resources.append({
                         "id": resource_counter,
-                        "type": "图片",
-                        "file_storage_id": None,
-                        "text_desc": f"PDF page {pno} embedded image (xref={xref})",
+                        "type": "image",
+                        "mime_type": "image/png",
+                        "filename": f"page{pno}_xref{xref}.png",
+                        "description": f"PDF page {pno} embedded image (xref={xref})",
+                        "_bytes_b64": base64.b64encode(img_bytes).decode("ascii") if img_bytes else "",
                     })
 
         return {
@@ -66,7 +82,28 @@ async def _parse(params: dict, caller: str) -> dict:
             "resources": resources,
         }
 
-    return await run_uploaded_file_capability(params, caller, allowed, parse_file)
+    result = await run_uploaded_file_capability(params, caller, allowed, parse_file)
+
+    from app.services.module_registry import call_capability
+    for res in result.get("resources", []):
+        data_b64 = res.pop("_bytes_b64", "")
+        if data_b64:
+            try:
+                await call_capability(
+                    "content", "store_resource",
+                    {
+                        "data_b64": data_b64,
+                        "resource_type": "image",
+                        "mime_type": res.get("mime_type", "image/png"),
+                        "filename": res.get("filename", "resource.png"),
+                        "description": res.get("description", ""),
+                    },
+                    caller,
+                )
+            except Exception:
+                pass
+
+    return result
 
 
 @router.get("/health")

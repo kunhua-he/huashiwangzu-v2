@@ -1,0 +1,116 @@
+{
+  "key": "browser-tools",
+  "name": "浏览器工具",
+  "icon": "Globe",
+  "icon_asset": "",
+  "category": "tools",
+  "component_key": null,
+  "route_prefix": "/api/browser-tools",
+  "permissions": ["viewer", "editor", "admin"],
+  "sort_order": 700,
+  "default_width": 900,
+  "default_height": 700,
+  "min_width": 640,
+  "min_height": 480,
+  "singleton": true,
+  "show_in_launcher": false,
+  "show_on_desktop": false,
+  "show_in_tray": false,
+  "show_in_sidebar": false,
+  "window_type": "background-service",
+  "allow_multiple": false,
+  "supported_formats": [],
+  "editable_formats": [],
+  "creatable_formats": [],
+  "module_version": "1.0.0",
+  "contract_version": "2.0",
+  "backend": {
+    "enabled": true,
+    "router": "backend/router.py"
+  },
+  "public_actions": [
+    {
+      "action": "open",
+      "description": "在隔离浏览器中打开 URL。适用于 JS 渲染页面、登录态页面。Cookie/localStorage 不返回给调用方。",
+      "parameters": {
+        "url": "要打开的 URL",
+        "session_id": "已有会话 ID（可选）",
+        "timeout": "超时秒数（默认 30s）"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "read_text",
+      "description": "提取当前页面的可见文本内容（截断保护）。返回标题/URL/可见文本。",
+      "parameters": {
+        "session_id": "浏览器会话 ID"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "list_links",
+      "description": "列出当前页面的可见链接（不含 Cookie/隐私数据）。",
+      "parameters": {
+        "session_id": "浏览器会话 ID"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "click",
+      "description": "点击页面元素。支持 CSS selector 或按可见文本点击。",
+      "parameters": {
+        "session_id": "浏览器会话 ID",
+        "selector": "CSS 选择器",
+        "text": "可见文本匹配"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "type",
+      "description": "向输入框输入文本。先清空再输入，带打字延迟。",
+      "parameters": {
+        "session_id": "浏览器会话 ID",
+        "selector": "CSS 选择器定位输入框",
+        "text": "要输入的文本"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "wait_for",
+      "description": "等待页面元素出现/导航完成。",
+      "parameters": {
+        "session_id": "浏览器会话 ID",
+        "selector": "等待元素出现的 CSS 选择器",
+        "timeout": "超时秒数（默认 30s）"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "screenshot",
+      "description": "截图并保存到工作区（非 base64）。用 terminal-tools:publish 交付桌面。",
+      "parameters": {
+        "session_id": "浏览器会话 ID",
+        "full_page": "是否全页截图"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "download",
+      "description": "下载文件到工作区。支持浏览器上下文或直链 HTTP 下载。",
+      "parameters": {
+        "session_id": "浏览器会话 ID",
+        "url": "下载 URL",
+        "timeout": "超时秒数（默认 30s）"
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "close",
+      "description": "关闭浏览器会话，释放隔离上下文资源。",
+      "parameters": {
+        "session_id": "浏览器会话 ID"
+      },
+      "min_role": "viewer"
+    }
+  ]
+}

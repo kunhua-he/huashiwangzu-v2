@@ -1,16 +1,27 @@
 """FastAPI router for desktop-tools module.
 
-Exposes 4 cross-module capabilities (desktop:list_files, desktop:search_files,
-desktop:read_file, desktop:list_apps) that bridge framework file/app capabilities
-to the Agent's tool discovery system. All queries are owner-isolated.
+Provides complete CRUD + artifact bridge capabilities for Agent file operations.
+All queries are owner-isolated. No Agent should handle base64 or physical paths.
 """
+import io
+import json
 import os
+from datetime import datetime, timezone
 
 from app.database import AsyncSessionLocal
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.services.file_reader import resolve_caller_user_id
+from app.services.file_reader import resolve_caller_user_id, get_file_content_bytes
+from app.services.file_service import check_file_access, delete_to_trash, rename_item
+from app.services.file_ops_service import copy_item
+from app.services.file_upload_service import upload_file, replace_file_content
+from app.services.artifact_service import (
+    create_artifact, get_artifact, replace_artifact_content,
+    list_artifact_versions, restore_artifact_version, publish_artifact,
+    replace_file_from_artifact as svc_replace_from_artifact,
+    list_artifacts,
+)
 from app.services.module_registry import call_capability, register_capability
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -377,94 +388,337 @@ register_capability(
 
 
 # =====================================================================
-# Capability: desktop:replace_file
+# Capability: desktop:get_file
 # =====================================================================
-async def _replace_file(params: dict, caller: str) -> dict:
-    """Replace an existing desktop file entry. Does NOT delete physical file.
-
-    Soft-deletes the old file entry and creates a new one.
-    Physical files stay on disk; old entry is marked deleted for later
-    cleanup (3-month retention policy).
-    """
-    import io as _io
-    from datetime import datetime, timezone
-
-    from app.services.file_service import check_file_access
-    from app.services.file_upload_service import upload_file
+async def _get_file(params: dict, caller: str) -> dict:
+    """Get a single file's metadata by file_id."""
+    from app.models.file import File
 
     owner_id = resolve_caller_user_id(caller)
+    file_id = int(params.get("file_id", 0))
+    if file_id <= 0:
+        raise ValueError("file_id must be a positive integer")
+
+    async with AsyncSessionLocal() as db:
+        file = await check_file_access(db, file_id, owner_id)
+
+    return {
+        "file_id": file.id,
+        "name": file.name,
+        "extension": file.extension,
+        "size": file.size,
+        "mime_type": file.mime_type,
+        "folder_id": file.folder_id,
+        "created_at": str(file.created_at) if file.created_at else None,
+        "updated_at": str(file.updated_at) if file.updated_at else None,
+        "md5_hash": file.md5_hash,
+    }
+
+
+# =====================================================================
+# Capability: desktop:create_file
+# =====================================================================
+async def _create_file(params: dict, caller: str) -> dict:
+    """Create a new file. Accepts text content or generates from template.
+    For binary content, use create_file then replace_file_from_artifact.
+    """
+    owner_id = resolve_caller_user_id(caller)
+    name = params.get("name", "Untitled")
+    extension = params.get("extension", "txt")
+    content = params.get("content", "")
+    folder_id = params.get("folder_id")
+
+    async with AsyncSessionLocal() as db:
+        result = await upload_file(
+            db, io.BytesIO(content.encode("utf-8") if isinstance(content, str) else content),
+            f"{name}.{extension}", owner_id, folder_id,
+        )
+
+    return {
+        "file_id": result["id"],
+        "name": result["name"],
+        "extension": result["extension"],
+        "size": result["size"],
+        "mime_type": result["mime_type"],
+    }
+
+
+# =====================================================================
+# Capability: desktop:replace_file
+# Now supports three input modes:
+#   1. new_content (string text) — for text files
+#   2. source_artifact_id (int) — replace from an artifact (no base64 needed)
+#   3. source_file_id (int) — replace from another file
+# =====================================================================
+async def _replace_file(params: dict, caller: str) -> dict:
+    """Replace an existing file's content. No base64 needed for binary files
+    — use source_artifact_id or source_file_id instead.
+    Conflict policy: create_version (default) / overwrite / fail / auto_rename.
+    """
+    owner_id = resolve_caller_user_id(caller)
     old_file_id = int(params.get("old_file_id", 0))
-    new_filename = params.get("new_filename", "")
-    new_content = params.get("new_content", "")  # text content
-    new_bytes_b64 = params.get("new_bytes_base64", "")  # binary content base64
+    new_content = params.get("new_content", "")
+    source_artifact_id = params.get("source_artifact_id")
+    source_file_id = params.get("source_file_id")
+    conflict_policy = params.get("conflict_policy", "create_version")
 
     if old_file_id <= 0:
         raise ValueError("old_file_id must be a positive integer")
 
     async with AsyncSessionLocal() as db:
-        # Verify access to old file
         old_file = await check_file_access(db, old_file_id, owner_id)
 
-        # Soft-delete old entry
-        old_file.deleted = True
-        old_file.deleted_at = datetime.now(timezone.utc)
-
-        # Create new file entry
-        if new_content or new_bytes_b64:
-            ext = (new_filename.rsplit(".", 1)[-1] if "." in new_filename else old_file.extension or "").lower()
-            name_no_ext = new_filename.rsplit(".", 1)[0] if "." in new_filename else new_filename or old_file.name
-            if new_bytes_b64:
-                import base64
-                file_bytes = base64.b64decode(new_bytes_b64)
+        if source_artifact_id:
+            artifact = await get_artifact(db, int(source_artifact_id), owner_id)
+            if artifact.get("file_id"):
+                content_bytes = await get_file_content_bytes(artifact["file_id"], owner_id)
+            elif artifact.get("content_text"):
+                content_bytes = artifact["content_text"].encode("utf-8")
+            elif artifact.get("content_json"):
+                content_bytes = json.dumps(artifact["content_json"], ensure_ascii=False).encode("utf-8")
             else:
-                file_bytes = new_content.encode("utf-8")
-
-            result = await upload_file(
-                db, _io.BytesIO(file_bytes), f"{name_no_ext}.{ext}",
-                owner_id, old_file.folder_id,
-            )
+                raise ValueError("Artifact has no content")
+            result = await replace_file_content(db, old_file_id, owner_id, content_bytes)
+        elif source_file_id:
+            content_bytes = await get_file_content_bytes(int(source_file_id), owner_id)
+            result = await replace_file_content(db, old_file_id, owner_id, content_bytes)
+        elif new_content:
+            result = await replace_file_content(db, old_file_id, owner_id, new_content.encode("utf-8"))
         else:
-            # No new content: just re-enable old file with same name
-            old_file.deleted = False
-            old_file.deleted_at = None
-            result = {"id": old_file.id, "name": old_file.name, "extension": old_file.extension,
-                       "size": old_file.size, "mime_type": old_file.mime_type}
-
-        await db.commit()
+            raise ValueError("Provide new_content, source_artifact_id, or source_file_id")
 
     return {
         "old_file_id": old_file_id,
         "new_file_id": result["id"],
-        "new_name": result["name"],
-        "new_extension": result.get("extension"),
-        "new_size": result.get("size"),
-        "old_file_retained_on_disk": True,
+        "name": result["name"],
+        "size": result["size"],
+        "md5_hash": result.get("md5_hash"),
     }
+
+
+# =====================================================================
+# Capability: desktop:delete_file
+# =====================================================================
+async def _delete_file(params: dict, caller: str) -> dict:
+    """Soft-delete a file. Supports restore."""
+    owner_id = resolve_caller_user_id(caller)
+    file_id = int(params.get("file_id", 0))
+
+    async with AsyncSessionLocal() as db:
+        await delete_to_trash(db, "file", file_id, owner_id)
+
+    return {"file_id": file_id, "deleted": True}
+
+
+# =====================================================================
+# Capability: desktop:rename_file
+# =====================================================================
+async def _rename_file(params: dict, caller: str) -> dict:
+    """Rename a file."""
+    owner_id = resolve_caller_user_id(caller)
+    file_id = int(params.get("file_id", 0))
+    new_name = params.get("new_name", "")
+
+    if not new_name:
+        raise ValueError("new_name is required")
+
+    async with AsyncSessionLocal() as db:
+        await rename_item(db, "file", file_id, new_name, owner_id)
+
+    return {"file_id": file_id, "new_name": new_name}
+
+
+# =====================================================================
+# Capability: desktop:copy_file
+# =====================================================================
+async def _copy_file(params: dict, caller: str) -> dict:
+    """Copy a file to a target folder."""
+    owner_id = resolve_caller_user_id(caller)
+    file_id = int(params.get("file_id", 0))
+    target_folder_id = params.get("target_folder_id")
+
+    async with AsyncSessionLocal() as db:
+        result = await copy_item(db, "file", file_id, target_folder_id, owner_id)
+
+    return {"file_id": file_id, "new_file_id": result.id}
+
+
+# =====================================================================
+# Capability: desktop:list_versions
+# =====================================================================
+async def _list_versions(params: dict, caller: str) -> dict:
+    """List all available versions of a file (via linked artifact)."""
+    owner_id = resolve_caller_user_id(caller)
+    artifact_id = int(params.get("artifact_id", 0))
+
+    async with AsyncSessionLocal() as db:
+        versions = await list_artifact_versions(db, artifact_id, owner_id)
+
+    return {"artifact_id": artifact_id, "versions": versions}
+
+
+# =====================================================================
+# Capability: desktop:restore_version
+# =====================================================================
+async def _restore_version(params: dict, caller: str) -> dict:
+    """Restore a file to a previous version."""
+    owner_id = resolve_caller_user_id(caller)
+    artifact_id = int(params.get("artifact_id", 0))
+    version_id = int(params.get("version_id", 0))
+
+    async with AsyncSessionLocal() as db:
+        result = await restore_artifact_version(db, artifact_id, version_id, owner_id)
+
+    return {"artifact_id": artifact_id, "version_id": version_id, "artifact": result}
+
+
+# =====================================================================
+# Capability: desktop:replace_file_from_artifact
+# =====================================================================
+async def _replace_file_from_artifact(params: dict, caller: str) -> dict:
+    """Replace a desktop file using content from an artifact.
+    No base64 needed — system handles binary internally.
+    """
+    owner_id = resolve_caller_user_id(caller)
+    target_file_id = int(params.get("target_file_id", 0))
+    source_artifact_id = int(params.get("source_artifact_id", 0))
+
+    async with AsyncSessionLocal() as db:
+        result = await svc_replace_from_artifact(
+            db, owner_id, target_file_id, source_artifact_id,
+        )
+
+    return result
+
+
+# =====================================================================
+# Capability: desktop:publish_artifact
+# =====================================================================
+async def _publish_artifact(params: dict, caller: str) -> dict:
+    """Publish an artifact to the desktop as a file.
+    Creates or replaces a desktop file entry from artifact content.
+    """
+    owner_id = resolve_caller_user_id(caller)
+    artifact_id = int(params.get("artifact_id", 0))
+    target_file_id = params.get("target_file_id")
+
+    async with AsyncSessionLocal() as db:
+        result = await publish_artifact(
+            db, artifact_id, owner_id,
+            target_file_id=target_file_id,
+        )
+
+    return result
 
 
 # =====================================================================
 # Capability: desktop:refresh
 # =====================================================================
 async def _refresh_desktop(params: dict, caller: str) -> dict:
-    """Trigger desktop file list refresh.
-    
-    The frontend listens for this event and reloads the desktop file grid.
-    """
+    """Trigger desktop file list refresh."""
     return {"refreshed": True}
 
 
 register_capability(
+    "desktop-tools", "list_files", _list_files,
+    description="List files in a folder (or root). Returns file name, type, size, and id.",
+    brief="列出桌面文件",
+    parameters={
+        "type": "object",
+        "properties": {
+            "folder_id": {"type": "integer", "description": "Folder ID (0 or omit for root)", "default": 0},
+            "page": {"type": "integer", "description": "Page number", "default": 1},
+            "page_size": {"type": "integer", "description": "Items per page", "default": 50},
+        },
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "desktop-tools", "search_files", _search_files,
+    description="Search files by keyword and/or extension. Returns matching file metadata.",
+    brief="搜索桌面文件",
+    parameters={
+        "type": "object",
+        "properties": {
+            "keyword": {"type": "string", "description": "Search keyword (file name contains)", "default": ""},
+            "extension": {"type": "string", "description": "Filter by extension (e.g. pdf, txt)", "default": None},
+            "page": {"type": "integer", "description": "Page number", "default": 1},
+            "page_size": {"type": "integer", "description": "Items per page", "default": 50},
+        },
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "desktop-tools", "read_file", _read_file,
+    description="Read file content by file_id. Routes to correct parser. Returns text content.",
+    brief="读取文件内容",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "integer", "description": "File ID in the file storage system"},
+        },
+        "required": ["file_id"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "desktop-tools", "list_apps", _list_apps,
+    description="List desktop applications available to the current user.",
+    brief="列出可用桌面应用",
+    parameters={
+        "type": "object",
+        "properties": {},
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "desktop-tools", "get_file", _get_file,
+    description="Get a single file's metadata by file_id.",
+    brief="获取文件详情",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "integer", "description": "File ID"},
+        },
+        "required": ["file_id"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "desktop-tools", "create_file", _create_file,
+    description="Create a new file with text content. For binary content, use artifact-based replace.",
+    brief="创建文件",
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "File name (without extension)", "default": "Untitled"},
+            "extension": {"type": "string", "description": "File extension", "default": "txt"},
+            "content": {"type": "string", "description": "File content as text", "default": ""},
+            "folder_id": {"type": "integer", "description": "Target folder ID (optional)"},
+        },
+        "required": ["name", "extension"],
+    },
+    min_role="editor",
+)
+
+register_capability(
     "desktop-tools", "replace_file", _replace_file,
-    brief="替换桌面文件",
-    description="Soft-delete old file entry and create new one. Physical file stays on disk. "
-                "Use this to update a previously generated file on the desktop.",
+    brief="替换桌面文件内容",
+    description="Replace an existing file's content. Supports text (new_content), "
+                "artifact source (source_artifact_id), or file source (source_file_id). No base64 needed.",
     parameters={
         "type": "object",
         "properties": {
             "old_file_id": {"type": "integer", "description": "Existing file ID to replace"},
-            "new_filename": {"type": "string", "description": "New file name (with extension)", "default": ""},
             "new_content": {"type": "string", "description": "New file content as plain text", "default": ""},
-            "new_bytes_base64": {"type": "string", "description": "New file content as base64-encoded bytes (for binary files)", "default": ""},
+            "source_artifact_id": {"type": "integer", "description": "Source artifact ID", "default": None},
+            "source_file_id": {"type": "integer", "description": "Source file ID to copy content from", "default": None},
+            "conflict_policy": {"type": "string", "description": "create_version / overwrite / fail / auto_rename", "default": "create_version"},
         },
         "required": ["old_file_id"],
     },
@@ -472,10 +726,112 @@ register_capability(
 )
 
 register_capability(
+    "desktop-tools", "delete_file", _delete_file,
+    brief="删除文件",
+    description="Soft-delete a file. Can be restored later.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "integer", "description": "File ID to delete"},
+        },
+        "required": ["file_id"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "desktop-tools", "rename_file", _rename_file,
+    brief="重命名文件",
+    description="Rename a file.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "integer", "description": "File ID"},
+            "new_name": {"type": "string", "description": "New file name (without extension)"},
+        },
+        "required": ["file_id", "new_name"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "desktop-tools", "copy_file", _copy_file,
+    brief="复制文件",
+    description="Copy a file to a target folder.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "integer", "description": "File ID to copy"},
+            "target_folder_id": {"type": "integer", "description": "Target folder ID (optional)"},
+        },
+        "required": ["file_id"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "desktop-tools", "list_versions", _list_versions,
+    brief="列出文件版本",
+    description="List all available versions of a file (via linked artifact).",
+    parameters={
+        "type": "object",
+        "properties": {
+            "artifact_id": {"type": "integer", "description": "Artifact ID to list versions for"},
+        },
+        "required": ["artifact_id"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "desktop-tools", "restore_version", _restore_version,
+    brief="恢复文件版本",
+    description="Restore a file to a previous version.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "artifact_id": {"type": "integer", "description": "Artifact ID"},
+            "version_id": {"type": "integer", "description": "Version ID to restore"},
+        },
+        "required": ["artifact_id", "version_id"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "desktop-tools", "replace_file_from_artifact", _replace_file_from_artifact,
+    brief="从制品替换桌面文件",
+    description="Replace a desktop file using content from an artifact. No base64 needed.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "target_file_id": {"type": "integer", "description": "Desktop file ID to replace"},
+            "source_artifact_id": {"type": "integer", "description": "Artifact ID with the new content"},
+        },
+        "required": ["target_file_id", "source_artifact_id"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "desktop-tools", "publish_artifact", _publish_artifact,
+    brief="发布制品到桌面",
+    description="Publish an artifact to the desktop as a file. Creates or replaces a desktop file entry.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "artifact_id": {"type": "integer", "description": "Artifact ID to publish"},
+            "target_file_id": {"type": "integer", "description": "Target desktop file ID (optional, creates new if omitted)"},
+        },
+        "required": ["artifact_id"],
+    },
+    min_role="editor",
+)
+
+register_capability(
     "desktop-tools", "refresh", _refresh_desktop,
     brief="刷新桌面",
-    description="Trigger desktop file list reload. Call this after generating or replacing files "
-                "to ensure the desktop shows the latest files.",
+    description="Trigger desktop file list reload.",
     parameters={
         "type": "object",
         "properties": {},

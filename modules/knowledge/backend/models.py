@@ -32,6 +32,8 @@ class KbDocument(Base, TimestampMixin):
     # 解析状态：pending/parsing/done/error
     parse_status: Mapped[str] = mapped_column(String(32), default="pending")
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 关联的内容包 ID（框架级 Content Package）
+    content_package_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="Linked content package id")
     # 向量化状态：pending/indexing/done/error
     vector_status: Mapped[str] = mapped_column(String(32), default="pending")
     # 原始采集状态：pending/collecting/done/failed
@@ -63,6 +65,8 @@ class KbChunk(Base, TimestampMixin):
     text: Mapped[str] = mapped_column(Text, default="")
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
     resource_ref: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Content Package block_id for cross-reference
+    block_id: Mapped[str | None] = mapped_column(String(64), nullable=True, comment="Content Package block id")
     # 关键词（用于全文检索）
     keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
 

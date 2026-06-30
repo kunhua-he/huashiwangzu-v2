@@ -2,7 +2,7 @@
 Agent 不硬编码任何模块工具——有什么技能就有什么工具。
 渐进式工具发现：只暴露 3 个元工具（skill_list/skill_describe/skill_use），
 模型需先查再调，默认 token 恒定不随模块膨胀。"""
-from app.services.module_registry import list_capabilities, call_capability
+from app.services.module_registry import call_capability, list_capabilities
 
 # 工具名用 module__action（function name 不能含冒号）
 SEP = "__"
@@ -92,8 +92,13 @@ async def handle_skill_list(params: dict, role: str) -> dict:
     return {"skills": items, "total": len(items)}
 
 
-async def handle_skill_describe(params: dict, role: str) -> dict:
-    """返回指定能力的完整描述和参数 schema。"""
+async def handle_skill_describe(
+    params: dict,
+    role: str,
+    owner_id: int | None = None,
+    agent_code: str = "default",
+) -> dict:
+    """返回指定能力的完整描述、参数 schema 和匹配的工具指引。"""
     name = params.get("name", "")
     module, action = parse_tool_name(name)
     if not module or not action:
@@ -101,7 +106,7 @@ async def handle_skill_describe(params: dict, role: str) -> dict:
     caps = list_capabilities(role=role)
     for cap in caps:
         if cap["module"] == module and cap["action"] == action:
-            return {
+            result = {
                 "name": f"{module}{SEP}{action}",
                 "module": module,
                 "action": action,
@@ -109,6 +114,25 @@ async def handle_skill_describe(params: dict, role: str) -> dict:
                 "parameters": cap.get("parameters", {}),
                 "min_role": cap.get("min_role", "viewer"),
             }
+            if owner_id is not None:
+                try:
+                    from app.database import AsyncSessionLocal
+
+                    from . import tool_guidance_service as tgs
+
+                    async with AsyncSessionLocal() as db:
+                        guidance = await tgs.render_tool_guidance(
+                            db,
+                            owner_id=owner_id,
+                            agent_code=agent_code,
+                            tool_names=[f"{module}{SEP}{action}"],
+                            max_tokens=512,
+                        )
+                    if guidance:
+                        result["tool_guidance"] = guidance
+                except Exception:
+                    pass
+            return result
     return {"error": f"Skill not found: {name}"}
 
 

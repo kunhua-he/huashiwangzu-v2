@@ -102,31 +102,133 @@
       "min_role": "viewer"
     },
     {
-      "action": "replace_file",
-      "description": "Soft-delete an existing file entry and create a replacement file entry.",
+      "action": "get_file",
+      "description": "Get a single file's metadata by file_id.",
       "parameters": {
         "type": "object",
         "properties": {
-          "old_file_id": {
-            "type": "integer",
-            "description": "Existing file ID to replace"
-          },
-          "new_filename": {
-            "type": "string",
-            "description": "New file name with extension"
-          },
-          "new_content": {
-            "type": "string",
-            "description": "New file content as plain text"
-          },
-          "new_bytes_base64": {
-            "type": "string",
-            "description": "New file content as base64-encoded bytes"
-          }
+          "file_id": {"type": "integer", "description": "File ID"}
         },
-        "required": [
-          "old_file_id"
-        ]
+        "required": ["file_id"]
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "create_file",
+      "description": "Create a new file with text content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "description": "File name"},
+          "extension": {"type": "string", "description": "File extension"},
+          "content": {"type": "string", "description": "File content"},
+          "folder_id": {"type": "integer", "description": "Target folder ID"}
+        },
+        "required": ["name", "extension"]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "replace_file",
+      "description": "Replace file content from text, artifact, or another file. No base64 needed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "old_file_id": {"type": "integer", "description": "Existing file ID to replace"},
+          "new_content": {"type": "string", "description": "New content as text"},
+          "source_artifact_id": {"type": "integer", "description": "Source artifact ID"},
+          "source_file_id": {"type": "integer", "description": "Source file ID"}
+        },
+        "required": ["old_file_id"]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "delete_file",
+      "description": "Soft-delete a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_id": {"type": "integer", "description": "File ID"}
+        },
+        "required": ["file_id"]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "rename_file",
+      "description": "Rename a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_id": {"type": "integer", "description": "File ID"},
+          "new_name": {"type": "string", "description": "New file name"}
+        },
+        "required": ["file_id", "new_name"]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "copy_file",
+      "description": "Copy a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_id": {"type": "integer", "description": "File ID"},
+          "target_folder_id": {"type": "integer", "description": "Target folder ID"}
+        },
+        "required": ["file_id"]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "list_versions",
+      "description": "List file versions (via artifact).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {"type": "integer", "description": "Artifact ID"}
+        },
+        "required": ["artifact_id"]
+      },
+      "min_role": "viewer"
+    },
+    {
+      "action": "restore_version",
+      "description": "Restore a file to a previous version.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {"type": "integer", "description": "Artifact ID"},
+          "version_id": {"type": "integer", "description": "Version ID"}
+        },
+        "required": ["artifact_id", "version_id"]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "replace_file_from_artifact",
+      "description": "Replace a desktop file using content from an artifact. No base64 needed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_file_id": {"type": "integer", "description": "Desktop file ID"},
+          "source_artifact_id": {"type": "integer", "description": "Artifact ID"}
+        },
+        "required": ["target_file_id", "source_artifact_id"]
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "publish_artifact",
+      "description": "Publish an artifact to the desktop as a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {"type": "integer", "description": "Artifact ID"},
+          "target_file_id": {"type": "integer", "description": "Target file ID (optional)"}
+        },
+        "required": ["artifact_id"]
       },
       "min_role": "editor"
     },

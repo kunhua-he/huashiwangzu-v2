@@ -49,7 +49,15 @@
     {"action": "record_profile_signal", "description": "记录画像信号", "parameters": {"signal_type": {"type": "string"}, "signal_data": {"type": "object"}, "confidence": {"type": "number"}}, "min_role": "viewer"},
     {"action": "list_profile_signals", "description": "查看画像信号", "parameters": {"signal_type": {"type": "string"}, "applied": {"type": "boolean"}}, "min_role": "viewer"},
     {"action": "record_trajectory", "description": "记录执行轨迹", "parameters": {"session_id": {"type": "string"}, "conversation_id": {"type": "integer"}, "user_input": {"type": "string"}}, "min_role": "viewer"},
-    {"action": "list_trajectories", "description": "查看执行轨迹", "parameters": {"conversation_id": {"type": "integer"}}, "min_role": "admin"}
+    {"action": "list_trajectories", "description": "查看执行轨迹", "parameters": {"conversation_id": {"type": "integer"}}, "min_role": "admin"},
+    {"action": "list_tool_guides", "description": "列出工具指引", "parameters": {"owner_id": {"type": "integer"}, "agent_code": {"type": "string"}, "tool_name": {"type": "string"}, "scope": {"type": "string"}, "status": {"type": "string"}}, "min_role": "viewer"},
+    {"action": "get_tool_guide", "description": "获取单条工具指引详情", "parameters": {"guide_id": {"type": "integer"}}, "min_role": "viewer"},
+    {"action": "propose_tool_guide", "description": "提交候选工具指引", "parameters": {"tool_name": {"type": "string"}, "agent_code": {"type": "string"}, "scope": {"type": "string"}, "title": {"type": "string"}, "guide_text": {"type": "string"}, "failure_policy": {"type": "object"}, "acceptance_policy": {"type": "object"}}, "min_role": "editor"},
+    {"action": "activate_tool_guide", "description": "激活工具指引或晋升候选", "parameters": {"guide_id": {"type": "integer"}}, "min_role": "admin"},
+    {"action": "disable_tool_guide", "description": "禁用工具指引", "parameters": {"guide_id": {"type": "integer"}}, "min_role": "admin"},
+    {"action": "rollback_tool_guide", "description": "回滚工具指引到指定版本", "parameters": {"guide_id": {"type": "integer"}, "version": {"type": "integer"}}, "min_role": "admin"},
+    {"action": "render_tool_guidance", "description": "按合并顺序渲染当前工具指引", "parameters": {"agent_code": {"type": "string"}, "tool_names": {"type": "array", "items": {"type": "string"}}, "max_tokens": {"type": "integer"}}, "min_role": "viewer"},
+    {"action": "classify_and_degrade", "description": "分类工具错误并返回降级建议", "parameters": {"error_class": {"type": "string"}, "tool_result": {"type": "object"}, "exception": {"type": "string"}, "user_input": {"type": "string"}}, "min_role": "viewer"}
   ],
   "dependency_declaration": [{"module": "knowledge", "optional": true}],
   "event_handler_declaration": [],

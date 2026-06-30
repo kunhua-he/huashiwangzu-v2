@@ -614,6 +614,8 @@ class ToolLoopRuntime:
                         elif tool["name"] == "skill_describe":
                             return await tool_discovery.handle_skill_describe(
                                 tool["args"], self.user_role,
+                                owner_id=self.owner_id,
+                                agent_code=AGENT_CODE,
                             )
                         elif tool["name"] == "skill_use":
                             return await tool_discovery.handle_skill_use(

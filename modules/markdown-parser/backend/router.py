@@ -53,14 +53,14 @@ async def _parse(params: dict, caller: str) -> dict:
             if para_lines:
                 text = "\n".join(para_lines).strip()
                 if text:
-                    blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                    blocks.append({"type": "paragraph", "text": text, "page": None, "resource_ref": None})
                 para_lines = []
 
         def flush_code():
             nonlocal code_lines, code_lang
             if code_lines:
                 text = "\n".join(code_lines)
-                blocks.append({"type": "代码", "text": text, "page": None, "resource_ref": None})
+                blocks.append({"type": "code", "text": text, "page": None, "resource_ref": None})
                 code_lines = []
                 code_lang = ""
 
@@ -68,14 +68,14 @@ async def _parse(params: dict, caller: str) -> dict:
             nonlocal table_lines
             if table_lines:
                 text = "\n".join(table_lines)
-                blocks.append({"type": "表格", "text": text, "page": None, "resource_ref": None})
+                blocks.append({"type": "table", "text": text, "page": None, "resource_ref": None})
                 table_lines = []
 
         def flush_list():
             nonlocal list_lines
             if list_lines:
                 text = "\n".join(list_lines)
-                blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                blocks.append({"type": "list", "text": text, "page": None, "resource_ref": None})
                 list_lines = []
 
         for line in lines:
@@ -116,7 +116,7 @@ async def _parse(params: dict, caller: str) -> dict:
                 flush_list()
                 level = len(m.group(1))
                 title_text = m.group(2).strip()
-                bt = "标题" if level <= 2 else "段落"
+                bt = "heading" if level <= 2 else "paragraph"
                 blocks.append({"type": bt, "text": title_text, "page": None, "resource_ref": None})
                 continue
 
@@ -126,7 +126,7 @@ async def _parse(params: dict, caller: str) -> dict:
                 m = BLOCKQUOTE_RE.match(line)
                 quote_text = m.group(1).strip()
                 if quote_text:
-                    blocks.append({"type": "段落", "text": f">{quote_text}", "page": None, "resource_ref": None})
+                    blocks.append({"type": "paragraph", "text": f">{quote_text}", "page": None, "resource_ref": None})
                 continue
 
             if not in_code_block and HORIZONTAL_RULE_RE.match(line):
@@ -166,10 +166,10 @@ async def _parse(params: dict, caller: str) -> dict:
             resource_counter += 1
             alt_text = img_match.group(1) or ""
             url = img_match.group(2) or ""
-            blocks.append({"type": "图片", "text": alt_text, "page": None, "resource_ref": resource_counter})
+            blocks.append({"type": "image", "text": alt_text, "page": None, "resource_ref": resource_counter})
             resources.append({
                 "id": resource_counter,
-                "type": "图片",
+                "type": "image",
                 "file_storage_id": None,
                 "text_desc": f"Markdown image: {url} ({alt_text})",
             })

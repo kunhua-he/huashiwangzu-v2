@@ -128,7 +128,7 @@ brief (全景理解)
 | `code_node(symbol)` | codegraph 查符号或文件定义 |
 | `code_impact(path)` | codegraph 查文件改动的影响面 |
 | `quick_fix_preview(path, old_text, new_text, start_line, end_line, expected_old_text_sha256)` | 预览精准补丁: 精确 old_text 替换, 不写盘 |
-| `quick_fix_patch(path, old_text, new_text, start_line, end_line, expected_old_text_sha256)` | 应用精准补丁: 同预览校验, 唯一命中后原子写盘 |
+| `quick_fix_patch / apply_patch(path, old_text, new_text, start_line, end_line, expected_old_text_sha256)` | 应用精准补丁: 同预览校验, 唯一命中后原子写盘 |
 | `lint(path, diff)` | ruff 静态检查 Python 文件；`diff=true` 只预览 ruff 建议 diff，不写盘 |
 | `finish_task(summary, agent, lint_paths, test_targets, module_key, verification_summary, risk_note)` | **【收工检查】** 汇总 Git dirty + 边界检查(模块路径越界校验) + 可选 lint/test + 风险评估 + 生成 memory_write 留痕模板；不提交、不写记忆 |
 

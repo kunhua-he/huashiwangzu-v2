@@ -54,12 +54,74 @@
     {
       "action": "parse",
       "description": "Parse XLSX/CSV files into cell data",
-      "parameters": {
-        "file_id": {
-          "type": "int"
-        }
-      },
+      "parameters": {"file_id": {"type": "int"}},
       "min_role": "viewer"
+    },
+    {
+      "action": "create_workbook",
+      "description": "Create a new empty workbook in the database",
+      "parameters": {"name": "Workbook name"},
+      "min_role": "editor"
+    },
+    {
+      "action": "import_file_to_workbook",
+      "description": "Import a file into a database workbook for editing",
+      "parameters": {"file_id": "File ID to import"},
+      "min_role": "editor"
+    },
+    {
+      "action": "update_range",
+      "description": "Update a range of cells",
+      "parameters": {"state_key": "Workbook key", "rows": "2D array of values"},
+      "min_role": "editor"
+    },
+    {
+      "action": "append_rows",
+      "description": "Append rows to the end of a sheet",
+      "parameters": {"state_key": "Workbook key", "rows": "2D array of values"},
+      "min_role": "editor"
+    },
+    {
+      "action": "undo",
+      "description": "Undo the last operation",
+      "parameters": {"state_key": "Workbook key"},
+      "min_role": "editor"
+    },
+    {
+      "action": "redo",
+      "description": "Redo the last undone operation",
+      "parameters": {"state_key": "Workbook key"},
+      "min_role": "editor"
+    },
+    {
+      "action": "list_history",
+      "description": "List operation history for a workbook",
+      "parameters": {"state_key": "Workbook key"},
+      "min_role": "viewer"
+    },
+    {
+      "action": "list_versions",
+      "description": "List saved versions of a workbook",
+      "parameters": {"state_key": "Workbook key"},
+      "min_role": "viewer"
+    },
+    {
+      "action": "restore_version",
+      "description": "Restore a workbook to a saved version",
+      "parameters": {"state_key": "Workbook key", "version_id": "Version ID"},
+      "min_role": "editor"
+    },
+    {
+      "action": "export_xlsx",
+      "description": "Export workbook to XLSX file",
+      "parameters": {"state_key": "Workbook key"},
+      "min_role": "editor"
+    },
+    {
+      "action": "publish_to_desktop",
+      "description": "Publish workbook to desktop",
+      "parameters": {"state_key": "Workbook key"},
+      "min_role": "editor"
     }
   ]
 }

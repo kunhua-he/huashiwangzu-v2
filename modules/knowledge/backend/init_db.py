@@ -61,6 +61,8 @@ _MIGRATION_STATEMENTS = [
     "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS fusion_version INTEGER DEFAULT 1",
     "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS fusion_status VARCHAR(32) DEFAULT 'pending'",
     "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS confidence FLOAT",
+    "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS content_package_id BIGINT",
+    "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS block_id VARCHAR(64)",
 ]
 
 

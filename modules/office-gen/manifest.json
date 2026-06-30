@@ -96,6 +96,34 @@
         "target_format": "Target format: pdf, docx, pptx, xlsx, png, etc."
       },
       "min_role": "editor"
+    },
+    {
+      "action": "generate_to_artifact",
+      "description": "Generate an office file and return as an artifact (no file-name conflict)",
+      "parameters": {
+        "format": "Output format: xlsx/docx/pptx/pdf",
+        "filename": "Output file name (without extension)",
+        "content/sheets/slides": "Content data for the chosen format"
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "replace_existing",
+      "description": "Generate an office file and replace an existing file entry",
+      "parameters": {
+        "format": "Output format: xlsx/docx/pptx/pdf",
+        "target_file_id": "Existing file ID to replace",
+        "content/sheets/slides": "Content data for the chosen format"
+      },
+      "min_role": "editor"
+    },
+    {
+      "action": "export_to_artifact",
+      "description": "Export an existing office file as an artifact for version management",
+      "parameters": {
+        "file_id": "Existing file ID to export"
+      },
+      "min_role": "editor"
     }
   ]
 }

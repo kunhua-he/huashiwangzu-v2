@@ -130,23 +130,6 @@ export interface OfficeVersion {
   created_at: string
 }
 
-export interface PatchPreview {
-  diff: unknown
-  risk_level: string
-}
-
-export interface PatchResult {
-  success: boolean
-  new_version_id: number | null
-  error: string | null
-}
-
-export interface RollbackResult {
-  success: boolean
-  restored_version_id: number | null
-  error: string | null
-}
-
 export interface ModelProfile {
   key: string
   name: string
@@ -361,15 +344,6 @@ export const office = {
   },
   async listVersions(packageId: number): Promise<OfficeVersion[]> {
     return apiGet<OfficeVersion[]>(`/office/package/${packageId}/versions`)
-  },
-  async previewPatch(payload: unknown): Promise<PatchPreview> {
-    return apiPost<PatchPreview>('/office/patch/preview', payload)
-  },
-  async applyPatch(payload: unknown): Promise<PatchResult> {
-    return apiPost<PatchResult>('/office/patch/apply', payload)
-  },
-  async rollback(payload: unknown): Promise<RollbackResult> {
-    return apiPost<RollbackResult>('/office/rollback', payload)
   },
 }
 

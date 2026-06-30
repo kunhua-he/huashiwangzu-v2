@@ -3,43 +3,53 @@
 1:1 translation of old 表格.php API entry + 表格_调用.php routing.
 All operations go through this unified router.
 """
+import io
 import json
 import os
-import tempfile
-from typing import Any, Optional
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from pathlib import Path
 
-from app.database import get_db
+from app.config import get_settings
+from app.core.exceptions import AppException, NotFound, ValidationError
+from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.core.exceptions import NotFound
-from app.services.file_service import check_file_access
-from app.services.module_registry import register_capability
+from app.services.artifact_service import create_artifact
 from app.services.file_reader import resolve_caller_user_id
+from app.services.file_service import check_file_access
+from app.services.file_upload_service import replace_file_content, upload_file
+from app.services.module_registry import register_capability
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .state.manager import (
-    init_state, cell_set_text, cell_get_style_ref,
-    parse_addresses, empty_state,
-    TEMP_DIR,
-)
-from .state.db_ops import (
-    find_or_create_workbook, find_or_create_sheet,
-    read_state_full, read_history, record_snapshot,
-    undo_operation, redo_operation, history_preview,
-    sync_cells, sync_col_widths, sync_row_heights,
-    find_workbook, find_sheet,
-)
-from .table.edit import EditOperations
-from .table.style_ops import StyleOperations
-from .table.clipboard import ClipboardOperations
-from .table.row_col import RowColOperations
-from .engine.xlsx_parser import parse_xlsx
 from .engine.csv_parser import parse_csv
-from .engine.xlsx_generator import generate_xlsx
-from .tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
+from .engine.xlsx_generator import generate_csv, generate_xlsx
+from .engine.xlsx_parser import parse_xlsx
+from .models import ExcelRedoStack, ExcelVersion, ExcelWorkbook
+from .state.db_ops import (
+    find_or_create_sheet,
+    find_or_create_workbook,
+    find_sheet,
+    find_workbook,
+    history_preview,
+    read_history,
+    read_state_full,
+    record_snapshot,
+    redo_operation,
+    sync_cells,
+    sync_col_widths,
+    sync_row_heights,
+    undo_operation,
+)
+from .state.manager import cell_set_text, empty_state, init_state, parse_addresses
+from .table.clipboard import ClipboardOperations
+from .table.edit import EditOperations
+from .table.row_col import RowColOperations
+from .table.style_ops import StyleOperations
+from .tool.address import rc_to_address
+from .tool.config import DEFAULT_TOTAL_COLS, DEFAULT_TOTAL_ROWS
 
 # Constants matching old project
 WRITE_OPERATIONS = [
@@ -197,8 +207,6 @@ async def _dispatch(
 
     if load_state:
         state = await read_state_full(db, state_key, sheet, owner_id=owner_id)
-        if not state.get('cells'):
-            state = empty_state(sheet)
 
     addrs = parse_addresses(params)
     op_key = f'{module}.{method}'
@@ -210,8 +218,6 @@ async def _dispatch(
         # Clear redo stack
         sheet_id = state.get('_sheet_id')
         if sheet_id and hasattr(db, 'execute'):
-            from sqlalchemy import text
-            from .state.db_ops import ExcelRedoStack
             await db.execute(
                 text(f"DELETE FROM {ExcelRedoStack.__tablename__} WHERE sheet_id = :sid"),
                 {'sid': sheet_id}
@@ -325,8 +331,6 @@ async def _handle_state(method: str, state: dict, state_key: str, params: dict, 
 
 async def _handle_state_direct(method: str, params: dict, db: AsyncSession) -> dict:
     if method == 'workbook_list':
-        from sqlalchemy import text
-        from ..models import ExcelWorkbook
         result = await db.execute(
             text(f"SELECT id, name, upload_time FROM {ExcelWorkbook.__tablename__} ORDER BY last_active_time DESC")
         )
@@ -337,7 +341,6 @@ async def _handle_state_direct(method: str, params: dict, db: AsyncSession) -> d
 
 async def _handle_export(method: str, state: dict, state_key: str, sheet: str, params: dict, db: AsyncSession) -> dict:
     if method == 'download':
-        from .state.db_ops import build_snapshot
         all_sheet_data = {}
         sheet_set_raw = state.get('sheet_set', {})
         first = next(iter(sheet_set_raw.values()), None) if sheet_set_raw else None
@@ -385,8 +388,6 @@ async def _handle_export(method: str, state: dict, state_key: str, sheet: str, p
             }
         }
     elif method == 'csv':
-        from ..engine.xlsx_generator import generate_csv
-        import tempfile
         fd, tmp_path = tempfile.mkstemp(suffix='.csv')
         os.close(fd)
         csv_content = generate_csv(tmp_path, state, sheet)
@@ -409,10 +410,6 @@ async def health():
 async def parse_xlsx_file(payload: OpenRequest, db: AsyncSession = Depends(get_db),
                           user: User = Depends(require_permission("viewer"))):
     """Parse XLSX/CSV file from file storage"""
-    from app.config import get_settings
-    from app.core.exceptions import NotFound, ValidationError
-    from pathlib import Path
-
     allowed = {"xlsx", "xls", "csv"}
     file = await check_file_access(db, payload.file_id, user.id)
     ext = (file.extension or "").lower()
@@ -438,10 +435,6 @@ async def parse_xlsx_file(payload: OpenRequest, db: AsyncSession = Depends(get_d
 async def open_xlsx(payload: OpenRequest, db: AsyncSession = Depends(get_db),
                     user: User = Depends(require_permission("viewer"))):
     """Open XLSX file - loads into DB state and returns initialized state"""
-    from app.config import get_settings
-    from app.core.exceptions import NotFound, ValidationError, AppException
-    from pathlib import Path
-
     file = await check_file_access(db, payload.file_id, user.id)
     ext = (file.extension or "").lower()
     state_key = f'knowledge_{payload.file_id}'
@@ -472,7 +465,7 @@ async def open_xlsx(payload: OpenRequest, db: AsyncSession = Depends(get_db),
     elif ext == "csv":
         result = parse_csv(str(full_path), file.name)
     else:
-        raise ValidationError(f"Unsupported format")
+        raise ValidationError("Unsupported format")
 
     if result.get('code') != 0:
         raise AppException(result.get('msg', 'Parse failed'))
@@ -626,18 +619,13 @@ async def download_file(state_key: str, db: AsyncSession = Depends(get_db),
                         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-# ── Register capability ──
+# ── Cross-module capabilities ──
 
 async def _parse_capability(params: dict, caller: str) -> dict:
-    """Parse XLSX/CSV capability for cross-module use"""
+    """Parse XLSX/CSV files into cell data structure"""
     file_id = int(params.get('file_id', 0))
     if file_id <= 0:
         raise ValueError("file_id must be a positive integer")
-
-    from app.config import get_settings
-    from pathlib import Path
-    from app.database import AsyncSessionLocal
-    from app.core.exceptions import NotFound
 
     user_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
@@ -683,10 +671,549 @@ async def _parse_capability(params: dict, caller: str) -> dict:
     return result
 
 
+async def _create_workbook_capability(params: dict, caller: str) -> dict:
+    """Create a new empty workbook in the database."""
+    from app.database import AsyncSessionLocal
+
+    user_id = resolve_caller_user_id(caller)
+    from datetime import datetime
+    name = params.get("name", "Untitled")
+    state_key = params.get("state_key", f"wb_{user_id}_{int(datetime.utcnow().timestamp())}")
+
+    async with AsyncSessionLocal() as db:
+        wb = await find_or_create_workbook(db, state_key, owner_id=user_id)
+        sheet = await find_or_create_sheet(db, wb['id'], 'Sheet1')
+        state = empty_state()
+        state['_workbook_id'] = wb['id']
+        state['_sheet_id'] = sheet['id']
+        await sync_cells(db, sheet['id'], {}, {}, {})
+
+    return {
+        'state_key': state_key,
+        'workbook_id': wb['id'],
+        'sheet_id': sheet['id'],
+        'name': name,
+        'total_rows': DEFAULT_TOTAL_ROWS,
+        'total_cols': DEFAULT_TOTAL_COLS,
+    }
+
+
+async def _import_file_to_workbook_capability(params: dict, caller: str) -> dict:
+    """Import a file into a database workbook."""
+    user_id = resolve_caller_user_id(caller)
+    file_id = int(params.get('file_id', 0))
+    state_key = params.get('state_key', f'knowledge_{file_id}')
+
+    if file_id <= 0:
+        raise ValueError("file_id must be a positive integer")
+
+    async with AsyncSessionLocal() as db:
+        file = await check_file_access(db, file_id, user_id)
+        ext = (file.extension or "").lower()
+        upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+        full_path = (upload_root / file.storage_path).resolve()
+
+        if ext in ("xlsx", "xls"):
+            result = parse_xlsx(str(full_path), file.name)
+        elif ext == "csv":
+            result = parse_csv(str(full_path), file.name)
+        else:
+            raise ValueError(f"Unsupported format: {ext}")
+
+        if result.get('code') != 0:
+            raise ValueError(result.get('msg', 'Parse failed'))
+
+        wb = await find_or_create_workbook(db, state_key, owner_id=user_id)
+
+        if 'sheet_set' in result:
+            for s_name, s_data in result['sheet_set'].items():
+                sheet_rec = await find_or_create_sheet(
+                    db, wb['id'], s_name,
+                    s_data.get('total_rows', DEFAULT_TOTAL_ROWS),
+                    s_data.get('total_cols', DEFAULT_TOTAL_COLS),
+                )
+                await sync_cells(db, sheet_rec['id'], s_data.get('cells', {}),
+                                 s_data.get('styles', {}), s_data.get('merges', {}))
+
+        state = await read_state_full(db, state_key, owner_id=user_id)
+
+    return {
+        'state_key': state_key,
+        'workbook_id': wb['id'],
+        'file_id': file_id,
+        'all_sheets': state.get('all_sheets', ['Sheet1']),
+        'total_rows': state.get('total_rows', DEFAULT_TOTAL_ROWS),
+        'total_cols': state.get('total_cols', DEFAULT_TOTAL_COLS),
+    }
+
+
+async def _update_range_capability(params: dict, caller: str) -> dict:
+    """Update a range of cells in the workbook."""
+    from app.database import AsyncSessionLocal
+
+    user_id = resolve_caller_user_id(caller)
+    state_key = params.get('state_key', '')
+    sheet = params.get('sheet', 'Sheet1')
+    rows_data = params.get('rows', [])
+
+    if not state_key:
+        raise ValueError("state_key is required")
+    if not rows_data:
+        raise ValueError("rows data is required")
+
+    async with AsyncSessionLocal() as db:
+        state = await read_state_full(db, state_key, sheet, owner_id=user_id)
+
+        start_col = params.get('start_col', 0)
+        start_row = params.get('start_row', 0)
+
+        for ri, row in enumerate(rows_data):
+            for ci, val in enumerate(row):
+                addr = rc_to_address(start_row + ri + 1, start_col + ci)
+                cell_set_text(state, addr, str(val) if val is not None else '')
+
+        await record_snapshot(db, state, state_key, 'edit.input', 'A1',
+                              f'Update range {len(rows_data)} rows', owner_id=user_id)
+        sheet_id = state.get('_sheet_id')
+        if sheet_id:
+            await sync_cells(db, sheet_id, state.get('cells', {}),
+                             state.get('styles', {}), state.get('merges', {}))
+
+    return {
+        'state_key': state_key,
+        'rows_updated': len(rows_data),
+        'total_cells': len(state.get('cells', {})),
+    }
+
+
+async def _append_rows_capability(params: dict, caller: str) -> dict:
+    """Append rows to the end of a sheet."""
+    from app.database import AsyncSessionLocal
+
+    user_id = resolve_caller_user_id(caller)
+    state_key = params.get('state_key', '')
+    sheet = params.get('sheet', 'Sheet1')
+    rows_data = params.get('rows', [])
+
+    if not state_key:
+        raise ValueError("state_key is required")
+    if not rows_data:
+        raise ValueError("rows data is required")
+
+    async with AsyncSessionLocal() as db:
+        state = await read_state_full(db, state_key, sheet, owner_id=user_id)
+
+        import re
+        current_cells = state.get('cells', {})
+        max_row = 0
+        for addr in current_cells:
+            m = re.match(r'([A-Z]+)(\d+)', addr)
+            if m:
+                max_row = max(max_row, int(m.group(2)))
+
+        start_row = max_row + 1
+        for ri, row in enumerate(rows_data):
+            for ci, val in enumerate(row):
+                addr = rc_to_address(start_row + ri, ci + 1)
+                cell_set_text(state, addr, str(val) if val is not None else '')
+
+        await record_snapshot(db, state, state_key, 'edit.input', f'A{start_row}',
+                              f'Append {len(rows_data)} rows starting at row {start_row}',
+                              owner_id=user_id)
+        sheet_id = state.get('_sheet_id')
+        if sheet_id:
+            await sync_cells(db, sheet_id, state.get('cells', {}),
+                             state.get('styles', {}), state.get('merges', {}))
+
+    return {
+        'state_key': state_key,
+        'rows_appended': len(rows_data),
+        'start_row': start_row,
+        'total_cells': len(state.get('cells', {})),
+    }
+
+
+async def _undo_capability(params: dict, caller: str) -> dict:
+    """Undo the last operation."""
+    user_id = resolve_caller_user_id(caller)
+    state_key = params.get('state_key', '')
+
+    async with AsyncSessionLocal() as db:
+        state = await read_state_full(db, state_key, owner_id=user_id)
+        success = await undo_operation(db, state, state_key)
+
+    return {
+        'state_key': state_key,
+        'success': success,
+        'message': '' if success else 'No operations to undo',
+    }
+
+
+async def _redo_capability(params: dict, caller: str) -> dict:
+    """Redo the last undone operation."""
+    user_id = resolve_caller_user_id(caller)
+    state_key = params.get('state_key', '')
+
+    async with AsyncSessionLocal() as db:
+        state = await read_state_full(db, state_key, owner_id=user_id)
+        success = await redo_operation(db, state, state_key)
+
+    return {
+        'state_key': state_key,
+        'success': success,
+        'message': '' if success else 'No operations to redo',
+    }
+
+
+async def _list_history_capability(params: dict, caller: str) -> dict:
+    """List operation history for a workbook."""
+    state_key = params.get('state_key', '')
+
+    async with AsyncSessionLocal() as db:
+        history = await read_history(db, state_key)
+
+    return {
+        'state_key': state_key,
+        'history': history,
+        'total': len(history),
+    }
+
+
+async def _list_versions_capability(params: dict, caller: str) -> dict:
+    """List saved versions of a workbook."""
+    state_key = params.get('state_key', '')
+
+    async with AsyncSessionLocal() as db:
+        wb = await find_workbook(db, state_key)
+        if not wb:
+            return {'state_key': state_key, 'versions': []}
+
+        result = await db.execute(
+            text(f"SELECT id, version_name, file_size, operation_steps, created_at "
+                 f"FROM {ExcelVersion.__tablename__} ORDER BY id DESC")
+        )
+        versions = []
+        for r in result.fetchall():
+            versions.append({
+                'id': r[0],
+                'version_name': r[1],
+                'file_size': r[2],
+                'operation_steps': r[3],
+                'created_at': str(r[4]) if r[4] else '',
+            })
+
+    return {'state_key': state_key, 'versions': versions}
+
+
+async def _restore_version_capability(params: dict, caller: str) -> dict:
+    """Restore a workbook to a saved version."""
+    state_key = params.get('state_key', '')
+    version_id = int(params.get('version_id', 0))
+
+    async with AsyncSessionLocal() as db:
+        wb = await find_workbook(db, state_key)
+        if not wb:
+            raise ValueError(f"Workbook not found: {state_key}")
+
+        result = await db.execute(
+            text(f"SELECT snapshot_json FROM {ExcelVersion.__tablename__} WHERE id = :vid"),
+            {'vid': version_id},
+        )
+        row = result.fetchone()
+        if not row:
+            raise ValueError("Version not found")
+
+        snapshot = json.loads(row[0]) if row[0] else empty_state()
+        if isinstance(snapshot, dict):
+            sheet_rec = await find_sheet(db, wb['id'], params.get('sheet', 'Sheet1'))
+            if sheet_rec:
+                await sync_cells(db, sheet_rec['id'], snapshot.get('cells', {}),
+                                 snapshot.get('styles', {}), snapshot.get('merges', {}))
+
+    return {'state_key': state_key, 'version_id': version_id, 'restored': True}
+
+
+async def _export_xlsx_capability(params: dict, caller: str) -> dict:
+    """Export workbook to XLSX file."""
+    user_id = resolve_caller_user_id(caller)
+    state_key = params.get('state_key', '')
+    sheet = params.get('sheet', 'Sheet1')
+    folder_id = params.get('folder_id')
+
+    async with AsyncSessionLocal() as db:
+        state = await read_state_full(db, state_key, sheet, owner_id=user_id)
+
+        result = await _handle_export('download', state, state_key, sheet, {}, db)
+        if result.get('code') != 0:
+            raise ValueError(result.get('msg', 'Export failed'))
+
+        file_path = result.get('file', '')
+        p = Path(file_path)
+        if not p.exists():
+            raise ValueError("Export file not found")
+
+        content_bytes = p.read_bytes()
+        upload_result = await upload_file(
+            db, io.BytesIO(content_bytes),
+            f"{state_key}.xlsx", user_id, folder_id,
+        )
+        wb = await find_workbook(db, state_key)
+        artifact = await create_artifact(
+            db,
+            user_id,
+            name=state_key,
+            extension="xlsx",
+            content=content_bytes,
+            folder_id=folder_id,
+            source_module="excel-engine",
+            source_object_type="workbook",
+            source_object_id=wb['id'] if wb else None,
+            file_id=upload_result['id'],
+            conflict_policy="auto_rename",
+        )
+
+        p.unlink(missing_ok=True)
+
+    return {
+        'file_id': upload_result['id'],
+        'artifact_id': artifact['id'],
+        'name': upload_result['name'],
+        'extension': upload_result['extension'],
+        'size': upload_result['size'],
+        'state_key': state_key,
+    }
+
+
+async def _publish_to_desktop_capability(params: dict, caller: str) -> dict:
+    """Publish workbook to desktop — export to XLSX and publish/replace desktop file."""
+    user_id = resolve_caller_user_id(caller)
+    state_key = params.get('state_key', '')
+    sheet = params.get('sheet', 'Sheet1')
+    target_file_id = params.get('target_file_id')
+
+    async with AsyncSessionLocal() as db:
+        state = await read_state_full(db, state_key, sheet, owner_id=user_id)
+
+        result = await _handle_export('download', state, state_key, sheet, {}, db)
+        if result.get('code') != 0:
+            raise ValueError(result.get('msg', 'Export failed'))
+
+        file_path = result.get('file', '')
+        p = Path(file_path)
+        if not p.exists():
+            raise ValueError("Export file not found")
+
+        content_bytes = p.read_bytes()
+        wb = await find_workbook(db, state_key)
+
+        if target_file_id:
+            file_result = await replace_file_content(db, int(target_file_id), user_id, content_bytes)
+            artifact_name = file_result.get('name') or state_key
+        else:
+            wb_name = wb['name'] if wb else state_key
+            file_result = await upload_file(
+                db, io.BytesIO(content_bytes),
+                f"{wb_name}.xlsx", user_id, params.get('folder_id'),
+            )
+            artifact_name = file_result.get('name') or wb_name
+
+        artifact = await create_artifact(
+            db,
+            user_id,
+            name=artifact_name,
+            extension='xlsx',
+            content=content_bytes,
+            folder_id=params.get('folder_id'),
+            source_module='excel-engine',
+            source_object_type='workbook',
+            source_object_id=wb['id'] if wb else None,
+            file_id=file_result.get('id', file_result.get('file_id')),
+            conflict_policy='auto_rename',
+        )
+
+        p.unlink(missing_ok=True)
+
+    return {
+        'file_id': file_result.get('id', file_result.get('file_id')),
+        'artifact_id': artifact['id'],
+        'name': file_result.get('name'),
+        'size': file_result.get('size'),
+        'state_key': state_key,
+        'published': True,
+    }
+
+
 register_capability(
     "excel-engine", "parse", _parse_capability,
     description="Parse XLSX/CSV files into cell data structure",
     brief="解析 Excel 数据",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
+)
+
+register_capability(
+    "excel-engine", "create_workbook", _create_workbook_capability,
+    description="Create a new empty workbook in the database.",
+    brief="创建工作簿",
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Workbook name", "default": "Untitled"},
+            "state_key": {"type": "string", "description": "Optional state_key (auto-generated if omitted)"},
+        },
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "import_file_to_workbook", _import_file_to_workbook_capability,
+    description="Import a file into a database workbook for editing.",
+    brief="导入文件到工作簿",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "integer", "description": "File ID to import"},
+            "state_key": {"type": "string", "description": "Optional state_key"},
+        },
+        "required": ["file_id"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "update_range", _update_range_capability,
+    description="Update a range of cells starting at a given position.",
+    brief="更新单元格范围",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+            "sheet": {"type": "string", "description": "Sheet name", "default": "Sheet1"},
+            "start_row": {"type": "integer", "description": "Starting row (0-based)", "default": 0},
+            "start_col": {"type": "integer", "description": "Starting column (0-based)", "default": 0},
+            "rows": {"type": "array", "description": "2D array of cell values"},
+        },
+        "required": ["state_key", "rows"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "append_rows", _append_rows_capability,
+    description="Append rows to the end of a sheet.",
+    brief="追加行",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+            "sheet": {"type": "string", "description": "Sheet name", "default": "Sheet1"},
+            "rows": {"type": "array", "description": "2D array of cell values to append"},
+        },
+        "required": ["state_key", "rows"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "undo", _undo_capability,
+    description="Undo the last operation.",
+    brief="撤销",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+        },
+        "required": ["state_key"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "redo", _redo_capability,
+    description="Redo the last undone operation.",
+    brief="重做",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+        },
+        "required": ["state_key"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "list_history", _list_history_capability,
+    description="List operation history for a workbook.",
+    brief="列出操作历史",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+        },
+        "required": ["state_key"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "excel-engine", "list_versions", _list_versions_capability,
+    description="List saved versions of a workbook.",
+    brief="列出版本",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+        },
+        "required": ["state_key"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
+    "excel-engine", "restore_version", _restore_version_capability,
+    description="Restore a workbook to a saved version.",
+    brief="恢复版本",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+            "version_id": {"type": "integer", "description": "Version ID to restore"},
+        },
+        "required": ["state_key", "version_id"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "export_xlsx", _export_xlsx_capability,
+    description="Export workbook to XLSX file in the file system.",
+    brief="导出 XLSX",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+            "sheet": {"type": "string", "description": "Sheet name", "default": "Sheet1"},
+            "folder_id": {"type": "integer", "description": "Target folder ID (optional)"},
+        },
+        "required": ["state_key"],
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "excel-engine", "publish_to_desktop", _publish_to_desktop_capability,
+    description="Publish workbook to desktop — export to XLSX and replace/create desktop file.",
+    brief="发布到桌面",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+            "sheet": {"type": "string", "description": "Sheet name", "default": "Sheet1"},
+            "target_file_id": {"type": "integer", "description": "Target desktop file ID (optional, creates new if omitted)"},
+            "folder_id": {"type": "integer", "description": "Target folder ID (optional)"},
+        },
+        "required": ["state_key"],
+    },
+    min_role="editor",
 )

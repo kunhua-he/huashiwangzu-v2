@@ -30,7 +30,6 @@ from app.models import (  # noqa: F401 - ensure models are loaded
     SystemLog, Notification, UserNotificationRead, Feedback, Task,
     Setting, SystemTaskQueue,
     RoleMatrix, DesktopState,
-    FileJsonPackage, FileJsonVersion, FileJsonPatch, FileJsonTask,
     PromptCategory, PromptTemplate,
     PrivateModule,
 )

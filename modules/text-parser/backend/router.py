@@ -33,35 +33,35 @@ async def _parse(params: dict, caller: str) -> dict:
                     if para_lines:
                         text = "\n".join(para_lines).strip()
                         if text:
-                            blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                            blocks.append({"type": "paragraph", "text": text, "page": None, "resource_ref": None})
                         para_lines = []
                     in_code_block = not in_code_block
-                    blocks.append({"type": "段落", "text": line, "page": None, "resource_ref": None})
+                    blocks.append({"type": "code", "text": line, "page": None, "resource_ref": None})
                     continue
                 if in_code_block:
-                    blocks.append({"type": "段落", "text": line, "page": None, "resource_ref": None})
+                    blocks.append({"type": "code", "text": line, "page": None, "resource_ref": None})
                     continue
                 if line.startswith("#"):
                     if para_lines:
                         text = "\n".join(para_lines).strip()
                         if text:
-                            blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                            blocks.append({"type": "paragraph", "text": text, "page": None, "resource_ref": None})
                         para_lines = []
                     title_text = line.lstrip("#").strip()
-                    blocks.append({"type": "标题", "text": title_text, "page": None, "resource_ref": None})
+                    blocks.append({"type": "heading", "text": title_text, "page": None, "resource_ref": None})
                     continue
                 if line.strip() == "":
                     if para_lines:
                         text = "\n".join(para_lines).strip()
                         if text:
-                            blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                            blocks.append({"type": "paragraph", "text": text, "page": None, "resource_ref": None})
                         para_lines = []
                     continue
                 para_lines.append(line)
             if para_lines:
                 text = "\n".join(para_lines).strip()
                 if text:
-                    blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                    blocks.append({"type": "paragraph", "text": text, "page": None, "resource_ref": None})
         else:
             para_lines = []
             for line in lines:
@@ -69,14 +69,14 @@ async def _parse(params: dict, caller: str) -> dict:
                     if para_lines:
                         text = "\n".join(para_lines).strip()
                         if text:
-                            blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                            blocks.append({"type": "paragraph", "text": text, "page": None, "resource_ref": None})
                         para_lines = []
                     continue
                 para_lines.append(line)
             if para_lines:
                 text = "\n".join(para_lines).strip()
                 if text:
-                    blocks.append({"type": "段落", "text": text, "page": None, "resource_ref": None})
+                    blocks.append({"type": "paragraph", "text": text, "page": None, "resource_ref": None})
 
         return {
             "file_id": file_id,

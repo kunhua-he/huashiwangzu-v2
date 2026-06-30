@@ -32,6 +32,19 @@ async def lifespan(app: FastAPI):
     from app.models.system import ensure_framework_scheduling_columns
     await ensure_framework_scheduling_columns()
 
+    # Idempotent migration: add origin_type to framework_content_packages
+    from sqlalchemy import text as sa_text
+    from app.database import engine
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sa_text(
+                "ALTER TABLE framework_content_packages "
+                "ADD COLUMN IF NOT EXISTS origin_type VARCHAR(32) DEFAULT 'uploaded'"
+            ))
+            logger.info("Ensured origin_type column on framework_content_packages")
+    except Exception as e:
+        logger.warning("Migration origin_type skipped: %s", e)
+
     # Set up module-specific log files
     from app.services.module_logger import setup_module_logging
     setup_module_logging()

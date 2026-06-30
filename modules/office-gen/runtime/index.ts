@@ -121,6 +121,8 @@ export interface OfficePackage {
   current_version_id: number | null
   format_type: string
   package_status: string
+  /** content_package_id if backed by Content Package */
+  content_package_id?: number
 }
 
 export interface OfficeVersion {
@@ -131,22 +133,11 @@ export interface OfficeVersion {
   created_at: string
 }
 
-export interface PatchPreview {
-  diff: unknown
-  risk_level: string
-}
 
-export interface PatchResult {
-  success: boolean
-  new_version_id: number | null
-  error: string | null
-}
 
-export interface RollbackResult {
-  success: boolean
-  restored_version_id: number | null
-  error: string | null
-}
+
+
+
 
 export interface ModelProfile {
   key: string
@@ -288,6 +279,20 @@ export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
   return body.data as T
 }
 
+export async function apiPut<T>(path: string, payload?: unknown): Promise<T> {
+  const url = getApiUrl(path)
+  const r = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: payload ? JSON.stringify(payload) : undefined,
+  })
+  if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
+  if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
+  const body = await r.json()
+  if (!body.success) throw new Error(body.error ?? 'API error')
+  return body.data as T
+}
+
 // ── Platform SDK namespaces ─────────────────────────────────────────
 
 export const auth = {
@@ -361,34 +366,69 @@ export const files = {
   },
 }
 
+export const content = {
+  /** Trigger content pipeline (parse file → content package) */
+  async pipeline(fileId: number): Promise<unknown> {
+    return apiPost<unknown>('/content/pipeline', { file_id: fileId })
+  },
+  /** Get full content package with blocks */
+  async getFullPackage(packageId: number): Promise<unknown> {
+    return apiGet<unknown>(`/content/packages/${packageId}/full`)
+  },
+  /** List blocks in a content package */
+  async listBlocks(packageId: number, blockType?: string): Promise<unknown> {
+    const qs = blockType ? `?block_type=${blockType}` : ''
+    return apiGet<unknown>(`/content/packages/${packageId}/blocks${qs}`)
+  },
+  /** Update blocks */
+  async updateBlocks(packageId: number, updates: Array<{ block_id: string; text?: string }>): Promise<unknown> {
+    return apiPut<unknown>(`/content/packages/${packageId}/blocks`, { package_id: packageId, updates })
+  },
+  /** Append blocks */
+  async appendBlocks(packageId: number, blocks: Array<{ type: string; text: string }>): Promise<unknown> {
+    return apiPost<unknown>(`/content/packages/${packageId}/blocks`, { package_id: packageId, blocks })
+  },
+  /** Export content package to file */
+  async export_(packageId: number, targetFormat?: string): Promise<unknown> {
+    return apiPost<unknown>(`/content/packages/${packageId}/export`, { target_format: targetFormat })
+  },
+  /** Publish content package as artifact */
+  async publish(packageId: number, targetFileId?: number): Promise<unknown> {
+    return apiPost<unknown>(`/content/packages/${packageId}/publish`, { target_file_id: targetFileId })
+  },
+  /** List versions */
+  async listVersions(packageId: number): Promise<unknown> {
+    return apiGet<unknown>(`/content/packages/${packageId}/versions`)
+  },
+  /** Restore version */
+  async restoreVersion(packageId: number, versionId: number): Promise<unknown> {
+    return apiPost<unknown>(`/content/packages/${packageId}/restore`, { package_id: packageId, version_id: versionId })
+  },
+  /** Replace text across blocks */
+  async replaceText(packageId: number, oldText: string, newText: string): Promise<unknown> {
+    return apiPost<unknown>(`/content/packages/${packageId}/replace-text`, {
+      package_id: packageId,
+      request: { old_text: oldText, new_text: newText },
+    })
+  },
+}
+
 export const office = {
   /** Get Office document status for a file */
   async getStatus(fileId: number): Promise<OfficeStatus> {
     return apiGet<OfficeStatus>(`/office/status/${fileId}`)
   },
-  /** Create a new JSON package for a file */
+  /** Create a new content package for a file (bridged to Content Package API) */
   async createPackage(payload: { file_id: number; format_type: string }): Promise<OfficePackage> {
     return apiPost<OfficePackage>('/office/package', payload)
   },
-  /** Get a JSON package by ID */
+  /** Get a content package by ID (bridged to Content Package API) */
   async getPackage(packageId: number): Promise<OfficePackage> {
     return apiGet<OfficePackage>(`/office/package/${packageId}`)
   },
-  /** List all versions of a JSON package */
+  /** List all versions of a content package */
   async listVersions(packageId: number): Promise<OfficeVersion[]> {
     return apiGet<OfficeVersion[]>(`/office/package/${packageId}/versions`)
-  },
-  /** Preview a patch before applying it */
-  async previewPatch(payload: unknown): Promise<PatchPreview> {
-    return apiPost<PatchPreview>('/office/patch/preview', payload)
-  },
-  /** Apply a patch */
-  async applyPatch(payload: unknown): Promise<PatchResult> {
-    return apiPost<PatchResult>('/office/patch/apply', payload)
-  },
-  /** Rollback to a previous version */
-  async rollback(payload: unknown): Promise<RollbackResult> {
-    return apiPost<RollbackResult>('/office/rollback', payload)
   },
 }
 

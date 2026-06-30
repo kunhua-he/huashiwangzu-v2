@@ -192,7 +192,12 @@ async def _execute_tool_loop(
             elif name == "skill_list":
                 tool_result = await tool_discovery.handle_skill_list(args, caller_role)
             elif name == "skill_describe":
-                tool_result = await tool_discovery.handle_skill_describe(args, caller_role)
+                tool_result = await tool_discovery.handle_skill_describe(
+                    args,
+                    caller_role,
+                    owner_id=owner_id,
+                    agent_code="subagent",
+                )
             elif name == "skill_use":
                 tool_result = await tool_discovery.handle_skill_use(
                     args, caller=caller, caller_role=caller_role,

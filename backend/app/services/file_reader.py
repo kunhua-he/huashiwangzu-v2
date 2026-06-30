@@ -63,3 +63,28 @@ def decode_text_bytes(raw: bytes) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+async def get_file_content_bytes(file_id: int, user_id: int) -> bytes:
+    """Read the raw bytes of a file from disk by file_id and owner_id.
+    
+    Returns the raw file content bytes. Access-controlled via check_file_access.
+    """
+    from pathlib import Path
+
+    from app.config import get_settings
+    from app.services.file_service import check_file_access
+
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        file = await check_file_access(db, file_id, user_id)
+        if not file.storage_path:
+            raise NotFound("File storage path is empty")
+        upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+        full_path = (upload_root / file.storage_path).resolve()
+        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
+            raise AppException("Unsafe file path", status_code=400)
+        if not full_path.exists() or not full_path.is_file():
+            raise NotFound("File not found on disk")
+        return full_path.read_bytes()

@@ -48,11 +48,13 @@ PLATFORM_ROUTER_MODULES: tuple[str, ...] = (
     "app.routers.office",
     "app.routers.gateway",
     "app.routers.modules",
-    "app.routers.office_export",
+    # "app.routers.office_export",  # removed — replaced by content:export + office-gen
     "app.routers.editors",
     "app.routers.app_manager",
     "app.routers.menu",
     "app.routers.private_modules",
+    "app.routers.artifacts",
+    "app.routers.content",
 )
 
 

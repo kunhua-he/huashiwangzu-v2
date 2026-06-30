@@ -1920,6 +1920,30 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="apply_patch",
+            description=(
+                "应用精准补丁(同 quick_fix_patch): path + old_text + new_text 精确替换, "
+                "仅 old_text 唯一命中时原子写盘; "
+                "适合 CodeGraph 定位后的快速修复."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "仓库内文件路径(绝对或相对仓库根)"},
+                    "old_text": {"type": "string", "description": "必须唯一命中的原文块"},
+                    "new_text": {"type": "string", "description": "替换后的文本块"},
+                    "start_line": {"type": "number", "description": "可选: CodeGraph 定位起始行"},
+                    "end_line": {"type": "number", "description": "可选: CodeGraph 定位结束行"},
+                    "expected_old_text_sha256": {
+                        "type": "string",
+                        "description": "可选: old_text 的 sha256, 防止调用方传错块",
+                        "default": "",
+                    },
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+        ),
+        Tool(
             name="quick_fix_patch",
             description=(
                 "应用精准补丁: 与 quick_fix_preview 同校验, 仅 old_text 唯一命中时原子写盘; "
@@ -2162,6 +2186,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "quick_fix_preview":
             result = json.dumps(
                 quick_fix_preview(
+                    repo_root=REPO_ROOT,
+                    path=arguments["path"],
+                    old_text=arguments["old_text"],
+                    new_text=arguments["new_text"],
+                    start_line=arguments.get("start_line"),
+                    end_line=arguments.get("end_line"),
+                    expected_old_text_sha256=arguments.get("expected_old_text_sha256", ""),
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        elif name == "apply_patch":
+            result = json.dumps(
+                quick_fix_patch(
                     repo_root=REPO_ROOT,
                     path=arguments["path"],
                     old_text=arguments["old_text"],

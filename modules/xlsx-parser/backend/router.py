@@ -41,7 +41,7 @@ async def _parse(params: dict, caller: str) -> dict:
                         break
                 if rows:
                     block_text = f"[Sheet: {sheet_name}]\n" + "\n".join(rows)
-                    blocks.append({"type": "表格", "text": block_text, "page": None, "resource_ref": None})
+                    blocks.append({"type": "table", "text": block_text, "page": None, "resource_ref": None})
             wb.close()
         elif ext == "csv":
             raw = full_path.read_bytes()

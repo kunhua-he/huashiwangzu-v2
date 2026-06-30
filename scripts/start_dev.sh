@@ -16,7 +16,7 @@ echo "=== Huashi Wangzu V2 Development Environment ==="
 echo ""
 
 # ── 1. Backend ──
-echo "[1/3] Backend server (FastAPI port 30004)..."
+echo "[1/3] Backend server (FastAPI port 33000)..."
 "$SCRIPT_DIR/start_backend.sh" || echo "[1/3] Backend start failed, continuing..."
 echo ""
 
@@ -44,4 +44,4 @@ echo ""
 echo "  Then open: http://localhost:5173"
 echo ""
 echo "=== All done ==="
-echo "Health check: http://127.0.0.1:30004/api/health"
+echo "Health check: http://127.0.0.1:33000/api/health"

@@ -1,29 +1,59 @@
+"""Office router — bridges old /api/office/* endpoints to Content Package API.
+Legacy compatibility layer: maps old JSON Package semantics to Content Package.
+Deprecated endpoints (patch/preview/apply/rollback) removed — use
+Content Package versions and restore instead.
+"""
+import logging
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.exceptions import AppException, ConflictError, NotFound, ValidationError, PermissionDenied
 from app.database import get_db
 from app.schemas.common import ApiResponse
 from app.middleware.auth import require_permission
 from app.models.user import User
-from app.services.office import JsonPackageService, JsonVersionService, JsonPatchService
-from app.services.file_share_service import check_file_access
+
+logger = logging.getLogger("v2.content").getChild("office_router")
 
 router = APIRouter(prefix="/api/office", tags=["office"])
 
-package_svc = JsonPackageService()
-version_svc = JsonVersionService()
-patch_svc = JsonPatchService()
+
+async def _get_content_package_for_file(db: AsyncSession, file_id: int, user_id: int) -> dict | None:
+    """Look up Content Package by source file, permissions checked by owner."""
+    from app.models.content import ContentPackage
+    from sqlalchemy import select
+    r = await db.execute(
+        select(ContentPackage).where(
+            ContentPackage.source_file_id == file_id,
+            ContentPackage.deleted.is_(False),
+        ).order_by(ContentPackage.created_at.desc()).limit(1)
+    )
+    pkg = r.scalar_one_or_none()
+    if not pkg:
+        return None
+    return {
+        "id": pkg.id,
+        "file_id": pkg.source_file_id,
+        "current_version_id": pkg.current_version_id,
+        "format_type": pkg.source_extension or "txt",
+        "package_status": pkg.status,
+    }
 
 
 async def _require_file_access(db: AsyncSession, file_id: int, user_id: int):
-    """Check that user owns the file or has shared access to it."""
-    from app.models.file import File
-    file = await db.get(File, file_id)
-    if not file or file.deleted:
-        raise NotFound("File not found")
-    access = await check_file_access(db, file_id, user_id)
-    if not access["accessible"]:
-        raise PermissionDenied("No permission to access this file")
+    """Return the File record (ORM) or raise NotFound/PermissionDenied."""
+    from app.services.file_service import check_file_access
+    return await check_file_access(db, file_id, user_id)
+
+
+async def _require_package_access(db: AsyncSession, package_id: int, user_id: int) -> dict:
+    from app.services.content.package_service import ContentPackageService
+    svc = ContentPackageService()
+    try:
+        pkg = await svc.get_package(db, package_id=package_id, owner_id=user_id)
+        return pkg
+    except Exception as e:
+        from app.core.exceptions import NotFound
+        raise NotFound(f"Package not found: {e}") from e
 
 
 @router.get("/status/{file_id}")
@@ -32,19 +62,16 @@ async def get_status(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await _require_file_access(db, file_id, user.id)
-    from app.models.file import File
-    pkg = await package_svc.get_status(db, file_id)
-    file = await db.get(File, file_id)
+    file = await _require_file_access(db, file_id, user.id)
+    pkg = await _get_content_package_for_file(db, file_id, user.id)
     return ApiResponse(data={
         "file_id": file_id,
-        "file_name": f"{file.name}.{file.extension}" if file else "",
+        "file_name": f"{file.name}.{file.extension}",
         "has_package": pkg is not None,
-        "package_id": pkg.id if pkg else None,
-        "current_version_id": pkg.current_version_id if pkg else None,
-        "package_status": pkg.package_status if pkg else "not_generated",
-        "summary": pkg.summary if pkg else None,
-        "last_updated": str(pkg.updated_at) if pkg and pkg.updated_at else None,
+        "package_id": pkg["id"] if pkg else None,
+        "current_version_id": pkg["current_version_id"] if pkg else None,
+        "package_status": pkg["package_status"] if pkg else "not_generated",
+        "format_type": pkg["format_type"] if pkg else None,
     })
 
 
@@ -55,18 +82,16 @@ async def create_package(
     user: User = Depends(require_permission("editor")),
 ):
     await _require_file_access(db, file_id, user.id)
-    result = await package_svc.create_package(db, file_id, user.id)
-    return ApiResponse(data=result)
-
-
-async def _require_package_access(db: AsyncSession, package_id: int, user_id: int):
-    """Check that user can access the file linked to this package."""
-    from app.models.office import FileJsonPackage
-    pkg = await db.get(FileJsonPackage, package_id)
-    if not pkg:
-        raise NotFound("Package not found")
-    await _require_file_access(db, pkg.file_id, user_id)
-    return pkg
+    from app.services.content.package_service import ContentPackageService
+    svc = ContentPackageService()
+    result = await svc.get_or_create(db, file_id, user.id, f"user:{user.id}")
+    return ApiResponse(data={
+        "id": result["id"],
+        "file_id": result["source_file_id"],
+        "current_version_id": result["current_version_id"],
+        "format_type": result["source_extension"],
+        "package_status": result["status"],
+    })
 
 
 @router.get("/package/{package_id}")
@@ -75,11 +100,14 @@ async def read_package(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await _require_package_access(db, package_id, user.id)
-    result = await package_svc.read_package(db, package_id)
-    if not result:
-        raise NotFound("Package not found")
-    return ApiResponse(data=result)
+    pkg = await _require_package_access(db, package_id, user.id)
+    return ApiResponse(data={
+        "id": pkg["id"],
+        "file_id": pkg["source_file_id"],
+        "current_version_id": pkg["current_version_id"],
+        "format_type": pkg["source_extension"],
+        "package_status": pkg["status"],
+    })
 
 
 @router.get("/package/{package_id}/versions")
@@ -89,86 +117,20 @@ async def list_versions(
     user: User = Depends(require_permission("viewer")),
 ):
     await _require_package_access(db, package_id, user.id)
-    versions = await version_svc.list_versions(db, package_id)
+    from app.services.content.package_service import ContentPackageService
+    svc = ContentPackageService()
+    versions = await svc.list_versions(db, package_id, owner_id=user.id)
     return ApiResponse(data=[
         {
-            "id": v.id, "package_id": v.package_id,
-            "version_number": v.version_number,
-            "summary": v.summary, "creator_id": v.creator_id,
-            "created_at": str(v.created_at) if v.created_at else None,
+            "id": v["id"],
+            "package_id": v["package_id"],
+            "version_number": v["version_no"],
+            "summary": v["summary"],
+            "creator_id": v["created_by"],
+            "created_at": str(v["created_at"]) if v.get("created_at") else None,
         }
         for v in versions
     ])
 
 
-@router.get("/package/{package_id}/patches")
-async def list_patches(
-    package_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("viewer")),
-):
-    await _require_package_access(db, package_id, user.id)
-    patches = await patch_svc.list_patches(db, package_id)
-    return ApiResponse(data=[
-        {
-            "id": p.id, "package_id": p.package_id,
-            "source_version_id": p.source_version_id,
-            "target_version_id": p.target_version_id,
-            "operation_type": p.operation_type,
-            "json_path": p.json_path,
-            "risk_level": p.risk_level,
-            "reason": p.reason, "patch_status": p.patch_status,
-            "created_at": str(p.created_at) if p.created_at else None,
-        }
-        for p in patches
-    ])
 
-
-@router.post("/patch/preview")
-async def preview_patch(
-    body: dict,
-    user: User = Depends(require_permission("viewer")),
-):
-    try:
-        result = patch_svc.preview_patch(body.get("patch", {}))
-        return ApiResponse(data=result)
-    except ValueError as e:
-        raise ValidationError(str(e))
-
-
-@router.post("/patch/apply")
-async def apply_patch(
-    body: dict,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
-):
-    try:
-        result = await patch_svc.apply_patch(
-            db, body.get("patch", {}), body.get("package_id"), user.id
-        )
-        return ApiResponse(data=result)
-    except AppException:
-        raise
-    except ValueError as e:
-        raise ValidationError(str(e))
-    except RuntimeError as e:
-        raise ConflictError(str(e))
-
-
-@router.post("/rollback")
-async def rollback_version(
-    body: dict,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
-):
-    try:
-        result = await version_svc.rollback(
-            db, body["package_id"], body["target_version_id"], user.id
-        )
-        return ApiResponse(data=result)
-    except AppException:
-        raise
-    except ValueError as e:
-        raise ValidationError(str(e))
-    except RuntimeError as e:
-        raise ConflictError(str(e))

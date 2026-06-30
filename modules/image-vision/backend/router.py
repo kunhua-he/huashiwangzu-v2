@@ -42,10 +42,10 @@ async def _describe(params: dict, caller: str) -> dict:
                 description = f"[Image metadata] {file.name}.{file.extension}, {len(raw)} bytes. Vision unavailable."
 
         blocks = [
-            {"type": "图片", "text": description, "page": None, "resource_ref": 1},
+            {"type": "image", "text": description, "page": None, "resource_ref": 1},
         ]
         resources = [
-            {"id": 1, "type": "图片", "file_storage_id": file_id, "text_desc": description},
+            {"id": 1, "type": "image", "file_storage_id": file_id, "text_desc": description},
         ]
 
         return {

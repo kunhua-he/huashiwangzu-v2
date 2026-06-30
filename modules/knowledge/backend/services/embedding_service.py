@@ -1,14 +1,10 @@
 """知识库分块与向量化服务。"""
-import json
 import logging
 import re
-from typing import AsyncIterator
 
-from sqlalchemy import select, func, and_
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.database import AsyncSessionLocal
 from app.services.model_services import get_embedding
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.knowledge").getChild("embedding")
 
@@ -145,6 +141,7 @@ async def chunk_and_embed(
             continue
         block_type = block.get("type", "段落")
         page = block.get("page")
+        block_id_val = block.get("block_id")
 
         sub_chunks = split_text_into_chunks(text)
         for sub_text in sub_chunks:
@@ -159,6 +156,7 @@ async def chunk_and_embed(
                 "text": sub_text,
                 "embedding": None,
                 "keywords": extract_keywords(sub_text),
+                "block_id": block_id_val,
             }
             chunks_to_store.append(ch)
             chunk_index += 1
@@ -204,6 +202,7 @@ async def store_chunks(db: AsyncSession, chunks: list[dict]) -> int:
             text=ch["text"],
             embedding=ch.get("embedding"),
             keywords=ch.get("keywords"),
+            block_id=ch.get("block_id"),
         )
         db.add(record)
         stored += 1

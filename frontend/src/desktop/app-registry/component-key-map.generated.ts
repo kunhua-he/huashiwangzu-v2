@@ -17,6 +17,7 @@ export const componentKeyMap: Record<string, () => Promise<{ default: Component 
   'image-viewer/index.vue': () => import('@modules/image-viewer/frontend/index.vue'),
   'image-vision/index.vue': () => import('@modules/image-vision/frontend/index.vue'),
   'knowledge/index.vue': () => import('@modules/knowledge/frontend/index.vue'),
+  'media-asr/index.vue': () => import('@modules/media-asr/frontend/index.vue'),
   'memory/index.vue': () => import('@modules/memory/frontend/index.vue'),
   'office-gen/index.vue': () => import('@modules/office-gen/frontend/index.vue'),
   'pdf-parser/index.vue': () => import('@modules/pdf-parser/frontend/index.vue'),

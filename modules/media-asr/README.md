@@ -21,7 +21,7 @@ No Douyin download support. No cookie/credential login.
 |--------|-------------|-------|
 | `extract_audio` | Extract audio track from video | `file_id`, `sample_rate`, `audio_format`, `save_file`, `folder_id` |
 | `transcribe_audio` | Transcribe audio to timestamped text | `file_id`, `model`, `language`, `save_text`, `folder_id` |
-| `transcribe_video` | Extract + transcribe in one step | `file_id`, `model`, `sample_rate`, `audio_format`, `language`, `save_audio`, `save_text`, `folder_id` |
+| `transcribe_video` | Extract + transcribe in one step | `file_id`, `model`, `sample_rate`, `language`, `save_audio`, `save_text`, `folder_id` |
 
 All capabilities require `editor` role (they may create framework files). Called from the frontend via `platform.modules.call('media-asr', action, params)`.
 

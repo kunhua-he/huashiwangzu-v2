@@ -385,8 +385,8 @@ export const settings = {
 }
 
 export const modules = {
-  async call(targetModule: string, action: string, parameters: Record<string, unknown> = {}): Promise<unknown> {
-    return apiPost<unknown>('/modules/call', { target_module: targetModule, action, parameters })
+  async call<T = unknown>(targetModule: string, action: string, parameters: Record<string, unknown> = {}): Promise<T> {
+    return apiPost<T>('/modules/call', { target_module: targetModule, action, parameters })
   },
   async capabilities(): Promise<string[]> {
     return apiGet<string[]>('/modules/capabilities')

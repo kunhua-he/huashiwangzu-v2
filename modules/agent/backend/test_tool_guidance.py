@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from app.core.exceptions import ValidationError
 
 REPO_DIR = Path(__file__).resolve().parents[3]
 if str(REPO_DIR) not in sys.path:
@@ -402,10 +403,9 @@ async def test_browser_session_actions_reject_blocked_current_url(handler, param
 def test_browser_router_error_envelope():
     if not browser_router:
         pytest.skip("browser-tools router not loaded")
-    response = browser_router._browser_response({"error": "file:// protocol is blocked"})
-    assert response.success is False
-    assert response.error == "file:// protocol is blocked"
-    assert response.data is None
+    with pytest.raises(ValidationError) as exc:
+        browser_router._browser_response({"error": "file:// protocol is blocked"})
+    assert "file:// protocol is blocked" in str(exc.value)
 
 
 def test_browser_router_success_unwraps_handler_data():

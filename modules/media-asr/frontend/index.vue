@@ -78,11 +78,7 @@
 
       <template v-if="mode === 'transcribe_video'">
         <div class="toolbar-row">
-          <label class="field-label">音频格式</label>
-          <select v-model="audioFormat" class="param-select">
-            <option v-for="f in audioFormats" :key="f" :value="f">{{ f }}</option>
-          </select>
-          <label class="field-label-offset">采样率</label>
+          <label class="field-label">采样率</label>
           <select v-model="sampleRate" class="param-select">
             <option v-for="r in sampleRates" :key="r" :value="r">{{ r }} Hz</option>
           </select>
@@ -120,7 +116,7 @@
       <div class="result-summary">
         <span class="result-badge ok">完成</span>
         <span v-if="result.audio_file_id" class="file-id-badge">音频 ID: {{ result.audio_file_id }}</span>
-        <span v-if="result.text_file_id" class="file-id-badge">文本 ID: {{ result.text_file_id }}</span>
+        <span v-if="displayTextFileId" class="file-id-badge">文本 ID: {{ displayTextFileId }}</span>
       </div>
 
       <div v-if="result.text" class="result-section">
@@ -178,7 +174,11 @@ interface TranscribeResult {
   sample_rate?: number
   duration_seconds?: number
   size?: number
-  blocks?: Array<{ type: string; text: string; page: unknown; resource_ref: unknown }>
+  metadata?: {
+    segment_count?: number
+    sample_rate?: number
+    text_file_id?: number | null
+  }
   error?: string
   detail?: string
 }
@@ -221,6 +221,7 @@ const running = ref(false)
 const errorMsg = ref('')
 const result = ref<TranscribeResult | null>(null)
 const durationMs = ref<number | null>(null)
+const displayTextFileId = computed(() => result.value?.text_file_id ?? result.value?.metadata?.text_file_id ?? null)
 
 const acceptExtensions = computed(() => {
   if (mode.value === 'extract_audio' || mode.value === 'transcribe_video') {
@@ -291,7 +292,6 @@ function buildParams(): Record<string, unknown> {
   } else {
     base.model = whisperModel.value
     base.sample_rate = sampleRate.value
-    base.audio_format = audioFormat.value
     base.language = language.value || null
     base.save_audio = saveAudio.value
     base.save_text = saveText.value
@@ -313,7 +313,7 @@ async function doExecute(): Promise<void> {
   const t0 = performance.now()
 
   try {
-    const resp = await platform.modules.call('media-asr', mode.value, buildParams()) as TranscribeResult
+    const resp = await platform.modules.call<TranscribeResult>('media-asr', mode.value, buildParams())
     if (resp.error) {
       errorMsg.value = resp.error
       return

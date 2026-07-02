@@ -6,26 +6,30 @@ Implements a Tencent Docs-style OpenAPI with self-hosted token triple
 This module delegates to existing editors via framework public APIs
 and registered capabilities. It does NOT rewrite any editor.
 """
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, FileResponse
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 
-from app.database import get_db
-from app.models.user import User
-from app.models.file import File
-from app.schemas.common import ApiResponse
-from app.core.exceptions import NotFound, AppException, PermissionDenied
-from app.services.file_service import check_file_access as framework_check_file_access
 from app.config import get_settings
+from app.core.exceptions import AppException, NotFound, PermissionDenied
+from app.database import get_db
+from app.models.file import File
+from app.models.user import User
+from app.schemas.common import ApiResponse
+from app.services.file_service import (
+    check_file_access as framework_check_file_access,
+)
+from app.services.file_service import (
+    check_file_write_access as framework_check_file_write_access,
+)
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DocsOpenToken
-from .token_service import create_token, validate_token, check_doc_access
-from .handlers.auth import get_authenticated_user, require_docs_permission, _get_base_url
-from .handlers.embed import _generate_embed_html, _get_doc_type
+from .handlers.auth import _get_base_url, get_authenticated_user, require_docs_permission
 from .handlers.content import _read_content, _write_content
+from .handlers.embed import _generate_embed_html, _get_doc_type
+from .models import DocsOpenToken
+from .token_service import check_doc_access, create_token, validate_token
 
 router = APIRouter(prefix="/api/docs", tags=["docs-open"])
 
@@ -58,6 +62,28 @@ class ExportRequest(BaseModel):
     target_format: str = "pdf"
 
 
+async def _require_file_access_for_request(
+    request: Request,
+    db: AsyncSession,
+    file_id: int,
+    user: User,
+    mode: str = "read",
+) -> File:
+    x_client_id = request.headers.get("X-Client-Id")
+    x_open_id = request.headers.get("X-Open-Id")
+    x_access_token = request.headers.get("X-Access-Token")
+    if x_client_id and x_open_id and x_access_token:
+        token_record = await validate_token(db, x_access_token, x_client_id, x_open_id)
+        if int(x_open_id) != user.id:
+            raise PermissionDenied("Open-Id mismatch")
+        if not check_doc_access(token_record, file_id, mode):
+            raise PermissionDenied("Token does not have access to this document")
+
+    if mode == "edit":
+        return await framework_check_file_write_access(db, file_id, user.id)
+    return await framework_check_file_access(db, file_id, user.id)
+
+
 # ── 1. Token endpoint ──
 
 @router.post("/token")
@@ -78,6 +104,12 @@ async def issue_token(
             raise PermissionDenied("scope.doc_ids must be a list")
         for fid in doc_ids:
             await framework_check_file_access(db, int(fid), user.id)
+    edit_doc_ids = scope.get("edit_doc_ids")
+    if edit_doc_ids is not None:
+        if not isinstance(edit_doc_ids, list):
+            raise PermissionDenied("scope.edit_doc_ids must be a list")
+        for fid in edit_doc_ids:
+            await framework_check_file_write_access(db, int(fid), user.id)
 
     result = await create_token(
         db,
@@ -99,10 +131,15 @@ async def open_document(
     user: User = Depends(require_docs_permission("viewer")),
 ):
     """Open a document. Returns id, title, type, embed_url, content_url.
-    
+
     Simulates Tencent Docs /openapi/drive/v2/files endpoint shape.
     """
-    file = await framework_check_file_access(db, body.file_id, user.id)
+    if body.mode == "edit":
+        file = await framework_check_file_write_access(db, body.file_id, user.id)
+        token_scope = {"doc_ids": [body.file_id], "edit_doc_ids": [body.file_id]}
+    else:
+        file = await framework_check_file_access(db, body.file_id, user.id)
+        token_scope = {"doc_ids": [body.file_id]}
     ext = (file.extension or "").lower().lstrip(".")
     doc_info = _get_doc_type(ext)
 
@@ -112,7 +149,7 @@ async def open_document(
         db,
         client_id="docs-open",
         open_id=user.id,
-        scope={"doc_ids": [body.file_id]},
+        scope=token_scope,
         expiry_hours=2,
     )
 
@@ -147,11 +184,10 @@ async def create_document(
     user: User = Depends(require_docs_permission("editor")),
 ):
     """Create a new empty document.
-    
+
     Delegates to office-gen for office files, or creates a plain text file.
     """
     ext = body.doc_type.lower().lstrip(".")
-    doc_info = _get_doc_type(ext)
 
     if ext in ("docx", "xlsx", "pptx", "pdf"):
         try:
@@ -189,7 +225,7 @@ async def create_document(
     base = _get_base_url(request)
     issue_doc_token = await create_token(
         db, client_id="docs-open", open_id=user.id,
-        scope={"doc_ids": [file_id]}, expiry_hours=2,
+        scope={"doc_ids": [file_id], "edit_doc_ids": [file_id]}, expiry_hours=2,
     )
     embed_url = f"{base}/api/docs/embed/{file_id}?token={issue_doc_token['access_token']}&client_id=docs-open&open_id={user.id}&mode=edit"
 
@@ -207,18 +243,19 @@ async def create_document(
 @router.get("/{file_id}/content")
 async def get_content(
     file_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_docs_permission("viewer")),
 ):
     """Get structured JSON content of a document.
-    
+
     Routes to the appropriate parser/engine based on file type.
     Returns the same shape as the module's parser output.
     """
-    file = await framework_check_file_access(db, file_id, user.id)
+    file = await _require_file_access_for_request(request, db, file_id, user, "read")
     ext = (file.extension or "").lower().lstrip(".")
 
-    result = await _read_content(db, file, ext, user.role)
+    result = await _read_content(db, file, ext, user.id, user.role)
     return ApiResponse(data=result)
 
 
@@ -226,17 +263,18 @@ async def get_content(
 async def write_content(
     file_id: int,
     body: ContentWriteRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_docs_permission("editor")),
 ):
     """Write structured JSON content back to a document.
-    
+
     Routes to the appropriate engine based on file type.
     """
-    file = await framework_check_file_access(db, file_id, user.id)
+    file = await _require_file_access_for_request(request, db, file_id, user, "edit")
     ext = (file.extension or "").lower().lstrip(".")
 
-    await _write_content(db, file, ext, body.content, user.role)
+    await _write_content(db, file, ext, body.content, user.id, user.role)
     return ApiResponse(data={"message": "Content saved"})
 
 
@@ -247,14 +285,14 @@ async def export_document(
     file_id: int,
     body: ExportRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_docs_permission("viewer")),
+    user: User = Depends(require_docs_permission("editor")),
 ):
     """Export a document to a different format.
-    
+
     Uses office-gen's convert capability for office files.
     For text files, returns the raw content.
     """
-    file = await framework_check_file_access(db, file_id, user.id)
+    file = await framework_check_file_write_access(db, file_id, user.id)
     ext = (file.extension or "").lower().lstrip(".")
     target = body.target_format.lower().lstrip(".")
 
@@ -291,17 +329,21 @@ async def embed_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Serve the embeddable document editor page (无桌面壳, full-page).
-    
+
     Validates the token triple, then serves an HTML page that:
     - Routes to the correct editor based on document format
     - Can be iframed into any internal page/dashboard/Agent card
     """
     token_info = await validate_token(db, token, client_id, open_id)
     token_record = token_info
-    if not check_doc_access(token_record, file_id):
+    access_mode = "edit" if mode == "edit" else "read"
+    if not check_doc_access(token_record, file_id, access_mode):
         raise PermissionDenied("Token does not have access to this document")
 
-    file = await framework_check_file_access(db, file_id, int(open_id))
+    if access_mode == "edit":
+        file = await framework_check_file_write_access(db, file_id, int(open_id))
+    else:
+        file = await framework_check_file_access(db, file_id, int(open_id))
 
     ext = (file.extension or "").lower().lstrip(".")
     doc_info = _get_doc_type(ext)
@@ -340,7 +382,9 @@ async def get_file_raw(
     2. JWT Bearer header (from desktop shell, via get_authenticated_user)
     """
     if token and client_id and open_id:
-        await validate_token(db, token, client_id, open_id)
+        token_record = await validate_token(db, token, client_id, open_id)
+        if not check_doc_access(token_record, file_id, "read"):
+            raise PermissionDenied("Token does not have access to this document")
         await framework_check_file_access(db, file_id, int(open_id))
     else:
         user = await get_authenticated_user(request, db)
@@ -371,20 +415,23 @@ async def revoke_doc_tokens(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_docs_permission("editor")),
 ):
-    """Revoke all tokens owned by the current user (security measure)."""
-    await framework_check_file_access(db, file_id, user.id)
-    from sqlalchemy import update as sql_update
-    stmt = (
-        sql_update(DocsOpenToken)
-        .where(
+    """Revoke active tokens owned by the current user for this file."""
+    await framework_check_file_write_access(db, file_id, user.id)
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(DocsOpenToken).where(
             DocsOpenToken.open_id == user.id,
-            DocsOpenToken.is_revoked == False,
+            DocsOpenToken.is_revoked.is_(False),
         )
-        .values(is_revoked=True)
     )
-    await db.execute(stmt)
+    revoked_count = 0
+    for token_record in result.scalars().all():
+        if check_doc_access(token_record, file_id, "read"):
+            token_record.is_revoked = True
+            revoked_count += 1
     await db.commit()
-    return ApiResponse(data={"message": "All active tokens revoked"})
+    return ApiResponse(data={"message": "Tokens revoked", "revoked": revoked_count})
 
 
 # ── Import capabilities to register them at module load ──

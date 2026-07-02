@@ -1,7 +1,8 @@
 """File-based cross-worker lock service.
 
 Uses JSON file persistence (locks.json) to ensure locks are shared across
-all uvicorn workers. Atomic writes via temp file + rename.
+all uvicorn workers. The read-modify-write cycle is protected by an OS file
+lock; atomic writes via temp file + rename prevent torn files.
 
 Lock model:
   - acquire_lock(path, agent_id, ttl=600) -> {success: bool, error: str}
@@ -12,19 +13,24 @@ Lock model:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 logger = logging.getLogger("v2.codemap").getChild("file_lock")
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 LOCK_FILE = DATA_DIR / "locks.json"
+OS_LOCK_FILE = DATA_DIR / "locks.json.lock"
 _LOCK_FILE_LOCK = threading.Lock()
+T = TypeVar("T")
 
 
 def _ensure_data_dir() -> None:
@@ -62,6 +68,26 @@ def _write_locks(locks: dict) -> bool:
         return False
 
 
+def _normalize_path(path: str) -> str:
+    clean = path.strip().replace("\\", "/")
+    if not clean:
+        raise ValueError("path is required")
+    raw = Path(clean)
+    parts: list[str] = []
+    for part in raw.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                raise ValueError("path cannot escape repository root")
+            parts.pop()
+            continue
+        parts.append(part)
+    if not parts:
+        raise ValueError("path is required")
+    return "/".join(parts)
+
+
 def _expire_locks(locks: dict) -> None:
     """Remove expired locks in-place."""
     now = time.time()
@@ -70,13 +96,29 @@ def _expire_locks(locks: dict) -> None:
         del locks[p]
 
 
+def _with_locked_locks(mutator: Callable[[dict], T]) -> T:
+    """Run *mutator* while holding thread and process locks."""
+    _ensure_data_dir()
+    with _LOCK_FILE_LOCK:
+        with open(OS_LOCK_FILE, "a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                return mutator(_read_locks())
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def acquire_lock(path: str, agent_id: str, ttl: int = 600) -> dict:
     """Acquire a lock on *path* for *agent_id* with *ttl* seconds TTL."""
-    expires_at = time.time() + ttl
-    with _LOCK_FILE_LOCK:
-        locks = _read_locks()
+    try:
+        norm_path = _normalize_path(path)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+
+    def _mutate(locks: dict) -> dict:
+        expires_at = time.time() + ttl
         _expire_locks(locks)
-        existing = locks.get(path)
+        existing = locks.get(norm_path)
         if existing and existing.get("agent_id") != agent_id:
             remaining = existing["expires_at"] - time.time()
             return {
@@ -84,42 +126,57 @@ def acquire_lock(path: str, agent_id: str, ttl: int = 600) -> dict:
                 "error": f"Already locked by agent '{existing['agent_id']}' "
                          f"(remaining TTL: {max(0, round(remaining, 1))}s)",
             }
-        locks[path] = {"agent_id": agent_id, "expires_at": expires_at}
+        locks[norm_path] = {"agent_id": agent_id, "expires_at": expires_at}
         if not _write_locks(locks):
             return {"success": False, "error": "Failed to persist lock"}
-    return {"success": True, "path": path, "agent_id": agent_id, "ttl": ttl}
+        return {"success": True, "path": norm_path, "agent_id": agent_id, "ttl": ttl}
+
+    return _with_locked_locks(_mutate)
 
 
 def check_lock(path: str) -> dict:
     """Check if *path* is locked."""
-    with _LOCK_FILE_LOCK:
-        locks = _read_locks()
+    try:
+        norm_path = _normalize_path(path)
+    except ValueError:
+        return {"locked": False, "owner": None, "remaining_ttl": 0.0}
+
+    def _mutate(locks: dict) -> dict:
         _expire_locks(locks)
-        lock = locks.get(path)
+        _write_locks(locks)
+        lock = locks.get(norm_path)
         if lock and lock.get("expires_at", 0) > time.time():
             remaining = lock["expires_at"] - time.time()
             return {"locked": True, "owner": lock.get("agent_id", ""),
                     "remaining_ttl": round(remaining, 1)}
-    return {"locked": False, "owner": None, "remaining_ttl": 0.0}
+        return {"locked": False, "owner": None, "remaining_ttl": 0.0}
+
+    return _with_locked_locks(_mutate)
 
 
 def release_lock(path: str) -> dict:
     """Release the lock on *path*."""
-    with _LOCK_FILE_LOCK:
-        locks = _read_locks()
-        if path not in locks:
+    try:
+        norm_path = _normalize_path(path)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+
+    def _mutate(locks: dict) -> dict:
+        if norm_path not in locks:
             return {"success": False, "error": "No lock found for path"}
-        del locks[path]
+        del locks[norm_path]
         if not _write_locks(locks):
             return {"success": False, "error": "Failed to persist lock release"}
-    return {"success": True, "path": path}
+        return {"success": True, "path": norm_path}
+
+    return _with_locked_locks(_mutate)
 
 
 def list_locks() -> dict:
     """List all active locks."""
-    with _LOCK_FILE_LOCK:
-        locks = _read_locks()
+    def _mutate(locks: dict) -> dict:
         _expire_locks(locks)
+        _write_locks(locks)
         now = time.time()
         result = [
             {"path": p, "agent_id": lk["agent_id"],
@@ -128,4 +185,6 @@ def list_locks() -> dict:
             for p, lk in locks.items()
             if lk.get("expires_at", 0) > now
         ]
-    return {"locks": result, "count": len(result)}
+        return {"locks": result, "count": len(result)}
+
+    return _with_locked_locks(_mutate)

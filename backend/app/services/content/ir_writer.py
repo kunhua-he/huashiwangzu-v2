@@ -6,6 +6,7 @@ Dispatch rules:
   image                             → Resource + ResourceRef
   memory                            → memory capability (via call_capability)
 """
+import base64
 import json
 import logging
 from typing import Any
@@ -13,11 +14,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import ConflictError, PermissionDenied
 from app.core.exceptions import ValidationError as AppValidationError
 from app.models.content import ContentPackage, ContentPackageVersion
+from app.models.file import File
+from app.models.file_share import FileShare
 from app.services.content.ir_normalizer import normalize_ir
 from app.services.content.ir_validator import validate_ir
+from app.services.content.resource_service import ResourceService
+from app.services.file_service import check_file_access
 from app.services.module_registry import call_capability
 
 logger = logging.getLogger("v2.content").getChild("ir_writer")
@@ -56,13 +61,29 @@ async def write_ir(
             details=[e.model_dump() for e in validation.errors],
         )
 
+    source_file_id = _normalize_source_file_id(source_file_id)
+    if source_file_id is not None:
+        source_file = await _check_source_file_write_access(
+            db,
+            source_file_id,
+            owner_id,
+        )
+        package_owner_id = source_file.owner_id
+    else:
+        package_owner_id = owner_id
+
     # Normalize
     ir = await normalize_ir(content_ir)
     content_type = ir.get("content_type", "")
 
     if content_type in ("document", "presentation", "text", "mixed"):
         return await _write_to_content_package(
-            db, ir, owner_id, source_file_id, expected_version_id,
+            db,
+            ir,
+            owner_id,
+            package_owner_id,
+            source_file_id,
+            expected_version_id,
         )
     elif content_type == "spreadsheet":
         return await _write_to_excel_engine(ir, owner_id, caller)
@@ -77,24 +98,27 @@ async def write_ir(
 async def _write_to_content_package(
     db: AsyncSession,
     ir: dict[str, Any],
-    owner_id: int,
+    writer_id: int,
+    package_owner_id: int,
     source_file_id: int | None,
     expected_version_id: int | None,
 ) -> dict[str, Any]:
     blocks = ir.get("blocks", [])
+    resources = ir.get("resources", [])
 
     # Find existing or create new package
     if source_file_id:
         existing = await db.execute(
             select(ContentPackage).where(
                 ContentPackage.source_file_id == source_file_id,
+                ContentPackage.owner_id == package_owner_id,
                 ContentPackage.deleted.is_(False),
             ).order_by(ContentPackage.created_at.desc()).limit(1)
         )
         pkg = existing.scalar_one_or_none()
         if not pkg:
             pkg = ContentPackage(
-                owner_id=owner_id,
+                owner_id=package_owner_id,
                 source_file_id=source_file_id,
                 package_type=ir.get("content_type", "document"),
                 source_extension="",
@@ -108,7 +132,7 @@ async def _write_to_content_package(
         # Always create new ContentPackage when no source_file_id and no package_id
         # This prevents accidental reuse of orphaned packages.
         pkg = ContentPackage(
-            owner_id=owner_id,
+            owner_id=package_owner_id,
             source_file_id=None,
             package_type=ir.get("content_type", "document"),
             source_extension="",
@@ -143,6 +167,13 @@ async def _write_to_content_package(
         if ev:
             version_no = ev.version_no + 1
 
+    resources_for_json, refs_to_add = await _persist_package_resources(
+        db,
+        resources,
+        blocks,
+        writer_id,
+    )
+
     # Build content_json (backward-compatible shape)
     manifest_dict = {
         "title": ir.get("title", ""),
@@ -151,8 +182,18 @@ async def _write_to_content_package(
         "schema_version": ir.get("schema_version", "1.0"),
         "locale": ir.get("locale", "zh-CN"),
     }
+    content_json = {
+        "manifest": manifest_dict,
+        "blocks": blocks,
+    }
+    metadata = ir.get("metadata")
+    if metadata:
+        content_json["metadata"] = metadata
+    if resources_for_json:
+        content_json["resources"] = resources_for_json
+
     content_json_str = json.dumps(
-        {"manifest": manifest_dict, "blocks": blocks},
+        content_json,
         ensure_ascii=False,
     )
 
@@ -162,10 +203,22 @@ async def _write_to_content_package(
         content_json=content_json_str,
         summary=f"Written via write_ir ({ir.get('content_type', '')})",
         operation_type="write_ir",
-        created_by=owner_id,
+        created_by=writer_id,
     )
     db.add(version)
     await db.flush()
+
+    if refs_to_add:
+        resource_svc = ResourceService()
+        for ref in refs_to_add:
+            await resource_svc.add_ref(
+                db,
+                pkg.id,
+                ref["resource_id"],
+                block_id=ref.get("block_id"),
+                usage_hints=ref.get("usage_hints"),
+                version_id=version.id,
+            )
 
     pkg.current_version_id = version.id
     pkg.manifest_json = json.dumps(manifest_dict, ensure_ascii=False)
@@ -178,8 +231,132 @@ async def _write_to_content_package(
         "package_id": pkg.id,
         "version_id": version.id,
         "version_no": version_no,
-        "owner_id": owner_id,
+        "owner_id": package_owner_id,
+        "written_by": writer_id,
     }
+
+
+def _normalize_source_file_id(source_file_id: int | str | None) -> int | None:
+    if source_file_id is None:
+        return None
+    try:
+        normalized = int(source_file_id)
+    except (TypeError, ValueError) as exc:
+        raise AppValidationError("source_file_id must be a positive integer") from exc
+    if normalized <= 0:
+        raise AppValidationError("source_file_id must be a positive integer")
+    return normalized
+
+
+async def _check_source_file_write_access(
+    db: AsyncSession,
+    source_file_id: int,
+    user_id: int,
+) -> File:
+    """Return the source file only when the caller can write content for it."""
+    file_record = await check_file_access(db, source_file_id, user_id)
+    if file_record.owner_id == user_id:
+        return file_record
+
+    share = await db.scalar(
+        select(FileShare).where(
+            FileShare.file_id == source_file_id,
+            FileShare.shared_with_user_id == user_id,
+            FileShare.permission == "edit",
+        )
+    )
+    if not share:
+        raise PermissionDenied("Edit permission required to write Content IR for shared file")
+    return file_record
+
+
+async def _persist_package_resources(
+    db: AsyncSession,
+    resources: list[dict[str, Any]],
+    blocks: list[dict[str, Any]],
+    owner_id: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not resources:
+        return [], []
+
+    resource_svc = ResourceService()
+    resources_for_json: list[dict[str, Any]] = []
+    local_to_real: dict[str, int] = {}
+    resource_hints: dict[int, str] = {}
+
+    for res in resources:
+        resource_entry = {k: v for k, v in res.items() if k != "data_b64"}
+        data_b64 = res.get("data_b64")
+        if data_b64:
+            try:
+                data = base64.b64decode(data_b64, validate=True)
+            except (TypeError, ValueError) as exc:
+                raise AppValidationError("Invalid resource data_b64") from exc
+            stored = await resource_svc.create_resource(
+                db,
+                data,
+                owner_id=owner_id,
+                resource_type=res.get("resource_type", "image"),
+                mime_type=res.get("mime_type", "application/octet-stream"),
+                filename=res.get("filename", "resource.bin"),
+                width=res.get("width"),
+                height=res.get("height"),
+                description=res.get("description"),
+                ocr_text=res.get("ocr_text"),
+            )
+            local_id = res.get("id")
+            if local_id is not None:
+                local_to_real[str(local_id)] = stored["id"]
+            resource_entry.update({
+                "resource_id": stored["id"],
+                "hash": stored.get("hash"),
+                "storage_path": stored.get("storage_path"),
+                "file_size": stored.get("file_size"),
+            })
+            resource_hints[stored["id"]] = str(res.get("description") or res.get("filename") or "")
+            if res.get("vlm_metadata"):
+                await resource_svc.update_description(
+                    db,
+                    stored["id"],
+                    vlm_metadata=res["vlm_metadata"],
+                )
+        resources_for_json.append(resource_entry)
+
+    refs_to_add: list[dict[str, Any]] = []
+    block_refs = _replace_block_resource_refs(blocks, local_to_real)
+    seen_resource_ids: set[int] = set()
+    for local_id, resource_id in local_to_real.items():
+        if resource_id in seen_resource_ids:
+            continue
+        seen_resource_ids.add(resource_id)
+        refs_to_add.append({
+            "resource_id": resource_id,
+            "block_id": block_refs.get(local_id),
+            "usage_hints": resource_hints.get(resource_id, ""),
+        })
+
+    return resources_for_json, refs_to_add
+
+
+def _replace_block_resource_refs(
+    blocks: list[dict[str, Any]],
+    local_to_real: dict[str, int],
+) -> dict[str, str | None]:
+    block_refs: dict[str, str | None] = {}
+
+    def _walk(items: list[dict[str, Any]]) -> None:
+        for block in items:
+            ref = block.get("resource_ref")
+            ref_key = str(ref) if ref is not None else None
+            if ref_key is not None and ref_key in local_to_real:
+                block_refs.setdefault(ref_key, block.get("id"))
+                block["resource_ref"] = local_to_real[ref_key]
+            children = block.get("children")
+            if isinstance(children, list):
+                _walk(children)
+
+    _walk(blocks)
+    return block_refs
 
 
 async def _write_to_excel_engine(

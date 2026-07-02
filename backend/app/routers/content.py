@@ -571,10 +571,27 @@ async def _cap_store_resource(params: dict, caller: str) -> dict:
     if not data_b64:
         return {"success": False, "error": "data_b64 required"}
     import base64
-    data = base64.b64decode(data_b64)
+    data = base64.b64decode(data_b64, validate=True)
     owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         try:
+            file_id = params.get("file_id")
+            package_id = params.get("package_id")
+            pkg_info_for_ref = None
+            if file_id:
+                from app.services.content.package_service import ContentPackageService
+                from app.services.file_service import check_file_access
+                await check_file_access(db, file_id, owner_id)
+                pkg_svc_local = ContentPackageService()
+                try:
+                    pkg_info_for_ref = await pkg_svc_local.get_package(db, file_id=file_id, owner_id=owner_id)
+                except Exception:
+                    pkg_info_for_ref = None
+            elif package_id:
+                from app.services.content.package_service import ContentPackageService
+                pkg_svc_local = ContentPackageService()
+                pkg_info_for_ref = await pkg_svc_local.get_package(db, package_id=package_id, owner_id=owner_id)
+
             result = await resource_svc.create_resource(
                 db, data,
                 owner_id=owner_id,
@@ -592,20 +609,12 @@ async def _cap_store_resource(params: dict, caller: str) -> dict:
                     db, result["id"],
                     vlm_metadata=params["vlm_metadata"],
                 )
-            # Create ResourceRef if file_id or package_id provided
-            if params.get("file_id"):
-                from app.services.file_service import get_file_record
-                file_rec = await get_file_record(db, params["file_id"])
-                if file_rec:
-                    from app.services.content.package_service import ContentPackageService
-                    pkg_svc_local = ContentPackageService()
-                    pkg_info = await pkg_svc_local.get_package(db, file_id=params["file_id"], owner_id=owner_id)
-                    if pkg_info and pkg_info.get("id"):
-                        await resource_svc.add_ref(
-                            db, pkg_info["id"], result["id"],
-                            block_id=params.get("block_id"),
-                            usage_hints=params.get("description", ""),
-                        )
+            if pkg_info_for_ref and pkg_info_for_ref.get("id"):
+                await resource_svc.add_ref(
+                    db, pkg_info_for_ref["id"], result["id"],
+                    block_id=params.get("block_id"),
+                    usage_hints=params.get("description", ""),
+                )
             return {"success": True, "data": result}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -681,7 +690,7 @@ async def _cap_write_ir(params: dict, caller: str) -> dict:
     owner_id = resolve_caller_user_id(caller)
     if owner_id == 0:
         return {"success": False, "error": "Write operations require a real user context (system principal not allowed)"}
-    source_file_id = params.get("file_id")
+    source_file_id = params.get("source_file_id") or params.get("file_id")
     expected_version_id = params.get("expected_version_id")
     async with AsyncSessionLocal() as db:
         try:
@@ -803,8 +812,7 @@ async def _cap_store_analysis_resource(params: dict, caller: str) -> dict:
     referenced file. The file_id is required for access validation.
     """
     from app.services.content.resource_service import ResourceService
-    from app.services.file_service import get_file_record
-    from app.services.file_share_service import check_file_access
+    from app.services.file_service import check_file_access, get_file_record
 
     data_b64 = params.get("data_b64")
     file_id = params.get("file_id")
@@ -814,16 +822,14 @@ async def _cap_store_analysis_resource(params: dict, caller: str) -> dict:
         return {"success": False, "error": "file_id required for access validation"}
 
     import base64
-    data = base64.b64decode(data_b64)
+    data = base64.b64decode(data_b64, validate=True)
     owner_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         try:
             file_rec = await get_file_record(db, file_id)
             if not file_rec:
                 return {"success": False, "error": "File not found"}
-            access = await check_file_access(db, file_id, owner_id)
-            if not access["accessible"]:
-                return {"success": False, "error": "Permission denied"}
+            await check_file_access(db, file_id, owner_id)
 
             resource_svc = ResourceService()
             result = await resource_svc.create_resource(
@@ -915,7 +921,7 @@ def _register_editor_caps():
         ("publish", _cap_publish, "Publish content package as an artifact", {"package_id": "int", "target_file_id": "int (optional)"}),
         ("restore_version", _cap_restore_version, "Restore a previous version", {"package_id": "int", "version_id": "int"}),
         ("store_resource", _cap_store_resource, "Store an extracted embedded resource (data_b64, mime_type, filename, description, ocr_text, vlm_metadata, file_id, package_id, block_id)", {"data_b64": "string", "resource_type": "string", "mime_type": "string", "filename": "string", "description": "string (optional)", "ocr_text": "string (optional)", "vlm_metadata": "object (optional)", "file_id": "int (optional)", "package_id": "int (optional)", "block_id": "string (optional)"}),
-        ("write_ir", _cap_write_ir, "Write validated Content IR to canonical DB source", {"content_ir": "object", "file_id": "int (optional)", "expected_version_id": "int (optional)"}),
+        ("write_ir", _cap_write_ir, "Write validated Content IR to canonical DB source", {"content_ir": "object", "file_id": "int (optional)", "source_file_id": "int (optional)", "expected_version_id": "int (optional)"}),
     ]
     for action, handler, desc, params in editor_caps:
         register_capability(

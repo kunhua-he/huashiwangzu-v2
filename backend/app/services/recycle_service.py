@@ -1,12 +1,13 @@
 import logging
 import os
-from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.recycle import RecycleItem
+
+from app.core.exceptions import AppException, NotFound
 from app.models.file import File, Folder
 from app.models.file_share import FileShare
-from app.core.exceptions import NotFound, AppException
+from app.models.recycle import RecycleItem
 
 logger = logging.getLogger("v2.recycle")
 
@@ -80,7 +81,11 @@ async def restore_item(db: AsyncSession, item_type: str, item_id: int, owner_id:
     await db.delete(recycle)
     await db.commit()
 
-    result = {"success": True}
+    result = {
+        "success": True,
+        "item_type": recycle.item_type,
+        "origin_id": recycle.origin_id,
+    }
     if moved_to_root:
         result["moved_to_root"] = True
         result["original_parent"] = original_parent
@@ -118,7 +123,7 @@ async def _check_file_name_conflict(db: AsyncSession, name: str, extension: str,
             File.extension == extension,
             File.folder_id == folder_id,
             File.owner_id == owner_id,
-            File.deleted == False,
+            File.deleted.is_(False),
         )
     )
     if existing.scalar_one_or_none():
@@ -132,7 +137,7 @@ async def _check_folder_name_conflict(db: AsyncSession, name: str, parent_id: in
             Folder.name == name,
             Folder.parent_id == parent_id,
             Folder.owner_id == owner_id,
-            Folder.deleted == False,
+            Folder.deleted.is_(False),
         )
     )
     if existing.scalar_one_or_none():
@@ -146,14 +151,14 @@ async def _recursive_restore_folder(db: AsyncSession, folder_id: int):
         folder.deleted_at = None
 
     files = await db.execute(
-        select(File).where(File.folder_id == folder_id, File.deleted == True)
+        select(File).where(File.folder_id == folder_id, File.deleted.is_(True))
     )
     for f in files.scalars():
         f.deleted = False
         f.deleted_at = None
 
     subfolders = await db.execute(
-        select(Folder).where(Folder.parent_id == folder_id, Folder.deleted == True)
+        select(Folder).where(Folder.parent_id == folder_id, Folder.deleted.is_(True))
     )
     for sf in subfolders.scalars():
         await _recursive_restore_folder(db, sf.id)
@@ -177,7 +182,7 @@ async def delete_permanently(db: AsyncSession, item_type: str, item_id: int, own
             other_refs = await db.execute(
                 select(File).where(
                     File.md5_hash == file.md5_hash,
-                    File.deleted == False,
+                    File.deleted.is_(False),
                     File.id != file.id,
                 ).with_for_update()
             )
@@ -204,7 +209,7 @@ async def delete_permanently(db: AsyncSession, item_type: str, item_id: int, own
 
 async def _recursive_permanent_delete_folder(db: AsyncSession, folder_id: int, owner_id: int = 0):
     files = await db.execute(
-        select(File).where(File.folder_id == folder_id, File.deleted == True)
+        select(File).where(File.folder_id == folder_id, File.deleted.is_(True))
     )
     for f in files.scalars():
         # Clean up shares for each file
@@ -217,7 +222,7 @@ async def _recursive_permanent_delete_folder(db: AsyncSession, folder_id: int, o
         other_refs = await db.execute(
             select(File).where(
                 File.md5_hash == f.md5_hash,
-                File.deleted == False,
+                File.deleted.is_(False),
                 File.id != f.id,
             ).with_for_update()
         )
@@ -231,7 +236,7 @@ async def _recursive_permanent_delete_folder(db: AsyncSession, folder_id: int, o
         await db.delete(f)
 
     subfolders = await db.execute(
-        select(Folder).where(Folder.parent_id == folder_id, Folder.deleted == True)
+        select(Folder).where(Folder.parent_id == folder_id, Folder.deleted.is_(True))
     )
     for sf in subfolders.scalars():
         await _recursive_permanent_delete_folder(db, sf.id, owner_id)
@@ -256,7 +261,7 @@ async def empty_trash(db: AsyncSession, owner_id: int):
                 other_refs = await db.execute(
                     select(File).where(
                         File.md5_hash == file.md5_hash,
-                        File.deleted == False,
+                        File.deleted.is_(False),
                         File.id != file.id,
                     ).with_for_update()
                 )
@@ -280,7 +285,9 @@ async def empty_trash(db: AsyncSession, owner_id: int):
 
 def _resolve_storage_path(file: File):
     from pathlib import Path
+
     from app.config import get_settings
+
     settings = get_settings()
     upload_root = Path(settings.UPLOAD_DIR).resolve()
     if not file.storage_path:

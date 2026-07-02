@@ -578,18 +578,23 @@ class ContentPackageService:
         if not resource:
             raise NotFound(f"Resource {resource_id} not found")
         if owner_id is not None and resource.owner_id != owner_id:
-            # Check if user has access via file shares (ResourceRef -> ContentPackage -> source_file_id)
+            # Check all package refs; a globally deduplicated resource can be
+            # referenced from multiple packages owned/shared by different users.
             ref_result = await db.execute(
-                select(ResourceRef).where(ResourceRef.resource_id == resource_id).limit(1)
+                select(ResourceRef).where(ResourceRef.resource_id == resource_id)
             )
-            ref = ref_result.scalar_one_or_none()
-            if ref:
+            for ref in ref_result.scalars().all():
                 pkg = await db.get(ContentPackage, ref.package_id)
-                if pkg and pkg.source_file_id:
-                    from app.services.file_share_service import check_file_access
-                    access = await check_file_access(db, pkg.source_file_id, owner_id)
-                    if access["accessible"]:
+                if not pkg or pkg.deleted:
+                    continue
+                if pkg.owner_id == owner_id:
+                    return self._resource_to_dict(resource)
+                if pkg.source_file_id:
+                    try:
+                        await check_file_access(db, pkg.source_file_id, owner_id)
                         return self._resource_to_dict(resource)
+                    except (NotFound, PermissionDenied):
+                        continue
             raise PermissionDenied("Permission denied")
         return self._resource_to_dict(resource)
 

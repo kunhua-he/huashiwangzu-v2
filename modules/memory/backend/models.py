@@ -1,9 +1,12 @@
 """Memory module models. memory_ prefix."""
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Float, Integer, String, Text, DateTime, BigInteger, func as sa_func, text as sa_text
-from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base, TimestampMixin
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import func as sa_func
+from sqlalchemy import text as sa_text
+from sqlalchemy.orm import Mapped, mapped_column
 
 
 class MemoryStableRule(Base, TimestampMixin):
@@ -72,9 +75,11 @@ class MemoryLink(Base, TimestampMixin):
 
 
 class MemoryExperience(Base):
-    """经验记忆：成功/失败的解决路径。全局共享。"""
+    """经验记忆：成功/失败的解决路径。默认用户级，global 仅保存 curated 经验。"""
     __tablename__ = "memory_experiences"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, comment="scope=user/team 时的 owner id；global 为空")
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="user", server_default=sa_text("'user'"), comment="user/team/global")
     trigger_condition: Mapped[str] = mapped_column(Text, nullable=False, comment="触发条件（自然语言描述）")
     trigger_embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True, comment="触发条件的 embedding")
     steps: Mapped[str] = mapped_column(Text, nullable=False, comment="JSON 有序步骤：每步=意图+工具名+关键参数模式")

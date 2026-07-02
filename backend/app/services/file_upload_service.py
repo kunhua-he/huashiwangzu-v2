@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.core.exceptions import AppException, NotFound, PermissionDenied
+from app.core.exceptions import AppException, NotFound
 from app.models.file import File, Folder
 
 settings = get_settings()
@@ -147,7 +147,7 @@ async def _ensure_folder_path(
 async def replace_file_content(
     db: AsyncSession,
     file_id: int,
-    owner_id: int,
+    user_id: int,
     content: bytes,
 ) -> dict:
     """Replace a file's content with new bytes (content-addressable).
@@ -159,8 +159,9 @@ async def replace_file_content(
     file = await db.get(File, file_id)
     if not file or file.deleted:
         raise NotFound("File not found")
-    if file.owner_id != owner_id:
-        raise PermissionDenied("Only the file owner can replace content")
+    from app.services.file_service import check_file_write_access
+
+    await check_file_write_access(db, file_id, user_id)
 
     old_storage_path = file.storage_path
     new_md5 = hashlib.md5(content).hexdigest()

@@ -23,6 +23,97 @@ SUPPORTED_EXTENSIONS = {
     "json", "yaml", "yml", "eml", "msg",
     "png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "svg",
 }
+
+_ACTIVE_OR_SOURCE_ERROR_STATUSES = {
+    "parsing", "indexing", "collecting", "running", "error", "failed",
+}
+
+
+def document_pipeline_complete(doc) -> bool:
+    """Return whether the durable knowledge pipeline has fully completed."""
+    return (
+        doc.parse_status == "done"
+        and doc.vector_status == "done"
+        and getattr(doc, "raw_status", "pending") == "done"
+        and getattr(doc, "fusion_status", "pending") == "done"
+    )
+
+
+def mark_document_source_unavailable(doc, reason: str) -> None:
+    """Pause transient pipeline state when the source file is intentionally unavailable."""
+    if doc.parse_status in _ACTIVE_OR_SOURCE_ERROR_STATUSES:
+        doc.parse_status = "pending"
+    if doc.vector_status in _ACTIVE_OR_SOURCE_ERROR_STATUSES:
+        doc.vector_status = "pending"
+    if getattr(doc, "raw_status", "pending") in _ACTIVE_OR_SOURCE_ERROR_STATUSES:
+        doc.raw_status = "pending"
+    if getattr(doc, "fusion_status", "pending") in _ACTIVE_OR_SOURCE_ERROR_STATUSES:
+        doc.fusion_status = "pending"
+    doc.parse_error = reason[:2000]
+
+
+async def _find_inflight_pipeline_task(db: AsyncSession, document_id: int):
+    from app.models.system import SystemTaskQueue
+
+    result = await db.execute(
+        select(SystemTaskQueue).where(
+            SystemTaskQueue.task_type == "kb_pipeline",
+            SystemTaskQueue.module == "knowledge",
+            SystemTaskQueue.status.in_(("pending", "running")),
+        )
+    )
+    for task in result.scalars().all():
+        try:
+            params = json.loads(task.parameters or "{}")
+        except json.JSONDecodeError:
+            continue
+        if int(params.get("document_id", 0) or 0) == int(document_id):
+            return task
+    return None
+
+
+async def enqueue_pipeline_task(
+    db: AsyncSession,
+    doc,
+    user_id: int,
+    *,
+    force_raw: bool = False,
+    force_fusion: bool = False,
+    priority: int = 5,
+) -> dict:
+    """Enqueue one kb_pipeline task, deduping pending/running work for the document."""
+    from app.models.system import SystemTaskQueue
+
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, :document_id)"),
+        {"namespace": 1262633036, "document_id": int(doc.id) % 2147483647},
+    )
+    existing = await _find_inflight_pipeline_task(db, int(doc.id))
+    if existing:
+        return {
+            "task_id": existing.id,
+            "enqueued": False,
+            "reason": "already_in_flight",
+        }
+
+    task = SystemTaskQueue(
+        task_type="kb_pipeline",
+        module="knowledge",
+        parameters=json.dumps({
+            "document_id": doc.id,
+            "user_id": user_id,
+            "force_raw": force_raw,
+            "force_fusion": force_fusion,
+        }, ensure_ascii=False),
+        priority=priority,
+        status="pending",
+        creator_id=user_id,
+    )
+    db.add(task)
+    await db.flush()
+    return {"task_id": task.id, "enqueued": True, "reason": "created"}
+
+
 async def register_document(
     db: AsyncSession,
     file_id: int,
@@ -116,24 +207,13 @@ async def register_document(
         raise
 
     # ── 自动入队 kb_pipeline 后台任务（上传即开始分析） ──
-    from app.models.system import SystemTaskQueue
-    task = SystemTaskQueue(
-        task_type="kb_pipeline",
-        module="knowledge",
-        parameters=json.dumps({
-            "document_id": doc.id,
-            "user_id": owner_id,
-            "force_raw": False,
-            "force_fusion": False,
-        }, ensure_ascii=False),
-        priority=5,
-        status="pending",
-        creator_id=owner_id,
-    )
-    db.add(task)
+    task_info = await enqueue_pipeline_task(db, doc, owner_id)
     await db.commit()
     await db.refresh(doc)
-    logger.info("Auto-enqueued kb_pipeline for document_id=%d (file_id=%d)", doc.id, file_id)
+    logger.info(
+        "Auto-enqueued kb_pipeline for document_id=%d file_id=%d task_id=%s enqueued=%s",
+        doc.id, file_id, task_info.get("task_id"), task_info.get("enqueued"),
+    )
 
     return document_payload(doc)
 

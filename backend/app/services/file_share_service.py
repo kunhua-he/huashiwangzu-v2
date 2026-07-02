@@ -1,9 +1,10 @@
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.file import File, Folder
+
+from app.core.exceptions import AppException, NotFound
+from app.models.file import File
 from app.models.file_share import FileShare
 from app.models.user import User
-from app.core.exceptions import NotFound, AppException
 
 
 async def check_file_access(db: AsyncSession, file_id: int, user_id: int) -> dict:
@@ -26,6 +27,14 @@ async def check_file_access(db: AsyncSession, file_id: int, user_id: int) -> dic
         return {"accessible": True, "permission": share_record.permission}
 
     return {"accessible": False, "permission": None}
+
+
+async def check_file_write_access(db: AsyncSession, file_id: int, user_id: int) -> dict:
+    """Check if a user can write a file. Owner or edit share only."""
+    access = await check_file_access(db, file_id, user_id)
+    if access["permission"] in ("owner", "edit"):
+        return {"accessible": True, "permission": access["permission"]}
+    return {"accessible": False, "permission": access["permission"]}
 
 
 async def create_share(
@@ -106,7 +115,7 @@ async def get_received_shares(
         .join(User, FileShare.shared_by_owner_id == User.id)
         .where(
             FileShare.shared_with_user_id == user_id,
-            File.deleted == False,
+            File.deleted.is_(False),
         )
     )
     if keyword:
@@ -116,7 +125,7 @@ async def get_received_shares(
     # Count with same filters (deleted=False, keyword)
     count_q = select(FileShare).join(File, FileShare.file_id == File.id).where(
         FileShare.shared_with_user_id == user_id,
-        File.deleted == False,
+        File.deleted.is_(False),
     )
     if keyword:
         count_q = count_q.where(File.name.ilike(f"%{keyword}%"))
@@ -157,7 +166,7 @@ async def get_sent_shares(
     total = len((await db.execute(
         select(FileShare).join(File, FileShare.file_id == File.id).where(
             FileShare.shared_by_owner_id == user_id,
-            File.deleted == False,
+            File.deleted.is_(False),
         )
     )).scalars().all())
 
@@ -181,7 +190,7 @@ async def get_sent_shares(
 async def get_accessible_file_ids(db: AsyncSession, user_id: int) -> set[int]:
     """Get all file IDs accessible to a user (owned + shared)."""
     owned = await db.execute(
-        select(File.id).where(File.owner_id == user_id, File.deleted == False)
+        select(File.id).where(File.owner_id == user_id, File.deleted.is_(False))
     )
     owned_ids = set(r for (r,) in owned.all())
     shared = await db.execute(

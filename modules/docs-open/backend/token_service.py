@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
+
+from app.core.exceptions import PermissionDenied
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.exceptions import PermissionDenied, AppException
-from app.services.file_service import check_file_access as framework_check_file_access
+
 from .models import DocsOpenToken, generate_access_token
 
 
@@ -64,7 +65,7 @@ async def validate_token(
         select(DocsOpenToken).where(
             DocsOpenToken.token_prefix == prefix,
             DocsOpenToken.access_token_hash == test_hash,
-            DocsOpenToken.is_revoked == False,
+            DocsOpenToken.is_revoked.is_(False),
         )
     )
     token = result.scalar_one_or_none()
@@ -83,13 +84,19 @@ async def validate_token(
     return token
 
 
-def check_doc_access(token: DocsOpenToken, doc_id: int) -> bool:
+def check_doc_access(token: DocsOpenToken, doc_id: int, mode: str = "read") -> bool:
     """Check if token has access to a specific doc.
-    Fail-closed: only allows if scope has a doc_ids list and doc_id is in it.
-    None/non-list doc_ids or empty scope is rejected.
+    Fail-closed: read allows scope.doc_ids or scope.edit_doc_ids; edit requires
+    scope.edit_doc_ids. None/non-list doc_ids or empty scope is rejected.
     """
     scope = token.scope or {}
+    edit_doc_ids = scope.get("edit_doc_ids")
+    if mode == "edit":
+        return isinstance(edit_doc_ids, list) and doc_id in edit_doc_ids
+
     doc_ids = scope.get("doc_ids")
     if isinstance(doc_ids, list) and len(doc_ids) > 0:
         return doc_id in doc_ids
+    if isinstance(edit_doc_ids, list) and len(edit_doc_ids) > 0:
+        return doc_id in edit_doc_ids
     return False

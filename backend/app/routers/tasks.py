@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFound
+from app.core.exceptions import NotFound, PermissionDenied
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.system import SystemTaskQueue
@@ -25,13 +25,21 @@ class TaskSubmitRequest(BaseModel):
     priority: int = 0
 
 
+def _ensure_task_owner_or_admin(task: SystemTaskQueue, user: User) -> None:
+    if user.role != "admin" and task.creator_id != user.id:
+        raise PermissionDenied("Permission denied")
+
+
 @router.get("/")
 async def task_list(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
+    stmt = select(SystemTaskQueue)
+    if user.role != "admin":
+        stmt = stmt.where(SystemTaskQueue.creator_id == user.id)
     r = await db.execute(
-        select(SystemTaskQueue).order_by(desc(SystemTaskQueue.id)).limit(50)
+        stmt.order_by(desc(SystemTaskQueue.id)).limit(50)
     )
     items = [SystemTaskQueueResponse.model_validate(i) for i in r.scalars().all()]
     return ApiResponse(data=items)
@@ -92,6 +100,7 @@ async def task_detail(
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
         raise NotFound("Task not found")
+    _ensure_task_owner_or_admin(task, user)
     return ApiResponse(data=SystemTaskQueueResponse.model_validate(task))
 
 
@@ -103,6 +112,7 @@ async def retry_task(
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
         raise NotFound("Task not found")
+    _ensure_task_owner_or_admin(task, user)
     task.status = "pending"
     task.retry_count = 0
     task.error_message = None
@@ -118,6 +128,7 @@ async def cancel_task(
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
         raise NotFound("Task not found")
+    _ensure_task_owner_or_admin(task, user)
     task.status = "failed"
     task.error_message = "Manually cancelled"
     task.completed_at = datetime.now(timezone.utc)
@@ -129,7 +140,7 @@ async def cancel_task(
 async def submit_task(
     payload: TaskSubmitRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
+    user: User = Depends(require_permission("admin")),
 ):
     task = SystemTaskQueue(
         task_type=payload.task_type,

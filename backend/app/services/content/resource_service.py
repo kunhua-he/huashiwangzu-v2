@@ -134,6 +134,28 @@ class ResourceService:
         usage_hints: str | None = None,
         version_id: int | None = None,
     ) -> dict[str, Any]:
+        existing_result = await db.execute(
+            select(ResourceRef).where(
+                ResourceRef.package_id == package_id,
+                ResourceRef.resource_id == resource_id,
+            ).limit(1)
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing:
+            if version_id is not None and existing.version_id is None:
+                existing.version_id = version_id
+            if block_id is not None and not existing.block_id:
+                existing.block_id = block_id
+            if page is not None and existing.page is None:
+                existing.page = page
+            if coordinates is not None and not existing.coordinates:
+                existing.coordinates = json.dumps(coordinates, ensure_ascii=False)
+            if usage_hints is not None and not existing.usage_hints:
+                existing.usage_hints = usage_hints
+            await db.commit()
+            await db.refresh(existing)
+            return self._ref_to_dict(existing)
+
         ref = ResourceRef(
             package_id=package_id,
             version_id=version_id,

@@ -120,6 +120,7 @@ async def _handle_slow_tool(params: dict) -> dict:
 
     logger.info("Slow tool background exec: tool=%s conv=%s user=%s", tool_name, conversation_id, owner_id)
 
+    failed_error = ""
     try:
         if tool_name.startswith("skill_use__"):
             inner_name = skill_args.get("name", "")
@@ -143,16 +144,19 @@ async def _handle_slow_tool(params: dict) -> dict:
             )
     except Exception as exc:
         tool_result = {"error": str(exc)}
+    if isinstance(tool_result, dict) and tool_result.get("error"):
+        failed_error = str(tool_result["error"])
 
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         try:
             from ..services import conversation_service as conv_svc2
             result_text = json.dumps(tool_result, ensure_ascii=False, default=str)
-            if isinstance(tool_result, dict) and tool_result.get("error"):
+            is_failed = bool(failed_error)
+            if is_failed:
                 await conv_svc2.add_message(
                     db, owner_id, conversation_id, "assistant",
-                    f"⚠️ 后台任务 [{tool_name}] 执行失败：{tool_result['error']}",
+                    f"⚠️ 后台任务 [{tool_name}] 执行失败：{failed_error}",
                 )
             else:
                 await conv_svc2.add_message(
@@ -161,15 +165,21 @@ async def _handle_slow_tool(params: dict) -> dict:
                 )
 
             try:
+                notify_title = "后台任务失败" if is_failed else "后台任务完成"
+                notify_content = (
+                    f"⚠️ 你的后台任务 [{tool_name}] 执行失败：{failed_error}"
+                    if is_failed
+                    else f"✅ 你的后台任务 [{tool_name}] 已完成，请到 AI 助手对话中查看结果。"
+                )
                 notify_result = await call_capability(
                     "im", "notify",
                     {
                         "user_id": owner_id,
-                        "content": f"✅ 你的后台任务 [{tool_name}] 已完成，请到 AI 助手对话中查看结果。",
-                        "title": "后台任务完成",
+                        "content": notify_content,
+                        "title": notify_title,
                     },
-                    caller="system:agent_worker",
-                    caller_role="admin",
+                    caller="system:task-worker",
+                    caller_role="viewer",
                 )
                 logger.info("Slow tool notify result: %s", notify_result)
             except Exception as notify_exc:
@@ -189,10 +199,17 @@ async def _handle_slow_tool(params: dict) -> dict:
             except Exception as clear_exc:
                 logger.warning("Failed to clear processing flag: %s", clear_exc)
 
+            if is_failed:
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "error": failed_error,
+                    "conversation_id": conversation_id,
+                }
             return {"status": "ok", "conversation_id": conversation_id}
         except Exception as persist_exc:
             logger.error("Failed to persist slow tool result: %s", persist_exc)
-            return {"error": str(persist_exc)}
+            return {"success": False, "status": "failed", "error": str(persist_exc)}
 
 
 register_task_handler("agent_execute_slow_tool", _handle_slow_tool)
@@ -577,7 +594,7 @@ async def _submit_memory_distill_task(
                     "memory", "save",
                     {"text": text.strip(), "tags": "auto-distill"},
                     caller=f"user:{owner_id}",
-                    caller_role="admin",
+                    caller_role="viewer",
                 )
             except Exception as save_exc:
                 logger.warning("Memory distill save failed (non-fatal): %s", save_exc)

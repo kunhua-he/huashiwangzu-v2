@@ -8,15 +8,16 @@ import logging
 import os
 import re as _re
 import urllib.parse
+from typing import Literal
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from app.core.url_safety import validate_safe_url
 from app.core.exceptions import ValidationError
+from app.core.url_safety import validate_safe_url
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 logger = logging.getLogger("v2.web-tools")
 
@@ -129,16 +130,37 @@ async def _cap_fetch(params: dict, caller: str) -> dict:
 
     client_kwargs = {
         "timeout": _FETCH_TIMEOUT,
-        "follow_redirects": True,
+        "follow_redirects": False,
         "headers": _HEADERS,
     }
     if _PROXY_URL:
         client_kwargs["proxy"] = httpx.Proxy(url=_PROXY_URL)
 
+    async def _request_checked(
+        client: httpx.AsyncClient,
+        method: Literal["HEAD", "GET"],
+        start_url: str,
+    ) -> httpx.Response:
+        current_url = start_url
+        for _ in range(8):
+            try:
+                current_url = validate_safe_url(current_url)
+            except ValidationError as exc:
+                raise ValidationError(exc.message) from exc
+            resp = await client.request(method, current_url, timeout=10 if method == "HEAD" else _FETCH_TIMEOUT)
+            if resp.is_redirect:
+                location = resp.headers.get("location")
+                if not location:
+                    raise ValidationError("redirect target missing")
+                current_url = urllib.parse.urljoin(current_url, location)
+                continue
+            return resp
+        raise ValidationError("too many redirects")
+
     try:
         async with httpx.AsyncClient(**client_kwargs) as client:
             # Head request first to check content type and size
-            head_resp = await client.head(url, timeout=10)
+            head_resp = await _request_checked(client, "HEAD", url)
             ct = (head_resp.headers.get("content-type") or "").lower()
             cl = head_resp.headers.get("content-length")
             if cl and int(cl) > _MAX_CONTENT_LENGTH:
@@ -156,8 +178,10 @@ async def _cap_fetch(params: dict, caller: str) -> dict:
                             "error": f"blocked binary content type: {ct}",
                         }
 
-            resp = await client.get(url)
+            resp = await _request_checked(client, "GET", url)
             resp.raise_for_status()
+    except ValidationError as exc:
+        return {"url": url, "title": "", "text": "", "truncated": False, "error": exc.message}
     except httpx.TimeoutException:
         return {"url": url, "title": "", "text": "", "truncated": False, "error": "request timed out"}
     except Exception as exc:

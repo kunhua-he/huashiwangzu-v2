@@ -59,8 +59,8 @@ const props = defineProps<{ fileId?: number; fileName?: string; format?: string;
 function getPayload(): { fileId: number; fileName: string } | null {
   // 框架通过 <component v-bind="payload"> 把 fileId 作为 prop 传进来
   if (props.fileId) return { fileId: Number(props.fileId), fileName: props.fileName || '' }
-  const p = (window as any).__MODULE_OPEN_FILE_PAYLOAD__
-  if (p?.fileId) return { fileId: p.fileId, fileName: p.fileName || '' }
+  const p = (window as unknown as { __MODULE_OPEN_FILE_PAYLOAD__?: { fileId?: number; fileName?: string } }).__MODULE_OPEN_FILE_PAYLOAD__
+  if (p?.fileId) return { fileId: Number(p.fileId), fileName: p.fileName || '' }
   return null
 }
 
@@ -70,6 +70,7 @@ const loadError = ref('')
 interface SlideElement {
   type: string
   content?: string
+  resourceRef?: number | null
 }
 
 interface Slide {
@@ -88,17 +89,89 @@ function slideTitle(slide: Slide): string {
   return textbox ? textbox.content?.slice(0, 40) || '' : `幻灯片 ${slide.index + 1}`
 }
 
+interface ParseResponse {
+  content?: unknown
+  blocks?: unknown
+  text?: unknown
+  page?: unknown
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function toText(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function toPage(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function toResourceRef(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function normalizeLegacySlide(raw: unknown): Slide | null {
+  if (!isRecord(raw) || !Array.isArray(raw.elements)) return null
+  const index = typeof raw.index === 'number' && Number.isFinite(raw.index) ? raw.index : 0
+  const elements = raw.elements
+    .filter(isRecord)
+    .map((elem): SlideElement => ({
+      type: toText(elem.type) || 'textbox',
+      content: toText(elem.content),
+      resourceRef: toResourceRef(elem.resource_ref),
+    }))
+  return { index, elements }
+}
+
+function normalizeParseResponse(data: ParseResponse): Slide[] {
+  if (Array.isArray(data.content)) {
+    const legacySlides = data.content
+      .map(normalizeLegacySlide)
+      .filter((slide): slide is Slide => slide !== null)
+    if (legacySlides.length > 0) return legacySlides
+  }
+
+  const source = Array.isArray(data.blocks) ? data.blocks : []
+  const grouped = new Map<number, SlideElement[]>()
+  for (const raw of source) {
+    if (!isRecord(raw)) continue
+    const type = toText(raw.type)
+    const text = toText(raw.text) || toText(raw.content)
+    const page = toPage(raw.page)
+    const elements = grouped.get(page) ?? []
+    if (type === 'image') {
+      elements.push({ type: 'image', content: text, resourceRef: toResourceRef(raw.resource_ref) })
+    } else if (text.trim()) {
+      elements.push({ type: 'textbox', content: text, resourceRef: null })
+    }
+    grouped.set(page, elements)
+  }
+
+  if (grouped.size === 0) {
+    const text = toText(data.text)
+    return text.trim()
+      ? [{ index: toPage(data.page) - 1, elements: [{ type: 'textbox', content: text, resourceRef: null }] }]
+      : []
+  }
+
+  return Array.from(grouped.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([page, elements]) => ({ index: page - 1, elements }))
+}
+
 async function loadPpt(fid: number) {
   try {
     loadError.value = ''
     loading.value = true
-    interface ParseResponse { content?: Slide[] }
     const data = await apiPost<ParseResponse>('/modules/call', {
       target_module: 'pptx-parser',
       action: 'parse',
       parameters: { file_id: fid },
     })
-    slides.value = data?.content || []
+    slides.value = normalizeParseResponse(data)
+    currentSlide.value = 0
   } catch (e: unknown) {
     loadError.value = e instanceof Error ? e.message : '演示文稿解析失败'
   } finally {

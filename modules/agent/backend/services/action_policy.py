@@ -8,12 +8,34 @@
 确认流：confirm 策略下，工具不直接执行 → 插入 agent_approval_queue →
 返回等待确认 → admin 同意/拒绝后继续/取消。
 """
+import json
 import logging
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.agent").getChild("action_policy")
+
+_APPROVAL_ARGS_MAX_CHARS = 12000
+_APPROVAL_ARG_STRING_MAX_CHARS = 2000
+_APPROVAL_ARG_LIST_MAX_ITEMS = 50
+_APPROVAL_ARG_DICT_MAX_ITEMS = 100
+_APPROVAL_ARG_MAX_DEPTH = 8
+_REDACTED_VALUE = "[REDACTED]"
+_SENSITIVE_ARG_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "jwt",
+    "password",
+    "passwd",
+    "private_key",
+    "refresh_token",
+    "secret",
+    "token",
+)
 
 # Sensitive tool name patterns (module__action or prefix match)
 # module__action exact match, or module__* wildcard
@@ -26,6 +48,8 @@ SENSITIVE_ACTION_PATTERNS: list[str] = [
     "desktop-tools__replace_file",
     "desktop-tools__publish_artifact",
     "desktop-tools__replace_file_from_artifact",
+    # Real runtime capability; keep terminal-tools__execute below as a legacy alias.
+    "terminal-tools__exec",
     "terminal-tools__execute",
     "agent__update_system_prompt",
     "agent__update_enterprise_prompt",
@@ -90,12 +114,78 @@ def _match_sensitive(tool_name: str) -> bool:
     return False
 
 
+def _is_sensitive_arg_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(part in normalized for part in _SENSITIVE_ARG_KEY_PARTS)
+
+
+def _truncate_text(value: str, max_chars: int = _APPROVAL_ARG_STRING_MAX_CHARS) -> str:
+    if len(value) <= max_chars:
+        return value
+    omitted = len(value) - max_chars
+    return f"{value[:max_chars]}...(truncated {omitted} chars)"
+
+
+def _sanitize_tool_arg_value(value: Any, key: str | None = None, depth: int = 0) -> Any:
+    if key and _is_sensitive_arg_key(key):
+        return _REDACTED_VALUE
+    if depth > _APPROVAL_ARG_MAX_DEPTH:
+        return "...(truncated: max depth)"
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        items = list(value.items())
+        for raw_key, raw_value in items[:_APPROVAL_ARG_DICT_MAX_ITEMS]:
+            item_key = str(raw_key)
+            sanitized[item_key] = _sanitize_tool_arg_value(raw_value, item_key, depth + 1)
+        if len(items) > _APPROVAL_ARG_DICT_MAX_ITEMS:
+            sanitized["..."] = f"truncated {len(items) - _APPROVAL_ARG_DICT_MAX_ITEMS} keys"
+        return sanitized
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+        sanitized_items = [
+            _sanitize_tool_arg_value(item, None, depth + 1)
+            for item in items[:_APPROVAL_ARG_LIST_MAX_ITEMS]
+        ]
+        if len(items) > _APPROVAL_ARG_LIST_MAX_ITEMS:
+            sanitized_items.append(f"...(truncated {len(items) - _APPROVAL_ARG_LIST_MAX_ITEMS} items)")
+        return sanitized_items
+    if isinstance(value, str):
+        return _truncate_text(value)
+    if isinstance(value, bytes):
+        return f"<bytes {len(value)}>"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _truncate_text(str(value))
+
+
+def _serialize_tool_args_for_approval(tool_args: Any | None) -> str:
+    """Serialize tool args for human approval review without storing raw secrets."""
+    sanitized = _sanitize_tool_arg_value(tool_args if tool_args is not None else {})
+    try:
+        serialized = json.dumps(sanitized, ensure_ascii=False, default=str, sort_keys=True)
+    except Exception as exc:
+        fallback = {
+            "_serialization_error": str(exc),
+            "_preview": _truncate_text(str(tool_args), max_chars=1000),
+        }
+        serialized = json.dumps(fallback, ensure_ascii=False, sort_keys=True)
+    if len(serialized) <= _APPROVAL_ARGS_MAX_CHARS:
+        return serialized
+    preview = {
+        "_truncated": True,
+        "_original_chars": len(serialized),
+        "_preview_json": serialized[:_APPROVAL_ARGS_MAX_CHARS],
+    }
+    return json.dumps(preview, ensure_ascii=False, sort_keys=True)
+
+
 async def check_action_allowed(
     db: AsyncSession,
     tool_name: str,
     agent_code: str,
     user_id: int,
     conversation_id: int | None = None,
+    tool_args: Any | None = None,
 ) -> dict:
     """Check whether a tool action is allowed under the agent's policy.
 
@@ -103,7 +193,7 @@ async def check_action_allowed(
         {"allowed": True} — proceed normally
         {"allowed": False, "action": "block", "reason": "..."} — rejected
         {"allowed": False, "action": "confirm", "approval_id": int,
-         "tool_name": str, "tool_args": dict} — needs admin approval
+         "tool_name": str, "tool_args": str} — needs admin approval
     """
     # System principal (user_id=0) → hard block on sensitive write actions
     # system:agent-engine is not allowed to generate/replace physical files
@@ -149,7 +239,7 @@ async def check_action_allowed(
         approval = ApprovalQueue(
             agent_code=agent_code,
             tool_name=tool_name,
-            tool_args="",
+            tool_args=_serialize_tool_args_for_approval(tool_args),
             status="pending",
             requested_by=user_id,
             conversation_id=conversation_id,
@@ -166,6 +256,7 @@ async def check_action_allowed(
             "action": "confirm",
             "approval_id": approval.id,
             "tool_name": tool_name,
+            "tool_args": approval.tool_args,
         }
     else:
         # Unknown policy → fallback to allow

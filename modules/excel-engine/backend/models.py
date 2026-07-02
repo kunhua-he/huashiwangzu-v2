@@ -4,9 +4,10 @@ Maps to old project tables: 桌面_Excel_工作簿, 桌面_Excel_子表, 桌面_
 桌面_Excel_列宽, 桌面_Excel_行高, 桌面_Excel_历史, 桌面_Excel_恢复栈, 桌面_Excel_版本
 """
 from datetime import datetime
-from sqlalchemy import Integer, String, Text, DateTime, BigInteger, Index
-from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 
 class ExcelWorkbook(Base):
@@ -14,7 +15,7 @@ class ExcelWorkbook(Base):
     __tablename__ = "excel_workbooks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    state_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, comment="状态键，如 knowledge_123")
+    state_key: Mapped[str] = mapped_column(String(255), nullable=False, comment="状态键，如 knowledge_123")
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="Untitled", comment="工作簿名称")
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="创建者用户ID")
     upload_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="上传时间")
@@ -25,6 +26,7 @@ class ExcelWorkbook(Base):
 
     __table_args__ = (
         Index("idx_excel_wb_state_key", "state_key"),
+        Index("ux_excel_wb_owner_state_key", "owner_id", "state_key", unique=True),
     )
 
 

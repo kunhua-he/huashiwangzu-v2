@@ -540,6 +540,7 @@ export const modules = {
 export const platform = {
   auth,
   files,
+  content,
   office,
   gateway,
   tasks,

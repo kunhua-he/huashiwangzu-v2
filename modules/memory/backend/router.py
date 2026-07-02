@@ -1,24 +1,28 @@
 import logging
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.services.module_registry import register_capability
 from app.services.task_worker import register_task_handler
-
+from fastapi import APIRouter, Depends
 from huashiwangzu_modules.memory.models import MemoryRecord
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .schemas import (
-    SaveMemoryRequest, RecallRequest, DeleteMemoryRequest,
-    FuseRequest, RethinkRequest, ReplaceRequest, InsertRequest,
+    DeleteMemoryRequest,
+    FuseRequest,
+    InsertRequest,
+    RecallRequest,
+    ReplaceRequest,
+    RethinkRequest,
+    SaveMemoryRequest,
 )
-from .services import memory_service, experience_service, capabilities as cap_mod
+from .services import capabilities as cap_mod
+from .services import memory_service
 from .services.distill_service import _hybrid_recall, _memory_to_dict
 
 logger = logging.getLogger("v2.memory").getChild("router")
@@ -344,6 +348,7 @@ register_capability(
             "steps": {"type": "string", "description": "JSON 有序步骤：每步=意图+工具名+关键参数"},
             "tools_used": {"type": "string", "description": "JSON 列表：用到的能力列表"},
             "source_conversation_id": {"type": "integer", "description": "来源对话 id（可选）"},
+            "scope": {"type": "string", "description": "经验范围：默认 user；global 仅系统 curated 通路可写"},
         },
         "required": ["trigger_condition", "steps"],
     },
@@ -359,6 +364,7 @@ register_capability(
         "properties": {
             "query": {"type": "string", "description": "当前用户输入（语义匹配）"},
             "limit": {"type": "integer", "description": "返回条数上限（默认 2）"},
+            "team_owner_ids": {"type": "array", "items": {"type": "integer"}, "description": "系统通路可传的团队 owner id 列表"},
         },
         "required": ["query"],
     },
@@ -375,6 +381,7 @@ register_capability(
             "experience_id": {"type": "integer", "description": "经验 ID"},
             "success": {"type": "boolean", "description": "是否成功"},
             "note": {"type": "string", "description": "失败时的备注（可选）"},
+            "team_owner_ids": {"type": "array", "items": {"type": "integer"}, "description": "系统通路可传的团队 owner id 列表"},
         },
         "required": ["experience_id", "success"],
     },

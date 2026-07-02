@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { apiGet, apiPost, authHeaders, getApiUrl } from '../runtime'
 
 interface TemplateItem {
   key: string
@@ -113,44 +114,25 @@ const sizeOptions = [
   { key: 'landscape', label: '16:9' },
 ]
 
-async function apiGet<T>(url: string): Promise<T> {
-  const resp = await fetch(url)
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-  const json = await resp.json()
-  if (json.success === false) throw new Error(json.error?.message || json.error || 'API error')
-  return json.data as T
-}
-
-async function apiPost<T>(url: string, body: unknown): Promise<T> {
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-  const json = await resp.json()
-  if (json.success === false) throw new Error(json.error?.message || json.error || 'API error')
-  return json.data as T
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
 }
 
 async function downloadImageBlob(fileId: number): Promise<Blob> {
-  const token = localStorage.getItem('v2_auth_token')
-  const headers: Record<string, string> = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const resp = await fetch(`/api/files/download/${fileId}`, { headers })
+  const resp = await fetch(getApiUrl(`/files/download/${fileId}`), { headers: authHeaders() })
   if (!resp.ok) throw new Error(`Download failed: ${resp.status}`)
   return resp.blob()
 }
 
 async function loadTemplates() {
   try {
-    const data = await apiGet<{ templates: TemplateItem[] }>('/api/image-gen/templates')
+    const data = await apiGet<{ templates: TemplateItem[] }>('/image-gen/templates')
     templates.value = data.templates
     if (data.templates.length) {
       templateKey.value = data.templates[0].key
       updateAvailable()
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.warn('Failed to load templates:', e)
   }
 }
@@ -172,7 +154,7 @@ async function doGenerate() {
   costInfo.value = null
 
   try {
-    const data = await apiPost<GenerateResponse>('/api/image-gen/generate', {
+    const data = await apiPost<GenerateResponse>('/image-gen/generate', {
       prompt: prompt.value,
       aspect_ratio: aspectRatio.value,
       count: count.value,
@@ -195,8 +177,8 @@ async function doGenerate() {
     if (data.points_cost != null || data.balance != null) {
       costInfo.value = { points_cost: data.points_cost, balance: data.balance }
     }
-  } catch (e: any) {
-    errorMsg.value = e.message || '生成失败'
+  } catch (e: unknown) {
+    errorMsg.value = errorMessage(e, '生成失败')
   } finally {
     generating.value = false
   }

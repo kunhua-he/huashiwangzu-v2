@@ -1,9 +1,10 @@
 """Memory module table initialization (idempotent)."""
 import logging
-from sqlalchemy import text
+
 from app.database import engine
-from .models import MemoryRecord, MemoryLink, MemoryExperience, MemoryChunk, MemoryStableRule
-from app.models.base import Base
+from sqlalchemy import text
+
+from .models import MemoryChunk, MemoryExperience, MemoryLink, MemoryRecord, MemoryStableRule
 
 logger = logging.getLogger("v2.memory").getChild("init_db")
 
@@ -42,6 +43,11 @@ async def run_init() -> None:
                 logger.warning("ALTER non-fatal: %s", e)
         # Idempotent ALTER for experience table
         exp_alters = [
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS owner_id INTEGER",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS scope VARCHAR(16)",
+            "UPDATE memory_experiences SET scope = 'global' WHERE scope IS NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN scope SET DEFAULT 'user'",
+            "ALTER TABLE memory_experiences ALTER COLUMN scope SET NOT NULL",
             "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS trigger_embedding vector(1024)",
             "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS tools_used TEXT",
             "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS fail_notes TEXT",
@@ -57,6 +63,37 @@ async def run_init() -> None:
                 await conn.execute(text(alter))
             except Exception as e:
                 logger.warning("ALTER non-fatal: %s", e)
+
+        link_dedupe_sql = """
+            DELETE FROM memory_links ml
+            USING memory_links dup
+            WHERE ml.id > dup.id
+              AND ml.owner_id = dup.owner_id
+              AND LEAST(ml.from_id, ml.to_id) = LEAST(dup.from_id, dup.to_id)
+              AND GREATEST(ml.from_id, ml.to_id) = GREATEST(dup.from_id, dup.to_id)
+              AND ml.relation = dup.relation
+        """
+        try:
+            await conn.execute(text(link_dedupe_sql))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_memory_links_owner_pair_relation "
+                "ON memory_links (owner_id, LEAST(from_id, to_id), GREATEST(from_id, to_id), relation)"
+            ))
+        except Exception as e:
+            logger.warning("Memory link unique index non-fatal: %s", e)
+
+        try:
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_memory_experiences_scope_owner "
+                "ON memory_experiences (scope, owner_id)"
+            ))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_memory_experiences_active_scope_content "
+                "ON memory_experiences (scope, COALESCE(owner_id, 0), md5(trigger_condition), md5(steps)) "
+                "WHERE active = true"
+            ))
+        except Exception as e:
+            logger.warning("Experience scope indexes non-fatal: %s", e)
 
         # Create vector index for experience embedding
         try:

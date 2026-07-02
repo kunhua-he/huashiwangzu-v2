@@ -1,22 +1,20 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.services.module_registry import register_capability
+from fastapi import APIRouter, Depends
+from huashiwangzu_modules.im.init_db import run_init
+from huashiwangzu_modules.im.models import ImConversation, ImMessage, ImReadState
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.im").getChild("router")
-
-from huashiwangzu_modules.im.models import ImConversation, ImMessage, ImReadState
-from huashiwangzu_modules.im.init_db import run_init
 
 router = APIRouter(prefix="/api/im", tags=["im"])
 
@@ -57,6 +55,52 @@ async def _get_or_create_conversation(db: AsyncSession, user_a: int, user_b: int
     await db.commit()
     await db.refresh(conv)
     return conv
+
+
+def _conversation_members(conv: ImConversation) -> list[int]:
+    if not isinstance(conv.member_ids, list):
+        return []
+    return [int(member_id) for member_id in conv.member_ids]
+
+
+def _message_to_dict(msg: ImMessage) -> dict:
+    return {
+        "id": msg.id,
+        "conversation_id": msg.conversation_id,
+        "sender_id": msg.sender_id,
+        "content": msg.content,
+        "msg_type": msg.msg_type,
+        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+    }
+
+
+async def _send_text_message_to_conversation(
+    db: AsyncSession,
+    conversation_id: int,
+    sender_id: int,
+    content: str,
+) -> ImMessage:
+    conv = await db.get(ImConversation, conversation_id)
+    if not conv:
+        raise NotFound("会话不存在")
+    if sender_id not in _conversation_members(conv):
+        raise PermissionDenied("无权向该会话发消息")
+
+    msg = ImMessage(
+        conversation_id=conversation_id,
+        sender_id=sender_id,
+        content=content,
+        msg_type="text",
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(msg)
+    await db.commit()
+    await db.refresh(msg)
+    summary = content[:50] + ("..." if len(content) > 50 else "")
+    conv.last_message_summary = summary
+    conv.last_message_at = datetime.now(timezone.utc)
+    await db.commit()
+    return msg
 
 
 async def _ensure_table_init(db: AsyncSession) -> None:
@@ -160,34 +204,13 @@ async def send_message(
         conv_id = conv.id
     if not conv_id:
         raise ValidationError("需要 conversation_id 或 target_user_id")
-    conv = await db.get(ImConversation, conv_id)
-    if not conv:
-        raise NotFound("会话不存在")
-    members = conv.member_ids if isinstance(conv.member_ids, list) else []
-    if current_user.id not in members:
-        raise PermissionDenied("无权向该会话发消息")
-    msg = ImMessage(
-        conversation_id=conv_id,
-        sender_id=current_user.id,
-        content=req.content,
-        msg_type="text",
-        created_at=datetime.now(timezone.utc),
+    msg = await _send_text_message_to_conversation(
+        db,
+        int(conv_id),
+        current_user.id,
+        req.content,
     )
-    db.add(msg)
-    await db.commit()
-    await db.refresh(msg)
-    summary = req.content[:50] + ("..." if len(req.content) > 50 else "")
-    conv.last_message_summary = summary
-    conv.last_message_at = datetime.now(timezone.utc)
-    await db.commit()
-    return ApiResponse(data={
-        "id": msg.id,
-        "conversation_id": msg.conversation_id,
-        "sender_id": msg.sender_id,
-        "content": msg.content,
-        "msg_type": msg.msg_type,
-        "created_at": msg.created_at.isoformat() if msg.created_at else None,
-    })
+    return ApiResponse(data=_message_to_dict(msg))
 
 
 @router.post("/conversations/{conv_id}/read")
@@ -259,7 +282,7 @@ async def list_users(
     """返回系统内可聊用户列表。"""
     from app.models.user import User as UserModel
     from sqlalchemy import select as sa_select
-    stmt = sa_select(UserModel.id, UserModel.username, UserModel.display_name).where(UserModel.enabled == True)
+    stmt = sa_select(UserModel.id, UserModel.username, UserModel.display_name).where(UserModel.enabled.is_(True))
     r = await db.execute(stmt)
     users = r.all()
     return ApiResponse(data=[{
@@ -309,26 +332,16 @@ async def _cap_send(params: dict, caller: str) -> dict:
         return {"success": False, "error": "conversation_id and content required"}
     caller_user_id = _parse_user_id(caller)
     if not caller_user_id:
-        caller_user_id = params.get("sender_id", 0)
+        raise PermissionDenied("im:send requires a user caller")
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         await run_init(db)
-        msg = ImMessage(
-            conversation_id=int(conv_id),
-            sender_id=caller_user_id,
-            content=content,
-            msg_type="text",
-            created_at=datetime.now(timezone.utc),
+        msg = await _send_text_message_to_conversation(
+            db,
+            int(conv_id),
+            caller_user_id,
+            content,
         )
-        db.add(msg)
-        await db.commit()
-        await db.refresh(msg)
-        conv = await db.get(ImConversation, int(conv_id))
-        if conv:
-            summary = content[:50] + ("..." if len(content) > 50 else "")
-            conv.last_message_summary = summary
-            conv.last_message_at = datetime.now(timezone.utc)
-            await db.commit()
         return {"success": True, "message_id": msg.id}
 
 

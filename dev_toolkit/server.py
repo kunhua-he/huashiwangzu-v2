@@ -43,6 +43,8 @@ try:
     from dev_toolkit.memory_tools import tool_definitions as memory_tool_definitions
     from dev_toolkit.memory_tools import update_index as memory_update_index
     from dev_toolkit.quick_fix import QuickFixError
+    from dev_toolkit.release_response import build_release_gate_response as build_release_gate_payload
+    from dev_toolkit.sql_guard import check_sql_readonly, readonly_psql_env
     from dev_toolkit.tool_usage_tools import handle_tool as tool_usage_handle_tool
     from dev_toolkit.tool_usage_tools import handles_tool as tool_usage_handles_tool
     from dev_toolkit.tool_usage_tools import record_tool_usage
@@ -73,6 +75,8 @@ except ModuleNotFoundError:
     from memory_tools import tool_definitions as memory_tool_definitions
     from memory_tools import update_index as memory_update_index
     from quick_fix import QuickFixError
+    from release_response import build_release_gate_response as build_release_gate_payload
+    from sql_guard import check_sql_readonly, readonly_psql_env
     from tool_usage_tools import handle_tool as tool_usage_handle_tool
     from tool_usage_tools import handles_tool as tool_usage_handles_tool
     from tool_usage_tools import record_tool_usage
@@ -205,33 +209,20 @@ async def _ensure_live_token(role: str = "admin") -> str:
 
 # ── SQL 只读执行器 ──────────────────────────────────────────────────
 
-# 允许的 SQL 语句前缀
-_ALLOWED_PREFIXES = ("SELECT", "WITH", "EXPLAIN", "SHOW", "DESCRIBE")
-_FORBIDDEN_KEYWORDS = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE|EXECUTE|CALL|MERGE)\b",
-    re.IGNORECASE,
-)
-
 def _check_sql_readonly(query: str) -> None:
-    stripped = query.strip().lstrip("(")
-    upper = stripped.upper()
-    if not upper.startswith(_ALLOWED_PREFIXES):
-        # 允许以 WITH 开头的 CTE
-        if not upper.startswith("WITH"):
-            raise ValueError(f"只允许只读查询 (SELECT/WITH/EXPLAIN), 检测到不允许的语句: {query[:80]}")
-    if _FORBIDDEN_KEYWORDS.search(query):
-        # 对于 SELECT/WITH 中的子查询, 允许但需要检查外层
-        pass
+    check_sql_readonly(query)
 
 async def _execute_sql(query: str) -> list[dict[str, Any]]:
     _check_sql_readonly(query)
     # 用 psql 执行(也可以用 asyncpg, 但 psql 更通用无需额外包)
     dsn = DB_DSN
     cmd = ["psql", dsn, "-t", "-A", "-F", "\t", "--no-align", "--field-separator=|", "-c", query]
+    env = readonly_psql_env(os.environ)
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
@@ -705,6 +696,19 @@ _CODEGRAPH_CLI = str(Path.home() / ".npm-global" / "bin" / "codegraph")
 _RUFF_CLI = str(REPO_ROOT / "backend" / ".venv" / "bin" / "ruff")
 
 
+def _extract_prefixed_json(output: str, prefix: str) -> dict[str, Any] | None:
+    for line in reversed(output.splitlines()):
+        text = line.strip()
+        if not text.startswith(prefix):
+            continue
+        try:
+            data = json.loads(text[len(prefix):].strip())
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+    return None
+
+
 async def _smoke_all(skip_ui: bool = False) -> str:
     """Run dev_toolkit/smoke.py and return its complete red/green matrix output."""
     env = os.environ.copy()
@@ -722,14 +726,28 @@ async def _smoke_all(skip_ui: bool = False) -> str:
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=360)
     except asyncio.TimeoutError:
-        return json.dumps({"success": False, "timeout": True, "timeout_seconds": 360}, ensure_ascii=False, indent=2)
+        return json.dumps(
+            {"success": False, "clean_pass": False, "verdict": "TIMEOUT", "timeout": True, "timeout_seconds": 360},
+            ensure_ascii=False,
+            indent=2,
+        )
     output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+    summary = _extract_prefixed_json(output, "SMOKE_JSON:")
+    verdict = summary.get("verdict") if summary else ("PASS" if proc.returncode == 0 else "FAIL")
+    if not isinstance(verdict, str) or not verdict:
+        verdict = "PASS" if proc.returncode == 0 else "FAIL"
+    clean_pass = proc.returncode == 0 and verdict == "PASS"
     return json.dumps(
         {
-            "success": proc.returncode == 0,
+            "success": clean_pass,
+            "completed": proc.returncode == 0,
+            "clean_pass": clean_pass,
+            "verdict": verdict,
+            "has_debt": verdict == "PASS_WITH_DEBT",
             "returncode": proc.returncode,
             "skip_ui": skip_ui,
             "duration_seconds": round(time.time() - started, 3),
+            "summary": summary,
             "output": output,
             "output_tail": _tail_text(output, 20000),
         },
@@ -738,6 +756,15 @@ async def _smoke_all(skip_ui: bool = False) -> str:
     )
 
 # ──────────────────── 工具: release_gate ──────────────────────────
+
+def _build_release_gate_response(
+    output: str,
+    returncode: int,
+    skip_ui: bool,
+    duration_seconds: float,
+) -> dict[str, Any]:
+    return build_release_gate_payload(output, returncode, skip_ui, duration_seconds)
+
 
 async def _release_gate(skip_ui: bool = False) -> str:
     """Run dev_toolkit/release_gate.py and return its verdict."""
@@ -759,17 +786,18 @@ async def _release_gate(skip_ui: bool = False) -> str:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
         output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
     except asyncio.TimeoutError:
-        return json.dumps({"success": False, "timeout": True, "timeout_seconds": 600}, ensure_ascii=False, indent=2)
+        return json.dumps(
+            {"success": False, "clean_pass": False, "release_safe": False, "verdict": "BLOCKER", "timeout": True, "timeout_seconds": 600},
+            ensure_ascii=False,
+            indent=2,
+        )
     return json.dumps(
-        {
-            "success": proc.returncode == 0,
-            "verdict": "PASS" if proc.returncode == 0 else "BLOCKER",
-            "returncode": proc.returncode,
-            "skip_ui": skip_ui,
-            "duration_seconds": round(time.time() - started, 3),
-            "output": output,
-            "output_tail": _tail_text(output, 20000),
-        },
+        _build_release_gate_response(
+            output=output,
+            returncode=proc.returncode,
+            skip_ui=skip_ui,
+            duration_seconds=time.time() - started,
+        ),
         ensure_ascii=False,
         indent=2,
     )

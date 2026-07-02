@@ -88,6 +88,7 @@ async def run_single_task(
     max_rounds: int = SUBAGENT_MAX_ROUNDS,
     caller: str = "",
     caller_role: str = "viewer",
+    owner_id: int | None = None,
     retry_prompt: str = "",
 ) -> dict:
     """执行一个子 Agent 任务，返回 task_result。
@@ -125,6 +126,7 @@ async def run_single_task(
         task_write_enabled=task_write_enabled,
         caller=caller,
         caller_role=caller_role,
+        owner_id=owner_id,
         task_desc=task_desc,
     )
 
@@ -136,6 +138,7 @@ async def _execute_tool_loop(
     task_write_enabled: bool,
     caller: str,
     caller_role: str,
+    owner_id: int | None,
     task_desc: str,
 ) -> dict:
     """内部工具循环 — 可被 gate 重试复用（传入更多 messages）。"""

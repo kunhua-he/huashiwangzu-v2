@@ -107,6 +107,7 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
     from ..services.subagent_runner import SUBAGENT_MAX_ROUNDS, run_single_task
 
     caller_role = "viewer"
+    owner_id = resolve_caller_user_id(caller) if caller.startswith("user:") else None
     tasks = params.get("tasks") or []
     single_task = params.get("task", "")
     if single_task and not tasks:
@@ -143,7 +144,7 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
             task_desc=desc, task_context=ctx, extra_context=extra_context,
             base_tools=base_tools, task_tools_param=task_tools,
             task_write_enabled=task_write, max_rounds=max_rounds,
-            caller=caller, caller_role=caller_role,
+            caller=caller, caller_role=caller_role, owner_id=owner_id,
         )
 
         # ── Gate 校验（可选） ──
@@ -164,6 +165,7 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
                         base_tools=base_tools, task_tools_param=task_tools,
                         task_write_enabled=task_write, max_rounds=max_rounds,
                         caller=caller, caller_role=caller_role,
+                        owner_id=owner_id,
                         retry_prompt="\n".join(prompt_parts),
                     )
             result["gate"] = {

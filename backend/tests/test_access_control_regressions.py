@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from app.main import app
@@ -55,6 +56,12 @@ async def _delete_file_permanently(
                 json={"item_type": "file", "id": item["id"]},
                 headers=headers,
             )
+
+
+async def _current_user_id(client: AsyncClient, headers: dict[str, str]) -> int:
+    response = await client.get("/api/current-user", headers=headers)
+    response.raise_for_status()
+    return int(response.json()["data"]["id"])
 
 
 @pytest.mark.asyncio
@@ -238,3 +245,166 @@ async def test_file_parsers_reject_other_users_private_files(
                 assert data is not None
         finally:
             await _delete_file_permanently(client, editor_headers, file_id)
+
+
+@pytest.mark.asyncio
+async def test_docs_open_write_requires_file_edit_access() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        admin_headers = {
+            "Authorization": f"Bearer {await _login(client, 'admin')}",
+        }
+        editor_headers = {
+            "Authorization": f"Bearer {await _login(client, 'editor')}",
+        }
+        editor_id = await _current_user_id(client, editor_headers)
+        file_id = await _upload_sample(
+            client,
+            admin_headers,
+            PROJECT_ROOT / "modules/text-parser/sandbox/samples/sample.txt",
+            f"docs-open-write-{uuid4().hex}",
+        )
+        try:
+            response = await client.post(
+                "/api/files/share",
+                json={
+                    "file_id": file_id,
+                    "target_user_id": editor_id,
+                    "permission": "read",
+                },
+                headers=admin_headers,
+            )
+            assert response.status_code == 200
+
+            response = await client.post(
+                f"/api/docs/{file_id}/content",
+                json={"content": "read share must not write"},
+                headers=editor_headers,
+            )
+            assert response.status_code == 403
+
+            response = await client.post(
+                "/api/docs/open",
+                json={"file_id": file_id, "mode": "edit"},
+                headers=editor_headers,
+            )
+            assert response.status_code == 403
+
+            response = await client.post(
+                "/api/files/share",
+                json={
+                    "file_id": file_id,
+                    "target_user_id": editor_id,
+                    "permission": "edit",
+                },
+                headers=admin_headers,
+            )
+            assert response.status_code == 200
+
+            response = await client.post(
+                f"/api/docs/{file_id}/content",
+                json={"content": "edit share can write"},
+                headers=editor_headers,
+            )
+            assert response.status_code == 200
+            assert response.json()["success"] is True
+
+            response = await client.get(f"/api/docs/{file_id}/content", headers=admin_headers)
+            assert response.status_code == 200
+            assert response.json()["data"]["content"] == "edit share can write"
+        finally:
+            await _delete_file_permanently(client, admin_headers, file_id)
+
+
+@pytest.mark.asyncio
+async def test_docs_open_token_scope_enforced_for_content_file_and_revoke() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        admin_headers = {
+            "Authorization": f"Bearer {await _login(client, 'admin')}",
+        }
+        sample_path = PROJECT_ROOT / "modules/text-parser/sandbox/samples/sample.txt"
+        file_one_id = await _upload_sample(
+            client,
+            admin_headers,
+            sample_path,
+            f"docs-open-token-one-{uuid4().hex}",
+        )
+        file_two_id = await _upload_sample(
+            client,
+            admin_headers,
+            sample_path,
+            f"docs-open-token-two-{uuid4().hex}",
+        )
+        try:
+            response = await client.post(
+                "/api/docs/token",
+                json={"client_id": "scope-test", "scope": {"doc_ids": [file_one_id]}},
+                headers=admin_headers,
+            )
+            assert response.status_code == 200
+            token_one = response.json()["data"]["access_token"]
+            open_id = response.json()["data"]["open_id"]
+            token_headers = {
+                "X-Client-Id": "scope-test",
+                "X-Open-Id": open_id,
+                "X-Access-Token": token_one,
+            }
+
+            response = await client.get(f"/api/docs/{file_one_id}/content", headers=token_headers)
+            assert response.status_code == 200
+
+            response = await client.post(
+                f"/api/docs/{file_one_id}/content",
+                json={"content": "read token must not write"},
+                headers=token_headers,
+            )
+            assert response.status_code == 403
+
+            response = await client.get(
+                f"/api/docs/{file_two_id}/file",
+                params={
+                    "token": token_one,
+                    "client_id": "scope-test",
+                    "open_id": open_id,
+                },
+            )
+            assert response.status_code == 403
+
+            response = await client.post(
+                "/api/docs/token",
+                json={"client_id": "scope-test", "scope": {"doc_ids": [file_two_id]}},
+                headers=admin_headers,
+            )
+            assert response.status_code == 200
+            token_two = response.json()["data"]["access_token"]
+
+            response = await client.post(
+                f"/api/docs/{file_one_id}/revoke-tokens",
+                headers=admin_headers,
+            )
+            assert response.status_code == 200
+            assert response.json()["data"]["revoked"] == 1
+
+            response = await client.get(
+                f"/api/docs/{file_one_id}/file",
+                params={
+                    "token": token_one,
+                    "client_id": "scope-test",
+                    "open_id": open_id,
+                },
+            )
+            assert response.status_code == 403
+
+            response = await client.get(
+                f"/api/docs/{file_two_id}/file",
+                params={
+                    "token": token_two,
+                    "client_id": "scope-test",
+                    "open_id": open_id,
+                },
+            )
+            assert response.status_code == 200
+        finally:
+            await _delete_file_permanently(client, admin_headers, file_one_id)
+            await _delete_file_permanently(client, admin_headers, file_two_id)

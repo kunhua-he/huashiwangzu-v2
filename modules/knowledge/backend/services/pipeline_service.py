@@ -11,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument
-from .document_service import parse_and_index_document
+from .document_service import mark_document_source_unavailable, parse_and_index_document
 from .pipeline_orchestrator import run_pipeline as _run_orchestrated
+from .source_file_state import get_source_file_availability, raise_if_source_unavailable
 
 logger = logging.getLogger("v2.knowledge").getChild("pipeline")
 
@@ -58,8 +59,18 @@ async def _pipeline_handler(params: dict) -> dict:
         doc = df.scalar_one_or_none()
         if not doc:
             return {"error": f"Document {document_id} not found", "status": "failed"}
+        if doc.deleted:
+            logger.info("Pipeline task obsolete for deleted document_id=%d", document_id)
+            return {
+                "document_id": document_id,
+                "file_id": doc.file_id,
+                "status": "skipped",
+                "reason": "doc_deleted",
+                "classification": "obsolete",
+            }
 
         try:
+            await raise_if_source_unavailable(db, doc.file_id)
             result = await _run_pipeline(
                 db, document_id, doc.owner_id, doc.file_id, user_id,
                 force_raw=params.get("force_raw", False),
@@ -67,6 +78,20 @@ async def _pipeline_handler(params: dict) -> dict:
             )
             return {"status": "done", **result}
         except Exception as e:
+            source_state = await get_source_file_availability(db, doc.file_id)
+            if not source_state.available:
+                mark_document_source_unavailable(doc, source_state.reason)
+                await db.commit()
+                logger.info(
+                    "Pipeline skipped for document_id=%d file_id=%d: %s",
+                    document_id, doc.file_id, source_state.reason,
+                )
+                return {
+                    "document_id": document_id,
+                    "file_id": doc.file_id,
+                    "status": "skipped",
+                    "reason": source_state.reason,
+                }
             logger.error("Pipeline handler failed for document_id=%d: %s", document_id, e)
             return {"error": str(e), "status": "failed"}
 

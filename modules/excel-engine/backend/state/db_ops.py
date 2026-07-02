@@ -20,8 +20,11 @@ from ..tool.config import AUTO_SAVE_INTERVAL, DEFAULT_TOTAL_COLS, DEFAULT_TOTAL_
 from .manager import build_snapshot
 
 
-async def find_workbook(db: AsyncSession, state_key: str) -> Optional[dict]:
-    result = await db.execute(select(ExcelWorkbook).where(ExcelWorkbook.state_key == state_key))
+async def find_workbook(db: AsyncSession, state_key: str, owner_id: int | None = None) -> Optional[dict]:
+    query = select(ExcelWorkbook).where(ExcelWorkbook.state_key == state_key)
+    if owner_id is not None:
+        query = query.where(ExcelWorkbook.owner_id == owner_id)
+    result = await db.execute(query)
     wb = result.scalar_one_or_none()
     if wb:
         return {'id': wb.id, 'name': wb.name, 'owner_id': wb.owner_id}
@@ -29,7 +32,7 @@ async def find_workbook(db: AsyncSession, state_key: str) -> Optional[dict]:
 
 
 async def find_or_create_workbook(db: AsyncSession, state_key: str, owner_id: int = 0) -> dict:
-    wb = await find_workbook(db, state_key)
+    wb = await find_workbook(db, state_key, owner_id=owner_id)
     if wb:
         return wb
     new_wb = ExcelWorkbook(state_key=state_key, name=state_key, owner_id=owner_id, upload_time=datetime.utcnow(), last_active_time=datetime.utcnow())
@@ -56,7 +59,16 @@ async def find_or_create_sheet(db: AsyncSession, workbook_id: int, name: str, to
     return {'id': new_sheet.id, 'name': new_sheet.name, 'total_rows': new_sheet.total_rows, 'total_cols': new_sheet.total_cols}
 
 
+async def _lock_sheet_for_write(db: AsyncSession, sheet_id: int) -> None:
+    await db.execute(
+        select(ExcelSheet.id)
+        .where(ExcelSheet.id == sheet_id)
+        .with_for_update()
+    )
+
+
 async def sync_cells(db: AsyncSession, sheet_id: int, cells: dict[str, str], styles: dict, merges: dict):
+    await _lock_sheet_for_write(db, sheet_id)
     await db.execute(text(f"DELETE FROM {ExcelCell.__tablename__} WHERE sheet_id = :sid"), {'sid': sheet_id})
     for addr, val in cells.items():
         style_json = json.dumps(styles.get(addr, {}), ensure_ascii=False) if addr in styles else None
@@ -70,6 +82,7 @@ async def sync_cells(db: AsyncSession, sheet_id: int, cells: dict[str, str], sty
 
 
 async def sync_col_widths(db: AsyncSession, sheet_id: int, col_widths: dict[str, int]):
+    await _lock_sheet_for_write(db, sheet_id)
     await db.execute(text(f"DELETE FROM {ExcelColWidth.__tablename__} WHERE sheet_id = :sid"), {'sid': sheet_id})
     for col_letter, width in col_widths.items():
         ci = 0
@@ -81,14 +94,15 @@ async def sync_col_widths(db: AsyncSession, sheet_id: int, col_widths: dict[str,
 
 
 async def sync_row_heights(db: AsyncSession, sheet_id: int, row_heights: dict[str, int]):
+    await _lock_sheet_for_write(db, sheet_id)
     await db.execute(text(f"DELETE FROM {ExcelRowHeight.__tablename__} WHERE sheet_id = :sid"), {'sid': sheet_id})
     for row_str, height in row_heights.items():
         db.add(ExcelRowHeight(sheet_id=sheet_id, row_index=int(row_str), height=height))
     await db.commit()
 
 
-async def read_history(db: AsyncSession, state_key: str) -> list[dict]:
-    wb = await find_workbook(db, state_key)
+async def read_history(db: AsyncSession, state_key: str, owner_id: int = 0) -> list[dict]:
+    wb = await find_workbook(db, state_key, owner_id=owner_id)
     if not wb:
         return []
     sheet = await find_sheet(db, wb['id'], 'Sheet1')
@@ -113,7 +127,7 @@ async def record_snapshot(db: AsyncSession, state: dict, state_key: str, action:
     count = result.scalar() or 0
     if count > 0 and count % AUTO_SAVE_INTERVAL == 0 and state_key.startswith('knowledge_'):
         file_id = int(state_key.replace('knowledge_', ''))
-        db.add(ExcelVersion(file_id=file_id, version_name=f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (auto)", snapshot_json=json.dumps(build_snapshot(state), ensure_ascii=False), operation_steps=count))
+        db.add(ExcelVersion(file_id=file_id, version_name=f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (auto)", snapshot_json=json.dumps(build_snapshot(state), ensure_ascii=False), operation_steps=count, creator_id=owner_id))
         await db.commit()
 
 
@@ -275,8 +289,8 @@ def empty_state(sheet_name: str = 'Sheet1') -> dict:
             'sheet_set': {}, 'all_sheets': [sheet_name], '_current_sheet': sheet_name}
 
 
-async def archive_workbook(db: AsyncSession, state: dict, state_key: str, output_dir: str):
-    wb = await find_workbook(db, state_key)
+async def archive_workbook(db: AsyncSession, state: dict, state_key: str, output_dir: str, owner_id: int = 0):
+    wb = await find_workbook(db, state_key, owner_id=owner_id)
     if not wb:
         return None
     from ..engine.xlsx_generator import generate_xlsx

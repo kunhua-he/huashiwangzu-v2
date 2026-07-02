@@ -91,17 +91,24 @@ def test_dream_params() -> None:
 
 
 def test_save_experience_params() -> None:
-    """save_experience: no params."""
-    params: dict = {}
-    assert len(params) == 0
+    """save_experience: trigger_condition and steps required; scope defaults to user."""
+    params = {
+        "trigger_condition": "user asks about theme",
+        "steps": '[{"intent":"recall","tool":"memory:recall"}]',
+        "scope": "user",
+    }
+    assert isinstance(params["trigger_condition"], str) and len(params["trigger_condition"]) > 0
+    assert isinstance(params["steps"], str) and len(params["steps"]) > 0
+    assert params["scope"] in {"user", "team", "global"}
     print("  [SAVE_EXPERIENCE] Parameter contract valid")
 
 
 def test_match_experience_params() -> None:
-    """match_experience: trigger_condition (string required)."""
-    params = {"trigger_condition": "user asks about theme"}
-    assert "trigger_condition" in params
-    assert isinstance(params["trigger_condition"], str) and len(params["trigger_condition"]) > 0
+    """match_experience: query (string required), limit optional."""
+    params = {"query": "user asks about theme", "limit": 2}
+    assert "query" in params
+    assert isinstance(params["query"], str) and len(params["query"]) > 0
+    assert isinstance(params["limit"], int) and params["limit"] > 0
     print("  [MATCH_EXPERIENCE] Parameter contract valid")
 
 
@@ -179,16 +186,18 @@ def test_experience_output_shape() -> None:
     """Experience object output shape contract."""
     experience = {
         "id": 1,
+        "owner_id": 7,
+        "scope": "user",
         "trigger_condition": "user asks about theme",
-        "action": "recall_preference",
-        "weight": 3,
-        "success_count": 2,
+        "steps": '[{"intent":"recall","tool":"memory:recall"}]',
+        "success_weight": 3,
         "fail_count": 0,
     }
-    required = {"id", "trigger_condition", "action", "weight"}
+    required = {"id", "owner_id", "scope", "trigger_condition", "steps", "success_weight", "fail_count"}
     for field in required:
         assert field in experience, f"Missing required field: {field}"
-    assert isinstance(experience["weight"], int) and experience["weight"] >= 0
+    assert experience["scope"] in {"user", "team", "global"}
+    assert isinstance(experience["success_weight"], int) and experience["success_weight"] >= 0
     print("  [EXPERIENCE] Output shape valid")
 
 

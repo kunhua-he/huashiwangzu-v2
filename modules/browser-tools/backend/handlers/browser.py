@@ -14,13 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import tempfile
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
 
+from app.core.exceptions import ValidationError
+from app.core.url_safety import validate_safe_url
 from app.services.module_registry import register_capability
 
 logger = logging.getLogger("v2.browser-tools").getChild("browser")
@@ -45,25 +45,10 @@ def _get_workspace_path(caller: str) -> Path:
 
 def _is_blocked_url(url: str) -> tuple[bool, str]:
     """Check URL against blocklist. Returns (blocked, reason)."""
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
-
-    # Block file:// protocol
-    if parsed.scheme == "file":
-        return True, "file:// protocol is blocked"
-
-    # Block localhost
-    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-        return True, "localhost access is blocked"
-
-    # Block private subnets (10.x, 172.16-31.x, 192.168.x)
-    if re.match(r"^10\.\d+\.\d+\.\d+$", host):
-        return True, "private subnet (10.x) is blocked"
-    if re.match(r"^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$", host):
-        return True, "private subnet (172.16-31.x) is blocked"
-    if re.match(r"^192\.168\.\d+\.\d+$", host):
-        return True, "private subnet (192.168.x) is blocked"
-
+    try:
+        validate_safe_url(url)
+    except ValidationError as exc:
+        return True, exc.message
     return False, ""
 
 
@@ -138,10 +123,36 @@ async def _launch_browser():
     return p, browser
 
 
+async def _attach_url_guard(context) -> None:
+    async def _guard(route):
+        request_url = route.request.url
+        if request_url.startswith(("about:", "data:", "blob:")):
+            await route.continue_()
+            return
+        if _blocked_error(request_url):
+            await route.abort()
+            return
+        await route.continue_()
+
+    await context.route("**/*", _guard)
+
+
+def _get_existing_session(session_id: str | None, caller: str) -> tuple[dict | None, str | None]:
+    if not session_id or session_id not in _sessions:
+        return None, "no active session, call open first"
+    session = _sessions[session_id]
+    if session.get("caller") != caller:
+        return None, "session belongs to another caller"
+    session["last_access"] = time.time()
+    return session, None
+
+
 async def _get_or_create_session(session_id: str | None, caller: str) -> dict:
     """Get or create a browser session."""
     if session_id and session_id in _sessions:
         session = _sessions[session_id]
+        if session.get("caller") != caller:
+            raise PermissionError("session belongs to another caller")
         session["last_access"] = time.time()
 
         # Ensure context is still alive
@@ -159,6 +170,7 @@ async def _get_or_create_session(session_id: str | None, caller: str) -> dict:
                 "Chrome/125.0.0.0 Safari/537.36"
             ),
         )
+        await _attach_url_guard(context)
         session["context"] = context
         page = await context.new_page()
         session["page"] = page
@@ -177,6 +189,7 @@ async def _get_or_create_session(session_id: str | None, caller: str) -> dict:
         ),
         no_viewport=True,
     )
+    await _attach_url_guard(context)
     page = await context.new_page()
     sid = session_id or str(uuid.uuid4())
 
@@ -243,9 +256,10 @@ async def _open(params: dict, caller: str) -> dict:
     if not url:
         return _err("url is required")
 
-    blocked, reason = _is_blocked_url(url)
-    if blocked:
-        return _err(reason)
+    if url:
+        blocked, reason = _is_blocked_url(url)
+        if blocked:
+            return _err(reason)
 
     try:
         session = await _get_or_create_session(params.get("session_id"), caller)
@@ -275,11 +289,10 @@ async def _open(params: dict, caller: str) -> dict:
 async def _read_text(params: dict, caller: str) -> dict:
     """Extract visible text from current page."""
     session_id = params.get("session_id")
-    if not session_id or session_id not in _sessions:
-        return _err("no active session, call open first")
+    session, session_error = _get_existing_session(session_id, caller)
+    if session_error:
+        return _err(session_error)
     try:
-        session = _sessions[session_id]
-        session["last_access"] = time.time()
         page = session["page"]
 
         title = await page.title()
@@ -308,11 +321,10 @@ async def _read_text(params: dict, caller: str) -> dict:
 async def _list_links(params: dict, caller: str) -> dict:
     """List visible links on current page (no cookies)."""
     session_id = params.get("session_id")
-    if not session_id or session_id not in _sessions:
-        return _err("no active session, call open first")
+    session, session_error = _get_existing_session(session_id, caller)
+    if session_error:
+        return _err(session_error)
     try:
-        session = _sessions[session_id]
-        session["last_access"] = time.time()
         page = session["page"]
         await _ensure_allowed_current_url(page)
 
@@ -338,15 +350,14 @@ async def _list_links(params: dict, caller: str) -> dict:
 async def _click(params: dict, caller: str) -> dict:
     """Click an element by selector or text match."""
     session_id = params.get("session_id")
-    if not session_id or session_id not in _sessions:
-        return _err("no active session, call open first")
+    session, session_error = _get_existing_session(session_id, caller)
+    if session_error:
+        return _err(session_error)
     selector = params.get("selector", "")
     text = params.get("text", "")
     if not selector and not text:
         return _err("selector or text is required")
     try:
-        session = _sessions[session_id]
-        session["last_access"] = time.time()
         page = session["page"]
         timeout = params.get("timeout", 30) * 1000
 
@@ -372,15 +383,14 @@ async def _click(params: dict, caller: str) -> dict:
 async def _type(params: dict, caller: str) -> dict:
     """Type text into an input field."""
     session_id = params.get("session_id")
-    if not session_id or session_id not in _sessions:
-        return _err("no active session, call open first")
+    session, session_error = _get_existing_session(session_id, caller)
+    if session_error:
+        return _err(session_error)
     selector = params.get("selector", "")
     text = params.get("text", "")
     if not selector:
         return _err("selector is required")
     try:
-        session = _sessions[session_id]
-        session["last_access"] = time.time()
         page = session["page"]
         timeout = params.get("timeout", 30) * 1000
         await _ensure_allowed_current_url(page)
@@ -397,11 +407,10 @@ async def _type(params: dict, caller: str) -> dict:
 async def _wait_for(params: dict, caller: str) -> dict:
     """Wait for an element, navigation, or fixed time."""
     session_id = params.get("session_id")
-    if not session_id or session_id not in _sessions:
-        return _err("no active session, call open first")
+    session, session_error = _get_existing_session(session_id, caller)
+    if session_error:
+        return _err(session_error)
     try:
-        session = _sessions[session_id]
-        session["last_access"] = time.time()
         page = session["page"]
         timeout = params.get("timeout", 30) * 1000
         selector = params.get("selector", "")
@@ -429,11 +438,10 @@ async def _wait_for(params: dict, caller: str) -> dict:
 async def _screenshot(params: dict, caller: str) -> dict:
     """Take screenshot, save to workspace file (not base64)."""
     session_id = params.get("session_id")
-    if not session_id or session_id not in _sessions:
-        return _err("no active session, call open first")
+    session, session_error = _get_existing_session(session_id, caller)
+    if session_error:
+        return _err(session_error)
     try:
-        session = _sessions[session_id]
-        session["last_access"] = time.time()
         page = session["page"]
         full_page = params.get("full_page", False)
         await _ensure_allowed_current_url(page)
@@ -476,10 +484,11 @@ async def _download(params: dict, caller: str) -> dict:
     try:
         workspace = _get_workspace_path(caller)
 
-        if session_id and session_id in _sessions:
+        if session_id:
             # Use browser context download
-            session = _sessions[session_id]
-            session["last_access"] = time.time()
+            session, session_error = _get_existing_session(session_id, caller)
+            if session_error:
+                return _err(session_error)
             page = session["page"]
             await _ensure_allowed_current_url(page)
 
@@ -521,8 +530,9 @@ async def _download(params: dict, caller: str) -> dict:
 async def _close(params: dict, caller: str) -> dict:
     """Close a browser session and release resources."""
     session_id = params.get("session_id")
-    if not session_id or session_id not in _sessions:
-        return _err("no active session")
+    _session, session_error = _get_existing_session(session_id, caller)
+    if session_error:
+        return _err(session_error)
     await _close_session(session_id)
     return _ok({"session_id": session_id, "closed": True})
 

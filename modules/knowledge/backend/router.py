@@ -16,7 +16,7 @@ from app.services.module_registry import register_capability
 
 from .services.document_service import (
     register_document, list_documents, get_document, soft_delete_document,
-    parse_and_index_document, resolve_user_id,
+    parse_and_index_document, resolve_user_id, enqueue_pipeline_task,
 )
 from .services.embedding_service import get_chunk_by_id
 from .services.search_service import hybrid_search, get_document_chunks
@@ -37,7 +37,9 @@ from .services.profile_service import get_document_profile
 from .services.relation_service import get_file_relations, get_relation_graph
 from .services.progress_service import get_document_progress, list_documents_progress
 from .services.dashboard_service import get_dashboard_stats
+from .services.pipeline_debt_service import classify_pipeline_lifecycle_debt
 from .services import pipeline_service  # noqa: F401 注册 kb_pipeline handler
+from .services import file_lifecycle_service  # noqa: F401 注册文件生命周期 handler
 
 logger = logging.getLogger("v2.knowledge").getChild("router")
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
@@ -373,28 +375,32 @@ async def api_full_pipeline(
     user: User = Depends(require_permission("editor")),
 ):
     """一键全链路：采集→融合→画像→图谱→关联（后台任务 kb_pipeline）。"""
-    import json as _json
-    from app.models.system import SystemTaskQueue
+    from app.core.exceptions import NotFound
+
+    from .models import KbDocument
 
     # 验证文档存在
-    await get_document(db, payload.document_id, user.id)
-
-    task = SystemTaskQueue(
-        task_type="kb_pipeline",
-        module="knowledge",
-        parameters=_json.dumps({
-            "document_id": payload.document_id,
-            "user_id": user.id,
-            "force_raw": payload.force_raw,
-            "force_fusion": payload.force_fusion,
-        }, ensure_ascii=False),
-        priority=5,
-        status="pending",
-        creator_id=user.id,
+    r = await db.execute(
+        select(KbDocument).where(
+            KbDocument.id == payload.document_id,
+            KbDocument.owner_id == user.id,
+            KbDocument.deleted.is_(False),
+        )
     )
-    db.add(task)
+    doc = r.scalar_one_or_none()
+    if not doc:
+        raise NotFound("Document not found")
+
+    task_info = await enqueue_pipeline_task(
+        db,
+        doc,
+        user.id,
+        force_raw=payload.force_raw,
+        force_fusion=payload.force_fusion,
+    )
     await db.commit()
-    return ApiResponse(data={"task_id": task.id, "status": "enqueued"})
+    status = "enqueued" if task_info.get("enqueued") else "already_in_flight"
+    return ApiResponse(data={"status": status, **task_info})
 
 @router.get("/documents/{document_id}/progress")
 async def api_document_progress(
@@ -575,6 +581,15 @@ async def api_pending_count(
 ):
     result = await get_pending_count(db, user.id)
     return ApiResponse(data={"pending_count": result})
+
+@router.get("/governance/pipeline-debt/dry-run")
+async def api_pipeline_debt_dry_run(
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    result = await classify_pipeline_lifecycle_debt(db, limit=limit)
+    return ApiResponse(data=result)
 
 # ── Cross-module capabilities ───────────────────────────────
 

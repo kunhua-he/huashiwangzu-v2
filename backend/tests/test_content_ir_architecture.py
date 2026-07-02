@@ -2,10 +2,13 @@
 
 Covers validator, writer, compile, download, and Agent policy.
 """
+import base64
+import hashlib
 import json
 import os
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -95,6 +98,33 @@ async def _delete_content_packages(db, package_ids: list[int]) -> None:
     await db.execute(delete(ContentPackageVersion).where(ContentPackageVersion.package_id.in_(package_ids)))
     await db.execute(delete(ContentPackage).where(ContentPackage.id.in_(package_ids)))
     await db.commit()
+
+
+async def _delete_files(db, file_ids: list[int]) -> None:
+    from app.models.file import File
+    from sqlalchemy import delete
+
+    if not file_ids:
+        return
+    await db.execute(delete(File).where(File.id.in_(file_ids)))
+    await db.commit()
+
+
+async def _delete_resources(db, resource_ids: list[int]) -> None:
+    from app.config import get_settings
+    from app.models.content import Resource, ResourceRef
+    from sqlalchemy import delete
+
+    if not resource_ids:
+        return
+    resources = [await db.get(Resource, resource_id) for resource_id in resource_ids]
+    upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+    await db.execute(delete(ResourceRef).where(ResourceRef.resource_id.in_(resource_ids)))
+    await db.execute(delete(Resource).where(Resource.id.in_(resource_ids)))
+    await db.commit()
+    for resource in resources:
+        if resource and resource.storage_path:
+            (upload_root / resource.storage_path).unlink(missing_ok=True)
 
 
 # ====================================================================
@@ -324,6 +354,211 @@ class TestWriteIR:
                 raise
 
     @pytest.mark.asyncio
+    async def test_write_ir_source_file_id_requires_file_access(self):
+        """content:write_ir must not let a caller update another user's file package by ID."""
+        from app.database import AsyncSessionLocal
+        from app.models.content import ContentPackage
+        from app.models.file import File
+        from app.routers.content import _cap_write_ir
+        from sqlalchemy import select
+
+        owner_id = 4
+        intruder_id = 5
+        file_id = None
+        package_ids: list[int] = []
+        async with AsyncSessionLocal() as db:
+            file_rec = File(
+                name=f"content-ir-security-{uuid.uuid4().hex}",
+                extension="txt",
+                size=0,
+                owner_id=owner_id,
+                storage_path="content-ir-security-test.txt",
+                mime_type="text/plain",
+                deleted=False,
+            )
+            db.add(file_rec)
+            await db.commit()
+            await db.refresh(file_rec)
+            file_id = file_rec.id
+
+        try:
+            result = await _cap_write_ir(
+                {
+                    "content_ir": _valid_document_ir(title="Unauthorized write"),
+                    "source_file_id": file_id,
+                },
+                caller=f"user:{intruder_id}",
+            )
+            assert result["success"] is False
+            assert "Permission denied" in result.get("error", "")
+
+            async with AsyncSessionLocal() as db:
+                existing = await db.execute(
+                    select(ContentPackage).where(ContentPackage.source_file_id == file_id)
+                )
+                packages = existing.scalars().all()
+                package_ids = [pkg.id for pkg in packages]
+                assert packages == []
+        finally:
+            async with AsyncSessionLocal() as db:
+                await _delete_content_packages(db, package_ids)
+                if file_id is not None:
+                    await _delete_files(db, [file_id])
+
+    @pytest.mark.asyncio
+    async def test_write_ir_requires_edit_share_and_preserves_source_owner(self):
+        """Read shares cannot write IR; edit shares write into the source owner's package."""
+        from app.database import AsyncSessionLocal
+        from app.models.content import ContentPackage
+        from app.models.file import File
+        from app.models.file_share import FileShare
+        from app.routers.content import _cap_write_ir
+        from sqlalchemy import delete, select
+
+        owner_id = 4
+        shared_user_id = 2
+        file_id = None
+        package_ids: list[int] = []
+        async with AsyncSessionLocal() as db:
+            file_rec = File(
+                name=f"content-ir-edit-share-{uuid.uuid4().hex}",
+                extension="txt",
+                size=0,
+                owner_id=owner_id,
+                storage_path="content-ir-edit-share-test.txt",
+                mime_type="text/plain",
+                deleted=False,
+            )
+            db.add(file_rec)
+            await db.flush()
+            share = FileShare(
+                file_id=file_rec.id,
+                shared_by_owner_id=owner_id,
+                shared_with_user_id=shared_user_id,
+                permission="read",
+            )
+            db.add(share)
+            await db.commit()
+            file_id = file_rec.id
+
+        try:
+            read_result = await _cap_write_ir(
+                {
+                    "content_ir": _valid_document_ir(title="Read share denied"),
+                    "source_file_id": file_id,
+                },
+                caller=f"user:{shared_user_id}",
+            )
+            assert read_result["success"] is False
+            assert "Edit permission required" in read_result.get("error", "")
+
+            async with AsyncSessionLocal() as db:
+                share = await db.scalar(
+                    select(FileShare).where(
+                        FileShare.file_id == file_id,
+                        FileShare.shared_with_user_id == shared_user_id,
+                    )
+                )
+                assert share is not None
+                share.permission = "edit"
+                await db.commit()
+
+            edit_result = await _cap_write_ir(
+                {
+                    "content_ir": _valid_document_ir(title="Edit share allowed"),
+                    "source_file_id": file_id,
+                },
+                caller=f"user:{shared_user_id}",
+            )
+            assert edit_result["success"] is True
+            package_id = edit_result["data"]["package_id"]
+            package_ids.append(package_id)
+            assert edit_result["data"]["owner_id"] == owner_id
+            assert edit_result["data"]["written_by"] == shared_user_id
+
+            async with AsyncSessionLocal() as db:
+                pkg = await db.get(ContentPackage, package_id)
+                assert pkg is not None
+                assert pkg.owner_id == owner_id
+                assert pkg.source_file_id == file_id
+        finally:
+            async with AsyncSessionLocal() as db:
+                await _delete_content_packages(db, package_ids)
+                if file_id is not None:
+                    await db.execute(delete(FileShare).where(FileShare.file_id == file_id))
+                    await db.commit()
+                    await _delete_files(db, [file_id])
+
+    @pytest.mark.asyncio
+    async def test_mixed_write_preserves_resources_and_refs(self):
+        """ContentPackage writes keep IR resources and persist ResourceRef links."""
+        from app.database import AsyncSessionLocal
+        from app.models.content import ContentPackageVersion, ResourceRef
+        from sqlalchemy import select
+
+        owner_id = 4
+        package_id = None
+        resource_id = None
+        raw_resource = b"content-ir-resource-" + uuid.uuid4().bytes
+        ir = {
+            "schema_version": "1.0",
+            "content_type": "mixed",
+            "title": "Mixed Resource Doc",
+            "blocks": [
+                {
+                    "id": "img-block",
+                    "type": "image",
+                    "text": "Diagram",
+                    "resource_ref": "r1",
+                }
+            ],
+            "resources": [
+                {
+                    "id": "r1",
+                    "resource_type": "image",
+                    "mime_type": "image/png",
+                    "filename": "diagram.png",
+                    "description": "embedded diagram",
+                    "data_b64": base64.b64encode(raw_resource).decode("ascii"),
+                }
+            ],
+        }
+
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await write_ir(
+                    db,
+                    ir,
+                    owner_id=owner_id,
+                    caller=f"user:{owner_id}",
+                )
+                package_id = result["package_id"]
+                version = await db.get(ContentPackageVersion, result["version_id"])
+                assert version is not None
+                content = json.loads(version.content_json)
+
+                assert "resources" in content
+                assert content["resources"][0]["id"] == "r1"
+                assert "data_b64" not in content["resources"][0]
+                resource_id = content["resources"][0]["resource_id"]
+                assert resource_id > 0
+                assert content["blocks"][0]["resource_ref"] == resource_id
+
+                refs = await db.execute(
+                    select(ResourceRef).where(ResourceRef.package_id == package_id)
+                )
+                ref_rows = refs.scalars().all()
+                assert len(ref_rows) == 1
+                assert ref_rows[0].resource_id == resource_id
+                assert ref_rows[0].block_id == "img-block"
+                assert ref_rows[0].version_id == result["version_id"]
+            finally:
+                if package_id is not None:
+                    await _delete_content_packages(db, [package_id])
+                if resource_id is not None:
+                    await _delete_resources(db, [resource_id])
+
+    @pytest.mark.asyncio
     async def test_consecutive_writes_different_packages(self):
         """Two writes without source_file_id create different packages."""
         from app.database import AsyncSessionLocal
@@ -433,6 +668,61 @@ class TestWriteIR:
                     if c[0][1] == "store_resource"
                 ]
                 assert len(store_calls) >= 1
+
+    @pytest.mark.asyncio
+    async def test_store_resource_requires_file_access_before_persist(self):
+        """store_resource(file_id=...) must fail before creating a resource for inaccessible files."""
+        from app.database import AsyncSessionLocal
+        from app.models.content import Resource
+        from app.models.file import File
+        from app.routers.content import _cap_store_resource
+        from sqlalchemy import select
+
+        owner_id = 4
+        intruder_id = 5
+        file_id = None
+        raw_resource = b"content-ir-denied-resource-" + uuid.uuid4().bytes
+        resource_hash = hashlib.sha256(raw_resource).hexdigest()
+        data_b64 = base64.b64encode(raw_resource).decode("ascii")
+
+        async with AsyncSessionLocal() as db:
+            file_rec = File(
+                name=f"content-ir-resource-denied-{uuid.uuid4().hex}",
+                extension="txt",
+                size=0,
+                owner_id=owner_id,
+                storage_path="content-ir-resource-denied.txt",
+                mime_type="text/plain",
+                deleted=False,
+            )
+            db.add(file_rec)
+            await db.commit()
+            await db.refresh(file_rec)
+            file_id = file_rec.id
+
+        try:
+            result = await _cap_store_resource(
+                {
+                    "data_b64": data_b64,
+                    "resource_type": "image",
+                    "mime_type": "image/png",
+                    "filename": "denied.png",
+                    "file_id": file_id,
+                },
+                caller=f"user:{intruder_id}",
+            )
+            assert result["success"] is False
+            assert "Permission denied" in result.get("error", "")
+
+            async with AsyncSessionLocal() as db:
+                existing = await db.execute(
+                    select(Resource).where(Resource.hash == resource_hash)
+                )
+                assert existing.scalar_one_or_none() is None
+        finally:
+            async with AsyncSessionLocal() as db:
+                if file_id is not None:
+                    await _delete_files(db, [file_id])
 
     @pytest.mark.asyncio
     async def test_version_conflict_detected(self):

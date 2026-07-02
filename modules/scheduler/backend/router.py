@@ -2,19 +2,18 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy import select, and_
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.database import get_db, AsyncSessionLocal
+from app.core.exceptions import ConflictError, NotFound, PermissionDenied, ValidationError
+from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
+from app.models.system import SystemTaskQueue
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.core.exceptions import NotFound, PermissionDenied, ValidationError, ConflictError
 from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
-from app.models.system import SystemTaskQueue
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.scheduler").getChild("router")
 
@@ -209,6 +208,8 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
     title = params.get("title", "定时任务")
     action_desc = params.get("action_description", "")
     creator_id = params.get("creator_id", 0)
+    if not creator_id:
+        return {"success": False, "error": "Missing creator_id"}
 
     result_text = f"定时任务「{title}」已触发。动作: {action_desc[:200]}"
     execute_result = ""
@@ -227,8 +228,8 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
                     "write_enabled": True,
                     "tools": [],
                 },
-                caller=f"scheduler:system",
-                caller_role="admin",
+                caller=f"user:{creator_id}",
+                caller_role="viewer",
             )
             if isinstance(conv_result, dict):
                 data = conv_result.get("data", {}) if conv_result.get("success") else {}
@@ -259,8 +260,8 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
         await _cc(
             "im", "notify",
             {"user_id": creator_id, "content": result_text, "title": title},
-            caller=f"scheduler:system",
-            caller_role="admin",
+            caller="system:task-worker",
+            caller_role="viewer",
         )
     except Exception as exc:
         logger.warning("IM notify unavailable, falling back to log: %s", exc)

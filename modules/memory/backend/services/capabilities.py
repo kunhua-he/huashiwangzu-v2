@@ -1,14 +1,12 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select, text
-
 from app.core.exceptions import NotFound, PermissionDenied, ValidationError
 from app.database import AsyncSessionLocal
-
 from huashiwangzu_modules.memory.models import MemoryChunk, MemoryRecord
+from sqlalchemy import select, text
 
-from . import memory_service, experience_service, embedding_service
+from . import embedding_service, experience_service, memory_service
 from .distill_service import _memory_to_dict
 
 logger = logging.getLogger("v2.memory").getChild("capabilities")
@@ -71,12 +69,14 @@ async def _cap_fuse(params: dict, caller: str) -> dict:
 
 async def _cap_dream(params: dict, caller: str) -> dict:
     owner_id = memory_service._parse_user_id(caller)
-    if not owner_id:
+    is_system = caller.startswith("system:")
+    if not owner_id and not is_system:
         raise PermissionDenied("无法解析调用者身份")
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
-        memory_report = await memory_service._do_dream(db, owner_id)
-        exp_report = await experience_service._do_experience_dream(db)
+        memory_report = await memory_service._do_dream(db, owner_id) if owner_id else {"merged": 0, "links_created": 0, "decayed": 0}
+        exp_scope = experience_service.EXPERIENCE_SCOPE_GLOBAL if is_system and not owner_id else experience_service.EXPERIENCE_SCOPE_USER
+        exp_report = await experience_service._do_experience_dream(db, owner_id if owner_id else None, exp_scope)
     return {"success": True, "data": {"memory": memory_report, "experience": exp_report}}
 
 
@@ -195,9 +195,24 @@ async def _cap_save_experience(params: dict, caller: str) -> dict:
     steps = params.get("steps", "")
     tools_used = params.get("tools_used")
     source_conversation_id = params.get("source_conversation_id")
+    caller_owner_id = memory_service._parse_user_id(caller)
+    target_owner_id, scope = experience_service._resolve_experience_write_scope(
+        caller,
+        caller_owner_id if caller_owner_id else None,
+        params.get("scope"),
+        params.get("owner_id"),
+    )
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
-        result = await experience_service._save_experience(db, trigger_condition, steps, tools_used, source_conversation_id)
+        result = await experience_service._save_experience(
+            db,
+            trigger_condition,
+            steps,
+            tools_used,
+            source_conversation_id,
+            owner_id=target_owner_id,
+            scope=scope,
+        )
     return {"success": True, "data": result}
 
 
@@ -206,9 +221,20 @@ async def _cap_match_experience(params: dict, caller: str) -> dict:
     limit = params.get("limit", 2)
     if not query.strip():
         return {"success": True, "data": []}
+    owner_id = memory_service._parse_user_id(caller)
+    is_system = caller.startswith("system:")
+    if not owner_id and not is_system:
+        raise PermissionDenied("无法解析调用者身份")
+    team_owner_ids = experience_service._parse_team_owner_ids(params.get("team_owner_ids")) if is_system else []
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
-        results = await experience_service._match_experience(db, query, limit)
+        results = await experience_service._match_experience(
+            db,
+            query,
+            limit,
+            owner_id=owner_id if owner_id else None,
+            team_owner_ids=team_owner_ids,
+        )
     return {"success": True, "data": results}
 
 
@@ -218,9 +244,21 @@ async def _cap_experience_feedback(params: dict, caller: str) -> dict:
     note = params.get("note")
     if not experience_id:
         raise ValidationError("experience_id required")
+    owner_id = memory_service._parse_user_id(caller)
+    is_system = caller.startswith("system:")
+    if not owner_id and not is_system:
+        raise PermissionDenied("无法解析调用者身份")
+    team_owner_ids = experience_service._parse_team_owner_ids(params.get("team_owner_ids")) if is_system else []
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
-        result = await experience_service._experience_feedback(db, experience_id, success, note)
+        result = await experience_service._experience_feedback(
+            db,
+            experience_id,
+            success,
+            note,
+            owner_id=owner_id if owner_id else None,
+            team_owner_ids=team_owner_ids,
+        )
     return {"success": True, "data": result}
 
 
@@ -277,7 +315,7 @@ async def _cap_recall_stable_rules(params: dict, caller: str) -> dict:
         from ..models import MemoryStableRule
         stmt = select(MemoryStableRule).where(
             MemoryStableRule.owner_id == owner_id,
-            MemoryStableRule.active == True,
+            MemoryStableRule.active.is_(True),
         )
         if rule_types:
             stmt = stmt.where(MemoryStableRule.rule_type.in_(rule_types))

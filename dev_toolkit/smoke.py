@@ -7,6 +7,7 @@ smoke_all — 一键全回归
 
 import asyncio
 import io
+import json
 import os
 import re
 import struct
@@ -14,6 +15,7 @@ import sys
 import time
 import zlib
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 
@@ -29,7 +31,7 @@ ACCOUNTS = {
 }
 
 TS = int(time.time() * 1000)
-results = []
+results: list[dict[str, Any]] = []
 _pending_deletions: list[int] = []  # 延后到所有测试结束后统一删除，避免异步 kb_pipeline 争抢
 
 # ── 辅助 ──────────────────────────────────────────────────────────────
@@ -150,10 +152,35 @@ async def call_capability(module: str, action: str, params: dict | None = None, 
             data = {"raw": resp.text[:500]}
         return {"status": resp.status_code, "data": data}
 
-def add_result(scenario: str, passed: bool, notes: str = ""):
-    results.append({"scenario": scenario, "passed": passed, "notes": notes})
-    status = "G" if passed else "R"
-    print(f"  [{status}] {scenario}: {notes[:120]}")
+def add_result(scenario: str, passed: bool, notes: str = "", status: str | None = None) -> None:
+    result_status = status or ("PASS" if passed else "FAIL")
+    results.append({"scenario": scenario, "passed": passed, "status": result_status, "notes": notes})
+    marker = {"PASS": "G", "FAIL": "R", "SKIPPED": "S"}.get(result_status, "?")
+    print(f"  [{marker}] {scenario}: {notes[:120]}")
+
+
+def _build_summary() -> dict[str, Any]:
+    total = len(results)
+    skipped = sum(1 for r in results if r.get("status") == "SKIPPED")
+    failed = sum(1 for r in results if r.get("status") == "FAIL" or not r.get("passed"))
+    passed = total - skipped - failed
+    verdict = "FAIL" if failed else ("PASS_WITH_DEBT" if skipped else "PASS")
+    return {
+        "verdict": verdict,
+        "clean_pass": verdict == "PASS",
+        "has_debt": verdict == "PASS_WITH_DEBT",
+        "counts": {"total": total, "passed": passed, "failed": failed, "skipped": skipped},
+        "skipped_scenarios": [r["scenario"] for r in results if r.get("status") == "SKIPPED"],
+    }
+
+
+def _new_failed_delta(failed_now: int, baseline_failed: int) -> int:
+    """Only count failures added by this smoke run; external cleanup is not a failure."""
+    return max(0, int(failed_now or 0) - int(baseline_failed or 0))
+
+
+def _no_new_queue_failures(failed_now: int, baseline_failed: int) -> bool:
+    return _new_failed_delta(failed_now, baseline_failed) == 0
 
 # ── A. 框架主链路 ──────────────────────────────────────────────────
 
@@ -193,7 +220,11 @@ async def test_a():
 
     # A5 recycle
     try:
-        up = await _upload_file(f"recycle-{TS}.txt", b"to recycle", "text/plain")
+        up = await _upload_file(
+            f"recycle-{TS}.bin",
+            b"to recycle",
+            "application/octet-stream",
+        )
         if up.get("success"):
             fid = up["data"]["id"]
             del_r = await probe("POST", "/api/files/delete", {"id": fid, "type": "file"})
@@ -216,6 +247,8 @@ async def test_a():
                 rest = await probe("POST", "/api/recycle/restore", {"id": recycle_id, "item_type": "file"})
                 ok = _cap_ok(rest)
                 add_result("A5 还原", ok, "restore OK")
+                if ok:
+                    await _schedule_delete(fid)
         else:
             add_result("A5 recycle", False, "upload failed")
     except Exception as e:
@@ -488,6 +521,8 @@ async def main():
             await test_ui()
         except Exception as exc:
             add_result("UI 集测 (Playwright)", False, f"group crashed: {exc}")
+    else:
+        add_result("UI 集测 (Playwright)", True, "SMOKE_SKIP_UI=1，前端 UI 集测本轮跳过", status="SKIPPED")
 
     # ── 清理 & 异步队列验证 ──
     print("\n═══════════════════ 清理 + 异步队列验证 ═══════════════════\n")
@@ -504,7 +539,7 @@ async def main():
     baseline_failed = settled.get("failed", pre_failed)
 
     # 延后删除所有测试文件
-    uploaded_count = len(_pending_deletions)
+    cleanup_count = len(_pending_deletions)
     deleted = await _flush_pending_deletions()
     print(f"  清理: 删除了 {deleted} 个测试文件")
 
@@ -515,31 +550,38 @@ async def main():
     failed_now = final.get("failed", 0)
     pending_now = final.get("pending", 0)
     oldest = final.get("oldest_waiting_seconds", 0)
-    new_failures = failed_now - baseline_failed
-    add_result("Z1 异步队列无意外新增失败", new_failures <= uploaded_count,
+    new_failures = _new_failed_delta(failed_now, baseline_failed)
+    add_result("Z1 异步队列无意外新增失败", _no_new_queue_failures(failed_now, baseline_failed),
                f"failed: {pre_failed} → {baseline_failed}(基准) → {failed_now}(终), 新增={new_failures}, "
-               f"容忍上限={len(_pending_deletions)}(测试文件数)")
+               f"清理文件数={cleanup_count}")
     add_result("Z2 异步队列积压可解释", pending_now <= 5,
                f"pending={pending_now}, oldest_waiting={oldest}s")
     print("\n" + "=" * 60)
     print("  红绿矩阵")
     print("=" * 60)
-    total = len(results)
-    passed = sum(1 for r in results if r["passed"])
-    failed = total - passed
+    summary = _build_summary()
+    counts = summary["counts"]
+    total = counts["total"]
+    passed = counts["passed"]
+    failed = counts["failed"]
+    skipped = counts["skipped"]
 
     print(f"\n{'场景':<40} {'结果':>6} {'备注'}")
     print("-" * 80)
     for r in results:
-        status = "G" if r["passed"] else "R"
-        print(f"{r['scenario']:<40} {status:>6}  {r['notes'][:100]}")
+        status = r.get("status", "PASS" if r["passed"] else "FAIL")
+        marker = {"PASS": "G", "FAIL": "R", "SKIPPED": "S"}.get(status, "?")
+        print(f"{r['scenario']:<40} {marker:>6}  {r['notes'][:100]}")
 
-    print(f"\n总计: {total} 场景, G {passed} 通过, R {failed} 失败")
-    if failed == 0:
-        print("全绿!")
-    else:
+    print(f"\n总计: {total} 场景, G {passed} 通过, R {failed} 失败, S {skipped} 跳过")
+    print("SMOKE_JSON: " + json.dumps(summary, ensure_ascii=False))
+    if failed > 0:
         print(f"{failed} 个场景失败, 请查看详情")
         sys.exit(1)
+    if skipped > 0:
+        print("通过但存在跳过项/债务，不是干净 PASS。")
+    else:
+        print("全绿!")
 
 if __name__ == "__main__":
     asyncio.run(main())

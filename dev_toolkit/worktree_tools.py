@@ -54,6 +54,17 @@ def path_matches_prefix(path: str, prefix: str) -> bool:
     return path == normalized or path.startswith(normalized + "/")
 
 
+def path_matches_forbidden(path: str, prefix: str) -> bool:
+    normalized = prefix.strip().strip("/")
+    if not normalized:
+        return False
+    if path_matches_prefix(path, normalized):
+        return True
+    if "/" not in normalized:
+        return normalized in path.split("/")
+    return False
+
+
 def default_forbidden_prefixes() -> list[str]:
     return [
         ".git",
@@ -102,7 +113,7 @@ async def worktree_guard(
     ]
     forbidden_hits = [
         path for path in paths
-        if any(path_matches_prefix(path, prefix) for prefix in forbidden)
+        if any(path_matches_forbidden(path, prefix) for prefix in forbidden)
     ]
 
     by_group = Counter(group_changed_path(path) for path in paths)

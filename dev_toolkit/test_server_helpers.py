@@ -1,10 +1,75 @@
+import sys
 from pathlib import Path
 
 import pytest
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
 pytest.importorskip("mcp")
 
-from dev_toolkit import server
+from dev_toolkit import server  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "select 1",
+        "WITH rows AS (SELECT 1 AS id) SELECT * FROM rows",
+        "EXPLAIN (FORMAT JSON) SELECT * FROM framework_file_items",
+        "SHOW max_connections",
+        "VALUES (1), (2)",
+        "SELECT '; drop table x' AS literal",
+        "SELECT '-- not a comment' AS literal",
+    ],
+)
+def test_check_sql_readonly_allows_safe_read_queries(query: str) -> None:
+    server._check_sql_readonly(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT 1; SELECT 2",
+        "SELECT 1; DROP TABLE framework_file_items",
+        "SELECT 1 -- hide the rest\n",
+        "SELECT /* hide */ 1",
+        "WITH deleted AS (DELETE FROM framework_file_items RETURNING *) SELECT * FROM deleted",
+        "EXPLAIN UPDATE framework_file_items SET name = 'x'",
+        "EXPLAIN (FORMAT JSON) CREATE TABLE audit_tmp(id int)",
+        "INSERT INTO audit_tmp VALUES (1)",
+        "SELECT * INTO audit_tmp FROM framework_file_items",
+        "DO $$ BEGIN DELETE FROM framework_file_items; END $$",
+        "SELECT 'unterminated",
+    ],
+)
+def test_check_sql_readonly_rejects_writes_chains_and_comment_bypass(query: str) -> None:
+    with pytest.raises(ValueError):
+        server._check_sql_readonly(query)
+
+
+def test_extract_prefixed_json_reads_machine_verdict_from_tail() -> None:
+    output = 'human\nSMOKE_JSON: {"verdict": "PASS_WITH_DEBT", "counts": {"skipped": 1}}\n'
+    assert server._extract_prefixed_json(output, "SMOKE_JSON:") == {
+        "verdict": "PASS_WITH_DEBT",
+        "counts": {"skipped": 1},
+    }
+
+
+def test_release_gate_response_does_not_map_debt_to_clean_success() -> None:
+    output = 'human\nRELEASE_GATE_JSON: {"verdict": "PASS_WITH_DEBT", "has_debt": true}\n'
+    result = server._build_release_gate_response(
+        output=output,
+        returncode=0,
+        skip_ui=True,
+        duration_seconds=1.2345,
+    )
+
+    assert result["success"] is False
+    assert result["clean_pass"] is False
+    assert result["release_safe"] is True
+    assert result["has_debt"] is True
+    assert result["verdict"] == "PASS_WITH_DEBT"
 
 
 def test_normalize_pytest_targets_accepts_backend_prefixed_path() -> None:

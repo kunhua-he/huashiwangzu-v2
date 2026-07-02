@@ -51,6 +51,10 @@ logger = logging.getLogger("v2.agent").getChild("runtime.tool_loop")
 
 
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
+TOOL_INTENT_FALLBACK_MESSAGE = (
+    "模型暂时没能发起工具调用。我已停止本轮工具尝试，避免错误执行；"
+    "请你再试一次，或告诉我可以直接基于已有信息回答。"
+)
 
 
 def _merge_usage(target: dict, usage: dict | None) -> None:
@@ -280,6 +284,32 @@ class ToolLoopRuntime:
                 if _single_prompt > _max_single_call_prompt_tokens:
                     _max_single_call_prompt_tokens = _single_prompt
 
+                if result.get("retry_tool_intent"):
+                    _tool_intent_retry_count += 1
+                    timeline.append({
+                        "type": "contract_retry",
+                        "content": result.get("content", ""),
+                        "started_at": time.time(),
+                        "source": "single_pass_streaming",
+                        "status": "retry" if _tool_intent_retry_count <= 1 else "degraded",
+                    })
+                    if _tool_intent_retry_count <= 1:
+                        messages.append({
+                            "role": "user",
+                            "content": result.get("retry_message") or TOOL_INTENT_RETRY_MESSAGE,
+                        })
+                        logger.info(
+                            "[DIAG] ToolLoopRuntime retrying unfinished streaming tool-intent reply",
+                        )
+                        continue
+                    full.clear()
+                    full.append(TOOL_INTENT_FALLBACK_MESSAGE)
+                    logger.warning(
+                        "ToolLoopRuntime degraded repeated unfinished streaming tool intent",
+                    )
+                    yield self._sse("token", TOOL_INTENT_FALLBACK_MESSAGE)
+                    break
+
                 if result.get("error"):
                     error_msg = str(result["error"])
                     logger.warning("ToolLoopRuntime model error: %s", error_msg)
@@ -368,7 +398,16 @@ class ToolLoopRuntime:
                                 "[DIAG] ToolLoopRuntime retrying unfinished tool-intent reply",
                             )
                             continue
-                        yield self._sse("error", "模型表示需要查询资料，但连续没有发起工具调用。")
+                        full.clear()
+                        full.append(TOOL_INTENT_FALLBACK_MESSAGE)
+                        timeline.append({
+                            "type": "contract_retry",
+                            "content": retry_tool_intent.get("content", ""),
+                            "started_at": time.time(),
+                            "source": "final_stream",
+                            "status": "degraded",
+                        })
+                        yield self._sse("token", TOOL_INTENT_FALLBACK_MESSAGE)
                         break
                     if inline_from_stream:
                         tool_calls = inline_from_stream
@@ -600,6 +639,7 @@ class ToolLoopRuntime:
                             pol = await check_action_allowed(
                                 _pol_db, effective_name, AGENT_CODE,
                                 self.owner_id, self.conversation_id,
+                                tool_args=tool.get("args") or tool.get("arguments", {}),
                             )
                         if not pol.get("allowed"):
                             return {
@@ -1138,7 +1178,9 @@ class ToolLoopRuntime:
                 "type": "_stream_result",
                 "result": {
                     "content": clean_content,
-                    "error": TOOL_INTENT_RETRY_MESSAGE,
+                    "retry_tool_intent": True,
+                    "retry_message": TOOL_INTENT_RETRY_MESSAGE,
+                    "finish_reason": "tool_intent_retry",
                     "usage": usage_data or {},
                 },
             }

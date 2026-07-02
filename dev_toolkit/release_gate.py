@@ -93,6 +93,36 @@ def audit_failed_count(audit: dict[str, Any]) -> int:
     return int(value or 0)
 
 
+def parse_prefixed_json(output: str, prefix: str) -> dict[str, Any] | None:
+    for line in reversed(output.splitlines()):
+        text = line.strip()
+        if not text.startswith(prefix):
+            continue
+        try:
+            data = json.loads(text[len(prefix):].strip())
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+    return None
+
+
+def classify_sandbox_matrix(entries: list[dict[str, Any]], elapsed: float) -> tuple[str, str]:
+    total = len(entries)
+    passed = sum(1 for e in entries if e.get("check") == "pass")
+    failed = sum(1 for e in entries if e.get("check") == "fail")
+    skipped = sum(1 for e in entries if e.get("check") == "skip")
+
+    if failed > 0:
+        fail_names = [e["module"] for e in entries if e.get("check") == "fail"]
+        return (
+            "BLOCKER",
+            f"{total} modules, {passed} pass, {failed} fail ({', '.join(fail_names)}), {skipped} skip ({elapsed:.0f}s)",
+        )
+    if skipped > 0:
+        return "DEBT", f"{total} modules, {passed} pass, {skipped} skip ({elapsed:.0f}s) — skipped is tracked debt"
+    return "PASS", f"{total} modules, {passed} pass, 0 skip ({elapsed:.0f}s)"
+
+
 async def check_health() -> None:
     try:
         r = await probe("GET", "/api/health")
@@ -139,6 +169,28 @@ async def check_smoke(skip_ui: bool) -> None:
         elapsed = time.monotonic() - started
         output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
         passed = proc.returncode == 0
+        smoke_summary = parse_prefixed_json(output, "SMOKE_JSON:")
+
+        if smoke_summary:
+            verdict = smoke_summary.get("verdict")
+            counts = smoke_summary.get("counts", {})
+            failed = int(counts.get("failed", 0) or 0) if isinstance(counts, dict) else 0
+            skipped = int(counts.get("skipped", 0) or 0) if isinstance(counts, dict) else 0
+            skipped_scenarios = smoke_summary.get("skipped_scenarios", [])
+            if not passed or verdict == "FAIL":
+                add_result("Smoke test (backends)", "BLOCKER",
+                           f"{elapsed:.0f}s, exit={proc.returncode}, failed={failed}")
+            elif verdict == "PASS_WITH_DEBT":
+                names = ", ".join(str(item) for item in skipped_scenarios[:3])
+                add_result("Smoke test (backends)", "DEBT",
+                           f"{elapsed:.0f}s, passed with debt; skipped={skipped} ({names})")
+            elif verdict == "PASS":
+                add_result("Smoke test (backends)", "PASS",
+                           f"{elapsed:.0f}s, clean pass")
+            else:
+                add_result("Smoke test (backends)", "BLOCKER",
+                           f"{elapsed:.0f}s, unknown smoke verdict={verdict!r}")
+            return
 
         # Parse the red-green matrix footer
         total = "-"
@@ -265,21 +317,8 @@ async def check_sandbox_matrix() -> None:
                        f"bad JSON output (len={len(output)}), see stderr")
             return
 
-        total = len(entries)
-        passed = sum(1 for e in entries if e.get("check") == "pass")
-        failed = sum(1 for e in entries if e.get("check") == "fail")
-        skipped = sum(1 for e in entries if e.get("check") == "skip")
-
-        if failed > 0:
-            fail_names = [e["module"] for e in entries if e.get("check") == "fail"]
-            add_result("Sandbox matrix", "BLOCKER",
-                       f"{total} modules, {passed} pass, {failed} fail ({', '.join(fail_names)}), {skipped} skip ({elapsed:.0f}s)")
-        elif passed == 0 and skipped == total:
-            add_result("Sandbox matrix", "DEBT",
-                       f"all {total} modules skipped (no sandbox tests) — needs test coverage")
-        else:
-            add_result("Sandbox matrix", "PASS",
-                       f"{total} modules, {passed} pass, {skipped} skip ({elapsed:.0f}s)")
+        level, detail = classify_sandbox_matrix(entries, elapsed)
+        add_result("Sandbox matrix", level, detail)
     except asyncio.TimeoutError:
         add_result("Sandbox matrix", "BLOCKER", "timeout (>180s)")
     except Exception as e:
@@ -288,12 +327,27 @@ async def check_sandbox_matrix() -> None:
 
 def get_final_verdict() -> str:
     blockers = [r for r in results if r["level"] == "BLOCKER"]
-    debts = [r for r in results if r["level"] == "DEBT"]
+    debts = [r for r in results if r["level"] in {"DEBT", "SKIPPED_WITH_REASON"}]
     if blockers:
         return "BLOCKER"
     if debts:
-        return "DEBT (PASS_WITH_DEBT)"
+        return "PASS_WITH_DEBT"
     return "PASS"
+
+
+def build_release_summary(verdict: str) -> dict[str, Any]:
+    levels: dict[str, int] = {}
+    for result in results:
+        level = result["level"]
+        levels[level] = levels.get(level, 0) + 1
+    return {
+        "verdict": verdict,
+        "clean_pass": verdict == "PASS",
+        "release_safe": verdict in {"PASS", "PASS_WITH_DEBT"},
+        "has_debt": verdict == "PASS_WITH_DEBT",
+        "levels": levels,
+        "results": results,
+    }
 
 
 async def main():
@@ -331,6 +385,7 @@ async def main():
     verdict = get_final_verdict()
     print(f"  RELEASE GATE VERDICT: {verdict}")
     print("=" * 70)
+    print("RELEASE_GATE_JSON: " + json.dumps(build_release_summary(verdict), ensure_ascii=False))
     print()
     print(f"{'Check':<40} {'Level':>20}  Detail")
     print("-" * 100)
@@ -344,8 +399,8 @@ async def main():
         for b in blockers:
             print(f"  - {b['check']}: {b['detail'][:200]}")
         sys.exit(1)
-    elif verdict.startswith("DEBT"):
-        debts = [r for r in results if r["level"] == "DEBT"]
+    elif verdict == "PASS_WITH_DEBT":
+        debts = [r for r in results if r["level"] in {"DEBT", "SKIPPED_WITH_REASON"}]
         print(f"🟡 DEBTS ({len(debts)}):")
         for d in debts:
             print(f"  - {d['check']}: {d['detail'][:200]}")

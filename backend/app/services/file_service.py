@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.file import Folder, File
-from app.core.exceptions import NotFound, AppException, PermissionDenied
+
+from app.core.exceptions import AppException, NotFound, PermissionDenied
+from app.models.file import File, Folder
 from app.services.file_share_service import get_accessible_file_ids
 
 
 async def get_folder_tree(db: AsyncSession, owner_id: int) -> list[Folder]:
-    result = await db.execute(select(Folder).where(Folder.owner_id == owner_id, Folder.deleted == False).order_by(Folder.name))
+    result = await db.execute(select(Folder).where(Folder.owner_id == owner_id, Folder.deleted.is_(False)).order_by(Folder.name))
     return result.scalars().all()
 
 
@@ -24,7 +26,7 @@ async def create_folder(db: AsyncSession, name: str, parent_id: int | None, owne
             Folder.name == name,
             Folder.parent_id == parent_id,
             Folder.owner_id == owner_id,
-            Folder.deleted == False,
+            Folder.deleted.is_(False),
         )
     )
     if existing.scalar_one_or_none():
@@ -38,16 +40,16 @@ async def create_folder(db: AsyncSession, name: str, parent_id: int | None, owne
 
 async def get_file_list(db: AsyncSession, folder_id: int, owner_id: int, page: int = 1, page_size: int = 50):
     if folder_id == 0:
-        subfolders = await db.execute(select(Folder).where(Folder.parent_id.is_(None), Folder.owner_id == owner_id, Folder.deleted == False).order_by(Folder.name))
+        subfolders = await db.execute(select(Folder).where(Folder.parent_id.is_(None), Folder.owner_id == owner_id, Folder.deleted.is_(False)).order_by(Folder.name))
     else:
         # Verify folder exists and belongs to user
         folder = await db.get(Folder, folder_id)
         if not folder or folder.deleted or folder.owner_id != owner_id:
             raise NotFound("Folder not found")
-        subfolders = await db.execute(select(Folder).where(Folder.parent_id == folder_id, Folder.owner_id == owner_id, Folder.deleted == False).order_by(Folder.name))
+        subfolders = await db.execute(select(Folder).where(Folder.parent_id == folder_id, Folder.owner_id == owner_id, Folder.deleted.is_(False)).order_by(Folder.name))
     folder_list = [{"id": f.id, "name": f.name, "extension": None, "size": 0, "created_at": f.created_at, "storage_path": None, "is_folder": True, "parent_id": f.parent_id, "mime_type": None} for f in subfolders.scalars().all()]
     cond = File.folder_id.is_(None) if folder_id == 0 else File.folder_id == folder_id
-    result = await db.execute(select(File).where(cond, File.owner_id == owner_id, File.deleted == False).order_by(File.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
+    result = await db.execute(select(File).where(cond, File.owner_id == owner_id, File.deleted.is_(False)).order_by(File.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
     file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "created_at": f.created_at, "storage_path": f.storage_path, "is_folder": False, "parent_id": f.folder_id, "mime_type": f.mime_type} for f in result.scalars().all()]
     return {"items": folder_list + file_list, "total": len(folder_list) + len(file_list), "page": page, "page_size": page_size}
 
@@ -60,13 +62,13 @@ async def rename_item(db: AsyncSession, item_type: str, item_id: int, new_name: 
     if item_type == "folder":
         existing = await db.execute(
             select(Folder).where(Folder.name == new_name, Folder.parent_id == item.parent_id,
-                                 Folder.owner_id == owner_id, Folder.deleted == False, Folder.id != item_id)
+                                 Folder.owner_id == owner_id, Folder.deleted.is_(False), Folder.id != item_id)
         )
     else:
         existing = await db.execute(
             select(File).where(File.name == new_name, File.extension == item.extension,
                                File.folder_id == item.folder_id, File.owner_id == owner_id,
-                               File.deleted == False, File.id != item_id)
+                               File.deleted.is_(False), File.id != item_id)
         )
     if existing.scalar_one_or_none():
         raise AppException("An item with the same name already exists in this directory", status_code=409)
@@ -90,7 +92,7 @@ async def move_item(db: AsyncSession, item_type: str, item_id: int, target_folde
         # Check name conflict in target directory
         existing = await db.execute(
             select(Folder).where(Folder.name == item.name, Folder.parent_id == target_folder_id,
-                                 Folder.owner_id == owner_id, Folder.deleted == False, Folder.id != item_id)
+                                 Folder.owner_id == owner_id, Folder.deleted.is_(False), Folder.id != item_id)
         )
         if existing.scalar_one_or_none():
             raise AppException("A folder with the same name already exists in the target directory", status_code=409)
@@ -100,7 +102,7 @@ async def move_item(db: AsyncSession, item_type: str, item_id: int, target_folde
         existing = await db.execute(
             select(File).where(File.name == item.name, File.extension == item.extension,
                                File.folder_id == target_folder_id, File.owner_id == owner_id,
-                               File.deleted == False, File.id != item_id)
+                               File.deleted.is_(False), File.id != item_id)
         )
         if existing.scalar_one_or_none():
             raise AppException("A file with the same name already exists in the target directory", status_code=409)
@@ -147,11 +149,11 @@ async def _recursive_delete_folder(db: AsyncSession, folder_id: int):
     if folder and not folder.deleted:
         folder.deleted = True
         folder.deleted_at = now
-    files = await db.execute(select(File).where(File.folder_id == folder_id, File.deleted == False))
+    files = await db.execute(select(File).where(File.folder_id == folder_id, File.deleted.is_(False)))
     for f in files.scalars():
         f.deleted = True
         f.deleted_at = now
-    subfolders = await db.execute(select(Folder).where(Folder.parent_id == folder_id, Folder.deleted == False))
+    subfolders = await db.execute(select(Folder).where(Folder.parent_id == folder_id, Folder.deleted.is_(False)))
     for sf in subfolders.scalars():
         await _recursive_delete_folder(db, sf.id)
 
@@ -177,10 +179,26 @@ async def check_file_access(db: AsyncSession, file_id: int, user_id: int) -> Fil
     return file
 
 
+async def check_file_write_access(db: AsyncSession, file_id: int, user_id: int) -> File:
+    """Return a writable file record or raise a framework API exception."""
+    file = await db.get(File, file_id)
+    if not file or file.deleted:
+        raise NotFound("File not found")
+    if file.owner_id == user_id:
+        return file
+
+    from app.services.file_share_service import check_file_write_access as check_shared_file_write_access
+
+    access = await check_shared_file_write_access(db, file_id, user_id)
+    if not access["accessible"]:
+        raise PermissionDenied("Write permission denied")
+    return file
+
+
 async def search_files(db: AsyncSession, owner_id: int, keyword: str = "", extension: str | None = None, page: int = 1, page_size: int = 50) -> dict:
     # Get all accessible file IDs (owned + shared)
     accessible_ids = await get_accessible_file_ids(db, owner_id)
-    base = File.deleted == False
+    base = File.deleted.is_(False)
     fq = select(File).where(base, File.id.in_(accessible_ids))
     if keyword:
         fq = fq.where(File.name.ilike(f"%{keyword}%"))
@@ -191,7 +209,7 @@ async def search_files(db: AsyncSession, owner_id: int, keyword: str = "", exten
     file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "folder_id": f.folder_id, "created_at": f.created_at, "is_folder": False} for f in result.scalars().all()]
     if extension:
         return {"items": file_list, "total": total, "page": page, "page_size": page_size}
-    fld_q = select(Folder).where(Folder.deleted == False, Folder.owner_id == owner_id)
+    fld_q = select(Folder).where(Folder.deleted.is_(False), Folder.owner_id == owner_id)
     if keyword:
         fld_q = fld_q.where(Folder.name.ilike(f"%{keyword}%"))
     fld_total = len((await db.execute(fld_q.with_only_columns(Folder.id))).scalars().all())

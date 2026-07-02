@@ -2,12 +2,11 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from app.core.exceptions import NotFound, PermissionDenied, ValidationError
+from huashiwangzu_modules.memory.models import MemoryExperience
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFound, ValidationError
-
-from huashiwangzu_modules.memory.models import MemoryExperience
 from . import embedding_service
 
 logger = logging.getLogger("v2.memory").getChild("experience_service")
@@ -15,11 +14,92 @@ logger = logging.getLogger("v2.memory").getChild("experience_service")
 EXPERIENCE_SIMILARITY_THRESHOLD = 0.3
 EXPERIENCE_DEDUP_THRESHOLD = 0.85
 EXPERIENCE_FAIL_PENALTY = 2
+EXPERIENCE_SCOPE_USER = "user"
+EXPERIENCE_SCOPE_TEAM = "team"
+EXPERIENCE_SCOPE_GLOBAL = "global"
+EXPERIENCE_SCOPES = {EXPERIENCE_SCOPE_USER, EXPERIENCE_SCOPE_TEAM, EXPERIENCE_SCOPE_GLOBAL}
+
+
+def _is_system_caller(caller: str) -> bool:
+    return bool(caller and caller.startswith("system:"))
+
+
+def _parse_team_owner_ids(raw: object) -> list[int]:
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list):
+        raise ValidationError("team_owner_ids must be a list")
+    result = []
+    for item in raw:
+        try:
+            value = int(item)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("team_owner_ids must contain integers") from exc
+        if value > 0:
+            result.append(value)
+    return result
+
+
+def _resolve_experience_write_scope(
+    caller: str,
+    caller_owner_id: int | None,
+    requested_scope: str | None = None,
+    requested_owner_id: int | None = None,
+) -> tuple[int | None, str]:
+    scope = (requested_scope or "").strip().lower()
+    if not scope:
+        scope = EXPERIENCE_SCOPE_GLOBAL if _is_system_caller(caller) and not caller_owner_id else EXPERIENCE_SCOPE_USER
+    if scope not in EXPERIENCE_SCOPES:
+        raise ValidationError("scope must be user/team/global")
+
+    if scope == EXPERIENCE_SCOPE_GLOBAL:
+        if not _is_system_caller(caller):
+            raise PermissionDenied("全局经验只能由系统 curated 通路写入")
+        return None, EXPERIENCE_SCOPE_GLOBAL
+
+    if scope == EXPERIENCE_SCOPE_TEAM:
+        if not _is_system_caller(caller):
+            raise PermissionDenied("团队经验必须由系统通路写入")
+        if not requested_owner_id:
+            raise ValidationError("team scope requires owner_id")
+        return int(requested_owner_id), EXPERIENCE_SCOPE_TEAM
+
+    if caller_owner_id:
+        return caller_owner_id, EXPERIENCE_SCOPE_USER
+    if _is_system_caller(caller) and requested_owner_id:
+        return int(requested_owner_id), EXPERIENCE_SCOPE_USER
+    raise PermissionDenied("无法解析调用者身份")
+
+
+def _access_condition(owner_id: int | None, team_owner_ids: list[int]) -> tuple[str, dict]:
+    clauses = ["COALESCE(scope, 'global') = 'global'"]
+    params: dict = {}
+    if owner_id:
+        clauses.append("(scope = 'user' AND owner_id = :owner_id)")
+        params["owner_id"] = owner_id
+    if team_owner_ids:
+        clauses.append("(scope = 'team' AND owner_id = ANY(CAST(:team_owner_ids AS INTEGER[])))")
+        params["team_owner_ids"] = team_owner_ids
+    return "(" + " OR ".join(clauses) + ")", params
+
+
+def _scope_owner_condition(scope: str, owner_id: int | None) -> tuple[str, dict]:
+    if owner_id is None:
+        return "scope = :scope AND owner_id IS NULL", {"scope": scope}
+    return "scope = :scope AND owner_id = :scope_owner_id", {"scope": scope, "scope_owner_id": owner_id}
+
+
+def _aliased_scope_owner_condition(alias: str, scope: str, owner_id: int | None) -> str:
+    if owner_id is None:
+        return f"COALESCE({alias}.scope, 'global') = :scope AND {alias}.owner_id IS NULL"
+    return f"{alias}.scope = :scope AND {alias}.owner_id = :scope_owner_id"
 
 
 async def _experience_to_dict(exp) -> dict:
     return {
         "id": exp.id,
+        "owner_id": exp.owner_id,
+        "scope": exp.scope,
         "trigger_condition": exp.trigger_condition,
         "steps": exp.steps,
         "tools_used": exp.tools_used,
@@ -39,6 +119,9 @@ async def _save_experience(
     steps: str,
     tools_used: str | None = None,
     source_conversation_id: int | None = None,
+    *,
+    owner_id: int | None = None,
+    scope: str = EXPERIENCE_SCOPE_USER,
 ) -> dict:
     if isinstance(steps, (list, dict)):
         steps = json.dumps(steps, ensure_ascii=False)
@@ -47,8 +130,30 @@ async def _save_experience(
     if not (trigger_condition or "").strip() or not (steps or "").strip():
         raise ValidationError("trigger_condition and steps required")
 
-    trigger_vec = await embedding_service._compute_embedding(trigger_condition)
+    scope_owner_sql, scope_owner_params = _scope_owner_condition(scope, owner_id)
+    exact_result = await db.execute(
+        text(f"""
+            UPDATE memory_experiences
+            SET success_weight = COALESCE(success_weight, 1) + 1,
+                updated_at = NOW()
+            WHERE active = true
+              AND {scope_owner_sql}
+              AND trigger_condition = :trigger_condition
+              AND steps = :steps
+            RETURNING id, success_weight
+        """),
+        {
+            **scope_owner_params,
+            "trigger_condition": trigger_condition,
+            "steps": steps,
+        },
+    )
+    exact_row = exact_result.mappings().first()
+    if exact_row:
+        await db.commit()
+        return {"id": exact_row["id"], "deduplicated": True, "success_weight": exact_row["success_weight"]}
 
+    trigger_vec = await embedding_service._compute_embedding(trigger_condition)
     if trigger_vec:
         try:
             vec_literal = "[" + ",".join(str(v) for v in trigger_vec) + "]"
@@ -56,12 +161,13 @@ async def _save_experience(
                 SELECT id, trigger_condition, steps, success_weight
                 FROM memory_experiences
                 WHERE active = true
+                  AND {scope_owner_sql}
                   AND trigger_embedding IS NOT NULL
-                  AND (1 - (trigger_embedding <=> '{vec_literal}'::vector)) >= :threshold
-                ORDER BY (1 - (trigger_embedding <=> '{vec_literal}'::vector)) DESC
+                  AND (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) >= :threshold
+                ORDER BY (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) DESC
                 LIMIT 3
             """)
-            r = await db.execute(sql, {"threshold": EXPERIENCE_DEDUP_THRESHOLD})
+            r = await db.execute(sql, {**scope_owner_params, "threshold": EXPERIENCE_DEDUP_THRESHOLD, "query_vec": vec_literal})
             candidates = r.mappings().all()
         except Exception as e:
             logger.warning("Experience dedup vector search failed: %s", e)
@@ -77,49 +183,115 @@ async def _save_experience(
             except (json.JSONDecodeError, TypeError):
                 same_tools = False
             if same_tools:
-                await db.execute(
-                    text("UPDATE memory_experiences SET success_weight = success_weight + 1, updated_at = NOW() WHERE id = :id"),
-                    {"id": cand["id"]},
+                update_result = await db.execute(
+                    text(f"""
+                        UPDATE memory_experiences
+                        SET success_weight = COALESCE(success_weight, 1) + 1,
+                            updated_at = NOW()
+                        WHERE id = :id
+                          AND {scope_owner_sql}
+                        RETURNING success_weight
+                    """),
+                    {**scope_owner_params, "id": cand["id"]},
                 )
+                updated = update_result.mappings().first()
                 await db.commit()
-                return {"id": cand["id"], "deduplicated": True, "success_weight": (cand["success_weight"] or 1) + 1}
+                return {
+                    "id": cand["id"],
+                    "deduplicated": True,
+                    "success_weight": updated["success_weight"] if updated else (cand["success_weight"] or 1) + 1,
+                }
 
-    exp = MemoryExperience(
-        trigger_condition=trigger_condition,
-        trigger_embedding=trigger_vec,
-        steps=steps,
-        tools_used=tools_used,
-        source_conversation_id=source_conversation_id,
+    trigger_vec_literal = "[" + ",".join(str(v) for v in trigger_vec) + "]" if trigger_vec else None
+    inserted = await db.execute(
+        text("""
+            INSERT INTO memory_experiences (
+                owner_id, scope, trigger_condition, trigger_embedding, steps,
+                tools_used, source_conversation_id, active, created_at, updated_at
+            )
+            VALUES (
+                :owner_id, :scope, :trigger_condition, CAST(:trigger_vec AS vector), :steps,
+                :tools_used, :source_conversation_id, true, NOW(), NOW()
+            )
+            ON CONFLICT DO NOTHING
+            RETURNING id, success_weight
+        """),
+        {
+            "owner_id": owner_id,
+            "scope": scope,
+            "trigger_condition": trigger_condition,
+            "trigger_vec": trigger_vec_literal,
+            "steps": steps,
+            "tools_used": tools_used,
+            "source_conversation_id": source_conversation_id,
+        },
     )
-    db.add(exp)
+    insert_row = inserted.mappings().first()
     await db.commit()
-    await db.refresh(exp)
-    return {"id": exp.id, "deduplicated": False, "success_weight": 1}
+    if insert_row:
+        return {"id": insert_row["id"], "deduplicated": False, "success_weight": insert_row["success_weight"]}
+
+    duplicate_result = await db.execute(
+        text(f"""
+            UPDATE memory_experiences
+            SET success_weight = COALESCE(success_weight, 1) + 1,
+                updated_at = NOW()
+            WHERE active = true
+              AND {scope_owner_sql}
+              AND trigger_condition = :trigger_condition
+              AND steps = :steps
+            RETURNING id, success_weight
+        """),
+        {
+            **scope_owner_params,
+            "trigger_condition": trigger_condition,
+            "steps": steps,
+        },
+    )
+    duplicate_row = duplicate_result.mappings().first()
+    await db.commit()
+    if duplicate_row:
+        return {"id": duplicate_row["id"], "deduplicated": True, "success_weight": duplicate_row["success_weight"]}
+    raise ValidationError("经验保存失败")
 
 
 async def _match_experience(
     db: AsyncSession,
     query: str,
     limit: int = 2,
+    *,
+    owner_id: int | None = None,
+    team_owner_ids: list[int] | None = None,
 ) -> list[dict]:
     query_vec = await embedding_service._compute_embedding(query)
+    access_sql, access_params = _access_condition(owner_id, team_owner_ids or [])
     if query_vec:
         try:
             vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
             sql = text(f"""
-                SELECT id, trigger_condition, steps, tools_used,
+                SELECT id, owner_id, COALESCE(scope, 'global') AS scope,
+                       trigger_condition, steps, tools_used,
                        success_weight, fail_count, fail_notes,
                        source_conversation_id, created_at, updated_at,
-                       (1 - (trigger_embedding <=> '{vec_literal}'::vector)) AS similarity
+                       (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) AS similarity,
+                       CASE COALESCE(scope, 'global')
+                           WHEN 'user' THEN 0
+                           WHEN 'team' THEN 1
+                           ELSE 2
+                       END AS scope_rank
                 FROM memory_experiences
                 WHERE active = true
+                  AND {access_sql}
                   AND trigger_embedding IS NOT NULL
-                  AND (1 - (trigger_embedding <=> '{vec_literal}'::vector)) >= :threshold
-                ORDER BY (success_weight - fail_count * :penalty) DESC,
+                  AND (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) >= :threshold
+                ORDER BY scope_rank ASC,
+                         (success_weight - fail_count * :penalty) DESC,
                          similarity DESC
                 LIMIT :limit
             """)
             r = await db.execute(sql, {
+                **access_params,
+                "query_vec": vec_literal,
                 "threshold": EXPERIENCE_SIMILARITY_THRESHOLD,
                 "penalty": EXPERIENCE_FAIL_PENALTY,
                 "limit": limit,
@@ -136,6 +308,7 @@ async def _match_experience(
         d = dict(row)
         d["similarity"] = float(d.get("similarity", 0))
         d["net_weight"] = (d.get("success_weight", 0) or 0) - (d.get("fail_count", 0) or 0) * EXPERIENCE_FAIL_PENALTY
+        d.pop("scope_rank", None)
         if isinstance(d.get("created_at"), datetime):
             d["created_at"] = d["created_at"].isoformat()
         if isinstance(d.get("updated_at"), datetime):
@@ -149,50 +322,83 @@ async def _experience_feedback(
     experience_id: int,
     success: bool,
     note: str | None = None,
+    *,
+    owner_id: int | None = None,
+    team_owner_ids: list[int] | None = None,
 ) -> dict:
-    exp = await db.get(MemoryExperience, experience_id)
-    if not exp:
-        raise NotFound("经验不存在")
+    access_sql, access_params = _access_condition(owner_id, team_owner_ids or [])
     if success:
-        exp.success_weight = (exp.success_weight or 1) + 1
-        exp.updated_at = datetime.now(timezone.utc)
+        result = await db.execute(
+            text(f"""
+                UPDATE memory_experiences
+                SET success_weight = COALESCE(success_weight, 1) + 1,
+                    updated_at = NOW()
+                WHERE id = :id
+                  AND {access_sql}
+                RETURNING id, success_weight, fail_count
+            """),
+            {**access_params, "id": experience_id},
+        )
     else:
-        exp.fail_count = (exp.fail_count or 0) + 1
-        existing = []
-        if exp.fail_notes:
-            try:
-                existing = json.loads(exp.fail_notes) if isinstance(exp.fail_notes, str) else exp.fail_notes or []
-            except (json.JSONDecodeError, TypeError):
-                existing = []
+        note_payload = None
         if note:
-            existing.append({"note": note, "time": datetime.now(timezone.utc).isoformat()})
-        exp.fail_notes = json.dumps(existing, ensure_ascii=False)
-        exp.updated_at = datetime.now(timezone.utc)
+            note_payload = json.dumps([{"note": note, "time": datetime.now(timezone.utc).isoformat()}], ensure_ascii=False)
+        result = await db.execute(
+            text(f"""
+                UPDATE memory_experiences
+                SET fail_count = COALESCE(fail_count, 0) + 1,
+                    fail_notes = CASE
+                        WHEN :note_payload IS NULL THEN fail_notes
+                        ELSE (COALESCE(NULLIF(fail_notes, ''), '[]')::jsonb || CAST(:note_payload AS jsonb))::text
+                    END,
+                    updated_at = NOW()
+                WHERE id = :id
+                  AND {access_sql}
+                RETURNING id, success_weight, fail_count
+            """),
+            {**access_params, "id": experience_id, "note_payload": note_payload},
+        )
+    row = result.mappings().first()
+    if not row:
+        exists = await db.scalar(text("SELECT 1 FROM memory_experiences WHERE id = :id"), {"id": experience_id})
+        if exists:
+            raise PermissionDenied("只能反馈自己或可见范围内的经验")
+        raise NotFound("经验不存在")
     await db.commit()
     return {
         "id": experience_id,
         "success": success,
-        "success_weight": exp.success_weight,
-        "fail_count": exp.fail_count,
+        "success_weight": row["success_weight"],
+        "fail_count": row["fail_count"],
     }
 
 
-async def _do_experience_dream(db: AsyncSession) -> dict:
+async def _do_experience_dream(
+    db: AsyncSession,
+    owner_id: int | None = None,
+    scope: str = EXPERIENCE_SCOPE_USER,
+) -> dict:
     report = {"merged": 0, "deactivated": 0}
+    scope_owner_sql, scope_owner_params = _scope_owner_condition(scope, owner_id)
+    scope_owner_sql_a = _aliased_scope_owner_condition("a", scope, owner_id)
+    scope_owner_sql_b = _aliased_scope_owner_condition("b", scope, owner_id)
 
     try:
-        merge_sql = text("""
+        merge_sql = text(f"""
             SELECT a.id AS keep_id, b.id AS drop_id,
                    (1 - (a.trigger_embedding <=> b.trigger_embedding)) AS similarity
             FROM memory_experiences a
             JOIN memory_experiences b ON a.id < b.id
             WHERE a.active = true AND b.active = true
+              AND {scope_owner_sql_a}
+              AND {scope_owner_sql_b}
               AND a.trigger_embedding IS NOT NULL
               AND b.trigger_embedding IS NOT NULL
               AND (1 - (a.trigger_embedding <=> b.trigger_embedding)) >= :threshold
             ORDER BY similarity DESC
         """)
-        merge_candidates = await db.execute(merge_sql, {"threshold": EXPERIENCE_DEDUP_THRESHOLD})
+        merge_params = {**scope_owner_params, "threshold": EXPERIENCE_DEDUP_THRESHOLD}
+        merge_candidates = await db.execute(merge_sql, merge_params)
         merge_rows = merge_candidates.mappings().all()
         dropped = set()
         for row in merge_rows:
@@ -214,14 +420,15 @@ async def _do_experience_dream(db: AsyncSession) -> dict:
 
     try:
         deact_result = await db.execute(
-            text("""
+            text(f"""
                 UPDATE memory_experiences
                 SET active = false
                 WHERE active = true
+                  AND {scope_owner_sql}
                   AND (success_weight - fail_count * :penalty) <= 0
                   AND fail_count >= 3
             """),
-            {"penalty": EXPERIENCE_FAIL_PENALTY},
+            {**scope_owner_params, "penalty": EXPERIENCE_FAIL_PENALTY},
         )
         report["deactivated"] = deact_result.rowcount
     except Exception as e:

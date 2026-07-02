@@ -1,14 +1,12 @@
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from huashiwangzu_modules.memory.init_db import run_init
+from huashiwangzu_modules.memory.models import MemoryChunk, MemoryRecord
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ValidationError
-
-from huashiwangzu_modules.memory.models import MemoryRecord, MemoryLink, MemoryChunk
-from huashiwangzu_modules.memory.init_db import run_init
 from . import distill_service, embedding_service
 from .embedding_service import _update_embedding_sql
 
@@ -251,15 +249,20 @@ async def _do_dream(db: AsyncSession, owner_id: int) -> dict:
             "threshold": 0.55,
         })
         for row in link_candidates.mappings().all():
-            link = MemoryLink(
-                from_id=row["from_id"],
-                to_id=row["to_id"],
-                relation="semantic_related",
-                weight=row["similarity"],
-                owner_id=owner_id,
+            insert_result = await db.execute(
+                text("""
+                    INSERT INTO memory_links (from_id, to_id, relation, weight, owner_id, created_at, updated_at)
+                    VALUES (:from_id, :to_id, 'semantic_related', :weight, :owner_id, NOW(), NOW())
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "from_id": row["from_id"],
+                    "to_id": row["to_id"],
+                    "weight": row["similarity"],
+                    "owner_id": owner_id,
+                },
             )
-            db.add(link)
-            report["links_created"] += 1
+            report["links_created"] += max(insert_result.rowcount or 0, 0)
     except Exception as e:
         logger.warning("Dream link creation failed: %s", e)
 
@@ -285,8 +288,9 @@ async def _do_dream(db: AsyncSession, owner_id: int) -> dict:
 
 async def _enqueue_post_save(memory_id: int, content: str, source: str | None) -> None:
     try:
-        from app.models.system import SystemTaskQueue
         from app.database import AsyncSessionLocal
+        from app.models.system import SystemTaskQueue
+
         async with AsyncSessionLocal() as eq_db:
             task = SystemTaskQueue(
                 task_type="memory_post_save",

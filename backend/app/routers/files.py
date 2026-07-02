@@ -1,19 +1,42 @@
+import logging
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
+from app.middleware.auth import require_permission
+from app.models.recycle import RecycleItem
+from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.file import (
-    FolderResponse, FileResponse, CreateFolderRequest, RenameRequest, MoveRequest, DeleteRequest,
+    CreateFolderRequest,
+    DeleteRequest,
+    FolderResponse,
+    MoveRequest,
+    RenameRequest,
 )
-from app.middleware.auth import require_permission
-from app.models.user import User
-from app.models.recycle import RecycleItem
-from app.services import file_service, file_ops_service
+from app.services import file_ops_service, file_service
 from app.services.system_service import create_log
-from datetime import datetime, timezone
-from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/files", tags=["files"])
+logger = logging.getLogger("v2.files")
+
+
+async def _emit_file_event(event_name: str, file_id: int, user: User) -> None:
+    """Best-effort module lifecycle event; file operations remain authoritative."""
+    try:
+        from app.services.module_events import emit_module_event
+
+        await emit_module_event(
+            event_name,
+            {"file_id": file_id, "owner_id": user.id},
+            caller=f"user:{user.id}",
+            caller_role=user.role,
+        )
+    except Exception as exc:
+        logger.warning("%s event emission failed for file_id=%d: %s", event_name, file_id, exc)
 
 
 @router.get("/tree")
@@ -68,6 +91,8 @@ async def delete_item(body: DeleteRequest, db: AsyncSession = Depends(get_db), u
     recycle_item = RecycleItem(origin_id=body.id, item_type=body.type, name=item.name, owner_id=user.id, deleted_at=datetime.now(timezone.utc))
     db.add(recycle_item)
     await db.commit()
+    if body.type == "file":
+        await _emit_file_event("file.deleted", body.id, user)
     return ApiResponse(data={"message": "Deleted"})
 
 
@@ -101,6 +126,8 @@ async def batch_delete(body: BatchRequest, db: AsyncSession = Depends(get_db), u
             recycle_item = RecycleItem(origin_id=item.id, item_type=item.item_type, name=deleted.name, owner_id=user.id, deleted_at=datetime.now(timezone.utc))
             db.add(recycle_item)
             await db.commit()
+            if item.item_type == "file":
+                await _emit_file_event("file.deleted", item.id, user)
             results.append({"id": item.id, "type": item.item_type, "success": True, "error": None})
             success_count += 1
             await create_log(db, "info", "file_system", "delete_to_trash", f"Batch deleted {item.item_type} {item.id}", user_id=user.id)

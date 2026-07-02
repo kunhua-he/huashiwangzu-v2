@@ -2,15 +2,35 @@
 
 Tests the parsing, state management, and generation pipeline.
 """
+import asyncio
+import json
 import os
 import sys
-import json
 import tempfile
-import asyncio
+from datetime import UTC, datetime
 
 # Add module root to path (for `from backend.xxx` imports)
 _MODULE_ROOT = os.path.dirname(os.path.dirname(__file__))  # modules/excel-engine/
+_REPO_ROOT = os.path.abspath(os.path.join(_MODULE_ROOT, '..', '..'))
+_BACKEND_ROOT = os.path.join(_REPO_ROOT, 'backend')
 sys.path.insert(0, _MODULE_ROOT)
+sys.path.insert(1, _BACKEND_ROOT)
+
+
+def _load_backend_env() -> None:
+    env_path = os.path.join(_BACKEND_ROOT, '.env')
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, encoding='utf-8') as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_backend_env()
 
 # Test constants
 TEST_DATA = {
@@ -32,7 +52,7 @@ TEST_DATA = {
 
 def test_address_tool():
     """Test address utility functions"""
-    from backend.tool.address import parse_address, rc_to_address, col_letter
+    from backend.tool.address import col_letter, parse_address, rc_to_address
 
     assert parse_address('A1') == {'r': 1, 'c': 0}
     assert parse_address('B8') == {'r': 8, 'c': 1}
@@ -69,8 +89,8 @@ def test_formula():
 
 def test_state_manager():
     """Test state manager operations"""
-    from backend.state.manager import cell_set_text, cell_get_text, cell_get_style_ref, cell_set_style_val
     from backend.state.db_ops import empty_state
+    from backend.state.manager import cell_get_style_ref, cell_get_text, cell_set_style_val, cell_set_text
 
     state = empty_state()
     assert state['total_rows'] == 40
@@ -134,10 +154,10 @@ def test_csv_generation():
         os.unlink(tmp_path)
 
 
-async def test_edit_operations():
+async def _async_test_edit_operations():
     """Test edit operations"""
-    from backend.table.edit import EditOperations
     from backend.state.manager import cell_get_text
+    from backend.table.edit import EditOperations
 
     state = dict(TEST_DATA)
     result = await EditOperations._input(state, 'test_key', ['A1'], {'value': '测试值'})
@@ -152,10 +172,13 @@ async def test_edit_operations():
     print('  ✓ test_edit_operations passed')
 
 
-async def test_style_operations():
+def test_edit_operations():
+    asyncio.run(_async_test_edit_operations())
+
+
+async def _async_test_style_operations():
     """Test style operations"""
     from backend.table.style_ops import StyleOperations
-    from backend.state.manager import cell_get_style_ref
 
     state = dict(TEST_DATA)
     result = await StyleOperations._toggle_style(state, ['A1'], 'bold')
@@ -167,10 +190,13 @@ async def test_style_operations():
     print('  ✓ test_style_operations passed')
 
 
-async def test_row_col_operations():
+def test_style_operations():
+    asyncio.run(_async_test_style_operations())
+
+
+async def _async_test_row_col_operations():
     """Test row/column operations"""
     from backend.table.row_col import RowColOperations
-    from backend.tool.address import rc_to_address
 
     state = dict(TEST_DATA)
     old_a2_value = state.get('cells', {}).get('A2', '')
@@ -183,7 +209,11 @@ async def test_row_col_operations():
     print('  ✓ test_row_col_operations passed')
 
 
-async def test_clipboard():
+def test_row_col_operations():
+    asyncio.run(_async_test_row_col_operations())
+
+
+async def _async_test_clipboard():
     """Test clipboard operations"""
     from backend.table.clipboard import ClipboardOperations
 
@@ -199,6 +229,214 @@ async def test_clipboard():
     print('  ✓ test_clipboard passed')
 
 
+def test_clipboard():
+    asyncio.run(_async_test_clipboard())
+
+
+async def _cleanup_db_state(db, state_prefix: str, file_name_prefix: str) -> None:
+    from sqlalchemy import text
+
+    wb_rows = await db.execute(
+        text("SELECT id FROM excel_workbooks WHERE state_key LIKE :prefix"),
+        {"prefix": f"{state_prefix}%"},
+    )
+    workbook_ids = [row[0] for row in wb_rows.fetchall()]
+    if workbook_ids:
+        sheet_rows = await db.execute(
+            text("SELECT id FROM excel_sheets WHERE workbook_id = ANY(:workbook_ids)"),
+            {"workbook_ids": workbook_ids},
+        )
+        sheet_ids = [row[0] for row in sheet_rows.fetchall()]
+        if sheet_ids:
+            await db.execute(text("DELETE FROM excel_cells WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+            await db.execute(text("DELETE FROM excel_col_widths WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+            await db.execute(text("DELETE FROM excel_row_heights WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+            await db.execute(text("DELETE FROM excel_history WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+            await db.execute(text("DELETE FROM excel_redo_stack WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+        await db.execute(text("DELETE FROM excel_sheets WHERE workbook_id = ANY(:workbook_ids)"), {"workbook_ids": workbook_ids})
+        await db.execute(text("DELETE FROM excel_workbooks WHERE id = ANY(:workbook_ids)"), {"workbook_ids": workbook_ids})
+
+    file_rows = await db.execute(
+        text("SELECT id FROM framework_file_items WHERE name LIKE :prefix"),
+        {"prefix": f"{file_name_prefix}%"},
+    )
+    file_ids = [row[0] for row in file_rows.fetchall()]
+    if file_ids:
+        await db.execute(text("DELETE FROM excel_versions WHERE file_id = ANY(:file_ids)"), {"file_ids": file_ids})
+        await db.execute(text("DELETE FROM framework_file_items WHERE id = ANY(:file_ids)"), {"file_ids": file_ids})
+    await db.commit()
+
+
+async def _cleanup_db_workbooks_by_state_keys(db, state_keys: list[str]) -> None:
+    from sqlalchemy import text
+
+    if not state_keys:
+        return
+    wb_rows = await db.execute(
+        text("SELECT id FROM excel_workbooks WHERE state_key = ANY(:state_keys)"),
+        {"state_keys": state_keys},
+    )
+    workbook_ids = [row[0] for row in wb_rows.fetchall()]
+    if not workbook_ids:
+        return
+    sheet_rows = await db.execute(
+        text("SELECT id FROM excel_sheets WHERE workbook_id = ANY(:workbook_ids)"),
+        {"workbook_ids": workbook_ids},
+    )
+    sheet_ids = [row[0] for row in sheet_rows.fetchall()]
+    if sheet_ids:
+        await db.execute(text("DELETE FROM excel_cells WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+        await db.execute(text("DELETE FROM excel_col_widths WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+        await db.execute(text("DELETE FROM excel_row_heights WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+        await db.execute(text("DELETE FROM excel_history WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+        await db.execute(text("DELETE FROM excel_redo_stack WHERE sheet_id = ANY(:sheet_ids)"), {"sheet_ids": sheet_ids})
+    await db.execute(text("DELETE FROM excel_sheets WHERE workbook_id = ANY(:workbook_ids)"), {"workbook_ids": workbook_ids})
+    await db.execute(text("DELETE FROM excel_workbooks WHERE id = ANY(:workbook_ids)"), {"workbook_ids": workbook_ids})
+    await db.commit()
+
+
+async def _get_two_user_ids(db) -> tuple[int, int]:
+    from sqlalchemy import text
+
+    result = await db.execute(text("SELECT id FROM framework_user_accounts ORDER BY id LIMIT 2"))
+    user_ids = [int(row[0]) for row in result.fetchall()]
+    if len(user_ids) < 2:
+        raise AssertionError("At least two users are required for excel-engine isolation tests")
+    return user_ids[0], user_ids[1]
+
+
+async def _async_test_db_state_key_owner_isolation():
+    from app.database import AsyncSessionLocal
+    from backend.init_db import run_init
+    from backend.state.db_ops import (
+        find_or_create_sheet,
+        find_or_create_workbook,
+        find_workbook,
+        read_state_full,
+        sync_cells,
+    )
+
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    state_key = f"w3_state_isolation_{stamp}"
+    async with AsyncSessionLocal() as db:
+        await run_init(db)
+        owner_a, owner_b = await _get_two_user_ids(db)
+        await _cleanup_db_state(db, state_key, f"w3_excel_file_{stamp}")
+        try:
+            wb_a = await find_or_create_workbook(db, state_key, owner_id=owner_a)
+            wb_b = await find_or_create_workbook(db, state_key, owner_id=owner_b)
+            assert wb_a["id"] != wb_b["id"]
+            assert (await find_workbook(db, state_key, owner_id=owner_a))["id"] == wb_a["id"]
+            assert (await find_workbook(db, state_key, owner_id=owner_b))["id"] == wb_b["id"]
+
+            sheet_a = await find_or_create_sheet(db, wb_a["id"], "Sheet1")
+            await sync_cells(db, sheet_a["id"], {"A1": "owner-a"}, {}, {})
+
+            state_a = await read_state_full(db, state_key, owner_id=owner_a)
+            state_b = await read_state_full(db, state_key, owner_id=owner_b)
+            assert state_a["cells"].get("A1") == "owner-a"
+            assert state_b["cells"].get("A1") != "owner-a"
+        finally:
+            await _cleanup_db_state(db, state_key, f"w3_excel_file_{stamp}")
+
+    print('  ✓ test_db_state_key_owner_isolation passed')
+
+
+def test_db_state_key_owner_isolation():
+    asyncio.run(_async_test_db_state_key_owner_isolation())
+
+
+async def _async_test_version_restore_rejects_cross_file_version_id():
+    from app.database import AsyncSessionLocal
+    from backend.init_db import run_init
+    from backend.router import _restore_version_capability
+    from backend.state.db_ops import find_or_create_sheet, find_or_create_workbook
+    from sqlalchemy import text
+
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    file_name_prefix = f"w3_excel_file_{stamp}"
+    created_file_ids: list[int] = []
+    async with AsyncSessionLocal() as db:
+        await run_init(db)
+        owner_a, owner_b = await _get_two_user_ids(db)
+        await _cleanup_db_state(db, f"w3_unused_{stamp}", file_name_prefix)
+        try:
+            file_a = await db.execute(
+                text(
+                    "INSERT INTO framework_file_items "
+                    "(name, extension, size, owner_id, storage_path, mime_type, ref_count, deleted) "
+                    "VALUES (:name, 'xlsx', 0, :owner_id, '', '', 1, false) RETURNING id"
+                ),
+                {"name": f"{file_name_prefix}_a", "owner_id": owner_a},
+            )
+            file_b = await db.execute(
+                text(
+                    "INSERT INTO framework_file_items "
+                    "(name, extension, size, owner_id, storage_path, mime_type, ref_count, deleted) "
+                    "VALUES (:name, 'xlsx', 0, :owner_id, '', '', 1, false) RETURNING id"
+                ),
+                {"name": f"{file_name_prefix}_b", "owner_id": owner_b},
+            )
+            file_id_a = int(file_a.scalar_one())
+            file_id_b = int(file_b.scalar_one())
+            created_file_ids = [file_id_a, file_id_b]
+
+            wb_a = await find_or_create_workbook(db, f"knowledge_{file_id_a}", owner_id=owner_a)
+            wb_b = await find_or_create_workbook(db, f"knowledge_{file_id_b}", owner_id=owner_b)
+            await find_or_create_sheet(db, wb_a["id"], "Sheet1")
+            await find_or_create_sheet(db, wb_b["id"], "Sheet1")
+
+            version_a = await db.execute(
+                text(
+                    "INSERT INTO excel_versions "
+                    "(file_id, version_name, file_size, snapshot_json, operation_steps, creator_id, created_at) "
+                    "VALUES (:file_id, 'owner-a', 0, :snapshot, 1, :creator_id, NOW()) RETURNING id"
+                ),
+                {"file_id": file_id_a, "snapshot": json.dumps({"cells": {"A1": "a"}}), "creator_id": owner_a},
+            )
+            version_b = await db.execute(
+                text(
+                    "INSERT INTO excel_versions "
+                    "(file_id, version_name, file_size, snapshot_json, operation_steps, creator_id, created_at) "
+                    "VALUES (:file_id, 'owner-b', 0, :snapshot, 1, :creator_id, NOW()) RETURNING id"
+                ),
+                {"file_id": file_id_b, "snapshot": json.dumps({"cells": {"A1": "b"}}), "creator_id": owner_b},
+            )
+            version_id_a = int(version_a.scalar_one())
+            version_id_b = int(version_b.scalar_one())
+            await db.commit()
+
+            restored = await _restore_version_capability(
+                {"state_key": f"knowledge_{file_id_a}", "version_id": version_id_a},
+                f"user:{owner_a}",
+            )
+            assert restored["restored"] is True
+
+            try:
+                await _restore_version_capability(
+                    {"state_key": f"knowledge_{file_id_a}", "version_id": version_id_b},
+                    f"user:{owner_a}",
+                )
+            except ValueError as exc:
+                assert "Version not found" in str(exc)
+            else:
+                raise AssertionError("Cross-file version_id restore should fail")
+        finally:
+            await db.rollback()
+            if created_file_ids:
+                await _cleanup_db_workbooks_by_state_keys(
+                    db,
+                    [f"knowledge_{file_id}" for file_id in created_file_ids],
+                )
+                await _cleanup_db_state(db, f"w3_unused_{stamp}", file_name_prefix)
+
+    print('  ✓ test_version_restore_rejects_cross_file_version_id passed')
+
+
+def test_version_restore_rejects_cross_file_version_id():
+    asyncio.run(_async_test_version_restore_rejects_cross_file_version_id())
+
+
 if __name__ == '__main__':
     print('\n=== Excel Engine Module Tests ===\n')
     test_address_tool()
@@ -206,8 +444,10 @@ if __name__ == '__main__':
     test_state_manager()
     test_xlsx_roundtrip()
     test_csv_generation()
-    asyncio.run(test_edit_operations())
-    asyncio.run(test_style_operations())
-    asyncio.run(test_row_col_operations())
-    asyncio.run(test_clipboard())
+    test_edit_operations()
+    test_style_operations()
+    test_row_col_operations()
+    test_clipboard()
+    test_db_state_key_owner_isolation()
+    test_version_restore_rejects_cross_file_version_id()
     print('\n✓ All tests passed!\n')

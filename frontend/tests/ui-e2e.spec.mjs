@@ -200,6 +200,8 @@ const APP_NAMES = {
   'office-gen': 'Office Document Generator',
 }
 
+const IMAGE_GEN_APP = { key: 'image-gen', title: 'Image Generation' }
+
 test.describe('Scene 2: All Apps Open (Component Mapping)', () => {
   const launcherApps = Object.keys(APP_NAMES)
 
@@ -520,18 +522,30 @@ test.describe('Scene 5: Key Interaction Flows', () => {
 
   test('5.4 image-gen - open UI', async ({ page }) => {
     await gotoDesktop(page)
+    await closeAllWindows(page)
     await openLauncher(page)
 
-    const imgItem = page.locator('.desktop-launcher-app-item').filter({ hasText: 'Office' })
+    const imgItem = page.locator('.desktop-launcher-app-item').filter({ hasText: IMAGE_GEN_APP.title })
     const count = await imgItem.count()
-    if (count === 0) {
-      results.push({ scenario: '5.4 image-gen', passed: false, consoleErrors: [...consoleCollector], notes: 'Image-gen has show_in_launcher=false; can be opened via desktop icon if configured' })
-      return
+    if (count > 0) {
+      await imgItem.first().click()
+    } else {
+      await page.evaluate((appKey) => {
+        const manager = window.__HSWZ_WINDOW_MANAGER__
+        if (manager && typeof manager.openWindow === 'function') manager.openWindow(appKey)
+      }, IMAGE_GEN_APP.key)
     }
-    await imgItem.first().click()
     await page.waitForSelector('.desktop-window', { timeout: 5000 }).catch(() => {})
+    const hasImageGenApp = await page.locator('.image-gen-app').count() > 0
+    const hasImageGenTitle = await page.locator('.desktop-window').filter({ hasText: IMAGE_GEN_APP.title }).count() > 0
     const ss = screenshot(page, '5.4-image-gen')
-    results.push({ scenario: '5.4 image-gen', passed: true, screenshot: ss, consoleErrors: [...consoleCollector] })
+    results.push({
+      scenario: '5.4 image-gen',
+      passed: hasImageGenApp || hasImageGenTitle,
+      screenshot: ss,
+      consoleErrors: [...consoleCollector],
+      notes: `selector=${IMAGE_GEN_APP.key}/${IMAGE_GEN_APP.title}, launcher_visible=${count > 0}`,
+    })
   })
 
   test('5.5 docs-open test', async ({ request }) => {
@@ -634,5 +648,7 @@ test.describe('Report', () => {
     fs.writeFileSync(reportPath, lines.join('\n'), 'utf-8')
     console.log(`Report saved to ${reportPath}`)
     fs.writeFileSync(path.join(reportDir, 'results.json'), JSON.stringify({ results }, null, 2), 'utf-8')
+    const failed = results.filter(r => !r.passed)
+    expect(failed, failed.map(r => `${r.scenario}: ${r.notes || 'failed'}`).join('\n')).toHaveLength(0)
   })
 })

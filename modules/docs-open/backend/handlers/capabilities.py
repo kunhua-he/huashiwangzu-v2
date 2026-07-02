@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-from app.services.module_registry import register_capability
 from app.services.file_reader import resolve_caller_user_id
+from app.services.module_registry import register_capability
 
-from .embed import _get_doc_type
 from .content import _read_content
+from .embed import _get_doc_type
 
 
 async def _open_capability(params: dict, caller: str) -> dict:
@@ -19,12 +19,15 @@ async def _open_capability(params: dict, caller: str) -> dict:
         raise ValueError("file_id must be a positive integer")
 
     from app.database import AsyncSessionLocal
-    from app.models.file import File
-    from app.services.file_service import check_file_access
+    from app.services.file_service import check_file_access, check_file_write_access
 
     user_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
-        file = await check_file_access(db, file_id, user_id)
+        file = (
+            await check_file_write_access(db, file_id, user_id)
+            if mode == "edit"
+            else await check_file_access(db, file_id, user_id)
+        )
         ext = (file.extension or "").lower().lstrip(".")
         doc_info = _get_doc_type(ext)
         return {
@@ -43,14 +46,13 @@ async def _get_content_capability(params: dict, caller: str) -> dict:
         raise ValueError("file_id must be a positive integer")
 
     from app.database import AsyncSessionLocal
-    from app.models.file import File
     from app.services.file_service import check_file_access
 
     user_id = resolve_caller_user_id(caller)
     async with AsyncSessionLocal() as db:
         file = await check_file_access(db, file_id, user_id)
         ext = (file.extension or "").lower().lstrip(".")
-        return await _read_content(db, file, ext)
+        return await _read_content(db, file, ext, user_id)
 
 
 async def _create_doc_capability(params: dict, caller: str) -> dict:

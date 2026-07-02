@@ -1,13 +1,12 @@
 """
 项目工具台 MCP Server
-自包含 MCP 服务器, stdio 传输, 暴露 15 个开发工具.
+自包含 MCP 服务器, stdio 传输, 暴露项目开发工具.
 """
 
 import asyncio
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 import time
@@ -23,9 +22,65 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 try:
-    from dev_toolkit.quick_fix import QuickFixError, quick_fix_patch, quick_fix_preview
+    from dev_toolkit.code_tools import handle_tool as code_handle_tool
+    from dev_toolkit.code_tools import handles_tool as code_handles_tool
+    from dev_toolkit.code_tools import lint as code_lint
+    from dev_toolkit.code_tools import run_test as code_run_test
+    from dev_toolkit.code_tools import tool_definitions as code_tool_definitions
+    from dev_toolkit.edit_tools import handle_tool as edit_handle_tool
+    from dev_toolkit.edit_tools import handles_tool as edit_handles_tool
+    from dev_toolkit.edit_tools import tool_definitions as edit_tool_definitions
+    from dev_toolkit.insight_tools import handle_tool as insight_handle_tool
+    from dev_toolkit.insight_tools import handles_tool as insight_handles_tool
+    from dev_toolkit.insight_tools import tool_definitions as insight_tool_definitions
+    from dev_toolkit.mailbox_tools import handle_tool as mailbox_handle_tool
+    from dev_toolkit.mailbox_tools import handles_tool as mailbox_handles_tool
+    from dev_toolkit.mailbox_tools import outbox_dir as mailbox_outbox_dir
+    from dev_toolkit.mailbox_tools import tool_definitions as mailbox_tool_definitions
+    from dev_toolkit.memory_tools import handle_tool as memory_handle_tool
+    from dev_toolkit.memory_tools import handles_tool as memory_handles_tool
+    from dev_toolkit.memory_tools import list_memories
+    from dev_toolkit.memory_tools import tool_definitions as memory_tool_definitions
+    from dev_toolkit.memory_tools import update_index as memory_update_index
+    from dev_toolkit.quick_fix import QuickFixError
+    from dev_toolkit.tool_usage_tools import handle_tool as tool_usage_handle_tool
+    from dev_toolkit.tool_usage_tools import handles_tool as tool_usage_handles_tool
+    from dev_toolkit.tool_usage_tools import record_tool_usage
+    from dev_toolkit.tool_usage_tools import tool_definitions as tool_usage_tool_definitions
+    from dev_toolkit.worktree_tools import git_status_summary, worktree_guard
+    from dev_toolkit.worktree_tools import handle_tool as worktree_handle_tool
+    from dev_toolkit.worktree_tools import handles_tool as worktree_handles_tool
+    from dev_toolkit.worktree_tools import tool_definitions as worktree_tool_definitions
 except ModuleNotFoundError:
-    from quick_fix import QuickFixError, quick_fix_patch, quick_fix_preview
+    from code_tools import handle_tool as code_handle_tool
+    from code_tools import handles_tool as code_handles_tool
+    from code_tools import lint as code_lint
+    from code_tools import run_test as code_run_test
+    from code_tools import tool_definitions as code_tool_definitions
+    from edit_tools import handle_tool as edit_handle_tool
+    from edit_tools import handles_tool as edit_handles_tool
+    from edit_tools import tool_definitions as edit_tool_definitions
+    from insight_tools import handle_tool as insight_handle_tool
+    from insight_tools import handles_tool as insight_handles_tool
+    from insight_tools import tool_definitions as insight_tool_definitions
+    from mailbox_tools import handle_tool as mailbox_handle_tool
+    from mailbox_tools import handles_tool as mailbox_handles_tool
+    from mailbox_tools import outbox_dir as mailbox_outbox_dir
+    from mailbox_tools import tool_definitions as mailbox_tool_definitions
+    from memory_tools import handle_tool as memory_handle_tool
+    from memory_tools import handles_tool as memory_handles_tool
+    from memory_tools import list_memories
+    from memory_tools import tool_definitions as memory_tool_definitions
+    from memory_tools import update_index as memory_update_index
+    from quick_fix import QuickFixError
+    from tool_usage_tools import handle_tool as tool_usage_handle_tool
+    from tool_usage_tools import handles_tool as tool_usage_handles_tool
+    from tool_usage_tools import record_tool_usage
+    from tool_usage_tools import tool_definitions as tool_usage_tool_definitions
+    from worktree_tools import git_status_summary, worktree_guard
+    from worktree_tools import handle_tool as worktree_handle_tool
+    from worktree_tools import handles_tool as worktree_handles_tool
+    from worktree_tools import tool_definitions as worktree_tool_definitions
 
 # ── 配置 ──────────────────────────────────────────────────────────────
 
@@ -43,6 +98,7 @@ EMBEDDING_CACHE_PATH = REPO_ROOT / CONFIG["embedding_cache"]
 LOG_DIR = REPO_ROOT / CONFIG["log_dir"]
 DB_DSN = CONFIG["db_dsn"]
 UPLOADS_DIR = REPO_ROOT / "backend" / "data" / "uploads"
+TOOL_USAGE_PATH = LOG_DIR / "tool_usage_stats.json"
 _OUTPUT_TAIL_LIMIT = 8000
 MEMORY_NOISE_PATTERN = re.compile(
     r"(e2e-|smoke-|test-|test_|kb_test|kb-test|ui-e2e|audit-test|renamed-audit-test|docs-open验收|event_test|e2e_test|sample|to_del|验收|smoke)",
@@ -62,52 +118,6 @@ def _tail_text(text: str, limit: int = _OUTPUT_TAIL_LIMIT) -> str:
     if len(text) <= limit:
         return text
     return text[-limit:]
-
-
-def _repo_relative(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(REPO_ROOT))
-    except ValueError:
-        return str(path)
-
-
-def _resolve_repo_path(path: str, *, base_dir: Path | None = None) -> Path:
-    raw = Path(path).expanduser()
-    if raw.is_absolute():
-        resolved = raw.resolve()
-    else:
-        base = base_dir or REPO_ROOT
-        resolved = (base / raw).resolve()
-    if REPO_ROOT.resolve() not in resolved.parents and resolved != REPO_ROOT.resolve():
-        raise ValueError(f"路径必须在仓库内: {path}")
-    return resolved
-
-
-def _normalize_pytest_targets(target: str) -> list[str]:
-    backend_dir = REPO_ROOT / "backend"
-    normalized: list[str] = []
-    for raw_part in shlex.split(target):
-        path_part, sep, suffix = raw_part.partition("::")
-        if not path_part:
-            continue
-        try:
-            resolved = _resolve_repo_path(path_part, base_dir=backend_dir)
-        except ValueError:
-            normalized.append(raw_part)
-            continue
-        if resolved.exists():
-            try:
-                rel = resolved.relative_to(backend_dir)
-                normalized.append(str(rel) + (sep + suffix if sep else ""))
-                continue
-            except ValueError:
-                normalized.append(str(resolved) + (sep + suffix if sep else ""))
-                continue
-        if path_part.startswith("backend/"):
-            normalized.append(path_part.removeprefix("backend/") + (sep + suffix if sep else ""))
-        else:
-            normalized.append(raw_part)
-    return normalized
 
 
 async def _run_command_json(
@@ -151,26 +161,11 @@ async def _run_command_json(
     }
 
 
-async def _git_status_summary() -> dict[str, Any]:
-    result = await _run_command_json(
-        ["git", "status", "--short", "--branch"],
-        cwd=REPO_ROOT,
-        timeout=10,
-    )
-    lines = [line for line in result.get("stdout", "").splitlines() if line.strip()]
-    branch = lines[0].removeprefix("## ") if lines else ""
-    changed = lines[1:]
-    return {
-        "branch": branch,
-        "is_main": branch.split("...")[0] in {"main", "master"},
-        "dirty_count": len(changed),
-        "sample": changed[:25],
-    }
-
-
 # 确保记忆目录存在
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 EMBEDDING_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 
 # ── Token 缓存 ────────────────────────────────────────────────────────
 
@@ -184,7 +179,7 @@ async def _ensure_token(role: str = "admin", *, force_refresh: bool = False) -> 
     if not force_refresh and cached and cached["expires_at"] > now + 60:
         return cached["token"]
     acct = ACCOUNTS[role]
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10) as client:
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
         resp = await client.post("/api/login", json={
             "username": acct["username"],
             "password": acct["password"],
@@ -200,96 +195,13 @@ async def _ensure_token(role: str = "admin", *, force_refresh: bool = False) -> 
 async def _ensure_live_token(role: str = "admin") -> str:
     token = await _ensure_token(role, force_refresh=True)
     headers = {"Authorization": f"Bearer {token}"}
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10) as client:
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
         resp = await client.get("/api/current-user", headers=headers)
         if resp.status_code == 200:
             return token
     token = await _ensure_token(role, force_refresh=True)
     _token_cache.pop(role, None)
     return token
-
-# ── 嵌入服务 ──────────────────────────────────────────────────────────
-
-async def _get_embedding(text: str) -> list[float] | None:
-    # v2 的 bge-m3 是 llama-server(端口30000), OpenAI 兼容 /v1/embeddings
-    try:
-        async with httpx.AsyncClient(base_url=BGE_M3_URL, timeout=10) as client:
-            resp = await client.post("/v1/embeddings", json={"input": text, "model": "bge-m3"})
-            if resp.status_code == 200:
-                data = resp.json()
-                emb = (data.get("data") or [{}])[0].get("embedding")
-                if emb:
-                    return emb
-    except Exception:
-        pass
-    return None
-
-def _cosine_sim(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(x * x for x in b) ** 0.5
-    return dot / (na * nb) if na and nb else 0.0
-
-def _load_embedding_cache() -> dict[str, list[float]]:
-    if EMBEDDING_CACHE_PATH.exists():
-        return json.loads(EMBEDDING_CACHE_PATH.read_text(encoding="utf-8"))
-    return {}
-
-def _save_embedding_cache(cache: dict[str, list[float]]) -> None:
-    tmp = EMBEDDING_CACHE_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
-    tmp.rename(EMBEDDING_CACHE_PATH)
-
-# ── 记忆文件操作 ─────────────────────────────────────────────────────
-
-def _slugify(title: str) -> str:
-    s = title.strip().lower()
-    s = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", s)
-    s = s.strip("-")
-    return s or "memory"
-
-def _list_memories() -> list[dict]:
-    """Return all memories sorted by created desc."""
-    memories = []
-    for f in sorted(MEMORY_DIR.iterdir()):
-        if f.suffix != ".md" or f.stem.startswith("_"):
-            continue
-        content = f.read_text(encoding="utf-8")
-        fm = _parse_frontmatter(content)
-        fm["slug"] = f.stem
-        fm["path"] = str(f.relative_to(REPO_ROOT))
-        memories.append(fm)
-    memories.sort(key=lambda m: m.get("created", ""), reverse=True)
-    return memories
-
-def _parse_frontmatter(content: str) -> dict:
-    """Parse YAML-like frontmatter from markdown."""
-    meta: dict[str, Any] = {"name": "", "type": "reference", "tags": [], "created": "", "body": content}
-    m = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)", content, re.DOTALL)
-    if m:
-        body = m.group(2).strip()
-        meta["body"] = body
-        for line in m.group(1).split("\n"):
-            line = line.strip()
-            if ":" in line:
-                key, _, val = line.partition(":")
-                key = key.strip()
-                val = val.strip()
-                if key == "tags":
-                    meta["tags"] = [t.strip().strip('"').strip("'") for t in val.strip("[]").split(",") if t.strip()]
-                elif key in ("name", "type", "created", "agent"):
-                    meta[key] = val.strip('"').strip("'")
-    return meta
-
-def _update_index() -> None:
-    index_path = MEMORY_DIR / "_索引.md"
-    lines = ["# 项目记忆索引\n", "\n", "每条记忆一条记录:\n", "- `[slug](slug.md)` — type — tags — created\n", "\n", "---\n", "\n"]
-    for m in _list_memories():
-        tag_str = ", ".join(m.get("tags", []))
-        lines.append(f"- `[{m['slug']}]({m['slug']}.md)` — {m.get('type','')} — [{tag_str}] — {m.get('created','')}\n")
-    tmp = index_path.with_suffix(".md.tmp")
-    Path(tmp).write_text("".join(lines), encoding="utf-8")
-    Path(tmp).rename(index_path)
 
 # ── SQL 只读执行器 ──────────────────────────────────────────────────
 
@@ -446,7 +358,7 @@ def _cleanup_knowledge_noise() -> dict[str, Any]:
 
     try:
         if removed_memory:
-            _update_index()
+            memory_update_index(REPO_ROOT, MEMORY_DIR)
     except Exception:
         pass
 
@@ -704,7 +616,7 @@ async def _restart_backend() -> dict[str, Any]:
     health = "unknown"
     for _ in range(15):
         try:
-            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=5) as c:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=5, trust_env=False) as c:
                 r = await c.get("/api/health")
                 health = r.text[:300]
                 if r.status_code == 200:
@@ -789,80 +701,8 @@ async def _snap_diff() -> dict[str, Any]:
     except Exception as e:
         return {"files": [], "count": 0, "error": str(e)}
 
-# ──────────────────── 工具 10: code_explore ──────────────────────────
-
 _CODEGRAPH_CLI = str(Path.home() / ".npm-global" / "bin" / "codegraph")
-
-async def _code_explore(query: str) -> str:
-    """通过 codegraph 探索代码: 查符号/调用链/影响面."""
-    cmd = [_CODEGRAPH_CLI, "explore", query]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        return json.dumps({"error": f"codegraph explore 失败: {stderr.decode()[:500]}"}, ensure_ascii=False)
-    return stdout.decode() or "(空结果)"
-
-async def _code_node(symbol: str) -> str:
-    """通过 codegraph 查符号或文件的定义."""
-    cmd = [_CODEGRAPH_CLI, "node", symbol]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        return json.dumps({"error": f"codegraph node 失败: {stderr.decode()[:500]}"}, ensure_ascii=False)
-    return stdout.decode() or "(空结果)"
-
-async def _code_impact(path: str) -> str:
-    """通过 codegraph 查文件改动的影响面."""
-    cmd = [_CODEGRAPH_CLI, "impact", path]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        # fallback: codegraph node 看调用者
-        fallback = [_CODEGRAPH_CLI, "node", path]
-        proc2 = await asyncio.create_subprocess_exec(
-            *fallback, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        stdout2, stderr2 = await proc2.communicate()
-        if proc2.returncode != 0:
-            return json.dumps({"error": f"codegraph impact 失败(无fallback): {stderr.decode()[:500]}; {stderr2.decode()[:500]}"}, ensure_ascii=False)
-        return stdout2.decode() or "(空结果)"
-    return stdout.decode() or "(空结果)"
-
-# ──────────────────── 工具 11: lint ──────────────────────────────────
-
 _RUFF_CLI = str(REPO_ROOT / "backend" / ".venv" / "bin" / "ruff")
-
-async def _lint(path: str, diff: bool = False) -> str:
-    """用 ruff 静态检查 Python 文件，可选只返回可修复 diff。"""
-    try:
-        abs_path = _resolve_repo_path(path)
-    except ValueError as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
-    if not abs_path.is_file():
-        return json.dumps({"success": False, "error": f"文件不存在: {abs_path}"}, ensure_ascii=False)
-    cmd = [_RUFF_CLI, "check"]
-    if diff:
-        cmd.extend(["--diff"])
-    cmd.append(str(abs_path))
-    result = await _run_command_json(cmd, cwd=REPO_ROOT, timeout=60)
-    output = (result.get("stdout") or "") + (result.get("stderr") or "")
-    payload = {
-        "success": result.get("success", False),
-        "path": _repo_relative(abs_path),
-        "diff": diff,
-        "command": result.get("command"),
-        "cwd": result.get("cwd"),
-        "duration_seconds": result.get("duration_seconds"),
-        "output": output or "All checks passed!",
-        "output_tail": _tail_text(output) if output else "All checks passed!",
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 async def _smoke_all(skip_ui: bool = False) -> str:
@@ -897,13 +737,86 @@ async def _smoke_all(skip_ui: bool = False) -> str:
         indent=2,
     )
 
+# ──────────────────── 工具: release_gate ──────────────────────────
+
+async def _release_gate(skip_ui: bool = False) -> str:
+    """Run dev_toolkit/release_gate.py and return its verdict."""
+    env = os.environ.copy()
+    if skip_ui:
+        env["RELEASE_GATE_SKIP_UI"] = "1"
+    started = time.time()
+    try:
+        cmd = [sys.executable, str(REPO_ROOT / "dev_toolkit" / "release_gate.py")]
+        if skip_ui:
+            cmd.append("--skip-ui")
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+    except asyncio.TimeoutError:
+        return json.dumps({"success": False, "timeout": True, "timeout_seconds": 600}, ensure_ascii=False, indent=2)
+    return json.dumps(
+        {
+            "success": proc.returncode == 0,
+            "verdict": "PASS" if proc.returncode == 0 else "BLOCKER",
+            "returncode": proc.returncode,
+            "skip_ui": skip_ui,
+            "duration_seconds": round(time.time() - started, 3),
+            "output": output,
+            "output_tail": _tail_text(output, 20000),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+async def _module_sandbox_matrix(check: bool = False) -> str:
+    """Run dev_toolkit/module_sandbox_matrix.py and return results."""
+    started = time.time()
+    cmd = [sys.executable, str(REPO_ROOT / "dev_toolkit" / "module_sandbox_matrix.py")]
+    if check:
+        cmd.append("--check")
+    cmd.append("--json")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(REPO_ROOT),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+        output = stdout.decode(errors="replace")
+    except asyncio.TimeoutError:
+        return json.dumps({"success": False, "timeout": True, "timeout_seconds": 300}, ensure_ascii=False, indent=2)
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        data = {"raw_output": output}
+    return json.dumps(
+        {
+            "success": proc.returncode == 0 or proc.returncode == 1,
+            "returncode": proc.returncode,
+            "check": check,
+            "duration_seconds": round(time.time() - started, 3),
+            "data": data,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 # ──────────────────── 工具 12: routes ────────────────────────────────
 
 async def _routes(filter_str: str = "") -> str:
     """从 openapi.json 查准后端端点."""
     url = f"{BACKEND_BASE}/openapi.json"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 return json.dumps({"error": f"openapi.json 返回 {resp.status_code}"}, ensure_ascii=False)
@@ -1017,31 +930,6 @@ async def _db_schema(table: str = "") -> str:
             })
         return json.dumps(columns, ensure_ascii=False, indent=2)
 
-# ──────────────────── 工具 15: run_test ──────────────────────────────
-
-async def _run_test(target: str, timeout: int = 120) -> str:
-    """Run a single pytest target and return structured JSON."""
-    normalized_targets = _normalize_pytest_targets(target)
-    backend_dir = REPO_ROOT / "backend"
-    cmd = [str(backend_dir / ".venv" / "bin" / "pytest"), *normalized_targets]
-    result = await _run_command_json(cmd, cwd=backend_dir, timeout=timeout)
-    return json.dumps({
-        "success": result.get("success", False),
-        "target": target,
-        "normalized_targets": normalized_targets,
-        "command": cmd,
-        "cwd": result.get("cwd"),
-        "duration_seconds": result.get("duration_seconds"),
-        "returncode": result.get("returncode"),
-        "stdout": result.get("stdout", ""),
-        "stderr": result.get("stderr", ""),
-        "stdout_tail": result.get("stdout_tail", ""),
-        "stderr_tail": result.get("stderr_tail", ""),
-        "timeout": result.get("timeout", False),
-        "timeout_seconds": result.get("timeout_seconds"),
-    }, ensure_ascii=False, indent=2)
-
-
 async def _start_frontend() -> str:
     """Start the frontend dev server from the frontend directory."""
     frontend_dir = REPO_ROOT / "frontend"
@@ -1136,7 +1024,7 @@ async def _finish_task(
         "success": True,
         "summary": summary,
         "agent": agent,
-        "git": await _git_status_summary(),
+        "git": await git_status_summary(_run_command_json, REPO_ROOT),
         "boundary_check": {},
         "lint": [],
         "tests": [],
@@ -1149,45 +1037,48 @@ async def _finish_task(
             "body": "# 改了什么\n\n# 验证了什么\n\n# 是否还有残留风险\n\n# 关联 commit",
             "tags": "",
         },
+        "mcp_feedback_template": {
+            "agent": agent,
+            "task_summary": summary[:160] or "task summary",
+            "rating": 4,
+            "smoothness": "本次 MCP 是否顺畅？一句话说明",
+            "tools_used": "列出本次关键 MCP 工具",
+            "friction": "遇到的卡点；没有写无",
+            "missing_tools": "缺少的工具/能力；没有写无",
+            "upgrade_suggestions": "下次可升级建议；没有写无",
+            "remove_or_merge_suggestions": "不好用/可合并/可移除工具；没有写无",
+            "notes": "",
+        },
+        "mailbox_delivery_template": {
+            "task_name": summary[:100] or "task summary",
+            "summary": "做了什么、关键结果、关键设计",
+            "changed_files": "逐行列出本次新增/修改/删除文件",
+            "verification_results": verification_summary or "贴验收命令和原始输出",
+            "risks": risk_note or "无",
+            "status": "已完成",
+            "self_test_passed": True,
+            "max_file_lines": 0,
+            "fix_count": 0,
+            "blocker_count": 0,
+            "overwrite": False,
+        },
     }
 
-    # 边界检查: 模块任务校验改动只发生在允许目录
-    if module_key:
-        allowed_prefix = f"modules/{module_key}/"
-        diff_result = await _run_command_json(
-            ["git", "diff", "--name-only"],
-            cwd=REPO_ROOT, timeout=10,
+    # 边界检查: 使用 worktree_guard，包含 untracked 文件，比 git diff --name-only 更不漏。
+    try:
+        report["boundary_check"] = json.loads(await worktree_guard(_run_command_json, REPO_ROOT, module_key=module_key))
+    except json.JSONDecodeError as exc:
+        report["boundary_check"] = {"success": False, "error": str(exc)}
+    if module_key and not report["boundary_check"].get("success", False):
+        report["success"] = False
+        report["risk_note"] = (
+            report["risk_note"]
+            + f" | [边界违规] outside_allowed={report['boundary_check'].get('outside_allowed', [])[:10]}"
         )
-        changed_files = [line.strip() for line in diff_result.get("stdout", "").splitlines() if line.strip()]
-        violations = [f for f in changed_files if not f.startswith(allowed_prefix)]
-        report["boundary_check"] = {
-            "module": module_key,
-            "allowed_prefix": allowed_prefix,
-            "changed_files": changed_files[:50],
-            "changed_count": len(changed_files),
-            "violations": violations[:20],
-            "violation_count": len(violations),
-            "passed": len(violations) == 0,
-        }
-        if violations:
-            report["success"] = False
-            report["risk_note"] = (report["risk_note"] + f" | [边界违规] 以下改动不在 {allowed_prefix} 内: {violations[:10]}")
-    else:
-        # 非模块任务: 只列出改动文件
-        diff_result = await _run_command_json(
-            ["git", "diff", "--name-only"],
-            cwd=REPO_ROOT, timeout=10,
-        )
-        changed_files = [line.strip() for line in diff_result.get("stdout", "").splitlines() if line.strip()]
-        report["boundary_check"] = {
-            "changed_files": changed_files[:50],
-            "changed_count": len(changed_files),
-            "note": "非模块任务，无路径约束",
-        }
 
     for item in [p.strip() for p in re.split(r"[,\n]", lint_paths) if p.strip()]:
         try:
-            lint_result = json.loads(await _lint(item))
+            lint_result = json.loads(await code_lint(_run_command_json, REPO_ROOT, _RUFF_CLI, item))
         except json.JSONDecodeError as exc:
             lint_result = {"success": False, "path": item, "error": str(exc)}
         report["lint"].append(lint_result)
@@ -1195,7 +1086,7 @@ async def _finish_task(
             report["success"] = False
     if test_targets.strip():
         try:
-            test_result = json.loads(await _run_test(test_targets))
+            test_result = json.loads(await code_run_test(_run_command_json, REPO_ROOT, test_targets))
         except json.JSONDecodeError as exc:
             test_result = {"success": False, "target": test_targets, "error": str(exc)}
         report["tests"].append(test_result)
@@ -1392,7 +1283,7 @@ async def _brief() -> str:
             parts.append(e.strip())
 
     # 投递箱信件标题
-    inbox_dir = REPO_ROOT.parent / "华世王镞_v2邮箱" / "投递箱"
+    inbox_dir = mailbox_outbox_dir(REPO_ROOT)
     if inbox_dir.exists():
         letters = sorted(inbox_dir.glob("*.md"))
         titles = []
@@ -1403,7 +1294,7 @@ async def _brief() -> str:
 
     # Git 工作区状态：让 agent 开工就知道是否在 main / 是否 dirty
     try:
-        status = await _git_status_summary()
+        status = await git_status_summary(_run_command_json, REPO_ROOT)
         parts.append("## Git 工作区")
         parts.append(f"- 当前分支: {status.get('branch', '')}")
         parts.append(f"- 未提交条目: {status.get('dirty_count', 0)}")
@@ -1431,7 +1322,7 @@ async def _brief() -> str:
     except Exception:
         pass
 
-    memories = _list_memories()[:5]
+    memories = list_memories(REPO_ROOT, MEMORY_DIR)[:5]
     if memories:
         parts.append("## 最近项目记忆")
         for m in memories:
@@ -1465,14 +1356,15 @@ async def _brief() -> str:
 
     return "\n\n".join(parts)
 
-# ──────────────────── 工具 2: probe ──────────────────────────────────
+
+# ──────────────────── 工具 3: probe ──────────────────────────────────
 
 async def _probe(method: str, path: str, body: str | None = None, role: str = "admin") -> str:
     """打后端任意接口, 自动登录."""
     token = await _ensure_live_token(role)
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{BACKEND_BASE}{path}"
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
         kwargs: dict[str, Any] = {"headers": headers}
         if body:
             try:
@@ -1500,7 +1392,7 @@ async def _call_capability(module: str, action: str, params: str = "{}", role: s
 
     async def _post_with_token(token_value: str) -> httpx.Response:
         headers = {"Authorization": f"Bearer {token_value}"}
-        async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=60) as client:
+        async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=60, trust_env=False) as client:
             return await client.post("/api/modules/call", json=body, headers=headers)
 
     resp = await _post_with_token(token)
@@ -1601,147 +1493,6 @@ def _html_to_text(html: str) -> str:
     html = re.sub(r"\n{3,}", "\n\n", html)
     return html.strip()
 
-# ──────────────────── 工具 7: memory_search ──────────────────────────
-
-async def _memory_search(query: str, k: int = 5) -> str:
-    """语义 + 关键词搜索项目记忆."""
-    memories = _list_memories()
-    if not memories:
-        return json.dumps([], ensure_ascii=False)
-
-    # 尝试语义搜索
-    query_emb = await _get_embedding(query)
-    if query_emb:
-        cache = _load_embedding_cache()
-        scored = []
-        for m in memories:
-            slug = m["slug"]
-            emb = cache.get(slug)
-            if emb is None:
-                # 在线算嵌入
-                body_text = m.get("body", "")[:512]
-                if body_text:
-                    emb = await _get_embedding(body_text)
-                    if emb:
-                        cache[slug] = emb
-            if emb:
-                score = _cosine_sim(query_emb, emb)
-                scored.append((score, m))
-        if cache:
-            _save_embedding_cache(cache)
-        # 按分数排序
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top = scored[:k]
-        results = []
-        for score, m in top:
-            body_preview = m.get("body", "")[:200]
-            results.append({
-                "name": m.get("name", m["slug"]),
-                "type": m.get("type", ""),
-                "tags": m.get("tags", []),
-                "slug": m["slug"],
-                "body": body_preview,
-                "score": round(score, 4),
-            })
-        return json.dumps(results, ensure_ascii=False, indent=2)
-
-    # 降级: 关键词匹配 (中文无空格, 需二元分词, 否则整串子串匹配必败)
-    q = query.lower()
-    words = [w.strip() for w in re.split(r'[\s,，、。!?！？:：;；]+', q) if len(w.strip()) > 1]
-    # 对含中文的词补充二元分词(字符bigram), 让中文查询能命中
-    bigrams = []
-    for run in re.findall(r'[一-鿿]{2,}', q):
-        bigrams.extend(run[i:i+2] for i in range(len(run) - 1))
-    words = list(dict.fromkeys(words + bigrams))  # 去重保序
-    if not words:
-        words = [q]
-    results = []
-    for m in memories:
-        body = m.get("body", "").lower()
-        name = m.get("name", "").lower()
-        tag_text = " ".join(m.get("tags", [])).lower()
-        # 任一关键词命中即匹配
-        matched_words = [w for w in words if w in body or w in name or w in tag_text]
-        if matched_words:
-            # score = 命中比例
-            score = len(matched_words) / len(words)
-            if q in name:
-                score = max(score, 0.9)
-            results.append({
-                "name": m.get("name", m["slug"]),
-                "type": m.get("type", ""),
-                "tags": m.get("tags", []),
-                "slug": m["slug"],
-                "body": m.get("body", "")[:200],
-                "score": round(score, 4),
-            })
-    results.sort(key=lambda x: x["score"], reverse=True)
-    results = results[:k]
-    return json.dumps(results, ensure_ascii=False, indent=2)
-
-# ──────────────────── 工具 8: memory_write ──────────────────────────
-
-async def _memory_write(type_: str, title: str, body: str, tags: str = "", agent: str = "") -> str:
-    """写入一条项目记忆."""
-    valid_types = {"decision", "gotcha", "architecture", "task", "reference"}
-    type_ = type_ if type_ in valid_types else "reference"
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    agent_val = agent.strip() or "unknown"
-    slug = _slugify(title)
-    created = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    filepath = MEMORY_DIR / f"{slug}.md"
-
-    # 检查重复
-    if filepath.exists():
-        return json.dumps({
-            "warning": f"记忆已存在 [{slug}], 未覆盖. 如需更新请手动编辑.",
-            "slug": slug,
-            "path": str(filepath.relative_to(REPO_ROOT)),
-        }, ensure_ascii=False, indent=2)
-
-    content = f"""---
-name: "{title}"
-type: {type_}
-tags: [{', '.join(f'"{t}"' for t in tag_list)}]
-created: {created}
-agent: {agent_val}
----
-
-{body}
-"""
-    filepath.write_text(content.lstrip(), encoding="utf-8")
-    _update_index()
-
-    # 算嵌入缓存
-    body_text = body[:512]
-    emb = await _get_embedding(body_text)
-    if emb:
-        cache = _load_embedding_cache()
-        cache[slug] = emb
-        _save_embedding_cache(cache)
-
-    return json.dumps({
-        "success": True,
-        "slug": slug,
-        "path": str(filepath.relative_to(REPO_ROOT)),
-    }, ensure_ascii=False, indent=2)
-
-# ──────────────────── 工具 9: memory_recent ─────────────────────────
-
-async def _memory_recent(n: int = 10) -> str:
-    """最近 N 条记忆."""
-    memories = _list_memories()[:n]
-    results = []
-    for m in memories:
-        results.append({
-            "name": m.get("name", m["slug"]),
-            "type": m.get("type", ""),
-            "tags": m.get("tags", []),
-            "slug": m["slug"],
-            "created": m.get("created", ""),
-        })
-    return json.dumps(results, ensure_ascii=False, indent=2)
-
 # ── 注册工具 ─────────────────────────────────────────────────────────
 
 @server.list_tools()
@@ -1752,6 +1503,7 @@ async def list_tools() -> list[Tool]:
             description="项目全景摘要: 主开发文档概览 + 最近变更 + 投递箱待处理 + 最近项目记忆",
             inputSchema={"type": "object", "properties": {}},
         ),
+        *mailbox_tool_definitions(),
         Tool(
             name="probe",
             description="自动登录后打后端任意 HTTP 接口. 返回 {status_code, data}.",
@@ -1826,146 +1578,10 @@ async def list_tools() -> list[Tool]:
                 "required": ["url"],
             },
         ),
-        Tool(
-            name="memory_search",
-            description="搜索项目记忆. 优先 bge-m3 语义搜索, 降级关键词匹配.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "搜索关键词或问题"},
-                    "k": {"type": "number", "description": "返回条数", "default": 5},
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="memory_write",
-            description="写入项目记忆(决策/踩坑/架构/任务/参考). 自动生成文件 + 更新索引 + 嵌入缓存.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string", "description": "类型: decision/gotcha/architecture/task/reference"},
-                    "title": {"type": "string", "description": "标题"},
-                    "body": {"type": "string", "description": "正文"},
-                    "tags": {"type": "string", "description": "逗号分隔的标签", "default": ""},
-                    "agent": {"type": "string", "description": "执行 agent 标识(如 opencode, claude)", "default": ""},
-                },
-                "required": ["type", "title", "body"],
-            },
-        ),
-        Tool(
-            name="memory_recent",
-            description="最近 N 条项目记忆.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "n": {"type": "number", "description": "返回条数", "default": 10},
-                },
-            },
-        ),
-        Tool(
-            name="code_explore",
-            description="通过 codegraph 探索代码: 查符号/调用链/影响面. shell: codegraph explore <query>",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "符号名/文件名/自然语言问题"},
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="code_node",
-            description="通过 codegraph 查符号或文件的定义. shell: codegraph node <symbol>",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "symbol": {"type": "string", "description": "符号名或文件路径"},
-                },
-                "required": ["symbol"],
-            },
-        ),
-        Tool(
-            name="code_impact",
-            description="通过 codegraph 查文件改动的影响面. shell: codegraph impact <path>",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "文件路径"},
-                },
-                "required": ["path"],
-            },
-        ),
-        Tool(
-            name="quick_fix_preview",
-            description=(
-                "预览精准补丁: path + old_text + new_text 精确替换, "
-                "可带 start_line/end_line 和 old_text sha256 防漂移; 不写盘."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "仓库内文件路径(绝对或相对仓库根)"},
-                    "old_text": {"type": "string", "description": "必须唯一命中的原文块"},
-                    "new_text": {"type": "string", "description": "替换后的文本块"},
-                    "start_line": {"type": "number", "description": "可选: CodeGraph 定位起始行"},
-                    "end_line": {"type": "number", "description": "可选: CodeGraph 定位结束行"},
-                    "expected_old_text_sha256": {
-                        "type": "string",
-                        "description": "可选: old_text 的 sha256, 防止调用方传错块",
-                        "default": "",
-                    },
-                },
-                "required": ["path", "old_text", "new_text"],
-            },
-        ),
-        Tool(
-            name="apply_patch",
-            description=(
-                "应用精准补丁(同 quick_fix_patch): path + old_text + new_text 精确替换, "
-                "仅 old_text 唯一命中时原子写盘; "
-                "适合 CodeGraph 定位后的快速修复."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "仓库内文件路径(绝对或相对仓库根)"},
-                    "old_text": {"type": "string", "description": "必须唯一命中的原文块"},
-                    "new_text": {"type": "string", "description": "替换后的文本块"},
-                    "start_line": {"type": "number", "description": "可选: CodeGraph 定位起始行"},
-                    "end_line": {"type": "number", "description": "可选: CodeGraph 定位结束行"},
-                    "expected_old_text_sha256": {
-                        "type": "string",
-                        "description": "可选: old_text 的 sha256, 防止调用方传错块",
-                        "default": "",
-                    },
-                },
-                "required": ["path", "old_text", "new_text"],
-            },
-        ),
-        Tool(
-            name="quick_fix_patch",
-            description=(
-                "应用精准补丁: 与 quick_fix_preview 同校验, 仅 old_text 唯一命中时原子写盘; "
-                "适合 CodeGraph 定位后的快速修复."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "仓库内文件路径(绝对或相对仓库根)"},
-                    "old_text": {"type": "string", "description": "必须唯一命中的原文块"},
-                    "new_text": {"type": "string", "description": "替换后的文本块"},
-                    "start_line": {"type": "number", "description": "可选: CodeGraph 定位起始行"},
-                    "end_line": {"type": "number", "description": "可选: CodeGraph 定位结束行"},
-                    "expected_old_text_sha256": {
-                        "type": "string",
-                        "description": "可选: old_text 的 sha256, 防止调用方传错块",
-                        "default": "",
-                    },
-                },
-                "required": ["path", "old_text", "new_text"],
-            },
-        ),
+        *memory_tool_definitions(),
+        *code_tool_definitions(),
+        *edit_tool_definitions(),
+        *insight_tool_definitions(),
         Tool(
             name="start_frontend",
             description="启动前端开发服务器，等价 cd frontend && npm run dev。",
@@ -1987,15 +1603,23 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="lint",
-            description="用 ruff 静态检查 Python 文件。支持 diff=true 只预览可修复 diff，不写盘。",
+            name="release_gate",
+            description="发布前 release gate: 聚合 health/system-status/smoke/队列审计/sandbox 矩阵, 输出 BLOCKER/DEBT/PASS.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Python 文件路径(绝对或相对仓库根)"},
-                    "diff": {"type": "boolean", "description": "只返回 ruff --diff 预览", "default": False},
+                    "skip_ui": {"type": "boolean", "description": "跳过前端UI测试", "default": False},
                 },
-                "required": ["path"],
+            },
+        ),
+        Tool(
+            name="module_sandbox_matrix",
+            description="模块 sandbox 验收矩阵扫描: 列出全部模块的 sandbox/test_module.py/可自动运行状态.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "check": {"type": "boolean", "description": "运行每个 auto-runnable test_module.py", "default": False},
+                },
             },
         ),
         Tool(
@@ -2026,18 +1650,6 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "table": {"type": "string", "description": "表名, 为空则列出所有表", "default": ""},
                 },
-            },
-        ),
-        Tool(
-            name="run_test",
-            description="跑单个测试目标，自动兼容 backend/tests、tests、绝对路径，返回结构化结果。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target": {"type": "string", "description": "测试目标, 如 backend/tests/test_auth.py、tests/test_auth.py 或 tests/test_auth.py::test_login"},
-                    "timeout": {"type": "number", "description": "超时秒数", "default": 120},
-                },
-                "required": ["target"],
             },
         ),
         Tool(
@@ -2078,6 +1690,8 @@ async def list_tools() -> list[Tool]:
                 "required": ["summary"],
             },
         ),
+        *worktree_tool_definitions(),
+        *tool_usage_tool_definitions(),
         Tool(
             name="knowledge_noise_report",
             description="扫描知识库相关的测试/烟雾/验收污染文件，返回可疑落盘样本与统计。",
@@ -2126,9 +1740,33 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    started = time.time()
+    success = False
     try:
         if name == "brief":
             result = await _brief()
+        elif mailbox_handles_tool(name):
+            result = await mailbox_handle_tool(REPO_ROOT, name, arguments)
+        elif memory_handles_tool(name):
+            result = await memory_handle_tool(
+                REPO_ROOT,
+                MEMORY_DIR,
+                EMBEDDING_CACHE_PATH,
+                BGE_M3_URL,
+                TOOL_USAGE_PATH,
+                name,
+                arguments,
+            )
+        elif code_handles_tool(name):
+            result = await code_handle_tool(_run_command_json, REPO_ROOT, _CODEGRAPH_CLI, _RUFF_CLI, name, arguments)
+        elif edit_handles_tool(name):
+            result = await edit_handle_tool(_run_command_json, REPO_ROOT, _RUFF_CLI, name, arguments)
+        elif insight_handles_tool(name):
+            result = await insight_handle_tool(REPO_ROOT, TOOL_USAGE_PATH, name, arguments)
+        elif worktree_handles_tool(name):
+            result = await worktree_handle_tool(_run_command_json, REPO_ROOT, name, arguments)
+        elif tool_usage_handles_tool(name):
+            result = await tool_usage_handle_tool(REPO_ROOT, TOOL_USAGE_PATH, name, arguments)
         elif name == "probe":
             result = await _probe(
                 method=arguments["method"],
@@ -2162,77 +1800,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await _sql(query=arguments["query"])
         elif name == "web_read":
             result = await _web_read(url=arguments["url"])
-        elif name == "memory_search":
-            result = await _memory_search(
-                query=arguments["query"],
-                k=int(arguments.get("k", 5)),
-            )
-        elif name == "memory_write":
-            result = await _memory_write(
-                type_=arguments["type"],
-                title=arguments["title"],
-                body=arguments["body"],
-                tags=arguments.get("tags", ""),
-                agent=arguments.get("agent", ""),
-            )
-        elif name == "memory_recent":
-            result = await _memory_recent(n=int(arguments.get("n", 10)))
-        elif name == "code_explore":
-            result = await _code_explore(query=arguments["query"])
-        elif name == "code_node":
-            result = await _code_node(symbol=arguments["symbol"])
-        elif name == "code_impact":
-            result = await _code_impact(path=arguments["path"])
-        elif name == "quick_fix_preview":
-            result = json.dumps(
-                quick_fix_preview(
-                    repo_root=REPO_ROOT,
-                    path=arguments["path"],
-                    old_text=arguments["old_text"],
-                    new_text=arguments["new_text"],
-                    start_line=arguments.get("start_line"),
-                    end_line=arguments.get("end_line"),
-                    expected_old_text_sha256=arguments.get("expected_old_text_sha256", ""),
-                ),
-                ensure_ascii=False,
-                indent=2,
-            )
-        elif name == "apply_patch":
-            result = json.dumps(
-                quick_fix_patch(
-                    repo_root=REPO_ROOT,
-                    path=arguments["path"],
-                    old_text=arguments["old_text"],
-                    new_text=arguments["new_text"],
-                    start_line=arguments.get("start_line"),
-                    end_line=arguments.get("end_line"),
-                    expected_old_text_sha256=arguments.get("expected_old_text_sha256", ""),
-                ),
-                ensure_ascii=False,
-                indent=2,
-            )
-        elif name == "quick_fix_patch":
-            result = json.dumps(
-                quick_fix_patch(
-                    repo_root=REPO_ROOT,
-                    path=arguments["path"],
-                    old_text=arguments["old_text"],
-                    new_text=arguments["new_text"],
-                    start_line=arguments.get("start_line"),
-                    end_line=arguments.get("end_line"),
-                    expected_old_text_sha256=arguments.get("expected_old_text_sha256", ""),
-                ),
-                ensure_ascii=False,
-                indent=2,
-            )
         elif name == "start_frontend":
             result = await _start_frontend()
         elif name == "sanity_check":
             result = await _sanity_check()
         elif name == "smoke_all":
             result = await _smoke_all(skip_ui=bool(arguments.get("skip_ui", False)))
-        elif name == "lint":
-            result = await _lint(path=arguments["path"], diff=bool(arguments.get("diff", False)))
+        elif name == "release_gate":
+            result = await _release_gate(skip_ui=bool(arguments.get("skip_ui", False)))
+        elif name == "module_sandbox_matrix":
+            result = await _module_sandbox_matrix(check=bool(arguments.get("check", False)))
         elif name == "plan_task":
             result = await _plan_task(
                 description=arguments["description"],
@@ -2257,11 +1834,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await _capabilities(module=arguments.get("module", ""))
         elif name == "db_schema":
             result = await _db_schema(table=arguments.get("table", ""))
-        elif name == "run_test":
-            result = await _run_test(
-                target=arguments["target"],
-                timeout=int(arguments.get("timeout", 120)),
-            )
         elif name == "knowledge_cleanup_noise":
             result = json.dumps(_cleanup_knowledge_noise(), ensure_ascii=False, indent=2)
         elif name == "workspace_audit":
@@ -2283,11 +1855,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = json.dumps(await _snap_diff(), ensure_ascii=False, indent=2)
         else:
             result = json.dumps({"error": f"未知工具: {name}"})
+            success = False
+            return [TextContent(type="text", text=result)]
+        success = True
         return [TextContent(type="text", text=result)]
     except QuickFixError as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e), "rejected": True}, ensure_ascii=False))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, ensure_ascii=False))]
+    finally:
+        record_tool_usage(TOOL_USAGE_PATH, name, success, time.time() - started, arguments)
 
 # ── 入口 ─────────────────────────────────────────────────────────────
 

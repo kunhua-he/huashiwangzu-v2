@@ -72,10 +72,7 @@ class ResourceService:
         if not file_record:
             raise NotFound(f"File {file_id} not found")
 
-        access = await check_file_access(db, file_id, owner_id)
-        if not access.get("accessible"):
-            from app.core.exceptions import PermissionDenied
-            raise PermissionDenied("Access denied")
+        await check_file_access(db, file_id, owner_id)
 
         from app.services.file_preview_service import _resolve_storage_path
         safe_path = _resolve_storage_path(file_record)

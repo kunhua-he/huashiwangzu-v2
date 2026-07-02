@@ -1,13 +1,15 @@
 import hashlib
 import os
-import magic
 from pathlib import Path
 from typing import BinaryIO
+
+import magic
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.file import Folder, File
-from app.core.exceptions import NotFound, AppException, PermissionDenied
+
 from app.config import get_settings
+from app.core.exceptions import AppException, NotFound, PermissionDenied
+from app.models.file import File, Folder
 
 settings = get_settings()
 UPLOAD_ROOT = Path(settings.UPLOAD_DIR).resolve()
@@ -46,7 +48,7 @@ async def upload_file(
             File.extension == ext_part,
             File.folder_id == target_folder_id,
             File.owner_id == owner_id,
-            File.deleted == False,
+            File.deleted.is_(False),
         )
     )
     if existing_name.scalar_one_or_none():
@@ -60,7 +62,7 @@ async def upload_file(
 
     # Check if content already exists on disk (search across all users for same md5_hash)
     existing_content = await db.execute(
-        select(File).where(File.md5_hash == md5_hash, File.deleted == False).limit(1)
+        select(File).where(File.md5_hash == md5_hash, File.deleted.is_(False)).limit(1)
     )
     existing_file = existing_content.scalar_one_or_none()
 
@@ -130,7 +132,7 @@ async def _ensure_folder_path(
                 Folder.name == part,
                 Folder.parent_id == current_parent,
                 Folder.owner_id == owner_id,
-                Folder.deleted == False,
+                Folder.deleted.is_(False),
             )
         )
         folder = existing.scalar_one_or_none()
@@ -149,7 +151,7 @@ async def replace_file_content(
     content: bytes,
 ) -> dict:
     """Replace a file's content with new bytes (content-addressable).
-    
+
     Writes new content to a new content-addressed path, updates the File record's
     storage_path/size/md5_hash, and maintains ref_count (old content cleaned up
     when its ref_count reaches zero).
@@ -168,7 +170,7 @@ async def replace_file_content(
 
     # Check if new content already exists on disk
     existing = await db.execute(
-        select(File).where(File.md5_hash == new_md5, File.deleted == False).limit(1)
+        select(File).where(File.md5_hash == new_md5, File.deleted.is_(False)).limit(1)
     )
     existing_file = existing.scalar_one_or_none()
 
@@ -191,7 +193,7 @@ async def replace_file_content(
         old_records = await db.execute(
             select(File).where(
                 File.storage_path == old_storage_path,
-                File.deleted == False,
+                File.deleted.is_(False),
             )
         )
         old_files = old_records.scalars().all()
@@ -204,6 +206,22 @@ async def replace_file_content(
                         update(File).where(File.id == of.id).values(ref_count=File.ref_count - 1)
                     )
                     break
+
+    # Mark associated ContentPackage as stale
+    try:
+        from sqlalchemy import update as sa_update
+
+        from app.models.content import ContentPackage
+        await db.execute(
+            sa_update(ContentPackage)
+            .where(
+                ContentPackage.source_file_id == file_id,
+                ContentPackage.deleted.is_(False),
+            )
+            .values(status="stale")
+        )
+    except Exception:
+        pass
 
     await db.commit()
     await db.refresh(file)
@@ -260,7 +278,7 @@ async def upload_file_from_path(
             File.extension == ext_part,
             File.folder_id == target_folder_id,
             File.owner_id == owner_id,
-            File.deleted == False,
+            File.deleted.is_(False),
         )
     )
     if existing_name.scalar_one_or_none():
@@ -276,7 +294,7 @@ async def upload_file_from_path(
     abs_content_path = UPLOAD_ROOT / content_path
 
     existing_content = await db.execute(
-        select(File).where(File.md5_hash == md5_hash, File.deleted == False).limit(1)
+        select(File).where(File.md5_hash == md5_hash, File.deleted.is_(False)).limit(1)
     )
     existing_file = existing_content.scalar_one_or_none()
 

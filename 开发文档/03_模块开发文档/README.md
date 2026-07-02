@@ -112,6 +112,20 @@ modules/{module_name}/sandbox/
 
 未通过 sandbox 的模块，不允许接入桌面壳。
 
+### sandbox 验收矩阵
+
+每个模块的 README 必须写清“可复现”的验收命令，不能只写“跑过 sandbox”。
+
+| 模块形态 | 必填验收 |
+|----------|----------|
+| 纯前端模块 | `cd modules/{key}/sandbox && npm install && npm run build`，再跑 `cd frontend && npm run build` |
+| 有后端能力模块 | 后端能力测试 + sandbox 前端 build + 主框架 build |
+| 文件解析模块 | `sandbox/test_module.py` 必须使用真实样例文件验证 blocks/resources，不只 import 成功 |
+| 依赖框架后端的 sandbox | 命令必须显式使用 `backend/.venv/bin/python` 和必要的 `PYTHONPATH=backend`，不得写成裸 `python3` |
+| 需要登录态/生产库的模块 | README 必须说明使用主框架活栈验证，不能把 sandbox 登录壳结果当主框架验收 |
+
+当前 `smoke_all` 只能证明主框架 happy path，不等于每个模块 sandbox 都通过。发布前应维护一张模块验收矩阵：模块 key、sandbox 命令、主框架命令、是否清理测试数据、最近一次结果。
+
 ### sandbox 模板不够用时
 
 sandbox 是模块开发态的小框架。如果模块需要更多能力：

@@ -47,16 +47,19 @@ class PackageQuery(BaseModel):
 class UpdateBlocksRequest(BaseModel):
     package_id: int
     updates: list[BlockUpdateRequest]
+    expected_version_id: int | None = None
 
 
 class AppendBlocksRequest(BaseModel):
     package_id: int
     blocks: list[BlockAppendRequest]
+    expected_version_id: int | None = None
 
 
 class ReplaceTextBody(BaseModel):
     package_id: int
     request: ReplaceTextRequest
+    expected_version_id: int | None = None
 
 
 class VersionRestoreRequest(BaseModel):
@@ -141,7 +144,10 @@ async def update_blocks(
     user: User = Depends(require_permission("editor")),
 ):
     caller = f"user:{user.id}"
-    result = await pkg_svc.update_blocks(db, package_id, body.updates, caller, owner_id=user.id)
+    result = await pkg_svc.update_blocks(
+        db, package_id, body.updates, caller,
+        owner_id=user.id, expected_version_id=body.expected_version_id,
+    )
     return ApiResponse(data=result)
 
 
@@ -153,7 +159,10 @@ async def append_blocks(
     user: User = Depends(require_permission("editor")),
 ):
     caller = f"user:{user.id}"
-    result = await pkg_svc.append_blocks(db, package_id, body.blocks, caller, owner_id=user.id)
+    result = await pkg_svc.append_blocks(
+        db, package_id, body.blocks, caller,
+        owner_id=user.id, expected_version_id=body.expected_version_id,
+    )
     return ApiResponse(data=result)
 
 
@@ -165,7 +174,10 @@ async def replace_text(
     user: User = Depends(require_permission("editor")),
 ):
     caller = f"user:{user.id}"
-    result = await pkg_svc.replace_text(db, package_id, body.request, caller, owner_id=user.id)
+    result = await pkg_svc.replace_text(
+        db, package_id, body.request, caller,
+        owner_id=user.id, expected_version_id=body.expected_version_id,
+    )
     return ApiResponse(data=result)
 
 
@@ -280,6 +292,88 @@ async def _cap_get_package(params: dict, caller: str) -> dict:
             return {"success": False, "error": str(e)}
 
 
+async def _cap_get_file_content(params: dict, caller: str) -> dict:
+    """Get the best available content for a file: ContentPackage → parse fallback.
+
+    Returns structured blocks for viewer rendering, or triggers a lazy parse.
+    """
+    file_id = params.get("file_id")
+    if not file_id:
+        return {"success": False, "error": "file_id required"}
+    owner_id = resolve_caller_user_id(caller)
+    async with AsyncSessionLocal() as db:
+        try:
+            from app.services.content.package_service import ContentPackageService
+            from app.services.file_service import check_file_access as file_access
+            from app.services.file_service import get_file_record
+            file_record = await get_file_record(db, file_id)
+            if not file_record:
+                return {"success": False, "error": "File not found"}
+
+            access = await file_access(db, file_id, owner_id)
+            if not access:
+                return {"success": False, "error": "Permission denied"}
+
+            pkg_svc = ContentPackageService()
+            pkg = await pkg_svc.get_package(db, file_id=file_id, owner_id=owner_id)
+            if pkg and pkg.get("status") == "parsed":
+                full = await pkg_svc.get_full_package(db, pkg["id"], owner_id=owner_id)
+                content = full.get("content", {})
+                blocks = content.get("blocks", [])
+                if full.get("version") and full["version"].get("content_json"):
+                    import json
+                    parsed = json.loads(full["version"]["content_json"])
+                    blocks = parsed.get("blocks", blocks)
+                return {"success": True, "data": {
+                    "source": "content_package",
+                    "package_id": pkg["id"],
+                    "blocks": blocks,
+                    "manifest": pkg.get("manifest"),
+                    "status": pkg.get("status"),
+                }}
+
+            # No parsed package → trigger lazy pipeline
+            from app.services.content.pipeline_service import ContentPipelineService
+            pipeline_svc = ContentPipelineService()
+            try:
+                caller_str = f"user:{owner_id}"
+                pipeline_result = await pipeline_svc.run_pipeline(file_id, caller_str)
+            except Exception as e:
+                return {"success": True, "data": {
+                    "source": "none",
+                    "blocks": [],
+                    "status": "parse_failed",
+                    "error": str(e),
+                    "download_url": f"/api/files/download/{file_id}/original",
+                }}
+
+            if pipeline_result:
+                pkg = await pkg_svc.get_package(db, file_id=file_id, owner_id=owner_id)
+                if pkg and pkg.get("status") == "parsed":
+                    full = await pkg_svc.get_full_package(db, pkg["id"], owner_id=owner_id)
+                    content = full.get("content", {})
+                    blocks = content.get("blocks", [])
+                    if full.get("version") and full["version"].get("content_json"):
+                        import json
+                        parsed = json.loads(full["version"]["content_json"])
+                        blocks = parsed.get("blocks", blocks)
+                    return {"success": True, "data": {
+                        "source": "content_package",
+                        "package_id": pkg["id"],
+                        "blocks": blocks,
+                        "status": "parsed",
+                    }}
+
+            return {"success": True, "data": {
+                "source": "none",
+                "blocks": [],
+                "status": "not_parsed",
+                "download_url": f"/api/files/download/{file_id}/original",
+            }}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
 async def _cap_get_full(params: dict, caller: str) -> dict:
     package_id = params.get("package_id")
     if not package_id:
@@ -328,10 +422,14 @@ async def _cap_update_blocks(params: dict, caller: str) -> dict:
     if not package_id or not updates_data:
         return {"success": False, "error": "package_id and updates required"}
     owner_id = resolve_caller_user_id(caller)
+    expected_version_id = params.get("expected_version_id")
     updates = [BlockUpdateRequest(**u) for u in updates_data]
     async with AsyncSessionLocal() as db:
         try:
-            result = await pkg_svc.update_blocks(db, package_id, updates, caller, owner_id=owner_id)
+            result = await pkg_svc.update_blocks(
+                db, package_id, updates, caller,
+                owner_id=owner_id, expected_version_id=expected_version_id,
+            )
             return {"success": True, "data": result}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -343,10 +441,14 @@ async def _cap_append_blocks(params: dict, caller: str) -> dict:
     if not package_id or not blocks_data:
         return {"success": False, "error": "package_id and blocks required"}
     owner_id = resolve_caller_user_id(caller)
+    expected_version_id = params.get("expected_version_id")
     blocks = [BlockAppendRequest(**b) for b in blocks_data]
     async with AsyncSessionLocal() as db:
         try:
-            result = await pkg_svc.append_blocks(db, package_id, blocks, caller, owner_id=owner_id)
+            result = await pkg_svc.append_blocks(
+                db, package_id, blocks, caller,
+                owner_id=owner_id, expected_version_id=expected_version_id,
+            )
             return {"success": True, "data": result}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -358,10 +460,14 @@ async def _cap_replace_text(params: dict, caller: str) -> dict:
     if not package_id or not req_data:
         return {"success": False, "error": "package_id and request required"}
     owner_id = resolve_caller_user_id(caller)
+    expected_version_id = params.get("expected_version_id")
     req = ReplaceTextRequest(**req_data)
     async with AsyncSessionLocal() as db:
         try:
-            result = await pkg_svc.replace_text(db, package_id, req, caller, owner_id=owner_id)
+            result = await pkg_svc.replace_text(
+                db, package_id, req, caller,
+                owner_id=owner_id, expected_version_id=expected_version_id,
+            )
             return {"success": True, "data": result}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -478,8 +584,199 @@ async def _cap_store_resource(params: dict, caller: str) -> dict:
                 width=params.get("width"),
                 height=params.get("height"),
                 description=params.get("description"),
+                ocr_text=params.get("ocr_text"),
+            )
+            # Update VLM metadata if provided
+            if params.get("vlm_metadata"):
+                await resource_svc.update_description(
+                    db, result["id"],
+                    vlm_metadata=params["vlm_metadata"],
+                )
+            # Create ResourceRef if file_id or package_id provided
+            if params.get("file_id"):
+                from app.services.file_service import get_file_record
+                file_rec = await get_file_record(db, params["file_id"])
+                if file_rec:
+                    from app.services.content.package_service import ContentPackageService
+                    pkg_svc_local = ContentPackageService()
+                    pkg_info = await pkg_svc_local.get_package(db, file_id=params["file_id"], owner_id=owner_id)
+                    if pkg_info and pkg_info.get("id"):
+                        await resource_svc.add_ref(
+                            db, pkg_info["id"], result["id"],
+                            block_id=params.get("block_id"),
+                            usage_hints=params.get("description", ""),
+                        )
+            return {"success": True, "data": result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+# ── Content IR capabilities ──────────────────────────────────────
+
+
+async def _cap_validate_ir(params: dict, caller: str) -> dict:
+    from app.services.content.ir_validator import validate_ir
+    content_ir = params.get("content_ir")
+    if not content_ir:
+        return {"success": False, "error": "content_ir required"}
+    try:
+        result = await validate_ir(content_ir)
+        return {
+            "success": True,
+            "data": {
+                "valid": result.valid,
+                "errors": [e.model_dump() for e in result.errors],
+            },
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def _cap_normalize_ir(params: dict, caller: str) -> dict:
+    from app.services.content.ir_normalizer import normalize_ir
+    from app.services.content.ir_validator import validate_ir
+    content_ir = params.get("content_ir")
+    if not content_ir:
+        return {"success": False, "error": "content_ir required"}
+    try:
+        validation = await validate_ir(content_ir)
+        if not validation.valid:
+            return {
+                "success": True,
+                "data": {
+                    "valid": False,
+                    "errors": [e.model_dump() for e in validation.errors],
+                },
+            }
+        normalized = await normalize_ir(content_ir)
+        return {
+            "success": True,
+            "data": {
+                "valid": True,
+                "normalized_preview": normalized,
+            },
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def _cap_write_ir(params: dict, caller: str) -> dict:
+    from app.core.exceptions import ValidationError as AppValidationError
+    from app.services.content.ir_validator import validate_ir
+    from app.services.content.ir_writer import write_ir
+    content_ir = params.get("content_ir")
+    if not content_ir:
+        return {"success": False, "error": "content_ir required"}
+    # Pre-validate with structured error response
+    validation = await validate_ir(content_ir)
+    if not validation.valid:
+        return {
+            "success": False,
+            "error": "CONTENT_IR_VALIDATION_FAILED",
+            "data": {
+                "valid": False,
+                "errors": [e.model_dump() for e in validation.errors],
+            },
+        }
+    owner_id = resolve_caller_user_id(caller)
+    if owner_id == 0:
+        return {"success": False, "error": "Write operations require a real user context (system principal not allowed)"}
+    source_file_id = params.get("file_id")
+    expected_version_id = params.get("expected_version_id")
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await write_ir(
+                db, content_ir, owner_id, caller,
+                source_file_id=source_file_id,
+                expected_version_id=expected_version_id,
             )
             return {"success": True, "data": result}
+        except AppValidationError as e:
+            details = getattr(e, "details", None) or []
+            return {
+                "success": False,
+                "error": "CONTENT_IR_VALIDATION_FAILED",
+                "data": {
+                    "valid": False,
+                    "errors": details,
+                },
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+async def _cap_compile(params: dict, caller: str) -> dict:
+    """Compile a ContentPackage to a temporary physical file for download.
+
+    Does NOT create framework_file_items.
+    Returns temp file path; caller is responsible for cleanup via BackgroundTask.
+
+    Security: validates that the returned file path is within allowed temp directories
+    and that the filename contains no path separators.
+    """
+    import os
+    import tempfile
+    from pathlib import Path
+
+    from app.config import get_settings
+    from app.models.content import ContentPackage
+    from app.services.content.export_service import ContentExportService
+    owner_id = resolve_caller_user_id(caller)
+    package_id = params.get("package_id")
+    target_format = params.get("target_format")
+    if not package_id:
+        return {"success": False, "error": "package_id required"}
+    async with AsyncSessionLocal() as db:
+        try:
+            # Verify access: file-level check for shared packages, owner check as fallback
+            pkg = await db.get(ContentPackage, package_id)
+            if not pkg or pkg.deleted:
+                return {"success": False, "error": "Package not found"}
+            if pkg.source_file_id:
+                from app.services.file_service import check_file_access
+                access = await check_file_access(db, pkg.source_file_id, owner_id)
+                if not access:
+                    return {"success": False, "error": "Permission denied"}
+            elif pkg.owner_id != owner_id:
+                return {"success": False, "error": "Permission denied"}
+
+            export_svc = ContentExportService()
+            full = await export_svc.package_svc.get_full_package(
+                db, package_id,
+            )
+            content = full.get("content", {})
+            pkg_info = full.get("package", {})
+            fmt = (target_format or pkg_info.get("source_extension", "docx")).lower().strip(".")
+            file_path, filename = await export_svc._compile_to_file(
+                db, pkg_info, fmt, content, owner_id=owner_id,
+            )
+            # Security: validate the returned file path
+            file_path_obj = Path(file_path) if not isinstance(file_path, Path) else file_path
+            file_path_str = str(file_path_obj.resolve())
+            settings = get_settings()
+            upload_root = Path(settings.UPLOAD_DIR).resolve().parent
+            allowed_roots = [
+                (upload_root / ".tmp_exports").resolve(),
+                (upload_root / ".tmp_downloads").resolve(),
+                Path(tempfile.gettempdir()).resolve(),
+            ]
+            allowed = any(
+                os.path.commonpath([str(root), file_path_str]) == str(root)
+                for root in allowed_roots
+            )
+            if not allowed or not file_path_obj.exists() or not file_path_obj.is_file():
+                return {"success": False, "error": "Invalid compile output path"}
+            # Filename must not contain path separators
+            if "/" in filename or "\\" in filename:
+                return {"success": False, "error": "Invalid filename"}
+            return {
+                "success": True,
+                "data": {
+                    "file_path": file_path_str,
+                    "filename": filename,
+                    "package_id": package_id,
+                },
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -498,6 +795,68 @@ async def _on_file_uploaded(payload: dict, caller: str, caller_role: str) -> dic
         return {"success": False, "error": str(e)}
 
 
+async def _cap_store_analysis_resource(params: dict, caller: str) -> dict:
+    """Store VLM/analysis result as a Resource (viewer-safe, requires file_id).
+
+    Unlike store_resource which requires editor role, this capability allows
+    viewer callers to store VLM metadata, provided they have access to the
+    referenced file. The file_id is required for access validation.
+    """
+    from app.services.content.resource_service import ResourceService
+    from app.services.file_service import get_file_record
+    from app.services.file_share_service import check_file_access
+
+    data_b64 = params.get("data_b64")
+    file_id = params.get("file_id")
+    if not data_b64:
+        return {"success": False, "error": "data_b64 required"}
+    if not file_id:
+        return {"success": False, "error": "file_id required for access validation"}
+
+    import base64
+    data = base64.b64decode(data_b64)
+    owner_id = resolve_caller_user_id(caller)
+    async with AsyncSessionLocal() as db:
+        try:
+            file_rec = await get_file_record(db, file_id)
+            if not file_rec:
+                return {"success": False, "error": "File not found"}
+            access = await check_file_access(db, file_id, owner_id)
+            if not access["accessible"]:
+                return {"success": False, "error": "Permission denied"}
+
+            resource_svc = ResourceService()
+            result = await resource_svc.create_resource(
+                db, data,
+                owner_id=owner_id,
+                resource_type=params.get("resource_type", "image"),
+                mime_type=params.get("mime_type", "application/octet-stream"),
+                filename=params.get("filename", "resource.bin"),
+                width=params.get("width"),
+                height=params.get("height"),
+                description=params.get("description"),
+                ocr_text=params.get("ocr_text"),
+            )
+            if params.get("vlm_metadata"):
+                await resource_svc.update_description(
+                    db, result["id"],
+                    vlm_metadata=params["vlm_metadata"],
+                )
+            # Create ResourceRef via package linked to file
+            from app.services.content.package_service import ContentPackageService
+            pkg_svc_local = ContentPackageService()
+            pkg_info = await pkg_svc_local.get_package(db, file_id=file_id, owner_id=owner_id)
+            if pkg_info and pkg_info.get("id"):
+                await resource_svc.add_ref(
+                    db, pkg_info["id"], result["id"],
+                    block_id=params.get("block_id"),
+                    usage_hints=params.get("description", ""),
+                )
+            return {"success": True, "data": result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
 from app.services.module_events import register_module_event_handler
 
 register_module_event_handler("file.uploaded", _on_file_uploaded, "content")
@@ -505,32 +864,78 @@ register_module_event_handler("file.uploaded", _on_file_uploaded, "content")
 # ── Register capabilities ────────────────────────────────────────
 
 def register_content_capabilities():
-    caps = [
-        ("pipeline", _cap_pipeline, "Automated content pipeline: parse file → content package", {"file_id": "int"}),
+    # Read-only capabilities (viewer)
+    _register_viewer_caps()
+    # Viewer-safe resource store (for parser/VLM backfill with file access check)
+    register_capability(
+        "content", "store_analysis_resource", _cap_store_analysis_resource,
+        description="Store VLM/analysis result as Resource (viewer-safe, requires file_id access check)",
+        parameters={
+            "data_b64": "string", "resource_type": "string", "mime_type": "string",
+            "filename": "string", "description": "string (optional)", "ocr_text": "string (optional)",
+            "vlm_metadata": "object (optional)", "file_id": "int (required)",
+        },
+        min_role="viewer",
+    )
+    # Write capabilities (editor)
+    _register_editor_caps()
+    logger.info("Registered all content:* capabilities")
+
+
+def _register_viewer_caps():
+    viewer_caps = [
         ("get_package", _cap_get_package, "Get content package metadata", {"package_id": "int (optional)", "file_id": "int (optional)"}),
         ("get_full_package", _cap_get_full, "Get full content package with blocks and resource refs", {"package_id": "int"}),
+        ("get_file_content", _cap_get_file_content, "Get file content from ContentPackage (lazy parse if needed)", {"file_id": "int"}),
         ("list_blocks", _cap_list_blocks, "List blocks in a content package", {"package_id": "int", "block_type": "str (optional)", "page": "int (optional)"}),
         ("get_block", _cap_get_block, "Get a single block by ID", {"package_id": "int", "block_id": "str"}),
-        ("update_blocks", _cap_update_blocks, "Update one or more blocks", {"package_id": "int", "updates": "list[{block_id, text?, data?, style?}]"}),
-        ("append_blocks", _cap_append_blocks, "Append new blocks to a package", {"package_id": "int", "blocks": "list[{type, text, data?, style?}]"}),
-        ("replace_text", _cap_replace_text, "Find and replace text across blocks", {"package_id": "int", "request": "{old_text, new_text, scope}"}),
-        ("export", _cap_export, "Export content package to a physical file", {"package_id": "int", "target_format": "str (optional)"}),
-        ("publish", _cap_publish, "Publish content package as an artifact", {"package_id": "int", "target_file_id": "int (optional)"}),
         ("list_versions", _cap_list_versions, "List all versions of a content package", {"package_id": "int"}),
-        ("restore_version", _cap_restore_version, "Restore a previous version", {"package_id": "int", "version_id": "int"}),
         ("list_resources", _cap_list_resources, "List resources referenced by a package", {"package_id": "int"}),
         ("get_resource", _cap_get_resource, "Get resource metadata by ID", {"resource_id": "int"}),
-        ("store_resource", _cap_store_resource, "Store an extracted embedded resource (data_b64, mime_type, filename)", {"data_b64": "string", "resource_type": "string", "mime_type": "string", "filename": "string", "description": "string (optional)"}),
+        ("validate_ir", _cap_validate_ir, "Validate Content IR structure and semantics", {"content_ir": "object"}),
+        ("normalize_ir", _cap_normalize_ir, "Normalize Content IR (fill defaults, ids)", {"content_ir": "object"}),
+        ("compile", _cap_compile, "Compile ContentPackage to temporary physical file for download", {"package_id": "int", "target_format": "str (optional)"}),
     ]
-    for action, handler, desc, params in caps:
-        role = "viewer" if action in ("get_package", "get_full_package", "list_blocks", "get_block", "list_versions", "list_resources", "get_resource") else "editor"
+    for action, handler, desc, params in viewer_caps:
         register_capability(
             "content", action, handler,
             description=desc,
             parameters=params,
-            min_role=role,
+            min_role="viewer",
         )
-    logger.info("Registered %d content:* capabilities", len(caps))
+
+
+def _register_editor_caps():
+    editor_caps = [
+        ("pipeline", _cap_pipeline, "Automated content pipeline: parse file → content package", {"file_id": "int"}),
+        ("update_blocks", _cap_update_blocks, "Update one or more blocks", {"package_id": "int", "updates": "list[{block_id, text?, data?, style?}]", "expected_version_id": "int (optional)"}),
+        ("append_blocks", _cap_append_blocks, "Append new blocks to a package", {"package_id": "int", "blocks": "list[{type, text, data?, style?}]", "expected_version_id": "int (optional)"}),
+        ("replace_text", _cap_replace_text, "Find and replace text across blocks", {"package_id": "int", "request": "{old_text, new_text, scope}", "expected_version_id": "int (optional)"}),
+        ("export", _cap_export, "Export content package to a physical file", {"package_id": "int", "target_format": "str (optional)"}),
+        ("publish", _cap_publish, "Publish content package as an artifact", {"package_id": "int", "target_file_id": "int (optional)"}),
+        ("restore_version", _cap_restore_version, "Restore a previous version", {"package_id": "int", "version_id": "int"}),
+        ("store_resource", _cap_store_resource, "Store an extracted embedded resource (data_b64, mime_type, filename, description, ocr_text, vlm_metadata, file_id, package_id, block_id)", {"data_b64": "string", "resource_type": "string", "mime_type": "string", "filename": "string", "description": "string (optional)", "ocr_text": "string (optional)", "vlm_metadata": "object (optional)", "file_id": "int (optional)", "package_id": "int (optional)", "block_id": "string (optional)"}),
+        ("write_ir", _cap_write_ir, "Write validated Content IR to canonical DB source", {"content_ir": "object", "file_id": "int (optional)", "expected_version_id": "int (optional)"}),
+    ]
+    for action, handler, desc, params in editor_caps:
+        register_capability(
+            "content", action, handler,
+            description=desc,
+            parameters=params,
+            min_role="editor",
+        )
+
+    # Viewer-safe resource storage for parser/VLM backfill
+    register_capability(
+        "content", "store_analysis_resource", _cap_store_analysis_resource,
+        description="Store VLM/analysis result as Resource (viewer-safe, requires file_id access check)",
+        parameters={
+            "data_b64": "string", "resource_type": "string", "mime_type": "string",
+            "filename": "string", "description": "string (optional)", "ocr_text": "string (optional)",
+            "vlm_metadata": "object (optional)", "file_id": "int (required)",
+        },
+        min_role="viewer",
+    )
 
 
 register_content_capabilities()

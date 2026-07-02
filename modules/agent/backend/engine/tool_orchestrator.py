@@ -135,6 +135,14 @@ _read_tools: list[str] = [
     "image-gen__usage_history",
     # Excel engine — reads
     "excel-engine__parse",
+    # Content IR — reads (validate/normalize have no side effects)
+    "content__validate_ir",
+    "content__normalize_ir",
+    "content__get_package",
+    "content__get_full_package",
+    "content__get_file_content",
+    "content__list_blocks",
+    "content__get_resource",
     # Docs-open — reads
     "docs-open__open",
 ]
@@ -184,6 +192,14 @@ _write_tools: list[str] = [
     "codemap__acquire_lock",
     "codemap__release_lock",
     "codemap__report_inaccuracy",
+    # Content IR — writes (names match register_capability)
+    "content__write_ir",
+    "content__update_blocks",
+    "content__append_blocks",
+    "content__replace_text",
+    # Excel engine — writes (names match register_capability)
+    "excel_engine__update_range",
+    "excel_engine__append_rows",
     # Knowledge — writes
     "knowledge__ingest",
 ]

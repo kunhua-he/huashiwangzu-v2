@@ -1,16 +1,19 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, desc, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.exceptions import NotFound
-from app.database import get_db
-from app.schemas.common import ApiResponse
-from app.schemas.system import SystemTaskQueueResponse, WorkerStatusResponse
-from app.middleware.auth import require_permission
-from app.models.user import User
-from app.models.system import SystemTaskQueue
 import json
 from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import NotFound
+from app.database import get_db
+from app.middleware.auth import require_permission
+from app.models.system import SystemTaskQueue
+from app.models.user import User
+from app.schemas.common import ApiResponse
+from app.schemas.system import SystemTaskQueueResponse, WorkerStatusResponse
+from app.services.task_queue_audit_service import audit_task_queue, reconcile_orphan_running, reconcile_stale_pending
 
 router = APIRouter(prefix="/api/tasks", tags=["system-tasks"])
 
@@ -57,6 +60,28 @@ async def worker_status(
         completed=counts["completed"], failed=counts["failed"],
         oldest_waiting_seconds=wait_secs,
     ))
+
+
+@router.get("/worker/audit")
+async def worker_audit(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    audit = await audit_task_queue(db)
+    return ApiResponse(data=audit)
+
+
+@router.post("/worker/reconcile")
+async def worker_reconcile(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    orphans = await reconcile_orphan_running(db)
+    stale = await reconcile_stale_pending(db)
+    return ApiResponse(data={
+        "orphans_reconciled": orphans,
+        "stale_pending_reconciled": stale,
+    })
 
 
 @router.get("/{task_id}")

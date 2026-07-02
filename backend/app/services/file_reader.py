@@ -9,13 +9,32 @@ from app.core.exceptions import AppException, NotFound, PermissionDenied, Valida
 
 
 def resolve_caller_user_id(caller: str) -> int:
+    """Extract user ID from caller string.
+
+    Accepted formats:
+        user:{id} — normal user
+        system:* — system principal (returns 0, owner-sensitive operations must reject)
+
+    Raises PermissionDenied for invalid format.
+    """
     try:
         prefix, raw_id = caller.split(":", 1)
         if prefix == "user":
             return int(raw_id)
+        if prefix == "system":
+            return 0  # System principal; caller must check owner_id before write
     except (TypeError, ValueError):
         pass
     raise PermissionDenied("Invalid caller")
+
+
+def is_system_caller(caller: str) -> bool:
+    """Check if the caller is a system principal (not tied to a user)."""
+    try:
+        prefix, _ = caller.split(":", 1)
+        return prefix == "system"
+    except (TypeError, ValueError):
+        return False
 
 
 def require_positive_file_id(params: dict) -> int:
@@ -67,15 +86,14 @@ def decode_text_bytes(raw: bytes) -> str:
 
 async def get_file_content_bytes(file_id: int, user_id: int) -> bytes:
     """Read the raw bytes of a file from disk by file_id and owner_id.
-    
+
     Returns the raw file content bytes. Access-controlled via check_file_access.
     """
     from pathlib import Path
 
     from app.config import get_settings
-    from app.services.file_service import check_file_access
-
     from app.database import AsyncSessionLocal
+    from app.services.file_service import check_file_access
 
     async with AsyncSessionLocal() as db:
         file = await check_file_access(db, file_id, user_id)

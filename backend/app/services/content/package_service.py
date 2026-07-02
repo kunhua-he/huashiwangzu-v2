@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFound, PermissionDenied, ValidationError
+from app.core.exceptions import ConflictError, NotFound, PermissionDenied, ValidationError
 from app.models.content import (
     ContentPackage,
     ContentPackageVersion,
@@ -344,11 +344,18 @@ class ContentPackageService:
         self, db: AsyncSession, package_id: int,
         updates: list[BlockUpdateRequest], caller: str,
         owner_id: int | None = None,
+        expected_version_id: int | None = None,
     ) -> dict[str, Any]:
         pkg = await self.get_package(db, package_id=package_id, owner_id=owner_id)
         version = await self._get_current_version(db, package_id)
         if not version:
             raise ValidationError("No version to update")
+
+        if expected_version_id is not None and version.id != expected_version_id:
+            raise ConflictError(
+                f"Version conflict: expected {expected_version_id}, "
+                f"current is {version.id}"
+            )
 
         content_ir = json.loads(version.content_json) if version.content_json else {"manifest": {}, "blocks": []}
         update_map = {u.block_id: u for u in updates}
@@ -395,11 +402,18 @@ class ContentPackageService:
         self, db: AsyncSession, package_id: int,
         request: ReplaceTextRequest, caller: str,
         owner_id: int | None = None,
+        expected_version_id: int | None = None,
     ) -> dict[str, Any]:
         pkg = await self.get_package(db, package_id=package_id, owner_id=owner_id)
         version = await self._get_current_version(db, package_id)
         if not version:
             raise ValidationError("No version to update")
+
+        if expected_version_id is not None and version.id != expected_version_id:
+            raise ConflictError(
+                f"Version conflict: expected {expected_version_id}, "
+                f"current is {version.id}"
+            )
 
         content_ir = json.loads(version.content_json) if version.content_json else {"manifest": {}, "blocks": []}
         replacement_count = 0
@@ -439,11 +453,18 @@ class ContentPackageService:
         self, db: AsyncSession, package_id: int,
         blocks: list[BlockAppendRequest], caller: str,
         owner_id: int | None = None,
+        expected_version_id: int | None = None,
     ) -> dict[str, Any]:
         pkg = await self.get_package(db, package_id=package_id, owner_id=owner_id)
         version = await self._get_current_version(db, package_id)
         if not version:
             raise ValidationError("No version to update")
+
+        if expected_version_id is not None and version.id != expected_version_id:
+            raise ConflictError(
+                f"Version conflict: expected {expected_version_id}, "
+                f"current is {version.id}"
+            )
 
         content_ir = json.loads(version.content_json) if version.content_json else {"manifest": {}, "blocks": []}
 
@@ -556,6 +577,20 @@ class ContentPackageService:
         resource = await db.get(Resource, resource_id)
         if not resource:
             raise NotFound(f"Resource {resource_id} not found")
+        if owner_id is not None and resource.owner_id != owner_id:
+            # Check if user has access via file shares (ResourceRef -> ContentPackage -> source_file_id)
+            ref_result = await db.execute(
+                select(ResourceRef).where(ResourceRef.resource_id == resource_id).limit(1)
+            )
+            ref = ref_result.scalar_one_or_none()
+            if ref:
+                pkg = await db.get(ContentPackage, ref.package_id)
+                if pkg and pkg.source_file_id:
+                    from app.services.file_share_service import check_file_access
+                    access = await check_file_access(db, pkg.source_file_id, owner_id)
+                    if access["accessible"]:
+                        return self._resource_to_dict(resource)
+            raise PermissionDenied("Permission denied")
         return self._resource_to_dict(resource)
 
     async def delete_package(

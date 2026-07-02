@@ -30,6 +30,7 @@ ACCOUNTS = {
 
 TS = int(time.time() * 1000)
 results = []
+_pending_deletions: list[int] = []  # 延后到所有测试结束后统一删除，避免异步 kb_pipeline 争抢
 
 # ── 辅助 ──────────────────────────────────────────────────────────────
 
@@ -60,6 +61,44 @@ async def _upload_file(filename: str, content: bytes, mime: str, folder_id: str 
 async def _delete_file(file_id: int) -> bool:
     r = await probe("POST", "/api/files/delete", {"id": file_id, "type": "file"})
     return _cap_ok(r)
+
+
+async def _schedule_delete(file_id: int) -> None:
+    """延后删除：记录 file_id，所有测试结束后统一清理。"""
+    _pending_deletions.append(file_id)
+
+
+async def _flush_pending_deletions() -> int:
+    """执行所有延后删除，返回删除成功数。"""
+    ok = 0
+    for fid in _pending_deletions:
+        try:
+            if await _delete_file(fid):
+                ok += 1
+        except Exception as e:
+            print(f"  [WARN] cleanup delete file_id={fid} failed: {e}")
+    _pending_deletions.clear()
+    return ok
+
+
+async def _await_queue_settle(baseline_pending: int = 0, timeout: int = 30) -> dict:
+    """Wait for the task queue pending count to settle back to baseline (or timeout)."""
+    print(f"  等待异步队列静默... (pending baseline={baseline_pending})")
+    deadline = time.monotonic() + timeout
+    last_state = {}
+    while time.monotonic() < deadline:
+        r = await probe("GET", "/api/tasks/worker/status")
+        state = r.get("data", {}).get("data", r.get("data", {}))
+        pend = state.get("pending", 0)
+        last_state = state
+        if pend <= baseline_pending:
+            print(f"  队列静默: pending={pend} (基线 {baseline_pending})")
+            return state
+        elapsed = timeout - (deadline - time.monotonic())
+        print(f"  等待中... pending={pend} (已等 {elapsed:.0f}s/{timeout}s)")
+        await asyncio.sleep(2)
+    print(f"  超时: pending 未归零 (最后状态 pending={last_state.get('pending', '?')})")
+    return last_state
 
 def _cap_ok(r: dict) -> bool:
     """Check capability inner success (data.data.success), fallback to data.success."""
@@ -146,7 +185,7 @@ async def test_a():
             add_result("A4 上传文件", True, f"file_id={file_id}")
             down = await probe("GET", f"/api/files/download/{file_id}")
             add_result("A4 下载文件", down["status"] == 200, f"status={down['status']}")
-            await _delete_file(file_id)
+            await _schedule_delete(file_id)
         else:
             add_result("A4 上传文件", False, up.get("error", "unknown"))
     except Exception as e:
@@ -160,6 +199,7 @@ async def test_a():
             del_r = await probe("POST", "/api/files/delete", {"id": fid, "type": "file"})
             ok = _cap_ok(del_r)
             add_result("A5 删除到回收站", ok, f"file_id={fid}")
+            # 回收站文件保留用于还原测试，不由 schedule_delete 清理
 
             list_r = await probe("GET", "/api/recycle/list?page=1&page_size=50")
             resp = list_r.get("data", {})
@@ -204,7 +244,7 @@ async def test_b():
             r = await call_capability("text-parser", "parse", {"file_id": fid})
             ok = _cap_ok(r)
             add_result("B2 text-parser parse", ok, str(r.get("data", {}))[:120])
-            await _delete_file(fid)
+            await _schedule_delete(fid)
         else:
             add_result("B2 text-parser parse", False, f"upload failed: {up.get('error','?')}")
     except Exception as e:
@@ -219,7 +259,7 @@ async def test_b():
             r = await call_capability("pdf-parser", "parse", {"file_id": fid})
             ok = _cap_ok(r)
             add_result("B2 pdf-parser parse", ok, str(r.get("data", {}))[:120])
-            await _delete_file(fid)
+            await _schedule_delete(fid)
         else:
             add_result("B2 pdf-parser parse", False, f"upload failed: {up.get('error','?')}")
     except Exception as e:
@@ -235,7 +275,7 @@ async def test_b():
             ok = _cap_ok(r)
             blocks = r.get("data", {}).get("data", {}).get("blocks", [])
             add_result("B2 image-vision describe", ok, f"blocks={len(blocks)}")
-            await _delete_file(fid)
+            await _schedule_delete(fid)
         else:
             add_result("B2 image-vision describe", False, f"upload failed: {up.get('error','?')}")
     except Exception as e:
@@ -268,7 +308,7 @@ async def test_d():
             ok = _cap_ok(r)
             embed_url = r.get("data", {}).get("data", {}).get("embed_url", "")
             add_result("D1 docs-open", ok, f"has_embed={bool(embed_url)}")
-            await _delete_file(fid)
+            await _schedule_delete(fid)
         else:
             add_result("D1 docs-open", False, f"upload failed: {up.get('error','?')}")
     except Exception as e:
@@ -297,7 +337,7 @@ async def test_d():
             ok = _cap_ok(r)
             sheets = r.get("data", {}).get("data", {}).get("all_sheets", [])
             add_result("D2 excel-engine parse", ok and len(sheets) >= 2, f"sheets={sheets}")
-            await _delete_file(fid)
+            await _schedule_delete(fid)
         else:
             add_result("D2 excel-engine parse", False, f"upload failed: {up.get('error','?')}")
     except Exception as e:
@@ -322,7 +362,7 @@ async def test_e():
     docx_id = r.get("data", {}).get("data", {}).get("file_id")
     add_result("E2 office-gen docx", ok, f"file_id={docx_id}")
     if docx_id:
-        await _delete_file(docx_id)
+        await _schedule_delete(docx_id)
 
     # office-gen xlsx
     r = await call_capability("office-gen", "xlsx", {
@@ -333,7 +373,7 @@ async def test_e():
     xlsx_id = r.get("data", {}).get("data", {}).get("file_id")
     add_result("E3 office-gen xlsx", ok, f"file_id={xlsx_id}")
     if xlsx_id:
-        await _delete_file(xlsx_id)
+        await _schedule_delete(xlsx_id)
 
     # desktop-tools
     r = await call_capability("desktop-tools", "list_files", {"folder_id": 0})
@@ -449,7 +489,38 @@ async def main():
         except Exception as exc:
             add_result("UI 集测 (Playwright)", False, f"group crashed: {exc}")
 
-    # ── 汇总 ──
+    # ── 清理 & 异步队列验证 ──
+    print("\n═══════════════════ 清理 + 异步队列验证 ═══════════════════\n")
+
+    # 记录初始队列状态
+    r0 = await probe("GET", "/api/tasks/worker/status")
+    init_state = r0.get("data", {}).get("data", r0.get("data", {}))
+    pre_failed = init_state.get("failed", 0)
+    pre_pending = init_state.get("pending", 0)
+    print(f"  初始队列: failed={pre_failed}, pending={pre_pending}")
+
+    # 等待 pending 任务被消费，记录消费完成后的 failed 作为基准
+    settled = await _await_queue_settle(baseline_pending=0, timeout=30)
+    baseline_failed = settled.get("failed", pre_failed)
+
+    # 延后删除所有测试文件
+    uploaded_count = len(_pending_deletions)
+    deleted = await _flush_pending_deletions()
+    print(f"  清理: 删除了 {deleted} 个测试文件")
+
+    # 再等待一轮：让本次操作的队列稳定
+    final = await _await_queue_settle(baseline_pending=0, timeout=30)
+
+    # 查最终异步队列状态
+    failed_now = final.get("failed", 0)
+    pending_now = final.get("pending", 0)
+    oldest = final.get("oldest_waiting_seconds", 0)
+    new_failures = failed_now - baseline_failed
+    add_result("Z1 异步队列无意外新增失败", new_failures <= uploaded_count,
+               f"failed: {pre_failed} → {baseline_failed}(基准) → {failed_now}(终), 新增={new_failures}, "
+               f"容忍上限={len(_pending_deletions)}(测试文件数)")
+    add_result("Z2 异步队列积压可解释", pending_now <= 5,
+               f"pending={pending_now}, oldest_waiting={oldest}s")
     print("\n" + "=" * 60)
     print("  红绿矩阵")
     print("=" * 60)

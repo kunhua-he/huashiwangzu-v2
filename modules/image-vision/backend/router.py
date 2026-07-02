@@ -14,7 +14,11 @@ class DescribeRequest(BaseModel):
 
 
 async def _describe(params: dict, caller: str) -> dict:
+    import base64
     import io
+    import logging
+
+    logger = logging.getLogger("v2.image-vision")
 
     allowed = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "ico"}
 
@@ -41,11 +45,37 @@ async def _describe(params: dict, caller: str) -> dict:
             except Exception:
                 description = f"[Image metadata] {file.name}.{file.extension}, {len(raw)} bytes. Vision unavailable."
 
+        # Persist to Resource via content:store_resource
+        data_b64 = base64.b64encode(raw).decode("ascii")
+        mime_type_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                         "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp", "ico": "image/x-icon"}
+        try:
+            from app.services.module_registry import call_capability
+            store_result = await call_capability(
+                "content", "store_analysis_resource",
+                {
+                    "data_b64": data_b64,
+                    "resource_type": "image",
+                    "mime_type": mime_type_map.get(ext, "image/jpeg"),
+                    "filename": f"{file.name}.{file.extension}",
+                    "description": description,
+                    "file_id": file_id,
+                },
+                caller=caller, caller_role="viewer",
+            )
+            resource_id = store_result.get("data", store_result).get("id") if isinstance(store_result, dict) else None
+            if resource_id:
+                logger.info("Persisted image-vision result to Resource id=%s for file_id=%d", resource_id, file_id)
+        except Exception as e:
+            logger.warning("Failed to persist image-vision result to Resource: %s", e)
+            resource_id = None
+
+        block_ref = resource_id if resource_id else 1
         blocks = [
-            {"type": "image", "text": description, "page": None, "resource_ref": 1},
+            {"type": "image", "text": description, "page": None, "resource_ref": block_ref},
         ]
         resources = [
-            {"id": 1, "type": "image", "file_storage_id": file_id, "text_desc": description},
+            {"id": block_ref, "type": "image", "file_storage_id": file_id, "text_desc": description},
         ]
 
         return {
@@ -53,6 +83,7 @@ async def _describe(params: dict, caller: str) -> dict:
             "format": ext,
             "blocks": blocks,
             "resources": resources,
+            "resource_id": resource_id,
         }
 
     return await run_uploaded_file_capability(params, caller, allowed, describe_file)

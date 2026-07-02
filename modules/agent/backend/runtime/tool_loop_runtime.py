@@ -1039,6 +1039,16 @@ class ToolLoopRuntime:
                     yield self._sse("thinking", clean)
             elif event_type == "tool_call":
                 if segment is not None:
+                    draft_text = "".join(content_parts).strip()
+                    if draft_text:
+                        timeline.append({
+                            "type": "assistant_draft",
+                            "title": "回复用户",
+                            "content": draft_text,
+                            "reason": "rollback:tool_call_detected",
+                            "started_at": time.time(),
+                            "collapsed": True,
+                        })
                     rollback_event = proxy.rollback(segment, "tool_call_detected")
                     if rollback_event:
                         yield rollback_event
@@ -1080,6 +1090,16 @@ class ToolLoopRuntime:
             clean_content, inline_calls = raw_content, []
         if inline_calls:
             if segment is not None:
+                draft_text = "".join(content_parts).strip()
+                if draft_text:
+                    timeline.append({
+                        "type": "assistant_draft",
+                        "title": "回复用户",
+                        "content": draft_text,
+                        "reason": "rollback:inline_tool_call_detected",
+                        "started_at": time.time(),
+                        "collapsed": True,
+                    })
                 rollback_event = proxy.rollback(segment, "inline_tool_call_detected", replacement=clean_content)
                 if rollback_event:
                     yield rollback_event
@@ -1100,6 +1120,16 @@ class ToolLoopRuntime:
 
         if looks_like_unfinished_tool_intent(clean_content):
             if segment is not None:
+                draft_text = "".join(content_parts).strip()
+                if draft_text:
+                    timeline.append({
+                        "type": "assistant_draft",
+                        "title": "回复用户",
+                        "content": draft_text,
+                        "reason": "rollback:unfinished_tool_intent",
+                        "started_at": time.time(),
+                        "collapsed": True,
+                    })
                 rollback_event = proxy.rollback(segment, "unfinished_tool_intent")
                 if rollback_event:
                     yield rollback_event
@@ -1230,6 +1260,16 @@ class ToolLoopRuntime:
                     "[DIAG] Final summary cleaned: %d chars → %d chars",
                     len(raw), len(clean),
                 )
+                draft_text = raw.strip()
+                if draft_text:
+                    timeline.append({
+                        "type": "assistant_draft",
+                        "title": "回复用户",
+                        "content": draft_text,
+                        "reason": "replace:summary_cleaned",
+                        "started_at": time.time(),
+                        "collapsed": True,
+                    })
                 if segment is not None:
                     rollback_event = proxy.rollback(segment, "summary_cleaned", replacement=clean)
                     if rollback_event:

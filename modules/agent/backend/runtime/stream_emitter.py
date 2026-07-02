@@ -124,6 +124,16 @@ class StreamEmitter:
                 clean_content, inline_calls = full_content, []
 
             if inline_calls:
+                draft_text = "".join(full).strip()
+                if draft_text:
+                    tl.append({
+                        "type": "assistant_draft",
+                        "title": "回复用户",
+                        "content": draft_text,
+                        "reason": "replace:inline_tool_calls",
+                        "started_at": time.time(),
+                        "collapsed": True,
+                    })
                 full.clear()
                 full.append(clean_content)
                 logger.info(
@@ -136,6 +146,16 @@ class StreamEmitter:
                 return
 
             if looks_like_unfinished_tool_intent(clean_content):
+                draft_text = "".join(full).strip()
+                if draft_text:
+                    tl.append({
+                        "type": "assistant_draft",
+                        "title": "回复用户",
+                        "content": draft_text,
+                        "reason": "replace:unfinished_tool_intent",
+                        "started_at": time.time(),
+                        "collapsed": True,
+                    })
                 full.clear()
                 logger.warning(
                     "StreamEmitter requested retry for unfinished tool-intent reply: %s",

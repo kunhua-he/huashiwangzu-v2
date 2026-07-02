@@ -1,5 +1,7 @@
-from pydantic import BaseModel
 from datetime import datetime
+
+from pydantic import BaseModel
+
 
 class SystemLogResponse(BaseModel):
     id: int; level: str; module: str; action: str; message: str
@@ -93,3 +95,13 @@ class SystemTaskQueueResponse(BaseModel):
 
 class WorkerStatusResponse(BaseModel):
     pending: int; running: int; completed: int; failed: int; oldest_waiting_seconds: int | None
+
+class TaskQueueAuditResponse(BaseModel):
+    summary: dict
+    classification: dict
+    recent_failed_count: int
+    historical_debt_total: int
+    stalest_pending: dict | None
+    handler_breakdown: dict
+    top_error_signatures: list
+    metadata: dict

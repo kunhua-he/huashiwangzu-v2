@@ -69,11 +69,12 @@ backend/    Desktop shell backend / platform service layer
 
 ## 开工铁律(项目工具台 MCP)
 
-1. **每个开发 agent 开工先连"项目工具台"MCP**: 调 `brief()` 了解全貌→`code_explore`/`codegraph` 查代码与影响面→`routes`/`capabilities`/`db_schema` 查准端点/能力/表(别猜)→改完 `lint` 静态查错→`probe`/`call_capability` 直接打活系统验(别写测试脚本搭场景)→单测用 `run_test`→收工**必须用 `memory_write(agent="<自己>")`** 落一条"我是谁/干了啥/commit"(禁止手写JSON/文件到别处)。记忆唯一位置 = `开发文档/项目记忆/`(markdown)。
+1. **每个开发 agent 开工先连"项目工具台"MCP**: 调 `brief()` 了解全貌→`plan_task()` 定工作流→`worktree_guard()` 先看 dirty/边界(含未跟踪文件)→`code_explore`/`codegraph` 查代码与影响面→`routes`/`capabilities`/`db_schema` 查准端点/能力/表(别猜)→改完 `lint` 静态查错→`probe`/`call_capability` 直接打活系统验(别写测试脚本搭场景)→单测用 `run_test`→收工用 `finish_task()` + **必须用 `memory_write(agent="<自己>")`** 落一条"我是谁/干了啥/commit"(禁止手写JSON/文件到别处)→**必须用 `mcp_feedback(agent="<自己>")`** 反馈本次工具台是否顺畅、缺什么、建议升级/移除什么。记忆唯一位置 = `开发文档/项目记忆/`(markdown)。邮箱投递信统一用 `mailbox_write_letter()`；邮箱回信/五件套统一用 `mailbox_create_delivery_bundle()` + `mailbox_check_delivery_bundle()`，不要手工自由发挥五件套结构。工具台使用情况定期用 `tool_usage_stats()` + `mcp_feedback_summary()` 看，常用工具继续打磨，低价值工具合并/移除。
 2. **跨模块归因**: 每个 agent 任务完成必 `memory_write(agent="<agent名>")` 留一条, 注明 agent、干了啥、关联 commit。重复主题用更新不新建。
 3. **查代码优先 codegraph**: `code_explore`/`code_node`/`code_impact` 或直接 `codegraph` CLI。
 4. **读网页用 `web_read`**(不截图)。
 5. **测试直接用 `probe` / `call_capability` 打活系统** + `tail_log` 看错, 别写测试脚本搭场景。
+6. **项目工具台 MCP 新增工具必须组件化**: `dev_toolkit/server.py` 只做 MCP 启动、工具列表拼接和顶层路由；新增/升级工具优先放到 `dev_toolkit/{domain}_tools.py`，提供 `tool_definitions()`、`handles_tool(name)`、`handle_tool(repo_root, name, arguments)`。不要再把大段 schema 或业务实现堆进 `server.py`。
 
 ## 测试铁律
 

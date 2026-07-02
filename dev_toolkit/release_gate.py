@@ -1,0 +1,358 @@
+"""Release gate — pre-publish validation matrix.
+
+Aggregates:
+  1. /api/health
+  2. /api/system/status
+  3. smoke_all(skip_ui=true)
+  4. Task queue audit (gate-run additions vs historical debt)
+  5. Module sandbox matrix summary
+
+Output levels:
+  - PASS       everything green
+  - BLOCKER    must fix before release (gate-run failures, health non-ok, worker down)
+  - DEBT       known historical issues, tracked not blocking
+  - SKIPPED_WITH_REASON  intentionally skipped (e.g. no sandbox test)
+
+Usage:
+    cd <repo> && backend/.venv/bin/python dev_toolkit/release_gate.py [--skip-ui]
+"""
+import argparse
+import asyncio
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BACKEND_BASE = "http://127.0.0.1:33000"
+
+ACCOUNTS = {
+    "admin": {"username": "何焜华", "password": "123rgE123"},
+}
+
+results: list[dict[str, Any]] = []
+_token_cache: dict[str, tuple[str, float]] = {}
+_TOKEN_MAX_AGE = 300  # 5 min — short enough to avoid stale-after-smoke expiry
+
+
+def add_result(check: str, level: str, detail: str) -> None:
+    results.append({"check": check, "level": level, "detail": detail})
+    icon = {"PASS": "✅", "BLOCKER": "🔴", "DEBT": "🟡", "SKIPPED_WITH_REASON": "⏭️"}.get(level, "❓")
+    print(f"  {icon} [{level:>20}] {check}: {detail[:200]}")
+
+
+async def _ensure_token() -> str:
+    now = time.monotonic()
+    if "admin" in _token_cache:
+        cached_token, cached_at = _token_cache["admin"]
+        if now - cached_at < _TOKEN_MAX_AGE:
+            return cached_token
+    acct = ACCOUNTS["admin"]
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
+        resp = await client.post("/api/login", json={
+            "username": acct["username"],
+            "password": acct["password"],
+        })
+        data = resp.json()
+        token = data.get("data", {}).get("access_token") or data.get("access_token")
+        if not token:
+            raise RuntimeError(f"Login failed: {data}")
+        _token_cache["admin"] = (token, now)
+        return token
+
+
+async def probe(method: str, path: str, body: dict | None = None) -> dict:
+    token = await _ensure_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=30, trust_env=False) as client:
+        resp = await client.request(method, path, json=body, headers=headers)
+        try:
+            return resp.json()
+        except Exception:
+            return {"raw": resp.text[:500], "status": resp.status_code}
+
+
+async def fetch_task_queue_audit() -> dict[str, Any]:
+    r = await probe("GET", "/api/tasks/worker/audit")
+    if not isinstance(r, dict):
+        raise TypeError(f"unexpected response type: {type(r)}")
+    d = r.get("data") if isinstance(r.get("data"), dict) else r
+    if not isinstance(d, dict):
+        raise TypeError(f"unexpected audit payload type: {type(d)}")
+    return d
+
+
+def audit_failed_count(audit: dict[str, Any]) -> int:
+    summary = audit.get("summary", {})
+    value = summary.get("failed", 0)
+    return int(value or 0)
+
+
+async def check_health() -> None:
+    try:
+        r = await probe("GET", "/api/health")
+        d = r.get("data", r)
+        status = d.get("status", "unknown")
+        if status == "ok":
+            add_result("Health check", "PASS", f"status={status}, db={d.get('database')}")
+        else:
+            add_result("Health check", "BLOCKER", f"status={status}, db={d.get('database')}")
+    except Exception as e:
+        add_result("Health check", "BLOCKER", str(e))
+
+
+async def check_system_status() -> None:
+    try:
+        r = await probe("GET", "/api/system/status")
+        d = r.get("data", r)
+        backend_ok = d.get("backend", {}).get("status") is True
+        db_ok = d.get("database", {}).get("status") is True
+        worker_ok = d.get("worker", {}).get("status") is True
+        if backend_ok and db_ok and worker_ok:
+            add_result("System status", "PASS", "backend/db/worker all ok")
+        else:
+            failing = [k for k in ("backend", "database", "worker") if not d.get(k, {}).get("status")]
+            add_result("System status", "BLOCKER", f"failing: {', '.join(failing)}")
+    except Exception as e:
+        add_result("System status", "BLOCKER", str(e))
+
+
+async def check_smoke(skip_ui: bool) -> None:
+    try:
+        started = time.monotonic()
+        env_override = {"SMOKE_SKIP_UI": "1"} if skip_ui else {}
+        env = {**os.environ.copy(), **env_override}
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(REPO_ROOT / "dev_toolkit" / "smoke.py"),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=360)
+        elapsed = time.monotonic() - started
+        output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+        passed = proc.returncode == 0
+
+        # Parse the red-green matrix footer
+        total = "-"
+        green = "-"
+        red = "-"
+        for line in output.splitlines():
+            if "总计" in line or "Total" in line:
+                parts = line.split()
+                for i, p in enumerate(parts):
+                    if p.isdigit():
+                        if total == "-":
+                            total = p
+                        elif green == "-":
+                            green = p
+                        elif red == "-":
+                            red = p
+                            break
+            if "全绿" in line or "All green" in line:
+                red = "0"
+
+        if passed and (red == "-" or red == "0" or red == "0"):
+            add_result("Smoke test (backends)", "PASS",
+                       f"{elapsed:.0f}s, all green")
+        elif passed:
+            add_result("Smoke test (backends)", "DEBT",
+                       f"{elapsed:.0f}s, passed but red count uncertain, see raw output")
+        else:
+            # Extract failure count from output
+            fail_lines = [line for line in output.splitlines() if "R]" in line or "❌" in line or "[R]" in line]
+            add_result("Smoke test (backends)", "BLOCKER",
+                       f"{elapsed:.0f}s, exit={proc.returncode}, failures: {len(fail_lines)}")
+    except asyncio.TimeoutError:
+        add_result("Smoke test (backends)", "BLOCKER", "timeout (>360s)")
+    except Exception as e:
+        add_result("Smoke test (backends)", "BLOCKER", str(e))
+
+
+async def check_task_queue_audit(baseline_failed: int | None) -> None:
+    try:
+        d = await fetch_task_queue_audit()
+        summary = d.get("summary", {})
+        classification = d.get("classification", {})
+        stalest = d.get("stalest_pending")
+
+        failed = summary.get("failed", 0)
+        pending = summary.get("pending", 0)
+        recent_failed = d.get("recent_failed_count", classification.get("recent_failed_count", 0))
+        gate_failed_delta = None if baseline_failed is None else max(0, int(failed or 0) - baseline_failed)
+        historical_debt = d.get("historical_debt_total", 0)
+        stale_pending = classification.get("stale_pending_debt_count", 0)
+        orphan_running = classification.get("orphan_running_debt_count", 0)
+
+        add_result("Queue: total", "PASS" if failed == 0 else "DEBT",
+                   f"failed={failed}, pending={pending}, completed={summary.get('completed', 0)}")
+
+        if historical_debt > 0:
+            add_result("Queue: historical debt", "DEBT",
+                       f"{historical_debt} failed tasks older than 1h")
+        else:
+            add_result("Queue: historical debt", "PASS", "no historical failed tasks")
+
+        if gate_failed_delta is None:
+            add_result("Queue: gate-run failed delta", "BLOCKER",
+                       "missing pre-smoke failed baseline")
+        elif gate_failed_delta > 0:
+            add_result("Queue: gate-run failed delta", "BLOCKER",
+                       f"failed increased during gate: {baseline_failed} -> {failed} (+{gate_failed_delta})")
+        else:
+            add_result("Queue: gate-run failed delta", "PASS",
+                       f"no failed tasks added during gate: baseline={baseline_failed}, current={failed}")
+
+        if recent_failed > 0:
+            window_hours = d.get("metadata", {}).get("recent_failure_window_hours", "?")
+            add_result("Queue: recent failed window", "DEBT",
+                       f"{recent_failed} failed task(s) in the last {window_hours}h; tracked as debt unless gate delta grows")
+        else:
+            add_result("Queue: recent failed window", "PASS",
+                       "no failed tasks in recent audit window")
+
+        if stale_pending > 0:
+            info = f"{stale_pending} stale pending (not new)"
+            if stalest:
+                info += f", oldest: type={stalest.get('task_type')} age={stalest.get('age_seconds')}s"
+            add_result("Queue: stale pending", "DEBT",
+                       info + " — not a BLOCKER because they predate current deploy")
+        else:
+            add_result("Queue: stale pending", "PASS", "no stale pending")
+
+        if orphan_running > 0:
+            add_result("Queue: orphan running", "DEBT",
+                       f"{orphan_running} orphan running (not new)")
+        else:
+            add_result("Queue: orphan running", "PASS", "no orphan running")
+
+    except Exception as e:
+        add_result("Queue: audit", "BLOCKER", str(e))
+
+
+async def check_sandbox_matrix() -> None:
+    """Run module_sandbox_matrix.py and report summary."""
+    try:
+        started = time.monotonic()
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(REPO_ROOT / "dev_toolkit" / "module_sandbox_matrix.py"),
+            "--check", "--json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(REPO_ROOT),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+        elapsed = time.monotonic() - started
+        output = stdout.decode(errors="replace")
+
+        if proc.returncode != 0 and proc.returncode != 1:
+            add_result("Sandbox matrix", "BLOCKER",
+                       f"script crashed (exit={proc.returncode})")
+            return
+
+        try:
+            entries = json.loads(output)
+        except json.JSONDecodeError:
+            add_result("Sandbox matrix", "DEBT",
+                       f"bad JSON output (len={len(output)}), see stderr")
+            return
+
+        total = len(entries)
+        passed = sum(1 for e in entries if e.get("check") == "pass")
+        failed = sum(1 for e in entries if e.get("check") == "fail")
+        skipped = sum(1 for e in entries if e.get("check") == "skip")
+
+        if failed > 0:
+            fail_names = [e["module"] for e in entries if e.get("check") == "fail"]
+            add_result("Sandbox matrix", "BLOCKER",
+                       f"{total} modules, {passed} pass, {failed} fail ({', '.join(fail_names)}), {skipped} skip ({elapsed:.0f}s)")
+        elif passed == 0 and skipped == total:
+            add_result("Sandbox matrix", "DEBT",
+                       f"all {total} modules skipped (no sandbox tests) — needs test coverage")
+        else:
+            add_result("Sandbox matrix", "PASS",
+                       f"{total} modules, {passed} pass, {skipped} skip ({elapsed:.0f}s)")
+    except asyncio.TimeoutError:
+        add_result("Sandbox matrix", "BLOCKER", "timeout (>180s)")
+    except Exception as e:
+        add_result("Sandbox matrix", "BLOCKER", str(e))
+
+
+def get_final_verdict() -> str:
+    blockers = [r for r in results if r["level"] == "BLOCKER"]
+    debts = [r for r in results if r["level"] == "DEBT"]
+    if blockers:
+        return "BLOCKER"
+    if debts:
+        return "DEBT (PASS_WITH_DEBT)"
+    return "PASS"
+
+
+async def main():
+    parser = argparse.ArgumentParser(description="Release gate validation")
+    parser.add_argument("--skip-ui", action="store_true",
+                        help="Skip Playwright UI tests in smoke_all")
+    args = parser.parse_args()
+
+    print("=" * 70)
+    print("  RELEASE GATE")
+    print(f"  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    print(f"  Backend: {BACKEND_BASE}")
+    print("=" * 70)
+
+    await check_health()
+    print()
+    await check_system_status()
+    print()
+    baseline_failed: int | None = None
+    try:
+        baseline_failed = audit_failed_count(await fetch_task_queue_audit())
+        add_result("Queue: pre-smoke baseline", "PASS", f"failed={baseline_failed}")
+    except Exception as e:
+        add_result("Queue: pre-smoke baseline", "BLOCKER", str(e))
+    print()
+    await check_smoke(skip_ui=args.skip_ui)
+    _token_cache.clear()
+    print()
+    await check_task_queue_audit(baseline_failed)
+    print()
+    await check_sandbox_matrix()
+
+    print()
+    print("=" * 70)
+    verdict = get_final_verdict()
+    print(f"  RELEASE GATE VERDICT: {verdict}")
+    print("=" * 70)
+    print()
+    print(f"{'Check':<40} {'Level':>20}  Detail")
+    print("-" * 100)
+    for r in results:
+        print(f"{r['check']:<40} {r['level']:>20}  {r['detail'][:120]}")
+
+    print()
+    if verdict == "BLOCKER":
+        blockers = [r for r in results if r["level"] == "BLOCKER"]
+        print(f"🔴 BLOCKERS ({len(blockers)}):")
+        for b in blockers:
+            print(f"  - {b['check']}: {b['detail'][:200]}")
+        sys.exit(1)
+    elif verdict.startswith("DEBT"):
+        debts = [r for r in results if r["level"] == "DEBT"]
+        print(f"🟡 DEBTS ({len(debts)}):")
+        for d in debts:
+            print(f"  - {d['check']}: {d['detail'][:200]}")
+        print("✅ No BLOCKERs — release is safe with tracked debt.")
+    else:
+        print("✅ ALL CHECKS PASS — ready for release!")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

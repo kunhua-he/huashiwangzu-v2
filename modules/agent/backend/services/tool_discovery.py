@@ -144,6 +144,8 @@ async def handle_skill_describe(
 async def handle_skill_use(params: dict, caller: str, caller_role: str) -> dict:
     """通用调度器：拆 name 为 module/action，走 call_capability。
 
+    特殊处理 content:write_ir — 调用前先 validate，失败后自动 LLM 修正最多 3 次。
+
     容错：模型常把 args 传成 JSON 字符串，先处理再透传。
     """
     name = params.get("name", "")
@@ -159,7 +161,70 @@ async def handle_skill_use(params: dict, caller: str, caller_role: str) -> dict:
     module, action = parse_tool_name(name)
     if not module or not action:
         return {"error": f"Invalid skill name: {name}"}
+
+    # Content IR validate + correct loop
+    if module == "content" and action == "write_ir" and args.get("content_ir"):
+        return await _handle_write_ir_with_correction(args, caller, caller_role)
+
     try:
         return await call_capability(module, action, args, caller=caller, caller_role=caller_role)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+async def _handle_write_ir_with_correction(args: dict, caller: str, caller_role: str) -> dict:
+    """Handle content:write_ir with validate -> correct -> write pipeline."""
+    import logging
+
+    from ..services.content_ir_correction import validate_and_correct
+
+    logger = logging.getLogger("v2.agent").getChild("write_ir_correction")
+
+    content_ir = args.get("content_ir", {})
+    file_id = args.get("file_id")
+    expected_version_id = args.get("expected_version_id")
+
+    # Step 1: Validate
+    validation = await call_capability(
+        "content", "validate_ir",
+        {"content_ir": content_ir},
+        caller=caller, caller_role=caller_role,
+    )
+    inner = validation.get("data", validation) if isinstance(validation, dict) else {}
+    errors = inner.get("errors", []) if isinstance(inner, dict) else []
+
+    if errors:
+        logger.info("Content IR validation failed, starting correction loop (%d errors)", len(errors))
+        # Try to extract conversation_id from caller
+        import re
+        conv_match = re.search(r"agent_engine:(\d+)", caller)
+        conv_id = int(conv_match.group(1)) if conv_match else 0
+
+        correction_result = await validate_and_correct(
+            content_ir,
+            conversation_id=conv_id,
+            profile_key="deepseek-v4-flash",
+        )
+        if not correction_result["success"]:
+            return {
+                "error": f"Content IR validation failed after {correction_result['retry_count']} correction attempts",
+                "validation_errors": correction_result["errors"],
+            }
+        content_ir = correction_result["content_ir"]
+        logger.info("Content IR corrected after %d retries", correction_result["retry_count"])
+
+    # Step 2: Write
+    try:
+        write_args = {"content_ir": content_ir}
+        if file_id:
+            write_args["file_id"] = file_id
+        if expected_version_id:
+            write_args["expected_version_id"] = expected_version_id
+
+        result = await call_capability(
+            "content", "write_ir", write_args,
+            caller=caller, caller_role=caller_role,
+        )
+        return result
     except Exception as exc:
         return {"error": str(exc)}

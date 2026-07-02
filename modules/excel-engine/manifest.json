@@ -118,6 +118,12 @@
       "min_role": "editor"
     },
     {
+      "action": "compile_xlsx",
+      "description": "Compile workbook to temporary XLSX for download without creating a file record",
+      "parameters": {"state_key": "Workbook key"},
+      "min_role": "viewer"
+    },
+    {
       "action": "publish_to_desktop",
       "description": "Publish workbook to desktop",
       "parameters": {"state_key": "Workbook key"},

@@ -283,6 +283,14 @@ function expandTimeline(msgs: MsgItem[]): MsgItem[] {
         } as MsgItem)
       } else if (entryType === 'thinking') {
         applyThinkingEvent((e.content as string) || '', items, { isRestore: true, durationMs: e.duration_ms as number | undefined })
+      } else if (entryType === 'assistant_draft') {
+        items.push({
+          id: 0, role: '', content: (e.content as string) || '',
+          eventType: 'assistant_draft',
+          collapsed: (e.collapsed as boolean) ?? true,
+          title: (e.title as string) || '回复用户',
+          reason: (e.reason as string) || '',
+        } as MsgItem)
       } else if (entryType === 'tool_call') {
         applyToolCallEvent((e.name as string) || 'unknown', items)
       } else if (entryType === 'tool_result') {
@@ -471,7 +479,25 @@ function appendAssistantStream(segmentId: string, content: string) {
   if (msg) msg.content += content
 }
 
-function rollbackAssistantStream(segmentId: string) {
+function rollbackAssistantStream(segmentId: string, reason?: string) {
+  // Capture the draft text before removing the streaming message
+  const draftMsg = messages.value.find(m => m.role === 'assistant' && m.streaming && m.streamId === segmentId)
+  const draftText = draftMsg?.content?.trim() || ''
+  if (draftText) {
+    const wg = ensureWorkGroup()
+    if (wg && wg.items) {
+      let title = '回复用户'
+      let cleanReason = reason || 'rollback'
+      if (cleanReason === 'tool_call_detected') title = '回复用户'
+      wg.items.push({
+        id: 0, role: '', content: draftText,
+        eventType: 'assistant_draft',
+        collapsed: true,
+        title,
+        reason: cleanReason,
+      } as MsgItem)
+    }
+  }
   messages.value = messages.value.filter(m => !(m.role === 'assistant' && m.streaming && m.streamId === segmentId))
   if (activeAssistantStreamId.value === segmentId || !segmentId) activeAssistantStreamId.value = null
 }
@@ -802,9 +828,11 @@ function commitAssistantStream(segmentId: string) {
                     } else if (etype === 'assistant_stream_delta') {
                       appendAssistantStream((evt.segment_id as string) || '', (evt.content as string) || '')
                     } else if (etype === 'assistant_stream_rollback') {
-                      rollbackAssistantStream((evt.segment_id as string) || '')
+                      const segId = (evt.segment_id as string) || ''
+                      const rollbackReason = (evt.reason as string) || 'rollback'
+                      rollbackAssistantStream(segId, rollbackReason)
                       const replacement = (evt.replacement as string) || ''
-                      streamingText.value = evt.reason === 'summary_cleaned' ? replacement : ''
+                      streamingText.value = rollbackReason === 'summary_cleaned' ? replacement : ''
                       ensureWorkGroup()
                     } else if (etype === 'assistant_stream_commit') {
                       commitAssistantStream((evt.segment_id as string) || '')
@@ -820,6 +848,20 @@ function commitAssistantStream(segmentId: string) {
 				        const rp = typeof evt.content === 'string' ? JSON.parse(evt.content) as Record<string, unknown> : evt
 				        replaceContent = (rp.content as string) || ''
 				      } catch { replaceContent = (evt.content as string) || '' }
+				      // Save pre-replace streaming text as assistant_draft if it will be overwritten
+				      const preReplaceText = streamingText.value.trim()
+				      if (preReplaceText && replaceContent !== preReplaceText) {
+				        const wg = ensureWorkGroup()
+				        if (wg && wg.items) {
+				          wg.items.push({
+				            id: 0, role: '', content: preReplaceText,
+				            eventType: 'assistant_draft',
+				            collapsed: true,
+				            title: '回复用户',
+				            reason: 'replace',
+				          } as MsgItem)
+				        }
+				      }
 				      streamingText.value = replaceContent
 				    } else if (etype === 'usage' || etype === 'round_usage') {
 				      const usage = normalizeUsagePayload(evt)

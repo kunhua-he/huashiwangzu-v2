@@ -8,9 +8,9 @@
 确认流：confirm 策略下，工具不直接执行 → 插入 agent_approval_queue →
 返回等待确认 → admin 同意/拒绝后继续/取消。
 """
-import json
 import logging
-from sqlalchemy import select, update
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.agent").getChild("action_policy")
@@ -22,6 +22,10 @@ SENSITIVE_ACTION_PATTERNS: list[str] = [
     "desktop-tools__delete_file",
     "desktop-tools__move_file",
     "desktop-tools__copy_file",
+    "desktop-tools__create_file",
+    "desktop-tools__replace_file",
+    "desktop-tools__publish_artifact",
+    "desktop-tools__replace_file_from_artifact",
     "terminal-tools__execute",
     "agent__update_system_prompt",
     "agent__update_enterprise_prompt",
@@ -34,7 +38,34 @@ SENSITIVE_ACTION_PATTERNS: list[str] = [
     "file-manager__*",
     "git__*",
     "admin__*",
+    # Office-gen physical file generation — blocked/approval for agent
+    "office-gen__docx",
+    "office-gen__xlsx",
+    "office-gen__pptx",
+    "office-gen__pdf",
+    "office-gen__replace_existing",
+    "office-gen__generate_to_artifact",
+    "office-gen__export_to_artifact",
+    "office-gen__convert",
 ]
+
+# Actions that are always HARD BLOCKED for system:agent-engine principal
+# (no approval path, must be physically blocked at policy level)
+SYSTEM_HARD_BLOCKED_ACTIONS: set[str] = {
+    "office-gen__docx",
+    "office-gen__xlsx",
+    "office-gen__pptx",
+    "office-gen__pdf",
+    "office-gen__replace_existing",
+    "office-gen__generate_to_artifact",
+    "office-gen__export_to_artifact",
+    "office-gen__convert",
+    "desktop-tools__write_file",
+    "desktop-tools__replace_file",
+    "desktop-tools__create_file",
+    "desktop-tools__publish_artifact",
+    "desktop-tools__replace_file_from_artifact",
+}
 
 # Actions that are only for admins (min_role=admin from capability registry)
 # These are always treated as sensitive regardless of the pattern list
@@ -74,6 +105,16 @@ async def check_action_allowed(
         {"allowed": False, "action": "confirm", "approval_id": int,
          "tool_name": str, "tool_args": dict} — needs admin approval
     """
+    # System principal (user_id=0) → hard block on sensitive write actions
+    # system:agent-engine is not allowed to generate/replace physical files
+    # without explicit user context.
+    if user_id == 0 and tool_name in SYSTEM_HARD_BLOCKED_ACTIONS:
+        return {
+            "allowed": False,
+            "action": "block",
+            "reason": f"Action '{tool_name}' is hard blocked for system principal (no user context)",
+        }
+
     # 1. Check if the action is sensitive
     is_sensitive = _match_sensitive(tool_name) or tool_name in ADMIN_ACTIONS
 
@@ -145,6 +186,7 @@ async def resolve_approval(
     Returns the updated approval record.
     """
     from datetime import datetime, timezone
+
     from ..models import ApprovalQueue
     r = await db.execute(
         select(ApprovalQueue).where(ApprovalQueue.id == approval_id)

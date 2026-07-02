@@ -1,7 +1,9 @@
-import psutil
 import socket
-from sqlalchemy.ext.asyncio import AsyncSession
+
+import psutil
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.services.model_watchdog.watchdog import status_all
 
 
@@ -24,16 +26,17 @@ async def check_database(db: AsyncSession) -> dict:
 
 
 async def check_worker() -> dict:
-    """Check for background task worker process."""
-    processes = [
-        proc.info
-        for proc in psutil.process_iter(["pid", "cmdline"])
-        if "background_worker" in " ".join(proc.info.get("cmdline") or [])
-    ]
-    if processes:
-        pids = ", ".join(str(item["pid"]) for item in processes)
-        return {"status": True, "message": f"Background worker running: {pids}"}
-    return {"status": False, "message": "Background worker process not found"}
+    """Check for background task worker using task_worker module.
+
+    Uses the same worker_health() as /api/health, not process name scanning.
+    """
+    from app.services.task_worker import worker_health
+    wh = worker_health()
+    running = wh.get("running", False)
+    return {
+        "status": running,
+        "message": "Background worker is running" if running else "Background worker is not running",
+    }
 
 
 async def check_model_service() -> dict:

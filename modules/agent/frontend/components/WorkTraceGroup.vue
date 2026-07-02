@@ -26,6 +26,19 @@
           v-else-if="item.eventType === 'tool_call' || item.eventType === 'tool_result'"
           :message="item"
         />
+        <div v-else-if="item.eventType === 'assistant_draft'" class="work-draft-row">
+          <button class="work-draft-toggle" @click="toggleDraft(index)">
+            <span class="work-draft-icon">💬</span>
+            <span class="work-draft-title">{{ item.title || '回复用户' }}</span>
+            <span v-if="item.reason" class="work-draft-reason">{{ item.reason }}</span>
+            <svg class="work-draft-chevron" :class="{ rotated: draftOpen[index] }" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" width="10" height="10">
+              <path d="M4 3l4 3-4 3" />
+            </svg>
+          </button>
+          <div v-show="draftOpen[index]" class="work-draft-body">
+            <div class="work-draft-content">{{ item.content }}</div>
+          </div>
+        </div>
       </template>
     </div>
   </div>
@@ -46,6 +59,8 @@ interface TraceItem {
   toolName?: string
   toolResult?: unknown
   label?: string
+  title?: string
+  reason?: string
 }
 
 const props = defineProps<{
@@ -58,6 +73,11 @@ const props = defineProps<{
 }>()
 
 const isOpen = ref(!props.message.collapsed)
+const draftOpen = ref<Record<number, boolean>>({})
+
+function toggleDraft(index: number) {
+  draftOpen.value[index] = !draftOpen.value[index]
+}
 
 watch(
   () => props.message.collapsed,
@@ -148,4 +168,48 @@ function formatDuration(ms: number): string {
   opacity: 0.5;
 }
 .work-overhead-time { margin-left: auto; font-size: 11px; }
+
+.work-draft-row {
+  padding: 2px 0;
+}
+.work-draft-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: var(--ag-font-size-sm);
+  color: var(--ag-text-tertiary);
+  padding: 2px 0;
+  transition: color var(--ag-transition-fast);
+  width: 100%;
+  text-align: left;
+}
+.work-draft-toggle:hover { color: var(--ag-text-secondary); }
+.work-draft-icon { flex-shrink: 0; font-size: 12px; }
+.work-draft-title { font-weight: 500; }
+.work-draft-reason {
+  font-size: 11px;
+  color: var(--ag-text-disabled);
+  margin-left: auto;
+}
+.work-draft-chevron {
+  flex-shrink: 0;
+  transition: transform var(--ag-transition-base);
+}
+.work-draft-chevron.rotated { transform: rotate(90deg); }
+.work-draft-body {
+  padding: 4px 0 4px 18px;
+}
+.work-draft-content {
+  font-size: var(--ag-font-size-sm);
+  color: var(--ag-text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--ag-bg-secondary);
+  border-radius: var(--ag-radius-sm);
+  padding: 6px 8px;
+}
 </style>

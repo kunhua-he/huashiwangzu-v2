@@ -399,6 +399,21 @@ async def _handle_import_method(method: str, state: dict, state_key: str, params
     return {'code': 1, 'msg': f'Unknown import method: {method}'}
 
 
+def _legacy_result_to_api(result: dict) -> ApiResponse:
+    """Wrap a legacy {code, msg} result into ApiResponse with correct success/error semantics.
+
+    Legacy internal results use {code: 0, msg} for success and {code: 1, msg} for failure.
+    This ensures the outer ApiResponse doesn't hide failures behind success:true.
+    """
+    if isinstance(result, dict) and result.get("code") not in (None, 0):
+        return ApiResponse(
+            success=False,
+            data=None,
+            error=result.get("msg", "Operation failed"),
+        )
+    return ApiResponse(data=result)
+
+
 # ── API Endpoints ──
 
 @router.get("/health")
@@ -428,7 +443,7 @@ async def parse_xlsx_file(payload: OpenRequest, db: AsyncSession = Depends(get_d
     else:
         raise ValidationError(f"Unsupported format '{ext}'")
 
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.post("/open")
@@ -502,7 +517,7 @@ async def dispatch(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
     """Unified dispatch endpoint - mirrors old 表格.php API"""
     result = await _dispatch(payload.module, payload.method, payload.params,
                              payload.state_key, payload.sheet, db, owner_id=user.id)
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.post("/edit")
@@ -529,7 +544,7 @@ async def edit_cell(payload: CellEditRequest, db: AsyncSession = Depends(get_db)
         if sheet_id:
             await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
 
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.post("/style")
@@ -549,7 +564,7 @@ async def edit_style(payload: StyleRequest, db: AsyncSession = Depends(get_db),
         if sheet_id:
             await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
 
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.post("/clipboard")
@@ -559,7 +574,7 @@ async def clipboard(payload: ClipboardRequest, db: AsyncSession = Depends(get_db
     addrs = payload.address_list or ([payload.address] if payload.address else [])
     state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
     result = await ClipboardOperations.execute(payload.method, state, payload.state_key, addrs, payload.params)
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.post("/table")
@@ -579,7 +594,7 @@ async def table_op(payload: TableRequest, db: AsyncSession = Depends(get_db),
         if sheet_id:
             await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
 
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.post("/state")
@@ -591,7 +606,7 @@ async def state_op(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
     else:
         state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
         result = await _handle_state(payload.method, state, payload.state_key, payload.params, payload.sheet, db)
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.post("/export")
@@ -600,7 +615,7 @@ async def export_op(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
     """Export operations"""
     state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=user.id)
     result = await _handle_export(payload.method, state, payload.state_key, payload.sheet, payload.params, db)
-    return ApiResponse(data=result)
+    return _legacy_result_to_api(result)
 
 
 @router.get("/download/{state_key}")
@@ -1183,6 +1198,70 @@ register_capability(
         "required": ["state_key", "version_id"],
     },
     min_role="editor",
+)
+
+async def _compile_xlsx_capability(params: dict, caller: str) -> dict:
+    """Compile workbook cells to a temporary XLSX file for download.
+
+    Does NOT create framework_file_items or artifacts.
+    Returns temp file path; caller is responsible for cleanup.
+    """
+    import tempfile
+    from pathlib import Path
+
+    user_id = resolve_caller_user_id(caller)
+    state_key = params.get("state_key", "")
+    sheet = params.get("sheet", "Sheet1")
+
+    if not state_key:
+        return {"success": False, "error": "state_key required"}
+
+    async with AsyncSessionLocal() as db:
+        workbook = await find_workbook(db, state_key)
+        if not workbook:
+            return {"success": False, "error": f"Workbook not found: {state_key}"}
+
+        state = await read_state_full(db, state_key, sheet, owner_id=user_id)
+
+        result = await _handle_export('download', state, state_key, sheet, {}, db)
+        if result.get('code') != 0:
+            return {"success": False, "error": result.get('msg', 'Export failed')}
+
+        file_path = result.get('file', '')
+        if not file_path or not os.path.exists(file_path):
+            return {"success": False, "error": "Export file not found"}
+
+        filename = result.get('filename', 'export.xlsx')
+        file_path_obj = Path(file_path).resolve()
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        if os.path.commonpath([str(temp_root), str(file_path_obj)]) != str(temp_root):
+            return {"success": False, "error": "Invalid compile output path"}
+        if "/" in filename or "\\" in filename:
+            return {"success": False, "error": "Invalid filename"}
+
+    return {
+        "success": True,
+        "data": {
+            "file_path": str(file_path_obj),
+            "filename": filename,
+            "state_key": state_key,
+        },
+    }
+
+
+register_capability(
+    "excel-engine", "compile_xlsx", _compile_xlsx_capability,
+    description="Compile workbook to temporary XLSX for download (no file record created).",
+    brief="编译 XLSX 临时下载",
+    parameters={
+        "type": "object",
+        "properties": {
+            "state_key": {"type": "string", "description": "Workbook state_key"},
+            "sheet": {"type": "string", "description": "Sheet name", "default": "Sheet1"},
+        },
+        "required": ["state_key"],
+    },
+    min_role="viewer",
 )
 
 register_capability(

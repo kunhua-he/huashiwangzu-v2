@@ -6,12 +6,16 @@
 """
 import logging
 
-from sqlalchemy import select, func, distinct
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import (
-    KbDocument, KbRawData, KbPageFusion, KbDocumentProfile,
-    KbGovernanceCandidate, KbFileRelation,
+    KbDocument,
+    KbDocumentProfile,
+    KbFileRelation,
+    KbGovernanceCandidate,
+    KbPageFusion,
+    KbRawData,
 )
 
 logger = logging.getLogger("v2.knowledge").getChild("progress")
@@ -41,7 +45,7 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
         select(KbDocument).where(
             KbDocument.id == document_id,
             KbDocument.owner_id == owner_id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     doc = dr.scalar_one_or_none()
@@ -105,6 +109,8 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
     fusion_status = doc.fusion_status or "pending"
     if raw_status == "failed" or fusion_status == "failed":
         overall_status = "failed"
+    elif raw_status == "degraded" or fusion_status == "degraded":
+        overall_status = "degraded"
     elif profile_done > 0 and fusion_done >= tp and tp > 0:
         overall_status = "done"
     elif raw_status == "pending" and fusion_status == "pending":
@@ -126,6 +132,7 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
         "filename": doc.filename,
         "total_pages": total_pages,
         "overall_status": overall_status,
+        "quality_status": "degraded" if overall_status == "degraded" else "ok",
         "overall_percent": overall_percent,
         "current_stage": current,
         "stages": stages,

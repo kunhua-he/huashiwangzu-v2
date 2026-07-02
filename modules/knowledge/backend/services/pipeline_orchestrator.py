@@ -41,6 +41,66 @@ class StageDef:
     requires: list[str] = field(default_factory=list)  # 必须前置执行完的 stage
 
 
+@dataclass(frozen=True)
+class StageAssessment:
+    """归一化 stage 结果语义。"""
+    status: str
+    complete_for_dependencies: bool
+    reason: str = ""
+
+
+FAILED_STATUSES = {"failed", "error"}
+DEGRADED_STATUSES = {"degraded", "partial", "done_with_errors"}
+
+
+def assess_stage_result(stage_name: str, result: dict, required: bool = True) -> StageAssessment:
+    """把各服务松散返回值归一为 done/degraded/failed/skipped 语义。
+
+    required=True 表示该 stage 的产物会被后续 stage 当成依赖。required stage
+    返回 skipped 或零有效内容时，pipeline 不再假装它已完成。
+    """
+    status_value = str(result.get("status") or "").lower()
+
+    if result.get("error") not in (None, ""):
+        return StageAssessment("failed", False, str(result.get("error")))
+    if status_value in FAILED_STATUSES:
+        return StageAssessment("failed", False, str(result.get("reason") or status_value))
+    if status_value == "skipped":
+        reason = str(result.get("reason") or "skipped")
+        return StageAssessment("degraded" if required else "skipped", not required, reason)
+
+    if stage_name == "raw":
+        total_rounds = int(result.get("total_rounds") or 0)
+        valid_rounds = int(result.get("valid_rounds") or 0)
+        if total_rounds > 0 and valid_rounds == 0:
+            return StageAssessment("degraded", False, "raw_content_empty")
+        if int(result.get("empty_rounds") or 0) > 0 or status_value in DEGRADED_STATUSES:
+            return StageAssessment("degraded", True, "raw_content_partial")
+
+    if stage_name == "fusion":
+        total_pages = int(result.get("total_pages") or 0)
+        valid_pages = int(result.get("valid_pages") or 0)
+        if total_pages > 0 and valid_pages == 0:
+            return StageAssessment("degraded", False, "fusion_content_empty")
+        if (
+            int(result.get("empty_pages") or 0) > 0
+            or result.get("index_error")
+            or status_value in DEGRADED_STATUSES
+        ):
+            return StageAssessment("degraded", True, "fusion_content_partial")
+
+    if stage_name == "profile":
+        if not (result.get("subject") or result.get("doc_summary")) and status_value not in {"done", "ok", "success"}:
+            return StageAssessment("degraded", False, "profile_content_empty")
+
+    if stage_name == "graph" and result.get("errors"):
+        return StageAssessment("degraded", False, "graph_content_empty")
+
+    if status_value in DEGRADED_STATUSES:
+        return StageAssessment("degraded", True, status_value)
+    return StageAssessment("done", True, status_value or "done")
+
+
 # ── Stage 注册表 ──────────────────────────────────────
 # 顺序即执行顺序
 STAGE_REGISTRY: list[StageDef] = [
@@ -106,6 +166,9 @@ async def run_pipeline(
 
     # ── 2. 按注册表顺序执行 ────────────────────────────
     completed_stages: set[str] = set()
+    failed_stages: set[str] = set()
+    degraded_stages: set[str] = set()
+    required_stage_names = {req for stage in STAGE_REGISTRY for req in stage.requires}
 
     for stage_def in STAGE_REGISTRY:
         step_name = stage_def.name
@@ -130,10 +193,22 @@ async def run_pipeline(
         # 检查前置依赖是否完成
         for req in stage_def.requires:
             if req not in completed_stages:
-                steps[step_name] = {"error": f"dependency '{req}' not completed", "status": "failed"}
-                logger.error("Pipeline aborted at %s: dependency '%s' not completed for doc_id=%d",
-                             step_name, req, document_id)
-                return {"document_id": document_id, "status": "failed", "steps": steps}
+                if req in failed_stages:
+                    steps[step_name] = {"error": f"dependency '{req}' failed", "status": "failed"}
+                    logger.error("Pipeline aborted at %s: dependency '%s' failed for doc_id=%d",
+                                 step_name, req, document_id)
+                    return {"document_id": document_id, "status": "failed", "steps": steps}
+                steps[step_name] = {
+                    "status": "skipped",
+                    "reason": f"dependency '{req}' not available",
+                    "classification": "degraded_dependency",
+                }
+                degraded_stages.add(step_name)
+                logger.warning("Pipeline skipped %s: dependency '%s' unavailable for doc_id=%d",
+                               step_name, req, document_id)
+                break
+        if step_name in steps and steps[step_name].get("classification") == "degraded_dependency":
+            continue
 
         # 执行
         logger.info("Pipeline step %s: doc_id=%d", step_name, document_id)
@@ -146,23 +221,35 @@ async def run_pipeline(
             steps[step_name] = await stage_def.fn(**fn_kwargs)
             await db.commit()
 
-            # 检查执行结果是否有 error
-            if "error" in steps[step_name]:
+            assessment = assess_stage_result(
+                step_name,
+                steps[step_name],
+                required=step_name in required_stage_names,
+            )
+            steps[step_name]["stage_status"] = assessment.status
+            if assessment.reason and "stage_reason" not in steps[step_name]:
+                steps[step_name]["stage_reason"] = assessment.reason
+
+            if assessment.status == "failed":
+                failed_stages.add(step_name)
                 logger.error("Pipeline step %s failed for doc_id=%d: %s",
-                             step_name, document_id, steps[step_name].get("error"))
+                             step_name, document_id, assessment.reason)
                 return {"document_id": document_id, "status": "failed", "steps": steps}
+            if assessment.status == "degraded":
+                degraded_stages.add(step_name)
+                logger.warning("Pipeline step %s degraded for doc_id=%d: %s",
+                               step_name, document_id, assessment.reason)
 
             # 记录 hash
-            await record_artifact_hash(db, document_id, step_name)
+            if assessment.complete_for_dependencies:
+                await record_artifact_hash(db, document_id, step_name)
+                completed_stages.add(step_name)
 
         except Exception as e:
             steps[step_name] = {"error": str(e)}
             logger.error("Pipeline step %s failed for doc_id=%d: %s", step_name, document_id, e)
             return {"document_id": document_id, "status": "failed", "steps": steps}
 
-        completed_stages.add(step_name)
-
     # ── 3. 汇总 ────────────────────────────────────────
-    has_errors = any("error" in s for s in steps.values())
-    status = "done_with_errors" if has_errors else "done"
+    status = "degraded" if degraded_stages else "done"
     return {"document_id": document_id, "status": status, "steps": steps}

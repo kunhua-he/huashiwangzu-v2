@@ -76,6 +76,10 @@ async def _pipeline_handler(params: dict) -> dict:
                 force_raw=params.get("force_raw", False),
                 force_fusion=params.get("force_fusion", False),
             )
+            if result.get("status") == "failed":
+                return result
+            if result.get("status") == "degraded":
+                return {"task_status": "completed", **result}
             return {"status": "done", **result}
         except Exception as e:
             source_state = await get_source_file_availability(db, doc.file_id)

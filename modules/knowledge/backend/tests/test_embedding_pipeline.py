@@ -6,9 +6,11 @@
 - 独立知识库文档，不与生产数据混用
 """
 import asyncio
+import importlib
 import sys
 import uuid
 from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -16,9 +18,9 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.main import app
 from app.database import AsyncSessionLocal
-from sqlalchemy import text, select
+from app.main import app
+from sqlalchemy import select, text
 
 SEED_PASS = "admin123"
 
@@ -28,6 +30,14 @@ _POLL_INTERVAL = 3       # 每 3 秒轮询一次
 
 def _uid():
     return uuid.uuid4().hex[:8]
+
+
+def _load_knowledge_service(service_name: str):
+    suffix = f".{service_name}"
+    for module_name, module in sys.modules.items():
+        if module_name.endswith(suffix):
+            return module
+    return importlib.import_module(f"modules.knowledge.backend.services.{service_name}")
 
 
 async def _login(client, username="admin"):
@@ -54,6 +64,22 @@ async def _cleanup_file(file_id: int):
     """从 framework_file_items 永久删除测试文件（包括回收站）。"""
     async with AsyncSessionLocal() as db:
         await db.execute(text("DELETE FROM framework_file_items WHERE id = :fid"), {"fid": file_id})
+        await db.commit()
+
+
+async def _clear_pipeline_tasks(document_id: int):
+    """Stop live-stack workers from racing tests that intentionally parse synchronously."""
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text(
+                "DELETE FROM framework_system_task_queues "
+                "WHERE task_type = 'kb_pipeline' "
+                "AND module = 'knowledge' "
+                "AND status IN ('pending', 'running') "
+                "AND parameters LIKE :pattern"
+            ),
+            {"pattern": f'%"document_id": {document_id}%'},
+        )
         await db.commit()
 
 
@@ -156,7 +182,7 @@ async def test_dedup_blocks_on_real_content():
     """MD5 去重：真正有 chunks 的文档应被去重挡回。"""
     uid = _uid()
     transport = ASGITransport(app=app)
-    doc_id1, doc_id2 = None, None
+    doc_id1 = None
     file_id1, file_id2 = None, None
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -178,6 +204,7 @@ async def test_dedup_blocks_on_real_content():
         doc_id1 = ingest1.json()["data"]["document_id"]
 
         # Parse 第一个文件（让它有 chunks）
+        await _clear_pipeline_tasks(doc_id1)
         await client.post(
             "/api/knowledge/documents/parse",
             json={"document_id": doc_id1, "extract_graph": False},
@@ -244,6 +271,7 @@ async def test_dedup_allows_orphan_reingest():
         doc_id1 = ingest1.json()["data"]["document_id"]
 
         # 第一次 parse（产生 chunks）
+        await _clear_pipeline_tasks(doc_id1)
         await client.post(
             "/api/knowledge/documents/parse",
             json={"document_id": doc_id1, "extract_graph": False},
@@ -253,6 +281,23 @@ async def test_dedup_allows_orphan_reingest():
         # 删除 chunks（模拟孤儿状态）
         async with AsyncSessionLocal() as db:
             await db.execute(text("DELETE FROM kb_chunks WHERE document_id = :did"), {"did": doc_id1})
+            await db.execute(
+                text(
+                    "UPDATE kb_documents SET total_chunks = 0, vector_status = 'done' "
+                    "WHERE id = :did"
+                ),
+                {"did": doc_id1},
+            )
+            await db.execute(
+                text(
+                    "DELETE FROM framework_system_task_queues "
+                    "WHERE task_type = 'kb_pipeline' "
+                    "AND module = 'knowledge' "
+                    "AND status IN ('pending', 'running') "
+                    "AND parameters LIKE :pattern"
+                ),
+                {"pattern": f'%"document_id": {doc_id1}%'},
+            )
             await db.commit()
         async with AsyncSessionLocal() as db:
             r = await db.execute(
@@ -319,7 +364,7 @@ async def _wait_for_pipeline(doc_id: int, client, headers, timeout: int = _PIPEL
 @pytest.mark.asyncio
 async def test_pipeline_e2e_via_background_worker():
     """★真走 ingest 管线：上传 → ingest(enqueue) → 验证文档存在 + 任务入队。
-    
+
     背景管线异步执行（受 embedding 模型可用性影响），本测试验证关键点：
     1. 文档创建且未被清壳逻辑误删
     2. kb_pipeline 任务已入队
@@ -406,7 +451,7 @@ async def test_pipeline_e2e_via_background_worker():
 @pytest.mark.asyncio
 async def test_dedup_does_not_delete_inflight():
     """去重清壳不误删正在入库的文档：入库中（chunks=0, pending）不应被清理脚本删除。
-    
+
     场景：
     1. 传文件 A → ingest → 文档 D1 创建（pending, chunks=0）
     2. 马上传文件 B（同内容）→ ingest → 应返回 D1，不应删除 D1
@@ -477,6 +522,7 @@ async def test_dedup_does_not_delete_inflight():
         print(f"Doc {doc_id} still exists (not cleaned)")
 
         # 4. Parse D1 → 产生 chunks
+        await _clear_pipeline_tasks(doc_id)
         parse_resp = await client.post(
             "/api/knowledge/documents/parse",
             json={"document_id": doc_id, "extract_graph": False},
@@ -511,20 +557,21 @@ async def test_dedup_does_not_delete_inflight():
 @pytest.mark.asyncio
 async def test_raw_text_round_keeps_page_none_blocks(monkeypatch):
     """Text/markdown parser blocks use page=None; raw collection must map them to page 1."""
-    from modules.knowledge.backend.services import raw_collection_service
+    raw_collection_service = _load_knowledge_service("raw_collection_service")
 
     doc_id = int(f"9{uuid.uuid4().hex[:10]}", 16)
     expected_text = f"华世王镞 page-none raw 测试 {uuid.uuid4().hex[:8]}"
 
     async def fake_parse_document(file_id: int, extension: str, caller: str) -> dict:
-        return {
-            "file_id": file_id,
-            "format": extension,
-            "blocks": [
+        from modules.knowledge.backend.ir_models import from_legacy_blocks
+
+        return from_legacy_blocks(
+            file_id=file_id,
+            fmt=extension,
+            blocks=[
                 {"type": "paragraph", "text": expected_text, "page": None, "resource_ref": None},
             ],
-            "resources": [],
-        }
+        )
 
     monkeypatch.setattr(raw_collection_service, "parse_document", fake_parse_document)
     try:
@@ -553,7 +600,7 @@ async def test_raw_text_round_keeps_page_none_blocks(monkeypatch):
 @pytest.mark.asyncio
 async def test_fusion_falls_back_when_llm_returns_empty_text(monkeypatch):
     """Fusion must not persist empty text when raw rounds contain usable content."""
-    from modules.knowledge.backend.services import fusion_service
+    fusion_service = _load_knowledge_service("fusion_service")
 
     raw_text = "胶原蛋白肽饮是华世王镞的王牌产品。"
 

@@ -15,6 +15,7 @@ from app.gateway.config import (
     get_model_type_config,
     get_provider_configs,
 )
+from app.gateway.protocol import is_protocol_error_text
 
 from .adapters import _extract_usage, get_adapter
 from .base import BaseProvider
@@ -59,6 +60,42 @@ _vision_cfg = get_model_type_config("vision")
 _VISION_PRIMARY: str = _vision_cfg.get("primary", "mimo")
 _VISION_FALLBACK: list[str] = _vision_cfg.get("fallback_chain", ["qwen3-vl"])
 _VISION_PROFILES: dict[str, dict] = _vision_cfg.get("profiles", {})
+
+
+def _profile_chain_for_model_type(
+    model_type: str,
+    requested_key: str | None,
+    *,
+    primary_key: str | None = None,
+    fallback_chain: list[str] | None = None,
+    profiles: dict[str, dict] | None = None,
+) -> list[str]:
+    """Return ordered profile candidates from models.json.
+
+    The requested profile is tried first.  When
+    ``fallback_on_explicit_profile`` is enabled (default), explicitly asking for
+    a cloud profile such as ``mimo`` or ``deepseek-v4-flash`` still falls back to
+    the configured local chain when the provider is unavailable or out of quota.
+    """
+    cfg = get_model_type_config(model_type)
+    profile_map = profiles if profiles is not None else cfg.get("profiles", {})
+    primary = primary_key or cfg.get("primary") or DEFAULT_MODEL
+    requested = requested_key if requested_key in profile_map else primary
+    fallback_enabled = bool(cfg.get("fallback_on_explicit_profile", True))
+    raw_fallbacks = fallback_chain if fallback_chain is not None else cfg.get("fallback_chain", [])
+
+    chain = [requested]
+    if fallback_enabled:
+        chain.extend(raw_fallbacks or [])
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for key in chain:
+        if not key or key in seen or key not in profile_map:
+            continue
+        seen.add(key)
+        result.append(key)
+    return result
 
 
 def _resolve_api_key(provider_cfg: dict) -> str:
@@ -267,28 +304,53 @@ class ModelGatewayRouter:
         tools: list[dict] | None = None,
         budget: RetryBudget | None = None,
     ) -> dict:
-        profile = self.get_profile(profile_key)
-        if profile["provider"] == "llama":
-            await _ensure_local_text_model(profile)
+        candidate_keys = _profile_chain_for_model_type("llm", profile_key, profiles=MODEL_PROFILES)
+        last_result: ModelResponse | None = None
+        last_key = profile_key
 
-        req = model_request_from_dict({
-            "messages": messages,
-            "tools": tools,
-            "temperature": profile["temperature"],
-            "max_tokens": profile["max_tokens"],
-        })
+        for idx, key in enumerate(candidate_keys):
+            profile = self.get_profile(key)
+            if profile["provider"] == "llama":
+                await _ensure_local_text_model(profile)
 
-        result = await _call_with_unified_retry(
-            provider=self.get_provider(profile["provider"]),
-            req=req,
-            model=profile["model"],
-            caller_module="gateway.chat",
-            profile_key=profile_key,
-            provider_name=profile.get("provider", ""),
-            budget=budget,
-        )
+            req = model_request_from_dict({
+                "messages": messages,
+                "tools": tools,
+                "temperature": profile["temperature"],
+                "max_tokens": profile["max_tokens"],
+            })
 
-        return model_response_to_dict(result)
+            result = await _call_with_unified_retry(
+                provider=self.get_provider(profile["provider"]),
+                req=req,
+                model=profile["model"],
+                caller_module="gateway.chat",
+                profile_key=key,
+                provider_name=profile.get("provider", ""),
+                budget=budget,
+            )
+            if not result.error:
+                if idx > 0:
+                    logger.warning("LLM fallback succeeded: %s -> %s", last_key, key)
+                return model_response_to_dict(result)
+
+            last_result = result
+            last_key = key
+            if is_protocol_error_text(result.error or result.content):
+                logger.error("LLM protocol error, fallback stopped: %s", result.error)
+                return model_response_to_dict(result)
+            if idx < len(candidate_keys) - 1:
+                logger.warning(
+                    "LLM profile %s failed, trying fallback %s: %s",
+                    key,
+                    candidate_keys[idx + 1],
+                    result.error,
+                )
+
+        if last_result is not None:
+            last_result.content = f"(Model fallback exhausted: {last_result.error or last_result.content})"
+            return model_response_to_dict(last_result)
+        return {"content": "(No valid model profile configured)", "error": "No valid model profile configured"}
 
     async def chat_stream(
         self,
@@ -296,18 +358,52 @@ class ModelGatewayRouter:
         profile_key: str = DEFAULT_MODEL,
         tools: list[dict] | None = None,
     ) -> AsyncGenerator[dict, None]:
-        profile = self.get_profile(profile_key)
-        if profile["provider"] == "llama":
-            await _ensure_local_text_model(profile)
-        provider = self.get_provider(profile["provider"])
-        async for event in provider.chat_stream(
-            messages=messages,
-            model=profile["model"],
-            temperature=profile["temperature"],
-            max_tokens=profile["max_tokens"],
-            tools=tools,
-        ):
-            yield event
+        candidate_keys = _profile_chain_for_model_type("llm", profile_key, profiles=MODEL_PROFILES)
+        last_error = ""
+        for idx, key in enumerate(candidate_keys):
+            profile = self.get_profile(key)
+            if profile["provider"] == "llama":
+                await _ensure_local_text_model(profile)
+            provider = self.get_provider(profile["provider"])
+            emitted_content = False
+            try:
+                async for event in provider.chat_stream(
+                    messages=messages,
+                    model=profile["model"],
+                    temperature=profile["temperature"],
+                    max_tokens=profile["max_tokens"],
+                    tools=tools,
+                ):
+                    if event.get("type") == "error":
+                        last_error = str(event.get("content") or "")
+                        if is_protocol_error_text(last_error) or emitted_content:
+                            yield event
+                            return
+                        raise RuntimeError(last_error)
+                    if event.get("type") in {"token", "thinking", "tool_call"}:
+                        emitted_content = True
+                    yield event
+                if idx > 0:
+                    logger.warning("LLM stream fallback succeeded: %s", key)
+                return
+            except Exception as exc:
+                last_error = _format_exception_detail(exc)
+                if is_protocol_error_text(last_error) or emitted_content:
+                    yield {"type": "error", "content": last_error}
+                    return
+                if idx < len(candidate_keys) - 1:
+                    logger.warning(
+                        "LLM stream profile %s failed before first token, trying fallback %s: %s",
+                        key,
+                        candidate_keys[idx + 1],
+                        last_error,
+                    )
+                    yield {
+                        "type": "degradation",
+                        "content": f"降级: {key} -> {candidate_keys[idx + 1]} 原因:{last_error[:300]}",
+                    }
+                    continue
+        yield {"type": "error", "content": f"Model stream fallback exhausted: {last_error}"}
 
     def _resolve_vision_profile(self, profile_key: str | None = None) -> dict:
         """Resolve vision profile key → profile dict, with fallback chain."""
@@ -343,8 +439,15 @@ class ModelGatewayRouter:
             ]},
         ]
 
-        # Try primary → fallback chain
-        candidate_keys = [profile_key] if profile_key else [_VISION_PRIMARY] + _VISION_FALLBACK
+        # Try requested/primary → fallback chain. Explicit profile requests still
+        # fall back when models.json enables fallback_on_explicit_profile.
+        candidate_keys = _profile_chain_for_model_type(
+            "vision",
+            profile_key,
+            primary_key=_VISION_PRIMARY,
+            fallback_chain=_VISION_FALLBACK,
+            profiles=_VISION_PROFILES,
+        )
         last_error = None
         for idx, key in enumerate(candidate_keys):
             profile = _VISION_PROFILES.get(key)

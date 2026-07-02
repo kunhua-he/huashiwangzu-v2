@@ -7,12 +7,12 @@
 """
 import json
 import logging
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
 from app.services.task_worker import register_task_handler
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbPageFusion, KbRawData
 
@@ -93,6 +93,34 @@ def _compute_confidence(round_texts: dict[int, str], conflicts: list[dict]) -> f
         return 0.30
 
 
+def _fallback_fusion(round_texts: dict[int, str], conflicts: list[dict] | None = None) -> dict:
+    text = next((value.strip() for value in round_texts.values() if value and value.strip()), "")
+    return {
+        "fused_text": text,
+        "page_summary": text[:120],
+        "page_title": None,
+        "entities": [],
+        "attributes": {},
+        "tags": [],
+        "conflicts": conflicts or [],
+        "confidence": _compute_confidence(round_texts, conflicts or []),
+    }
+
+
+def classify_fusion_status(
+    total_pages: int,
+    valid_pages: int,
+    error_pages: int = 0,
+    index_error: str = "",
+) -> str:
+    """根据融合有效页和非致命索引错误判定文档 fusion 状态。"""
+    if total_pages > 0 and valid_pages == 0:
+        return "failed" if error_pages >= total_pages else "degraded"
+    if total_pages > valid_pages or error_pages > 0 or index_error:
+        return "degraded"
+    return "done"
+
+
 async def _llm_fuse(round_texts: dict[int, str]) -> dict:
     """调用 LLM 进行交叉印证融合。"""
     user_message = f"""请交叉印证以下三轮采集结果，输出融合后的权威描述。
@@ -121,19 +149,17 @@ async def _llm_fuse(round_texts: dict[int, str]) -> dict:
             content = "\n".join(lines[1:]) if len(lines) > 1 else content
             if content.endswith("```"):
                 content = content[:-3].strip()
-        return json.loads(content)
+        parsed = json.loads(content)
+        if not (parsed.get("fused_text") or "").strip():
+            fallback = _fallback_fusion(round_texts, parsed.get("conflicts", []))
+            fallback["confidence"] = parsed.get("confidence", fallback["confidence"])
+            return fallback
+        if not (parsed.get("page_summary") or "").strip():
+            parsed["page_summary"] = str(parsed.get("fused_text") or "")[:120]
+        return parsed
     except Exception as e:
         logger.warning("LLM fusion failed, using heuristic fallback: %s", e)
-        return {
-            "fused_text": round_texts.get(1, "") or round_texts.get(2, "") or round_texts.get(3, ""),
-            "page_summary": "",
-            "page_title": None,
-            "entities": [],
-            "attributes": {},
-            "tags": [],
-            "conflicts": [],
-            "confidence": _compute_confidence(round_texts, []),
-        }
+        return _fallback_fusion(round_texts)
 
 
 async def fuse_page(
@@ -163,7 +189,7 @@ async def fuse_page(
 
     if not round_texts:
         logger.warning("No raw data for document_id=%d page=%d", document_id, page)
-        return {"fused_text": "", "confidence": 0.0, "conflicts": [], "page": page}
+        return {"fused_text": "", "confidence": 0.0, "conflicts": [], "page": page, "status": "degraded"}
 
     # 2. 启发式冲突检测
     simple_conflicts = _detect_simple_conflicts(round_texts)
@@ -178,6 +204,8 @@ async def fuse_page(
 
     # 5. 合并冲突记录
     all_conflicts = fusion_result.get("conflicts", []) + simple_conflicts
+    fused_text = (fusion_result.get("fused_text") or "").strip()
+    page_status = "done" if fused_text else "degraded"
 
     # 6. 写入 kb_page_fusions
     from sqlalchemy import delete as sa_delete
@@ -192,7 +220,7 @@ async def fuse_page(
         document_id=document_id,
         owner_id=owner_id,
         page=page,
-        fused_text=fusion_result.get("fused_text", ""),
+        fused_text=fused_text,
         page_summary=fusion_result.get("page_summary", ""),
         page_title=fusion_result.get("page_title"),
         body_json=fusion_result.get("entities"),
@@ -202,7 +230,7 @@ async def fuse_page(
         evidence_json=[rec.id for rec in raw_records],
         source_version=1,
         fusion_version=1,
-        fusion_status="done",
+        fusion_status=page_status,
         confidence=final_confidence,
     )
     db.add(pf)
@@ -220,6 +248,7 @@ async def fuse_page(
         "conflicts": all_conflicts,
         "confidence": final_confidence,
         "fusion_version": pf.fusion_version,
+        "status": page_status,
     }
 
 
@@ -245,11 +274,12 @@ async def fuse_all_pages(
     doc.fusion_status = "running"
     await db.commit()
 
-    # 查询已完成页
+    # 查询已完成且有正文的页。历史空 done 记录要重跑，避免假完成。
     r = await db.execute(
         select(KbPageFusion.page).where(
             KbPageFusion.document_id == document_id,
             KbPageFusion.fusion_status == "done",
+            KbPageFusion.fused_text != "",
         )
     )
     done_pages = {row[0] for row in r.all()}
@@ -258,7 +288,7 @@ async def fuse_all_pages(
     for page in range(1, total_pages + 1):
         if page in done_pages:
             logger.info("Fusion page=%d already done, skip", page)
-            results.append({"page": page, "skipped": True})
+            results.append({"page": page, "skipped": True, "status": "done"})
             continue
 
         try:
@@ -276,22 +306,53 @@ async def fuse_all_pages(
             except Exception:
                 await db.rollback()
 
-    # 更新文档状态
-    await db.refresh(doc)
-    doc.fusion_status = "done"
-    await db.commit()
-
     # 第4层融合落库后,把"融合正文"切块+向量化写进 kb_chunks
     # → 对外检索(hybrid_search)默认召回的就是融合层内容(华哥设计:对外用第4层)
+    indexed = 0
+    index_error = ""
     try:
         indexed = await index_fusions_to_chunks(db, document_id, owner_id)
         logger.info("Indexed fusion layer to chunks: doc_id=%d chunks=%d", document_id, indexed)
     except Exception as e:
+        index_error = str(e)
         logger.error("Index fusion to chunks failed for doc_id=%d (non-fatal): %s", document_id, e)
+
+    fusion_rows = await db.execute(
+        select(KbPageFusion.fused_text).where(KbPageFusion.document_id == document_id)
+    )
+    valid_pages = sum(1 for (text,) in fusion_rows.all() if text and text.strip())
+    empty_pages = max(total_pages - valid_pages, 0)
+    error_pages = sum(1 for item in results if item.get("error"))
+
+    await db.refresh(doc)
+    doc.fusion_status = classify_fusion_status(
+        total_pages=total_pages,
+        valid_pages=valid_pages,
+        error_pages=error_pages,
+        index_error=index_error,
+    )
+    if doc.fusion_status == "failed":
+        logger.error("All fusion pages failed for doc_id=%d", document_id)
+    elif doc.fusion_status == "degraded":
+        if valid_pages == 0:
+            logger.warning("Fusion produced no usable pages for doc_id=%d", document_id)
+        else:
+            logger.warning(
+                "Fusion degraded for doc_id=%d: valid_pages=%d empty_pages=%d error_pages=%d index_error=%s",
+                document_id, valid_pages, empty_pages, error_pages, bool(index_error),
+            )
+    await db.commit()
 
     return {
         "document_id": document_id,
-        "pages_fused": len([r for r in results if "error" not in r or r.get("skipped")]),
+        "total_pages": total_pages,
+        "pages_fused": valid_pages,
+        "valid_pages": valid_pages,
+        "empty_pages": empty_pages,
+        "error_pages": error_pages,
+        "indexed_chunks": indexed,
+        "index_error": index_error,
+        "status": doc.fusion_status,
         "results": results,
     }
 
@@ -302,6 +363,7 @@ async def index_fusions_to_chunks(db: AsyncSession, document_id: int, owner_id: 
     重建式:先清掉该文档旧 chunk(无论来自老解析还是上轮融合),再按融合层重灌。
     """
     from sqlalchemy import delete as sa_delete
+
     from ..models import KbChunk
     from .embedding_service import chunk_and_embed, store_chunks
 
@@ -355,7 +417,7 @@ async def _fuse_handler(params: dict) -> dict:
         owner_id = doc.owner_id
         try:
             result = await fuse_all_pages(db, document_id, owner_id)
-            return {"status": "done", **result}
+            return result
         except Exception as e:
             logger.error("Fuse handler failed for document_id=%d: %s", document_id, e)
             try:

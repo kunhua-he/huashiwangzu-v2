@@ -1,6 +1,7 @@
 """Source-file lifecycle helpers for the knowledge pipeline."""
 from dataclasses import dataclass
 
+from app.core.exceptions import NotFound
 from app.models.file import File
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,3 +38,16 @@ async def raise_if_source_unavailable(db: AsyncSession, file_id: int) -> None:
     state = await get_source_file_availability(db, file_id)
     if not state.available:
         raise SourceFileUnavailable(file_id, state.reason)
+
+
+async def get_live_document_or_raise(db: AsyncSession, document_id: int, owner_id: int) -> dict:
+    """Return a visible knowledge document only when its source file is still live."""
+    from .document_service import get_document
+
+    doc = await get_document(db, document_id, owner_id)
+    state = await get_source_file_availability(db, int(doc.get("file_id") or 0))
+    if not state.available:
+        raise NotFound(f"Document source file unavailable: {state.reason}")
+    doc["source_available"] = True
+    doc["source_state"] = "available"
+    return doc

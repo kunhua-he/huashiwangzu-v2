@@ -81,6 +81,20 @@ def _hash_content(content: str) -> str:
     return hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()
 
 
+def classify_raw_collection_status(
+    total_rounds: int,
+    valid_rounds: int,
+    failed_rounds: int,
+    task_count: int,
+) -> str:
+    """根据有效内容统计判定 raw 阶段状态。"""
+    if total_rounds > 0 and valid_rounds == 0:
+        return "failed" if task_count > 0 and failed_rounds >= task_count else "degraded"
+    if total_rounds > valid_rounds or failed_rounds > 0:
+        return "degraded"
+    return "done"
+
+
 async def _exec_round_1_text(
     doc_id: int, file_id: int, owner_id: int,
     page: int, caller: str, ext: str = "pdf",
@@ -93,7 +107,8 @@ async def _exec_round_1_text(
             page_texts = [
                 (b.get("text") or "").strip()
                 for b in blocks
-                if b.get("page") == page and (b.get("text") or "").strip()
+                if (b.get("page") == page or (page == 1 and b.get("page") is None))
+                and (b.get("text") or "").strip()
             ]
             content = "\n\n".join(page_texts)
         except Exception as e:
@@ -171,7 +186,7 @@ async def _exec_round_2_ocr(
             round=2,
             source_type="ocr",
             content=content,
-            model_used="mimo-v2.5" if "provider" not in metadata else "tesseract",
+            model_used="tesseract" if metadata.get("provider") == "tesseract" else "mimo-v2.5",
             confidence=0.85 if content else 0.0,
             content_hash=_hash_content(content),
             metadata_json=metadata,
@@ -349,22 +364,45 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
             else:
                 all_results.append(r)
 
-    await db.refresh(doc)
-    # Y3: 全部页（所有轮次）失败时标 failed，不静默 done
+    failed_count = 0
     if tasks:
-        failed_count = sum(1 for r in results if isinstance(r, Exception))
-        if failed_count == len(tasks):
-            doc.raw_status = "failed"
-            logger.error("All raw collection tasks failed for doc_id=%d", doc_id)
-        else:
-            doc.raw_status = "done"
-    else:
-        doc.raw_status = "done"
+        failed_count = sum(
+            1
+            for r in results
+            if isinstance(r, Exception) or (isinstance(r, dict) and r.get("error"))
+        )
+
+    raw_rows = await db.execute(
+        select(KbRawData.content).where(KbRawData.document_id == doc_id)
+    )
+    raw_contents = [content or "" for (content,) in raw_rows.all()]
+    total_rounds = total_pages * expected_rounds
+    valid_rounds = sum(1 for content in raw_contents if content.strip())
+    empty_rounds = max(total_rounds - valid_rounds, 0)
+
+    await db.refresh(doc)
+    doc.raw_status = classify_raw_collection_status(
+        total_rounds=total_rounds,
+        valid_rounds=valid_rounds,
+        failed_rounds=failed_count,
+        task_count=len(tasks),
+    )
+    if doc.raw_status == "failed":
+        logger.error("All raw collection tasks failed for doc_id=%d", doc_id)
+    elif doc.raw_status == "degraded":
+        logger.warning(
+            "Raw collection degraded for doc_id=%d: valid_rounds=%d empty_rounds=%d failed_rounds=%d",
+            doc_id, valid_rounds, empty_rounds, failed_count,
+        )
     await db.commit()
 
     return {
         "document_id": doc_id,
         "total_pages": total_pages,
+        "total_rounds": total_rounds,
+        "valid_rounds": valid_rounds,
+        "empty_rounds": empty_rounds,
+        "failed_rounds": failed_count,
         "rounds": all_results,
         "status": doc.raw_status,
     }
@@ -458,7 +496,7 @@ async def _raw_collection_handler(params: dict) -> dict:
 
         try:
             result = await collect_raw_data(db, document_id, doc.owner_id, doc.file_id, doc.owner_id)
-            return {"status": "done", **result}
+            return result
         except Exception as e:
             logger.error("Raw collection failed for document_id=%d: %s", document_id, e)
             doc.raw_status = "failed"

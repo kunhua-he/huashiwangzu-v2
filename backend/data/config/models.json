@@ -44,7 +44,8 @@
   "model_types": {
     "llm": {
       "primary": "deepseek-v4-flash",
-      "fallback_chain": ["deepseek-v4-pro", "gemma-4", "ollama-local"],
+      "fallback_on_explicit_profile": true,
+      "fallback_chain": ["gemma-4", "ollama-local", "deepseek-v4-pro"],
       "profiles": {
         "deepseek-v4-flash": {
           "provider": "opencode",
@@ -145,6 +146,7 @@
     },
     "vision": {
       "primary": "mimo",
+      "fallback_on_explicit_profile": true,
       "fallback_chain": ["qwen3-vl"],
       "profiles": {
         "mimo": {
@@ -222,6 +224,6 @@
 
   "local_bin": {
     "llama_server": "",
-    "model_root": ""
+    "model_root": "/Users/hekunhua/Documents/AI模型"
   }
 }

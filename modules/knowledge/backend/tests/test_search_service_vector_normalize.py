@@ -1,7 +1,7 @@
 """Tests for knowledge search vector normalization."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
@@ -17,6 +17,14 @@ def test_normalize_vector_accepts_json_string():
 
 def test_normalize_vector_rejects_bad_string():
     assert _normalize_vector("not-a-vector") is None
+
+
+def test_normalize_vector_accepts_tolist_values():
+    class ArrayLike:
+        def tolist(self):
+            return [1, "2", 3.5]
+
+    assert _normalize_vector(ArrayLike()) == [1.0, 2.0, 3.5]
 
 
 def test_cosine_similarity_handles_string_inputs():

@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.core.exceptions import AppException, NotFound, ValidationError
+from app.models.file import File
 from app.services.file_reader import resolve_caller_user_id as resolve_user_id  # noqa: F401
 from app.services.file_service import check_file_access
 from sqlalchemy import delete as sa_delete
@@ -114,6 +115,72 @@ async def enqueue_pipeline_task(
     return {"task_id": task.id, "enqueued": True, "reason": "created"}
 
 
+async def _count_document_chunks(db: AsyncSession, document_id: int) -> int:
+    from ..models import KbChunk
+
+    count = await db.scalar(
+        select(func.count(KbChunk.id)).where(KbChunk.document_id == document_id)
+    )
+    return int(count or 0)
+
+
+def _document_is_inflight_without_chunks(doc) -> bool:
+    """A zero-chunk duplicate should reuse only genuinely in-flight work."""
+    active_statuses = {"pending", "parsing", "indexing", "collecting", "running"}
+    return (
+        doc.parse_status in active_statuses
+        or doc.vector_status in active_statuses
+    )
+
+
+async def _find_content_duplicate(
+    db: AsyncSession,
+    file,
+    owner_id: int,
+):
+    """Return a same-owner knowledge doc for the same file content when reusable.
+
+    Same-content docs with chunks are canonical and should be reused. Same-content
+    docs still in parse/vector startup are also reused to avoid duplicate work.
+    Zero-chunk docs that already reached a terminal parse/vector state are treated
+    as orphan debt and do not block a fresh ingest.
+    """
+    from ..models import KbDocument
+
+    md5_hash = getattr(file, "md5_hash", None)
+    if not md5_hash:
+        return None, None
+
+    result = await db.execute(
+        select(KbDocument)
+        .join(File, File.id == KbDocument.file_id)
+        .where(
+            KbDocument.owner_id == owner_id,
+            KbDocument.deleted.is_(False),
+            File.deleted.is_(False),
+            File.md5_hash == md5_hash,
+        )
+        .order_by(KbDocument.updated_at.desc(), KbDocument.id.desc())
+    )
+    inflight_doc = None
+    for candidate in result.scalars().all():
+        chunk_count = await _count_document_chunks(db, int(candidate.id))
+        if chunk_count > 0:
+            return candidate, {
+                "task_id": None,
+                "enqueued": False,
+                "reason": "content already indexed",
+            }
+        if inflight_doc is None and _document_is_inflight_without_chunks(candidate):
+            inflight_doc = candidate
+
+    if inflight_doc is not None:
+        task_info = await enqueue_pipeline_task(db, inflight_doc, owner_id)
+        return inflight_doc, task_info
+
+    return None, None
+
+
 async def register_document(
     db: AsyncSession,
     file_id: int,
@@ -132,6 +199,11 @@ async def register_document(
         text("SELECT pg_advisory_xact_lock(:owner_id, :file_id)"),
         {"owner_id": owner_id, "file_id": file_id},
     )
+    if file.md5_hash:
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:namespace, ('x' || substr(:md5_hash, 1, 8))::bit(32)::int)"),
+            {"namespace": 1262633037, "md5_hash": file.md5_hash},
+        )
 
     # 已登记则返回现有记录
     existing_r = await db.execute(
@@ -143,7 +215,21 @@ async def register_document(
     )
     existing = existing_r.scalar_one_or_none()
     if existing:
-        return document_payload(existing)
+        if document_pipeline_complete(existing):
+            task_info = {
+                "task_id": None,
+                "enqueued": False,
+                "reason": "existing_completed",
+            }
+        else:
+            task_info = await enqueue_pipeline_task(db, existing, owner_id)
+            await db.commit()
+        return document_registration_payload(existing, task_info)
+
+    duplicate_doc, duplicate_task_info = await _find_content_duplicate(db, file, owner_id)
+    if duplicate_doc is not None:
+        await db.commit()
+        return document_registration_payload(duplicate_doc, duplicate_task_info)
 
     # Look up existing content package for this file
     content_package_id = None
@@ -203,7 +289,9 @@ async def register_document(
         )
         existing = existing_r.scalar_one_or_none()
         if existing:
-            return document_payload(existing)
+            task_info = await enqueue_pipeline_task(db, existing, owner_id)
+            await db.commit()
+            return document_registration_payload(existing, task_info)
         raise
 
     # ── 自动入队 kb_pipeline 后台任务（上传即开始分析） ──
@@ -215,7 +303,7 @@ async def register_document(
         doc.id, file_id, task_info.get("task_id"), task_info.get("enqueued"),
     )
 
-    return document_payload(doc)
+    return document_registration_payload(doc, task_info)
 
 
 def document_payload(doc) -> dict:
@@ -241,6 +329,53 @@ def document_payload(doc) -> dict:
         "created_at": doc.created_at,
         "updated_at": doc.updated_at,
     }
+
+
+def document_registration_payload(doc, task_info: dict | None = None) -> dict:
+    """Document payload plus stable ingest queue metadata."""
+    payload = document_payload(doc)
+    info = task_info or {
+        "task_id": None,
+        "enqueued": False,
+        "reason": "not_enqueued",
+    }
+    enqueued = bool(info.get("enqueued"))
+    reason = str(info.get("reason") or "")
+    if enqueued:
+        status = "queued"
+    elif reason == "already_in_flight":
+        status = "inflight"
+    elif reason == "existing_completed":
+        status = "completed"
+    else:
+        status = "existing"
+    search_ready = (
+        doc.parse_status == "done"
+        and doc.vector_status == "done"
+        and (doc.total_chunks or 0) > 0
+    )
+    deep_ready = (
+        getattr(doc, "raw_status", "pending") == "done"
+        and getattr(doc, "fusion_status", "pending") == "done"
+    )
+    payload.update({
+        "document_id": doc.id,
+        "task_id": info.get("task_id"),
+        "enqueued": enqueued,
+        "reason": reason or None,
+        "stage": "kb_pipeline",
+        "status": status,
+        "pipeline_status": status,
+        "search_ready": search_ready,
+        "deep_ready": deep_ready,
+        "stage_summary": {
+            "parse": doc.parse_status,
+            "vector": doc.vector_status,
+            "raw": getattr(doc, "raw_status", "pending"),
+            "fusion": getattr(doc, "fusion_status", "pending"),
+        },
+    })
+    return payload
 
 
 async def list_documents(

@@ -22,6 +22,7 @@ HTTP 前缀：`/api/knowledge`
 | `/documents` | GET/POST | 列出或登记文档 |
 | `/documents/{id}` | GET/DELETE | 详情或软删 |
 | `/documents/parse` | POST | 解析、分块、向量化、融合、可选图谱 |
+| `/documents/{id}/ingest-status` | GET | 查询入库队列与分析阶段状态 |
 | `/search` | POST | 混合检索 |
 | `/documents/{id}/chunks` | GET | 文档块列表 |
 | `/chunks/{id}` | GET | 块详情 |
@@ -42,6 +43,7 @@ HTTP 前缀：`/api/knowledge`
 | `knowledge:get_graph_context` | `entity_id` |
 | `knowledge:get_pending_count` | none |
 | `knowledge:get_evidence_detail` | `entity_id` |
+| `knowledge:get_ingest_status` | `document_id` |
 
 ## 数据表
 

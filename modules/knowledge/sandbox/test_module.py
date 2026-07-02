@@ -16,6 +16,8 @@ def test_search_result_shape() -> None:
         "text": "Relevant content snippet...",
         "score": 0.95,
         "content_package_id": None,
+        "source_available": True,
+        "source_state": "available",
     }
     required = {"document_id", "text", "score", "page"}
     for field in required:
@@ -57,11 +59,15 @@ def test_chunk_shape() -> None:
         "block_type": "paragraph",
         "text": "Chunk text content...",
         "keywords": "",
+        "source_available": True,
+        "source_state": "available",
     }
     required = {"id", "document_id", "text", "page", "block_type"}
     for field in required:
         assert field in chunk, f"Missing required field: {field}"
     assert chunk["block_type"] in ("paragraph", "heading", "list", "table", "code")
+    assert chunk["source_available"] is True
+    assert chunk["source_state"] == "available"
     print("  [CHUNK] Shape valid")
 
 
@@ -134,6 +140,42 @@ def test_ingest_capability_params() -> None:
     print("  [INGEST] Parameter contract valid")
 
 
+def test_ingest_status_shape() -> None:
+    """Ingest status result shape contract."""
+    status = {
+        "document_id": 1,
+        "task_id": 10,
+        "enqueued": True,
+        "stage": "parse",
+        "status": "queued",
+        "pipeline_status": "queued",
+        "task_status": "pending",
+        "parse_status": "pending",
+        "vector_status": "pending",
+        "raw_status": "pending",
+        "fusion_status": "pending",
+        "stage_summary": {
+            "parse": {"status": "pending", "ready": False},
+            "vector": {"status": "pending", "ready": False, "count": 0},
+            "raw": {"status": "pending", "ready": False},
+            "fusion": {"status": "pending", "ready": False},
+        },
+        "search_ready": False,
+        "deep_ready": False,
+        "next_action": "wait_for_search_index",
+    }
+    required = {
+        "document_id", "task_id", "enqueued", "stage", "status",
+        "pipeline_status", "stage_summary", "search_ready", "deep_ready",
+        "next_action",
+    }
+    for field in required:
+        assert field in status, f"Missing required field: {field}"
+    assert status["pipeline_status"] in ("queued", "running", "search_ready", "deep_ready", "failed", "pending")
+    assert isinstance(status["stage_summary"], dict)
+    print("  [INGEST-STATUS] Shape valid")
+
+
 def main() -> None:
     print("=" * 60)
     print("knowledge sandbox test")
@@ -146,6 +188,7 @@ def main() -> None:
     test_governance_candidate_shape()
     test_response_shape()
     test_ingest_capability_params()
+    test_ingest_status_shape()
     print("=" * 60)
     print("PASS: knowledge sandbox test")
 

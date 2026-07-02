@@ -159,6 +159,17 @@
       "min_role": "editor"
     },
     {
+      "action": "get_ingest_status",
+      "description": "查询文档入库任务与分析阶段状态",
+      "parameters": {
+        "document_id": {
+          "type": "integer",
+          "description": "文档ID"
+        }
+      },
+      "min_role": "viewer"
+    },
+    {
       "action": "export",
       "description": "导出已解析文档（markdown/html/json）",
       "parameters": {

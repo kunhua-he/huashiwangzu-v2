@@ -3,43 +3,50 @@
 业务接口全部在模块内；对外能力通过框架 register_capability 注册，供 Agent 自动发现和调用。
 """
 import logging
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import select, func, or_, exists
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.module_events import register_module_event_handler
 from app.services.module_registry import register_capability
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from .init_db import _run_startup_init
+from .services import file_lifecycle_service, pipeline_service  # noqa: F401
+from .services.dashboard_service import get_dashboard_stats
 from .services.document_service import (
-    register_document, list_documents, get_document, soft_delete_document,
-    parse_and_index_document, resolve_user_id, enqueue_pipeline_task,
+    enqueue_pipeline_task,
+    get_document,
+    list_documents,
+    parse_and_index_document,
+    register_document,
+    resolve_user_id,
+    soft_delete_document,
 )
 from .services.embedding_service import get_chunk_by_id
-from .services.search_service import hybrid_search, get_document_chunks
-from .services.entity_service import get_entity_dictionary, get_graph_context, get_page_fusion, process_document_entities_from_fusions
+from .services.entity_service import get_entity_dictionary, get_graph_context, get_page_fusion
+from .services.fusion_service import get_page_fusion_detail
 from .services.governance_service import (
-    list_governance_candidates, approve_candidate, reject_candidate,
-    merge_entities, get_pending_count, get_evidence_detail, calibrate_extraction,
+    approve_candidate,
+    calibrate_extraction,
+    get_evidence_detail,
+    get_pending_count,
+    list_governance_candidates,
+    merge_entities,
+    reject_candidate,
 )
-from .services.raw_collection_service import (
-    get_raw_data,
-    get_ocr_words,
-)
-from .services.fusion_service import (
-    get_page_fusion_detail,
-)
-from .init_db import _run_startup_init
-from .services.profile_service import get_document_profile
-from .services.relation_service import get_file_relations, get_relation_graph
-from .services.progress_service import get_document_progress, list_documents_progress
-from .services.dashboard_service import get_dashboard_stats
+from .services.ingest_status_service import get_ingest_status
 from .services.pipeline_debt_service import classify_pipeline_lifecycle_debt
-from .services import pipeline_service  # noqa: F401 注册 kb_pipeline handler
-from .services import file_lifecycle_service  # noqa: F401 注册文件生命周期 handler
+from .services.profile_service import get_document_profile
+from .services.progress_service import get_document_progress, list_documents_progress
+from .services.raw_collection_service import get_ocr_words, get_raw_data
+from .services.relation_service import get_file_relations, get_relation_graph
+from .services.search_service import get_document_chunks, hybrid_search
+from .services.source_file_state import get_live_document_or_raise
 
 logger = logging.getLogger("v2.knowledge").getChild("router")
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
@@ -50,40 +57,31 @@ _run_startup_init()
 class RegisterDocumentRequest(BaseModel):
     file_id: int
     catalog_id: int | None = None
-
 class ParseDocumentRequest(BaseModel):
     document_id: int
     extract_graph: bool = True
-
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 10
     use_rerank: bool = False
-
 class MergeEntitiesRequest(BaseModel):
     source_entity_ids: list[int]
     target_entity_id: int
     reason: str = ""
-
 class CalibrateRequest(BaseModel):
     candidate_id: int
     new_name: str | None = None
     new_category: str | None = None
-
 class CollectRawRequest(BaseModel):
     document_id: int
-
 class FuseRequest(BaseModel):
     document_id: int
-
 class ProfileRequest(BaseModel):
     document_id: int
     force_raw: bool = False
     force_fusion: bool = False
-
 class RelationComputeRequest(BaseModel):
     document_id: int
-
 class ProgressBatchRequest(BaseModel):
     document_ids: list[int] = Field(default_factory=list)
 
@@ -152,15 +150,17 @@ async def api_collect_raw(
     user: User = Depends(require_permission("editor")),
 ):
     """触发原始层多轮采集（后台任务）。"""
-    from app.models.system import SystemTaskQueue
-    from .models import KbDocument
     import json as _json
+
+    from app.models.system import SystemTaskQueue
+
+    from .models import KbDocument
 
     r = await db.execute(
         select(KbDocument).where(
             KbDocument.id == payload.document_id,
             KbDocument.owner_id == user.id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     doc = r.scalar_one_or_none()
@@ -197,7 +197,7 @@ async def api_raw_data(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await get_document(db, document_id, user.id)
+    await get_live_document_or_raise(db, document_id, user.id)
     data = await get_raw_data(db, document_id, page, round_num)
     return ApiResponse(data={"raw_data": data})
 
@@ -226,7 +226,7 @@ async def api_page_fusion_detail(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await get_document(db, document_id, user.id)
+    await get_live_document_or_raise(db, document_id, user.id)
     result = await get_page_fusion_detail(db, document_id, page)
     if not result:
         from app.core.exceptions import NotFound
@@ -241,7 +241,7 @@ async def api_list_fusions(
 ):
     """列出文档所有页的融合内容(第4层,阅读视图用)。"""
     from .models import KbPageFusion
-    await get_document(db, document_id, user.id)
+    await get_live_document_or_raise(db, document_id, user.id)
     r = await db.execute(
         select(KbPageFusion)
         .where(KbPageFusion.document_id == document_id)
@@ -275,7 +275,7 @@ async def api_get_profile(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await get_document(db, document_id, user.id)
+    await get_live_document_or_raise(db, document_id, user.id)
     result = await get_document_profile(db, document_id, owner_id=user.id)
     if not result:
         from app.core.exceptions import NotFound
@@ -316,7 +316,7 @@ async def api_entity_graph(
     user: User = Depends(require_permission("viewer")),
 ):
     """获取实体级知识图谱（节点=实体/概念/标签，边=关系）。"""
-    from .models import KbGraphNode, KbGraphEdge
+    from .models import KbGraphEdge, KbGraphNode
     node_r = await db.execute(
         select(KbGraphNode).where(KbGraphNode.owner_id == user.id).limit(200)
     )
@@ -352,6 +352,7 @@ async def api_rebuild_graph(
 ):
     """从融合层重建实体/图谱（第6层，后台任务 kb_graph，防同步超时）。"""
     import json as _json
+
     from app.models.system import SystemTaskQueue
 
     await get_document(db, payload.document_id, user.id)
@@ -412,6 +413,16 @@ async def api_document_progress(
     result = await get_document_progress(db, document_id, user.id)
     return ApiResponse(data=result)
 
+@router.get("/documents/{document_id}/ingest-status")
+async def api_document_ingest_status(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    """Unified ingest queue + document stage status for Agent/frontend polling."""
+    result = await get_ingest_status(db, document_id, user.id)
+    return ApiResponse(data=result)
+
 @router.post("/documents/progress-batch")
 async def api_progress_batch(
     payload: ProgressBatchRequest,
@@ -439,7 +450,7 @@ async def api_search(
 ):
     results = await hybrid_search(db, payload.query, user.id, payload.top_k, payload.use_rerank)
     # Enrich with content_package_id and block_id
-    from .models import KbDocument, KbChunk
+    from .models import KbChunk, KbDocument
     enriched = []
     doc_cache: dict[int, dict] = {}
     for r in results:
@@ -469,9 +480,8 @@ async def api_document_chunks(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    # 文档归属检查
-    await get_document(db, document_id, user.id)
-    result = await get_document_chunks(db, document_id)
+    await get_live_document_or_raise(db, document_id, user.id)
+    result = await get_document_chunks(db, document_id, owner_id=user.id)
     return ApiResponse(data=result)
 
 @router.get("/chunks/{chunk_id}")
@@ -480,13 +490,10 @@ async def api_get_chunk(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    result = await get_chunk_by_id(db, chunk_id)
+    result = await get_chunk_by_id(db, chunk_id, owner_id=user.id)
     if not result:
         from app.core.exceptions import NotFound
         raise NotFound("Chunk not found")
-    # owner 隔离：chunk.owner_id 校验由服务 payload 不含 owner，重新查一次保护
-    if result["document_id"]:
-        await get_document(db, result["document_id"], user.id)
     return ApiResponse(data=result)
 
 @router.get("/documents/{document_id}/page/{page}")
@@ -496,7 +503,7 @@ async def api_get_page_fusion(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await get_document(db, document_id, user.id)
+    await get_live_document_or_raise(db, document_id, user.id)
     result = await get_page_fusion(db, document_id, page)
     return ApiResponse(data=result)
 
@@ -596,14 +603,16 @@ async def api_pipeline_debt_dry_run(
 async def _enqueue_task(db, task_type: str, document_id: int, user_id: int) -> ApiResponse:
     """将派生层任务入队并立即返回。"""
     import json as _json
+
     from app.models.system import SystemTaskQueue
+
     from .models import KbDocument
 
     r = await db.execute(
         select(KbDocument).where(
             KbDocument.id == document_id,
             KbDocument.owner_id == user_id,
-            KbDocument.deleted == False,
+            KbDocument.deleted.is_(False),
         )
     )
     if not r.scalar_one_or_none():
@@ -622,8 +631,6 @@ async def _enqueue_task(db, task_type: str, document_id: int, user_id: int) -> A
     await db.commit()
     return ApiResponse(data={"task_id": task.id, "status": "enqueued"})
 
-# ── Cross-module capabilities ───────────────────────────────
-
 async def _cap_search(params: dict, caller: str) -> dict:
     owner_id = resolve_user_id(caller)
     query = str(params.get("query", "")).strip()
@@ -633,8 +640,8 @@ async def _cap_search(params: dict, caller: str) -> dict:
     async with AsyncSessionLocal() as db:
         results = await hybrid_search(db, query, owner_id, top_k=top_k, use_rerank=False)
         # 为每个结果补充页级融合内容和文档名称
+        from .models import KbChunk, KbDocument
         from .services.entity_service import get_page_fusion as _get_page_fusion
-        from .models import KbDocument, KbChunk
         enriched = []
         doc_cache: dict[int, dict] = {}
         for r in results:
@@ -669,10 +676,9 @@ async def _cap_get_block(params: dict, caller: str) -> dict:
     if block_id <= 0:
         raise ValueError("block_id must be positive")
     async with AsyncSessionLocal() as db:
-        result = await get_chunk_by_id(db, block_id)
+        result = await get_chunk_by_id(db, block_id, owner_id=owner_id)
         if not result:
             return {"block": None}
-        await get_document(db, result["document_id"], owner_id)
         return {"block": result}
 
 async def _cap_get_page_fusion(params: dict, caller: str) -> dict:
@@ -680,7 +686,7 @@ async def _cap_get_page_fusion(params: dict, caller: str) -> dict:
     document_id = int(params.get("document_id", 0) or 0)
     page = int(params.get("page", 1) or 1)
     async with AsyncSessionLocal() as db:
-        await get_document(db, document_id, owner_id)
+        await get_live_document_or_raise(db, document_id, owner_id)
         result = await get_page_fusion(db, document_id, page)
         return {"page_fusion": result}
 
@@ -800,8 +806,6 @@ INGEST_EXTENSIONS = {
 async def _cap_ingest(params: dict, caller: str) -> dict:
     """把已上传文件登记进知识库并触发后台分析（幂等、类型白名单）。"""
     from .services.document_service import register_document
-    from .models import KbDocument
-    from app.models.file import File
 
     owner_id = resolve_user_id(caller)
     file_id = int(params.get("file_id", 0) or 0)
@@ -810,8 +814,8 @@ async def _cap_ingest(params: dict, caller: str) -> dict:
 
     async with AsyncSessionLocal() as db:
         # 权限校验：验证当前用户有该文件的访问权限
-        from app.services.file_service import check_file_access
         from app.core.exceptions import NotFound, PermissionDenied
+        from app.services.file_service import check_file_access
         try:
             file = await check_file_access(db, file_id, owner_id)
         except (NotFound, PermissionDenied):
@@ -821,21 +825,17 @@ async def _cap_ingest(params: dict, caller: str) -> dict:
             logger.info("ingest skipped: unsupported extension '%s' for file_id=%d", ext, file_id)
             return {"skipped": True, "reason": f"unsupported extension '{ext}'"}
 
-        # 已存在则返回现有记录
-        existing_r = await db.execute(
-            select(KbDocument).where(
-                KbDocument.file_id == file_id,
-                KbDocument.owner_id == owner_id,
-                KbDocument.deleted == False,
-            )
-        )
-        existing = existing_r.scalar_one_or_none()
-        if existing:
-            return {"document_id": existing.id, "enqueued": False, "reason": "already registered"}
-
         # register_document 幂等且自动入队 kb_pipeline
         result = await register_document(db, file_id, owner_id, catalog_id=None)
-        return {"document_id": result["id"], "enqueued": True}
+        status = await get_ingest_status(db, int(result["id"]), owner_id)
+        response = {**status, **result, "document_id": int(result["id"])}
+        response["status"] = status["status"]
+        response["pipeline_status"] = status["pipeline_status"]
+        response["stage"] = status["stage"]
+        response["stage_summary"] = status["stage_summary"]
+        response["search_ready"] = status["search_ready"]
+        response["deep_ready"] = status["deep_ready"]
+        return response
 
 # ── Chunking strategy support ──────────────────────────────────────
 
@@ -852,16 +852,16 @@ async def api_chunk_document(
     user: User = Depends(require_permission("editor")),
 ):
     """Re-chunk a parsed document using the specified strategy (title_aware/structure_aware/fixed_size)."""
-    await get_document(db, payload.document_id, user.id)
-    from .services.chunking_service import chunk_document
-    from .services.embedding_service import store_chunks
+    await get_live_document_or_raise(db, payload.document_id, user.id)
+    from sqlalchemy import delete as sa_delete
+
     from ..ir_models import from_legacy_blocks
     from ..models import KbChunk, KbDocument
-    from sqlalchemy import delete as sa_delete
+    from .services.chunking_service import chunk_document
     from .services.search_service import get_document_chunks
 
     # Read existing chunks as DocumentIr
-    current_chunks = await get_document_chunks(db, payload.document_id)
+    current_chunks = await get_document_chunks(db, payload.document_id, owner_id=user.id)
     ir_blocks = []
     for ch in current_chunks:
         bt = ch.get("block_type", "段落")
@@ -923,6 +923,7 @@ async def api_export_document(
     """Export a parsed document in markdown/html/json format."""
     from .services.export_service import export_document
 
+    await get_live_document_or_raise(db, payload.document_id, user.id)
     result = await export_document(db, payload.document_id, fmt=payload.format, owner_id=user.id)
     if not result.get("success"):
         from app.core.exceptions import NotFound, ValidationError
@@ -930,10 +931,7 @@ async def api_export_document(
             raise NotFound(result["error"])
         raise ValidationError(result.get("error", "Export failed"))
     return ApiResponse(data=result)
-
-
 # ── Capability registrations ──────────────────────────────────────
-
 register_capability(
     "knowledge", "ingest", _cap_ingest,
     description="把已上传文件登记进知识库并触发后台分析（幂等、类型白名单）",
@@ -942,9 +940,25 @@ register_capability(
     min_role="editor",
 )
 
+async def _cap_get_ingest_status(params: dict, caller: str) -> dict:
+    owner_id = resolve_user_id(caller)
+    document_id = int(params.get("document_id", 0) or 0)
+    if document_id <= 0:
+        raise ValueError("document_id must be positive")
+    async with AsyncSessionLocal() as db:
+        return await get_ingest_status(db, document_id, owner_id)
+
+register_capability(
+    "knowledge", "get_ingest_status", _cap_get_ingest_status,
+    description="Get unified knowledge ingest status for a document, including queue task and stage readiness",
+    brief="查询入库状态",
+    parameters={"document_id": {"type": "integer", "description": "Document ID"}},
+    min_role="viewer",
+)
 async def _cap_export(params: dict, caller: str) -> dict:
-    from .services.export_service import export_document
     from app.database import AsyncSessionLocal
+
+    from .services.export_service import export_document
 
     document_id = int(params.get("document_id", 0))
     fmt = params.get("format", "markdown")
@@ -956,10 +970,10 @@ async def _cap_export(params: dict, caller: str) -> dict:
         owner_id = int(caller.split(":", 1)[1])
 
     async with AsyncSessionLocal() as db:
+        if owner_id is not None:
+            await get_live_document_or_raise(db, document_id, owner_id)
         result = await export_document(db, document_id, fmt=fmt, owner_id=owner_id)
         return result
-
-
 register_capability(
     "knowledge", "export", _cap_export,
     description="导出已解析文档（markdown/html/json）",
@@ -967,9 +981,6 @@ register_capability(
     parameters={"document_id": {"type": "integer"}, "format": {"type": "string"}},
     min_role="viewer",
 )
-
-# ── Event handler: file.uploaded ──────────────────────────────────
-
 async def _on_file_uploaded(payload: dict, caller: str, caller_role: str) -> dict:
     """Handle file.uploaded event: register file into knowledge base.
 
@@ -977,6 +988,4 @@ async def _on_file_uploaded(payload: dict, caller: str, caller_role: str) -> dic
     This is best-effort: failures are logged but do not block the upload flow.
     """
     return await _cap_ingest(payload, caller)
-
-from app.services.module_events import register_module_event_handler
 register_module_event_handler("file.uploaded", _on_file_uploaded, "knowledge")

@@ -1,19 +1,36 @@
 """知识库混合检索服务：向量检索 + 关键词检索 + RRF 融合排序。"""
+import json
 import logging
 import math
-import json
 from collections.abc import Sequence
 
-from sqlalchemy import select, or_, and_, func, text, Float, cast
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.database import AsyncSessionLocal
+from app.models.file import File
 from app.services.model_services import get_embedding, rerank
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.knowledge").getChild("search")
 
 # RRF 常数
 RRF_K = 60
+
+
+def _live_source_fields() -> dict[str, bool | str]:
+    return {"source_available": True, "source_state": "available"}
+
+
+def _live_chunk_select():
+    from ..models import KbChunk, KbDocument
+
+    return (
+        select(KbChunk)
+        .join(KbDocument, KbDocument.id == KbChunk.document_id)
+        .join(File, File.id == KbDocument.file_id)
+        .where(
+            KbDocument.deleted.is_(False),
+            File.deleted.is_(False),
+        )
+    )
 
 
 def _normalize_vector(vec: object) -> list[float] | None:
@@ -34,6 +51,8 @@ def _normalize_vector(vec: object) -> list[float] | None:
             vec = json.loads(text)
         except json.JSONDecodeError:
             return None
+    if hasattr(vec, "tolist"):
+        vec = vec.tolist()
     if not isinstance(vec, Sequence):
         return None
 
@@ -62,7 +81,7 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 
 async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int = 20) -> list[dict]:
     """关键词全文检索（ILIKE on text + keywords）。"""
-    from ..models import KbChunk
+    from ..models import KbChunk, KbDocument
 
     if not query.strip():
         return []
@@ -84,8 +103,12 @@ async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int
 
     clause = and_(*conditions) if len(conditions) > 1 else conditions[0]
     stmt = (
-        select(KbChunk)
-        .where(clause, KbChunk.owner_id == owner_id)
+        _live_chunk_select()
+        .where(
+            clause,
+            KbChunk.owner_id == owner_id,
+            KbDocument.owner_id == owner_id,
+        )
         .order_by(KbChunk.id.desc())
         .limit(top_k * 2)
     )
@@ -122,6 +145,7 @@ async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int
             "score": round(score, 4),
             "rank": i + 1,
             "source": "keyword",
+            **_live_source_fields(),
         })
 
     # 按得分排序取 top_k
@@ -131,7 +155,7 @@ async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int
 
 async def vector_search(db: AsyncSession, query: str, owner_id: int, top_k: int = 20) -> list[dict]:
     """向量检索：用 query embedding 与已存储 chunk embedding 计算余弦相似度。"""
-    from ..models import KbChunk
+    from ..models import KbChunk, KbDocument
 
     # 获取 query 向量
     try:
@@ -145,8 +169,12 @@ async def vector_search(db: AsyncSession, query: str, owner_id: int, top_k: int 
 
     # 查询有 embedding 的 chunk（移除硬上限，大文档也能召全）
     stmt = (
-        select(KbChunk)
-        .where(KbChunk.owner_id == owner_id, KbChunk.embedding.isnot(None))
+        _live_chunk_select()
+        .where(
+            KbChunk.owner_id == owner_id,
+            KbDocument.owner_id == owner_id,
+            KbChunk.embedding.isnot(None),
+        )
     )
     r = await db.execute(stmt)
     chunks = r.scalars().all()
@@ -168,6 +196,7 @@ async def vector_search(db: AsyncSession, query: str, owner_id: int, top_k: int 
                 "score": round(sim, 4),
                 "rank": 0,
                 "source": "vector",
+                **_live_source_fields(),
             })
 
     scored.sort(key=lambda x: -x["score"])
@@ -267,15 +296,17 @@ async def hybrid_search(
     return results[:top_k]
 
 
-async def get_document_chunks(db: AsyncSession, document_id: int) -> list[dict]:
+async def get_document_chunks(db: AsyncSession, document_id: int, owner_id: int | None = None) -> list[dict]:
     """获取某文档的所有内容块（按页和块索引排序）。"""
-    from ..models import KbChunk
+    from ..models import KbChunk, KbDocument
 
     stmt = (
-        select(KbChunk)
+        _live_chunk_select()
         .where(KbChunk.document_id == document_id)
         .order_by(KbChunk.page, KbChunk.chunk_index)
     )
+    if owner_id is not None:
+        stmt = stmt.where(KbChunk.owner_id == owner_id, KbDocument.owner_id == owner_id)
     r = await db.execute(stmt)
     chunks = r.scalars().all()
     return [
@@ -287,6 +318,7 @@ async def get_document_chunks(db: AsyncSession, document_id: int) -> list[dict]:
             "block_type": ch.block_type,
             "text": ch.text,
             "keywords": ch.keywords,
+            **_live_source_fields(),
         }
         for ch in chunks
     ]

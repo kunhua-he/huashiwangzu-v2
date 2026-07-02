@@ -214,11 +214,25 @@ async def store_chunks(db: AsyncSession, chunks: list[dict]) -> int:
     return stored
 
 
-async def get_chunk_by_id(db: AsyncSession, chunk_id: int) -> dict | None:
+async def get_chunk_by_id(db: AsyncSession, chunk_id: int, owner_id: int | None = None) -> dict | None:
     """按 chunk_id 获取内容块详情。"""
-    from ..models import KbChunk
+    from app.models.file import File
 
-    r = await db.execute(select(KbChunk).where(KbChunk.id == chunk_id))
+    from ..models import KbChunk, KbDocument
+
+    stmt = (
+        select(KbChunk)
+        .join(KbDocument, KbDocument.id == KbChunk.document_id)
+        .join(File, File.id == KbDocument.file_id)
+        .where(
+            KbChunk.id == chunk_id,
+            KbDocument.deleted.is_(False),
+            File.deleted.is_(False),
+        )
+    )
+    if owner_id is not None:
+        stmt = stmt.where(KbChunk.owner_id == owner_id, KbDocument.owner_id == owner_id)
+    r = await db.execute(stmt)
     chunk = r.scalar_one_or_none()
     if not chunk:
         return None
@@ -230,4 +244,6 @@ async def get_chunk_by_id(db: AsyncSession, chunk_id: int) -> dict | None:
         "block_type": chunk.block_type,
         "text": chunk.text,
         "keywords": chunk.keywords,
+        "source_available": True,
+        "source_state": "available",
     }

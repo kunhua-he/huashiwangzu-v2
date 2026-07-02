@@ -4,59 +4,31 @@
 """
 import json
 import logging
-from datetime import datetime, timezone
 
-from sqlalchemy import select, and_, delete as sa_delete
+from app.database import AsyncSessionLocal
+from app.gateway.router import gateway_router
+from app.services.task_worker import register_task_handler
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.router import gateway_router
-from app.database import AsyncSessionLocal
-from app.services.task_worker import register_task_handler
+from .prompt_utils import TENTITY, TFUSION_LEGACY, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("entity")
 
-# 实体抽取提示词
-ENTITY_EXTRACTION_PROMPT = """你是一个企业知识图谱实体抽取专家。请从以下文档内容中提取实体和关系。
-
-提取规则：
-1. 实体类型：人名、组织名、地名、产品名、术语、事件、其他
-2. 关系类型：属于、位于、产生、包含、引用、相关、领导、位于、拥有、参与
-3. 每条实体/关系必须基于原文证据
-4. 提取出的实体名称要规范化（全称优先）
-
-返回 JSON 格式（不要加 markdown 代码块标记）：
-{
-  "entities": [
-    {"name": "实体名", "category": "实体类型", "description": "简要描述"}
-  ],
-  "relationships": [
-    {"source": "实体A", "target": "实体B", "relation": "关系类型", "description": "关系描述"}
-  ]
-}
-
-如果无实体可抽，返回 {"entities": [], "relationships": []}。
-"""
-
-PAGE_FUSION_PROMPT = """你是一个企业文档内容融合专家。请将以下分块内容合并为连贯的文本段落。
-
-规则：
-1. 保持原文信息不丢失
-2. 消除分块造成的内容断裂
-3. 保留原文的段落结构和逻辑顺序
-4. 不要添加原文不存在的信息
-
-返回融合后的纯文本（不要 markdown 标记）。
-"""
-
-
-async def extract_entities_from_text(text: str, profile_key: str = "deepseek-v4-flash") -> dict:
+async def extract_entities_from_text(
+    text: str,
+    profile_key: str = "deepseek-v4-flash",
+    db: AsyncSession | None = None,
+) -> dict:
     """用大模型从文本中提取实体和关系。返回 {"entities": [...], "relationships": [...]}。"""
     if not text.strip():
         return {"entities": [], "relationships": []}
 
+    system_prompt = await load_prompt(db, TENTITY)
     try:
         messages = [
-            {"role": "system", "content": ENTITY_EXTRACTION_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请提取以下内容的实体和关系：\n\n{text[:6000]}"},
         ]
         resp = await gateway_router.chat(messages, profile_key=profile_key)
@@ -85,14 +57,19 @@ async def extract_entities_from_text(text: str, profile_key: str = "deepseek-v4-
         return {"entities": [], "relationships": []}
 
 
-async def fuse_page_text(text: str, profile_key: str = "deepseek-v4-flash") -> str:
+async def fuse_page_text(
+    text: str,
+    profile_key: str = "deepseek-v4-flash",
+    db: AsyncSession | None = None,
+) -> str:
     """用大模型融合页级文本。"""
     if not text.strip():
         return text
 
+    system_prompt = await load_prompt(db, TFUSION_LEGACY)
     try:
         messages = [
-            {"role": "system", "content": PAGE_FUSION_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请融合以下分块内容：\n\n{text[:8000]}"},
         ]
         resp = await gateway_router.chat(messages, profile_key=profile_key)
@@ -114,8 +91,11 @@ async def process_document_entities(
     返回统计：{"entities_found": int, "relationships_found": int, "errors": [...]}
     """
     from ..models import (
-        KbEntityDictionary, KbEntityAlias, KbGraphNode, KbGraphEdge,
-        KbChunkEntity, KbEvidence, KbGovernanceCandidate,
+        KbEntityDictionary,
+        KbEvidence,
+        KbGovernanceCandidate,
+        KbGraphEdge,
+        KbGraphNode,
     )
 
     stats = {"entities_found": 0, "relationships_found": 0, "errors": []}
@@ -140,7 +120,7 @@ async def process_document_entities(
             continue
 
         # 每页抽取一次实体
-        result = await extract_entities_from_text(combined)
+        result = await extract_entities_from_text(combined, db=db)
         all_entities.extend(result.get("entities", []))
         all_relationships.extend(result.get("relationships", []))
         processed_pages += 1
@@ -312,8 +292,12 @@ async def process_document_entities_from_fusions(
     幂等：每次重跑先清该文档的旧实体/图谱数据（kb_entity_dictionary 保留已有条目供其他文档引用）。
     """
     from ..models import (
-        KbEntityDictionary, KbEntityAlias, KbGraphNode, KbGraphEdge,
-        KbChunkEntity, KbEvidence, KbGovernanceCandidate,
+        KbChunkEntity,
+        KbEntityDictionary,
+        KbEvidence,
+        KbGovernanceCandidate,
+        KbGraphEdge,
+        KbGraphNode,
         KbPageFusion,
     )
 
@@ -384,7 +368,7 @@ async def process_document_entities_from_fusions(
         if len(text) < 20:
             continue
 
-        result = await extract_entities_from_text(text)
+        result = await extract_entities_from_text(text, db=db)
         all_entities.extend(result.get("entities", []))
         all_relationships.extend(result.get("relationships", []))
         processed_pages += 1
@@ -545,7 +529,7 @@ async def get_entity_dictionary(db: AsyncSession, owner_id: int, keyword: str = 
 
 async def get_graph_context(db: AsyncSession, owner_id: int, entity_id: int) -> dict:
     """查询实体在图谱中的上下文（关联节点 + 边）。"""
-    from ..models import KbGraphNode, KbGraphEdge
+    from ..models import KbGraphEdge, KbGraphNode
 
     # 查当前节点
     node_r = await db.execute(

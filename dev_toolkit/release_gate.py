@@ -30,6 +30,12 @@ import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_BASE = "http://127.0.0.1:33000"
+CONFIG_PATH = REPO_ROOT / "dev_toolkit" / "config.json"
+SEMANTIC_COMPLETED_SCAN_LIMIT = 500
+
+with open(CONFIG_PATH, encoding="utf-8") as f:
+    CONFIG = json.load(f)
+DB_DSN = CONFIG.get("db_dsn", "")
 
 ACCOUNTS = {
     "admin": {"username": "何焜华", "password": "123rgE123"},
@@ -89,8 +95,96 @@ async def fetch_task_queue_audit() -> dict[str, Any]:
 
 def audit_failed_count(audit: dict[str, Any]) -> int:
     summary = audit.get("summary", {})
-    value = summary.get("failed", 0)
+    if not isinstance(summary, dict) or "failed" not in summary:
+        raise ValueError("task queue audit missing summary.failed")
+    value = summary.get("failed")
     return int(value or 0)
+
+
+def _task_result_is_semantic_failure(result: dict[str, Any] | None) -> tuple[bool, str | None]:
+    if not isinstance(result, dict):
+        return False, None
+    if result.get("success") is False:
+        return True, str(result.get("error") or "Task result success=false")
+    status = result.get("status")
+    if isinstance(status, str) and status.lower() in {"failed", "error"}:
+        return True, str(result.get("error") or f"Task result status={status}")
+    if result.get("error") not in (None, "") and result.get("success") is not True:
+        return True, str(result.get("error"))
+    return False, None
+
+
+def _decode_task_result(raw_result: Any) -> dict[str, Any] | None:
+    if isinstance(raw_result, dict):
+        return raw_result
+    if not isinstance(raw_result, str) or not raw_result.strip():
+        return None
+    try:
+        decoded = json.loads(raw_result)
+    except json.JSONDecodeError:
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def find_semantic_failed_completed_tasks(limit: int = SEMANTIC_COMPLETED_SCAN_LIMIT) -> tuple[int, list[dict[str, Any]]]:
+    """Find completed queue rows whose result contract still says failed/error."""
+    if not DB_DSN:
+        raise RuntimeError("dev_toolkit config missing db_dsn")
+    try:
+        import psycopg2
+    except ImportError as exc:
+        raise RuntimeError("psycopg2 is required for semantic task-result inspection") from exc
+
+    samples: list[dict[str, Any]] = []
+    with psycopg2.connect(DB_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, task_type, module, result, completed_at
+            from framework_system_task_queues
+            where status = 'completed' and result is not null
+            order by completed_at desc nulls last, id desc
+            limit %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+
+    count = 0
+    for task_id, task_type, module, raw_result, completed_at in rows:
+        result = _decode_task_result(raw_result)
+        failed, reason = _task_result_is_semantic_failure(result)
+        if not failed:
+            continue
+        count += 1
+        if len(samples) < 5:
+            samples.append({
+                "id": task_id,
+                "task_type": task_type,
+                "module": module,
+                "reason": reason,
+                "completed_at": completed_at.isoformat() if completed_at else None,
+            })
+    return count, samples
+
+
+def classify_semantic_failed_completed(
+    current_count: int,
+    baseline_count: int | None,
+    samples: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
+    samples = samples or []
+    if baseline_count is None:
+        return "BLOCKER", "missing pre-smoke semantic-failed-completed baseline"
+    delta = max(0, int(current_count or 0) - int(baseline_count or 0))
+    if delta > 0:
+        names = ", ".join(f"#{s.get('id')}:{s.get('task_type')}" for s in samples[:3])
+        detail = f"semantic-failed completed tasks increased: {baseline_count} -> {current_count} (+{delta})"
+        if names:
+            detail += f"; samples={names}"
+        return "BLOCKER", detail
+    if current_count > 0:
+        return "DEBT", f"{current_count} historical completed task(s) contain failed/error result contracts"
+    return "PASS", "no semantic-failed completed task results in recent completed scan"
 
 
 def parse_prefixed_json(output: str, prefix: str) -> dict[str, Any] | None:
@@ -228,7 +322,10 @@ async def check_smoke(skip_ui: bool) -> None:
         add_result("Smoke test (backends)", "BLOCKER", str(e))
 
 
-async def check_task_queue_audit(baseline_failed: int | None) -> None:
+async def check_task_queue_audit(
+    baseline_failed: int | None,
+    baseline_semantic_failed_completed: int | None = None,
+) -> None:
     try:
         d = await fetch_task_queue_audit()
         summary = d.get("summary", {})
@@ -284,6 +381,14 @@ async def check_task_queue_audit(baseline_failed: int | None) -> None:
                        f"{orphan_running} orphan running (not new)")
         else:
             add_result("Queue: orphan running", "PASS", "no orphan running")
+
+        semantic_count, semantic_samples = find_semantic_failed_completed_tasks()
+        semantic_level, semantic_detail = classify_semantic_failed_completed(
+            semantic_count,
+            baseline_semantic_failed_completed,
+            semantic_samples,
+        )
+        add_result("Queue: semantic failed completed", semantic_level, semantic_detail)
 
     except Exception as e:
         add_result("Queue: audit", "BLOCKER", str(e))
@@ -367,16 +472,27 @@ async def main():
     await check_system_status()
     print()
     baseline_failed: int | None = None
+    baseline_semantic_failed_completed: int | None = None
     try:
         baseline_failed = audit_failed_count(await fetch_task_queue_audit())
         add_result("Queue: pre-smoke baseline", "PASS", f"failed={baseline_failed}")
     except Exception as e:
         add_result("Queue: pre-smoke baseline", "BLOCKER", str(e))
+    try:
+        baseline_semantic_failed_completed, _ = find_semantic_failed_completed_tasks()
+        level = "DEBT" if baseline_semantic_failed_completed > 0 else "PASS"
+        add_result(
+            "Queue: pre-smoke semantic baseline",
+            level,
+            f"semantic_failed_completed={baseline_semantic_failed_completed}",
+        )
+    except Exception as e:
+        add_result("Queue: pre-smoke semantic baseline", "BLOCKER", str(e))
     print()
     await check_smoke(skip_ui=args.skip_ui)
     _token_cache.clear()
     print()
-    await check_task_queue_audit(baseline_failed)
+    await check_task_queue_audit(baseline_failed, baseline_semantic_failed_completed)
     print()
     await check_sandbox_matrix()
 

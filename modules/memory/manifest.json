@@ -149,17 +149,42 @@
     },
     {
       "action": "save_experience",
-      "description": "保存经验",
-      "parameters": {},
+      "description": "保存一条成功经验（包含触发条件、有序步骤、工具列表）",
+      "parameters": {
+        "trigger_condition": {
+          "type": "string",
+          "description": "触发条件（自然语言描述）"
+        },
+        "steps": {
+          "type": "string",
+          "description": "JSON 有序步骤"
+        },
+        "tools_used": {
+          "type": "string",
+          "description": "JSON 工具列表（可选）"
+        },
+        "source_conversation_id": {
+          "type": "integer",
+          "description": "来源对话 ID（可选）"
+        },
+        "scope": {
+          "type": "string",
+          "description": "经验范围：user/team/global"
+        }
+      },
       "min_role": "viewer"
     },
     {
       "action": "match_experience",
       "description": "匹配经验",
       "parameters": {
-        "trigger_condition": {
+        "query": {
           "type": "string",
-          "description": "触发条件"
+          "description": "当前用户输入（语义匹配）"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "返回条数上限"
         }
       },
       "min_role": "viewer"

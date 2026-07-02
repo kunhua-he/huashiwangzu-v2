@@ -17,6 +17,7 @@ class ModelRecord:
         startup_script: str = "",
         port: int = 0,
         description: str = "",
+        launch: dict | None = None,
     ):
         self.name = name
         self.purpose = purpose
@@ -26,6 +27,7 @@ class ModelRecord:
         self.startup_script = startup_script
         self.port = port
         self.description = description
+        self.launch = launch or {}
 
     def health_url(self) -> str:
         return f"{self.endpoint.rstrip('/')}/{self.health_path.lstrip('/')}"
@@ -40,6 +42,7 @@ class ModelRecord:
             "startup_script": self.startup_script,
             "port": self.port,
             "description": self.description,
+            "launch": self.launch,
         }
 
 
@@ -72,6 +75,7 @@ def _load_from_config() -> None:
             startup_script=info.get("startup_script", ""),
             port=info.get("port", 0),
             description=info.get("description", ""),
+            launch=info.get("launch") or {},
         )
         _REGISTRY[name] = record
 

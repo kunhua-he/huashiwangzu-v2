@@ -274,7 +274,7 @@ class ModelGatewayRouter:
                     provider_name=cfg.get("provider_name", name),
                 )
             elif ptype == "local":
-                self._providers[name] = LocalProvider()
+                self._providers[name] = LocalProvider(allow_echo=bool(cfg.get("allow_echo", False)))
 
     def get_profile(self, profile_key: str) -> dict:
         profile = MODEL_PROFILES.get(profile_key) or MODEL_PROFILES.get(DEFAULT_MODEL)
@@ -305,13 +305,42 @@ class ModelGatewayRouter:
         budget: RetryBudget | None = None,
     ) -> dict:
         candidate_keys = _profile_chain_for_model_type("llm", profile_key, profiles=MODEL_PROFILES)
+        diagnostics: dict = {
+            "requested_profile": profile_key,
+            "candidates": candidate_keys,
+            "attempts": [],
+            "fallback_used": False,
+        }
         last_result: ModelResponse | None = None
         last_key = profile_key
 
         for idx, key in enumerate(candidate_keys):
             profile = self.get_profile(key)
             if profile["provider"] == "llama":
-                await _ensure_local_text_model(profile)
+                try:
+                    await _ensure_local_text_model(profile)
+                except Exception as exc:
+                    detail = _format_exception_detail(exc)
+                    diagnostics["attempts"].append({
+                        "profile": key,
+                        "provider": profile.get("provider", ""),
+                        "model": profile.get("model", key),
+                        "stage": "health",
+                        "success": False,
+                        "error": detail,
+                    })
+                    logger.warning(
+                        "Local LLM profile %s failed health/startup, trying next fallback if any: %s",
+                        key,
+                        detail,
+                    )
+                    last_result = ModelResponse(
+                        content=f"(Model error: {detail})",
+                        error=detail,
+                        finish_reason="error",
+                    )
+                    last_key = key
+                    continue
 
             req = model_request_from_dict({
                 "messages": messages,
@@ -329,7 +358,19 @@ class ModelGatewayRouter:
                 provider_name=profile.get("provider", ""),
                 budget=budget,
             )
+            diagnostics["attempts"].append({
+                "profile": key,
+                "provider": profile.get("provider", ""),
+                "model": profile.get("model", key),
+                "stage": "chat",
+                "success": not bool(result.error),
+                "error": result.error,
+            })
             if not result.error:
+                diagnostics["selected_profile"] = key
+                diagnostics["selected_provider"] = profile.get("provider", "")
+                diagnostics["fallback_used"] = idx > 0
+                result.diagnostics = diagnostics
                 if idx > 0:
                     logger.warning("LLM fallback succeeded: %s -> %s", last_key, key)
                 return model_response_to_dict(result)
@@ -338,6 +379,7 @@ class ModelGatewayRouter:
             last_key = key
             if is_protocol_error_text(result.error or result.content):
                 logger.error("LLM protocol error, fallback stopped: %s", result.error)
+                result.diagnostics = diagnostics
                 return model_response_to_dict(result)
             if idx < len(candidate_keys) - 1:
                 logger.warning(
@@ -349,8 +391,13 @@ class ModelGatewayRouter:
 
         if last_result is not None:
             last_result.content = f"(Model fallback exhausted: {last_result.error or last_result.content})"
+            last_result.diagnostics = diagnostics
             return model_response_to_dict(last_result)
-        return {"content": "(No valid model profile configured)", "error": "No valid model profile configured"}
+        return {
+            "content": "(No valid model profile configured)",
+            "error": "No valid model profile configured",
+            "diagnostics": diagnostics,
+        }
 
     async def chat_stream(
         self,
@@ -363,7 +410,24 @@ class ModelGatewayRouter:
         for idx, key in enumerate(candidate_keys):
             profile = self.get_profile(key)
             if profile["provider"] == "llama":
-                await _ensure_local_text_model(profile)
+                try:
+                    await _ensure_local_text_model(profile)
+                except Exception as exc:
+                    last_error = _format_exception_detail(exc)
+                    if idx < len(candidate_keys) - 1:
+                        logger.warning(
+                            "LLM stream local profile %s failed health/startup, trying fallback %s: %s",
+                            key,
+                            candidate_keys[idx + 1],
+                            last_error,
+                        )
+                        yield {
+                            "type": "degradation",
+                            "content": f"降级: {key} -> {candidate_keys[idx + 1]} 原因:{last_error[:300]}",
+                        }
+                        continue
+                    yield {"type": "error", "content": f"Model stream fallback exhausted: {last_error}"}
+                    return
             provider = self.get_provider(profile["provider"])
             emitted_content = False
             try:

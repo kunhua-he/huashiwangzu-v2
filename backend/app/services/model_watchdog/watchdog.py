@@ -19,7 +19,7 @@ def _check_health(record: ModelRecord) -> bool:
     try:
         with httpx.Client(timeout=5, trust_env=False) as client:
             resp = client.get(health_url)
-            if resp.status_code < 500:
+            if _healthy_status(record, resp.status_code):
                 return True
             logger.warning(
                 "Model %s returned HTTP %d", record.name, resp.status_code
@@ -68,3 +68,9 @@ def status_all() -> dict[str, bool]:
     for record in list_models():
         results[record.name] = _check_health(record)
     return results
+
+
+def _healthy_status(record: ModelRecord, status_code: int) -> bool:
+    if record.model_type == "local":
+        return 200 <= status_code < 300
+    return status_code < 500

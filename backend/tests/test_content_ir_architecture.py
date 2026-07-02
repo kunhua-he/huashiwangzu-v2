@@ -943,7 +943,111 @@ class TestCompileDownload:
 
 
 # ====================================================================
-# 4. Agent policy tests
+# 4. Content capability failure semantics
+# ====================================================================
+
+
+class TestContentFailureSemantics:
+    """Content capabilities must not wrap parser failures as successful empty content."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_capability_propagates_failed_result(self):
+        from app.routers import content
+
+        with mock.patch.object(
+            content.pipeline_svc,
+            "run_pipeline",
+            return_value={"status": "failed", "error": "pipeline failed"},
+        ):
+            result = await content._cap_pipeline({"file_id": 123}, "user:4")
+
+        assert result["success"] is False
+        assert result["error"] == "pipeline failed"
+        assert result["data"]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_pipeline_rest_propagates_failed_result(self):
+        from app.routers import content
+
+        user = mock.Mock()
+        user.id = 4
+        with mock.patch.object(
+            content.pipeline_svc,
+            "run_pipeline",
+            return_value={"status": "failed", "error": "pipeline failed"},
+        ):
+            result = await content.trigger_pipeline(content.PipelineRequest(file_id=123), user=user)
+
+        assert result.success is False
+        assert result.error == "pipeline failed"
+        assert result.data["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_get_file_content_lazy_parse_exception_fails(self):
+        from app.database import AsyncSessionLocal
+        from app.models.file import File
+        from app.routers.content import _cap_get_file_content
+
+        owner_id = 4
+        file_id = None
+        async with AsyncSessionLocal() as db:
+            file_rec = File(
+                name=f"lazy-parse-failure-{uuid.uuid4().hex}.txt",
+                extension="txt",
+                size=0,
+                owner_id=owner_id,
+                storage_path="content-lazy-parse-failure-test.txt",
+                mime_type="text/plain",
+                deleted=False,
+            )
+            db.add(file_rec)
+            await db.commit()
+            await db.refresh(file_rec)
+            file_id = file_rec.id
+
+        try:
+            with (
+                mock.patch(
+                    "app.services.content.package_service.ContentPackageService.get_package",
+                    return_value=None,
+                ),
+                mock.patch(
+                    "app.services.content.pipeline_service.ContentPipelineService.run_pipeline",
+                    side_effect=RuntimeError("parser exploded"),
+                ),
+            ):
+                result = await _cap_get_file_content({"file_id": file_id}, f"user:{owner_id}")
+
+            assert result["success"] is False
+            assert result["error"] == "parser exploded"
+            assert result["data"]["status"] == "parse_failed"
+            assert "blocks" not in result["data"]
+        finally:
+            async with AsyncSessionLocal() as db:
+                if file_id is not None:
+                    await _delete_files(db, [file_id])
+
+    @pytest.mark.asyncio
+    async def test_file_uploaded_handler_propagates_pipeline_failure(self):
+        from app.routers import content
+
+        async def failed_pipeline(_payload, _caller, _caller_role):
+            return {"status": "failed", "error": "parser returned no blocks"}
+
+        with mock.patch.object(content.pipeline_svc, "handle_file_uploaded", failed_pipeline):
+            result = await content._on_file_uploaded(
+                {"file_id": 123},
+                "user:4",
+                "editor",
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "parser returned no blocks"
+        assert result["data"]["status"] == "failed"
+
+
+# ====================================================================
+# 5. Agent policy tests
 # ====================================================================
 
 
@@ -1091,7 +1195,7 @@ class TestAgentPolicy:
 
 
 # ====================================================================
-# 5. Correction loop constants
+# 6. Correction loop constants
 # ====================================================================
 
 
@@ -1110,7 +1214,7 @@ class TestCorrectionLoopConstants:
 
 
 # ====================================================================
-# 6. Capability registration tests
+# 7. Capability registration tests
 # ====================================================================
 
 

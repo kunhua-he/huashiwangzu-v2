@@ -19,11 +19,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, desc, func
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import (
-    SkillRegistryItem, SkillApproval, SkillProvenance, SkillUsage,
+    SkillApproval,
+    SkillProvenance,
+    SkillRegistryItem,
+    SkillUsage,
 )
 
 logger = logging.getLogger("v2.agent").getChild("services.skill_governance")
@@ -43,7 +46,7 @@ async def list_skills(
     if scope:
         q = q.where(SkillRegistryItem.scope == scope)
     if enabled_only:
-        q = q.where(SkillRegistryItem.enabled == True)
+        q = q.where(SkillRegistryItem.enabled.is_(True))
     r = await db.execute(q)
     return [
         {
@@ -378,7 +381,7 @@ async def get_skill_usage_stats(
             "error_count": r[4],
             "error_rate": round(r[4] / max(r[1], 1), 3),
         }
-        for r in rows.fetchall()
+        for r in results
     ]
 
 

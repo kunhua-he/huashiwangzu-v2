@@ -37,6 +37,7 @@ class ModelResponse:
     finish_reason: str = "stop"
     usage: Usage | None = None
     error: str | None = None
+    diagnostics: dict | None = None
 
 
 class StreamEventType:
@@ -79,6 +80,8 @@ def model_response_to_dict(r: ModelResponse) -> dict:
         result["usage"] = asdict(r.usage)
     if r.error:
         result["error"] = r.error
+    if r.diagnostics:
+        result["diagnostics"] = r.diagnostics
     return result
 
 

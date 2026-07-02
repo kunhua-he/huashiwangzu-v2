@@ -68,8 +68,8 @@ class _FakeSessionFactory:
 
 def _load_knowledge_module(module_suffix: str):
     module_names = (
-        f"huashiwangzu_modules.knowledge.{module_suffix}",
         f"modules.knowledge.backend.{module_suffix}",
+        f"huashiwangzu_modules.knowledge.{module_suffix}",
     )
     for module_name in module_names:
         module = sys.modules.get(module_name)
@@ -88,6 +88,25 @@ def _load_pipeline_modules():
         _load_knowledge_module("services.pipeline_service"),
         _load_knowledge_module("services.source_file_state"),
     )
+
+
+@pytest.mark.asyncio
+async def test_kb_pipeline_skips_when_document_row_is_missing(monkeypatch) -> None:
+    pipeline_service, _source_state = _load_pipeline_modules()
+    db = _FakeDb(None)
+
+    monkeypatch.setattr(pipeline_service, "AsyncSessionLocal", _FakeSessionFactory(db))
+
+    result = await pipeline_service._pipeline_handler({
+        "document_id": 404,
+        "user_id": 4,
+    })
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "doc_missing"
+    assert result["classification"] == "obsolete"
+    assert result["document_id"] == 404
+    assert db.commits == 0
 
 
 @pytest.mark.asyncio
@@ -241,6 +260,36 @@ async def test_enqueue_pipeline_task_dedupes_existing_inflight_task() -> None:
     assert db.added == []
 
 
+def test_parser_empty_degraded_document_can_still_be_search_ready() -> None:
+    document_service = _load_knowledge_module("services.document_service")
+    doc = _FakeDocument()
+    doc.parse_status = "degraded"
+    doc.parse_error = "Parser returned no content blocks: empty_result"
+    doc.vector_status = "done"
+    doc.raw_status = "done"
+    doc.fusion_status = "done"
+    doc.total_chunks = 3
+    doc.total_pages = 1
+    doc.catalog_id = None
+    doc.filename = "scan.pdf"
+    doc.extension = "pdf"
+    doc.file_size = 128
+    doc.mime_type = "application/pdf"
+    doc.summary = None
+    doc.content_package_id = None
+    doc.created_at = None
+    doc.updated_at = None
+
+    payload = document_service.document_registration_payload(
+        doc,
+        {"task_id": None, "enqueued": False, "reason": "existing_completed"},
+    )
+
+    assert document_service.document_parse_allows_search(doc) is True
+    assert payload["search_ready"] is True
+    assert payload["deep_ready"] is True
+
+
 @pytest.mark.asyncio
 async def test_pipeline_debt_dry_run_keeps_live_file_for_retry_or_parser_investigation() -> None:
     debt_service = _load_knowledge_module("services.pipeline_debt_service")
@@ -274,3 +323,193 @@ async def test_pipeline_debt_dry_run_keeps_live_file_for_retry_or_parser_investi
     assert result["items"][0]["category"] == "file_row_live"
     assert result["items"][0]["suggested_action"] == "retry_or_parser_investigation"
     assert result["items"][0]["would_set_parse_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_debt_dry_run_includes_document_not_found_debt() -> None:
+    debt_service = _load_knowledge_module("services.pipeline_debt_service")
+    from app.models.system import SystemTaskQueue
+
+    task = SystemTaskQueue(
+        id=101,
+        task_type="kb_pipeline",
+        module="knowledge",
+        parameters='{"document_id": 404}',
+        status="failed",
+        error_message="Document 404 not found",
+    )
+
+    class FakeDb:
+        async def execute(self, _stmt):
+            return _ScalarListResult([task])
+
+        async def get(self, model, item_id):
+            if model.__name__ == "KbDocument" and item_id == 404:
+                return None
+            raise AssertionError(f"unexpected lookup: {model.__name__} {item_id}")
+
+    result = await debt_service.classify_pipeline_lifecycle_debt(FakeDb())
+
+    assert result["summary"] == {"doc_missing": 1}
+    assert result["items"][0]["category"] == "doc_missing"
+    assert result["items"][0]["suggested_action"] == "archive_obsolete"
+    assert result["items"][0]["archiveable"] is True
+    assert result["items"][0]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_pipeline_debt_dry_run_classifies_parser_empty_as_quality_debt() -> None:
+    debt_service = _load_knowledge_module("services.pipeline_debt_service")
+    from app.models.system import SystemTaskQueue
+
+    task = SystemTaskQueue(
+        id=102,
+        task_type="kb_pipeline",
+        module="knowledge",
+        parameters='{"document_id": 7}',
+        status="failed",
+        error_message="Parser returned no content blocks",
+    )
+    doc = _FakeDocument()
+    file_row = type("LiveFile", (), {"id": 99, "deleted": False})()
+
+    class FakeDb:
+        async def execute(self, _stmt):
+            return _ScalarListResult([task])
+
+        async def get(self, model, item_id):
+            if model.__name__ == "KbDocument" and item_id == 7:
+                return doc
+            if model.__name__ == "File" and item_id == 99:
+                return file_row
+            return None
+
+    result = await debt_service.classify_pipeline_lifecycle_debt(FakeDb())
+
+    assert result["summary"] == {"parser_no_content_blocks": 1}
+    assert result["items"][0]["category"] == "parser_no_content_blocks"
+    assert result["items"][0]["suggested_action"] == "parser_quality_investigation"
+    assert result["items"][0]["archiveable"] is False
+    assert result["items"][0]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_pipeline_debt_apply_archives_source_missing_as_skipped() -> None:
+    debt_service = _load_knowledge_module("services.pipeline_debt_service")
+    from app.models.system import SystemTaskQueue
+
+    task = SystemTaskQueue(
+        id=103,
+        task_type="kb_pipeline",
+        module="knowledge",
+        parameters='{"document_id": 7}',
+        status="failed",
+        error_message="File not found",
+    )
+    doc = _FakeDocument()
+
+    class FakeDb:
+        def __init__(self):
+            self.commits = 0
+
+        async def execute(self, _stmt):
+            return _ScalarListResult([task])
+
+        async def get(self, model, item_id):
+            if model.__name__ == "KbDocument" and item_id == 7:
+                return doc
+            if model.__name__ == "File" and item_id == 99:
+                return None
+            return None
+
+        async def commit(self):
+            self.commits += 1
+
+    db = FakeDb()
+    result = await debt_service.apply_pipeline_lifecycle_debt_action(
+        db,
+        action="archive_obsolete",
+        dry_run=False,
+    )
+
+    assert result["changed"] == 1
+    assert result["skipped"] == 0
+    assert db.commits == 1
+    assert task.status == "completed"
+    assert task.error_message is None
+    assert task.completed_at is not None
+    assert '"status": "skipped"' in (task.result or "")
+    assert '"classification": "source_file_missing"' in (task.result or "")
+    assert doc.parse_error == "source_file_missing"
+    assert doc.parse_status == "pending"
+    assert doc.vector_status == "pending"
+    assert doc.raw_status == "pending"
+    assert doc.fusion_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_debt_apply_retries_only_live_file_rows() -> None:
+    debt_service = _load_knowledge_module("services.pipeline_debt_service")
+    from app.models.system import SystemTaskQueue
+
+    live_task = SystemTaskQueue(
+        id=104,
+        task_type="kb_pipeline",
+        module="knowledge",
+        parameters='{"document_id": 7}',
+        status="failed",
+        retry_count=3,
+        error_message="File not found",
+    )
+    deleted_doc_task = SystemTaskQueue(
+        id=105,
+        task_type="kb_pipeline",
+        module="knowledge",
+        parameters='{"document_id": 8}',
+        status="failed",
+        retry_count=3,
+        error_message="File not found",
+    )
+    live_doc = _FakeDocument()
+    deleted_doc = type(
+        "DeletedDocument",
+        (),
+        {"id": 8, "owner_id": 4, "file_id": 100, "deleted": True},
+    )()
+    file_row = type("LiveFile", (), {"id": 99, "deleted": False})()
+
+    class FakeDb:
+        def __init__(self):
+            self.commits = 0
+
+        async def execute(self, _stmt):
+            return _ScalarListResult([live_task, deleted_doc_task])
+
+        async def get(self, model, item_id):
+            if model.__name__ == "KbDocument" and item_id == 7:
+                return live_doc
+            if model.__name__ == "KbDocument" and item_id == 8:
+                return deleted_doc
+            if model.__name__ == "File" and item_id == 99:
+                return file_row
+            return None
+
+        async def commit(self):
+            self.commits += 1
+
+    db = FakeDb()
+    result = await debt_service.apply_pipeline_lifecycle_debt_action(
+        db,
+        action="retry_live",
+        dry_run=False,
+    )
+
+    assert result["changed"] == 1
+    assert result["skipped"] == 1
+    assert result["skipped_items"][0]["category"] == "doc_deleted"
+    assert db.commits == 1
+    assert live_task.status == "pending"
+    assert live_task.retry_count == 0
+    assert live_task.error_message is None
+    assert deleted_doc_task.status == "failed"
+    assert deleted_doc_task.retry_count == 3

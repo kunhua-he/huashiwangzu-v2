@@ -10,6 +10,7 @@ from .base import (
 )
 from .deepseek import DeepSeekAdapter
 from .registry import clear_cache, get_adapter, list_adapters, register_adapter
+
 __all__ = [
     "ModelAdapter",
     "DeepSeekAdapter",

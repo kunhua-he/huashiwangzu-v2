@@ -122,6 +122,17 @@
       "min_role": "viewer"
     },
     {
+      "action": "classify_pipeline_debt",
+      "description": "dry-run 分类历史知识库管道债，不修改队列",
+      "parameters": {
+        "limit": {
+          "type": "integer",
+          "description": "最多检查的失败任务数（默认500）"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
       "action": "get_evidence_detail",
       "description": "获取证据详情",
       "parameters": {

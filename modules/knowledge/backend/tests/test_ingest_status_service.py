@@ -160,6 +160,26 @@ def test_ingest_status_degraded_is_explicit() -> None:
     assert payload["next_action"] == "inspect_degraded_or_retry_pipeline"
 
 
+def test_ingest_status_parser_empty_degraded_can_be_search_ready() -> None:
+    payload = build_ingest_status_payload(
+        _doc(
+            parse_status="degraded",
+            parse_error="Parser returned no content blocks: empty_result",
+            vector_status="done",
+            raw_status="done",
+            fusion_status="done",
+            total_chunks=5,
+        ),
+        _task(status="completed", result='{"status":"degraded"}'),
+    )
+
+    assert payload["pipeline_status"] == "degraded"
+    assert payload["stage_summary"]["parse"]["ready"] is True
+    assert payload["search_ready"] is True
+    assert payload["deep_ready"] is True
+    assert payload["last_error"] == "Parser returned no content blocks: empty_result"
+
+
 def test_ingest_status_source_unavailable_is_not_search_ready() -> None:
     payload = build_ingest_status_payload(
         _doc(

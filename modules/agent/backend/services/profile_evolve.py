@@ -13,7 +13,9 @@ Key design:
 """
 import json
 import logging
+from ast import literal_eval
 from datetime import datetime, timezone
+from typing import Any
 
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
@@ -70,6 +72,50 @@ def _make_fingerprint(msg_ids: list[int], item: str) -> str:
     import hashlib
     raw = f"{'_'.join(str(m) for m in sorted(msg_ids))}:{item.strip().lower()}"
     return hashlib.md5(raw.encode()).hexdigest()
+
+
+async def _add_profile_watermark(
+    db,
+    signal_model: Any,
+    *,
+    owner_id: int,
+    conversation_id: int,
+    msg_ids: list[int],
+    reason: str = "",
+) -> bool:
+    """Persist a per-conversation watermark so best-effort evolve jobs can skip bad batches."""
+    if not msg_ids:
+        return False
+    watermark_fp = _make_fingerprint(msg_ids, "__watermark__")
+    watermark_exists = await db.execute(
+        select(signal_model.id)
+        .where(
+            signal_model.owner_id == owner_id,
+            signal_model.conversation_id == conversation_id,
+            signal_model.signal_data["fingerprint"].as_string() == watermark_fp,
+        )
+        .limit(1)
+    )
+    if watermark_exists.scalar_one_or_none() is not None:
+        return False
+    signal_data = {
+        "fingerprint": watermark_fp,
+        "last_msg_id": max(msg_ids),
+    }
+    if reason:
+        signal_data["reason"] = reason
+    db.add(signal_model(
+        owner_id=owner_id,
+        signal_type="watermark",
+        target_profile_type="user",
+        signal_data=signal_data,
+        confidence=1.0,
+        source="auto_evolve",
+        conversation_id=conversation_id,
+        applied=True,
+        applied_at=datetime.now(timezone.utc),
+    ))
+    return True
 
 
 async def handle_profile_evolve(params: dict) -> dict:
@@ -152,12 +198,34 @@ async def handle_profile_evolve(params: dict) -> dict:
         content = result.get("content", "")
         if not content:
             logger.warning("Profile evolve: empty LLM response for user %s", owner_id)
-            return {"error": "Empty LLM response", "owner_id": owner_id}
+            await _add_profile_watermark(
+                db,
+                AgentProfileSignal,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                msg_ids=new_msg_ids,
+                reason="empty_llm_response",
+            )
+            await db.commit()
+            return {"status": "skipped", "reason": "empty_llm_response", "owner_id": owner_id}
 
         new_analysis = _parse_profile_json(content)
         if not new_analysis:
             logger.warning("Profile evolve: failed to parse LLM response for user %s: %s", owner_id, content[:200])
-            return {"error": "Failed to parse profile JSON", "owner_id": owner_id}
+            await _add_profile_watermark(
+                db,
+                AgentProfileSignal,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                msg_ids=new_msg_ids,
+                reason="unparseable_llm_profile_json",
+            )
+            await db.commit()
+            return {
+                "status": "skipped",
+                "reason": "unparseable_llm_profile_json",
+                "owner_id": owner_id,
+            }
 
         # Write new observations as low-confidence signals with fingerprint dedup
         signal_count = 0
@@ -195,31 +263,13 @@ async def handle_profile_evolve(params: dict) -> dict:
         # Persist an explicit per-conversation watermark even when the model
         # emits no list observations. Otherwise the same messages are analyzed
         # forever and tone-only/empty analyses never advance.
-        watermark_fp = _make_fingerprint(new_msg_ids, "__watermark__")
-        watermark_exists = await db.execute(
-            select(AgentProfileSignal.id)
-            .where(
-                AgentProfileSignal.owner_id == owner_id,
-                AgentProfileSignal.conversation_id == conversation_id,
-                AgentProfileSignal.signal_data["fingerprint"].as_string() == watermark_fp,
-            )
-            .limit(1)
+        await _add_profile_watermark(
+            db,
+            AgentProfileSignal,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            msg_ids=new_msg_ids,
         )
-        if watermark_exists.scalar_one_or_none() is None:
-            db.add(AgentProfileSignal(
-                owner_id=owner_id,
-                signal_type="watermark",
-                target_profile_type="user",
-                signal_data={
-                    "fingerprint": watermark_fp,
-                    "last_msg_id": max(new_msg_ids),
-                },
-                confidence=1.0,
-                source="auto_evolve",
-                conversation_id=conversation_id,
-                applied=True,
-                applied_at=datetime.now(timezone.utc),
-            ))
         await db.commit()
         logger.info("Profile evolve: recorded %d new signals for user %s", signal_count, owner_id)
 
@@ -467,9 +517,7 @@ async def _apply_caps(profile: dict, pending_signals: list | None = None) -> dic
 
 def _parse_profile_json(text: str) -> dict | None:
     """Attempt to extract JSON from LLM response text."""
-    # Try direct parse
     text = text.strip()
-    # Remove markdown code fences
     if text.startswith("```"):
         lines = text.split("\n")
         cleaned = []
@@ -480,10 +528,30 @@ def _parse_profile_json(text: str) -> dict | None:
         text = "\n".join(cleaned)
     text = text.strip()
 
+    def _normalize(data: Any) -> dict | None:
+        if not isinstance(data, dict):
+            return None
+        normalized: dict[str, Any] = {}
+        tone = data.get("tone", "")
+        normalized["tone"] = str(tone).strip() if tone is not None else ""
+        for key in ("taboos", "focus", "habits"):
+            value = data.get(key, [])
+            if isinstance(value, str):
+                value = [value] if value.strip() else []
+            if not isinstance(value, list):
+                value = []
+            normalized[key] = [
+                str(item).strip()
+                for item in value
+                if item is not None and str(item).strip()
+            ]
+        return normalized
+
     try:
         data = json.loads(text)
-        if isinstance(data, dict):
-            return data
+        normalized = _normalize(data)
+        if normalized is not None:
+            return normalized
     except json.JSONDecodeError:
         pass
 
@@ -491,11 +559,20 @@ def _parse_profile_json(text: str) -> dict | None:
     start = text.find("{")
     end = text.rfind("}")
     if start >= 0 and end > start:
+        candidate = text[start : end + 1]
         try:
-            data = json.loads(text[start : end + 1])
-            if isinstance(data, dict):
-                return data
+            data = json.loads(candidate)
+            normalized = _normalize(data)
+            if normalized is not None:
+                return normalized
         except json.JSONDecodeError:
+            pass
+        try:
+            data = literal_eval(candidate)
+            normalized = _normalize(data)
+            if normalized is not None:
+                return normalized
+        except (SyntaxError, ValueError, TypeError):
             pass
 
     return None

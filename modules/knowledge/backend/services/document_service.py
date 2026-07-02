@@ -28,15 +28,26 @@ SUPPORTED_EXTENSIONS = {
 _ACTIVE_OR_SOURCE_ERROR_STATUSES = {
     "parsing", "indexing", "collecting", "running", "error", "failed",
 }
+PARSER_NO_CONTENT_MARKER = "Parser returned no content blocks"
 
 
 def document_pipeline_complete(doc) -> bool:
     """Return whether the durable knowledge pipeline has fully completed."""
     return (
-        doc.parse_status == "done"
+        document_parse_allows_search(doc)
         and doc.vector_status == "done"
         and getattr(doc, "raw_status", "pending") == "done"
         and getattr(doc, "fusion_status", "pending") == "done"
+    )
+
+
+def document_parse_allows_search(doc) -> bool:
+    """Return whether parse state can support a searchable document."""
+    if doc.parse_status == "done":
+        return True
+    return (
+        doc.parse_status == "degraded"
+        and PARSER_NO_CONTENT_MARKER.lower() in (doc.parse_error or "").lower()
     )
 
 
@@ -350,7 +361,7 @@ def document_registration_payload(doc, task_info: dict | None = None) -> dict:
     else:
         status = "existing"
     search_ready = (
-        doc.parse_status == "done"
+        document_parse_allows_search(doc)
         and doc.vector_status == "done"
         and (doc.total_chunks or 0) > 0
     )
@@ -572,7 +583,27 @@ async def parse_and_index_document(
             blocks = parsed.get("blocks", [])
 
         if not blocks:
-            raise ValidationError("Parser returned no content blocks")
+            reason = PARSER_NO_CONTENT_MARKER
+            if "parsed_ir" in locals() and parsed_ir.parse_errors:
+                reason = f"{reason}: {', '.join(parsed_ir.parse_errors)}"
+            doc.parse_status = "degraded"
+            doc.vector_status = "pending"
+            doc.total_chunks = 0
+            doc.parse_error = reason[:2000]
+            await db.commit()
+            logger.warning(
+                "Parser produced no content for document_id=%d; continuing deep pipeline as degraded: %s",
+                document_id,
+                reason,
+            )
+            return {
+                "document": document_payload(doc),
+                "parsed_blocks": 0,
+                "stored_chunks": 0,
+                "total_pages": doc.total_pages or 1,
+                "status": "degraded",
+                "reason": reason,
+            }
 
         # 写页级融合
         total_pages = await create_page_fusions(db, document_id, owner_id, blocks)

@@ -11,7 +11,8 @@ TARGET_VALUES = ["opencode", "codex", "claude"]
 CATEGORY_VALUES = ["业务模块", "框架任务", "维修", "审计修复", "调研", "探查", "平台健壮性", "桌面交互", "桌面视觉", "补修", "常驻"]
 DELIVERY_MODE_VALUES = ["standard_bundle", "verification", "letter_only"]
 DELIVERY_BUNDLE_FILES = ["交付报告.md", "修改文件清单.md", "验收命令结果.md", "剩余风险.md", "元信息.json"]
-TOOL_NAMES = {"写封信", "mailbox_write_letter", "mailbox_create_delivery_bundle", "mailbox_check_delivery_bundle"}
+DECLARED_TOOL_NAMES = {"mailbox_write_letter", "mailbox_create_delivery_bundle", "mailbox_check_delivery_bundle"}
+TOOL_NAMES = DECLARED_TOOL_NAMES | {"写封信"}
 
 TASK_TYPE_MAP = {
     "业务模块": "开发（业务模块）",
@@ -52,38 +53,6 @@ def tool_definitions() -> list[Any]:
     from mcp.types import Tool
 
     return [
-        Tool(
-            name="写封信",
-            description="按投递箱规范写信到邮箱/投递箱/，输出可复制提示词发给目标 agent 执行。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "目标 agent: opencode / codex / claude",
-                        "enum": TARGET_VALUES,
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "信件分类: 业务模块 / 框架任务 / 维修 / 审计修复 / 调研 / 探查 / 平台健壮性 / 桌面交互 / 桌面视觉 / 补修 / 常驻",
-                        "enum": CATEGORY_VALUES,
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "信件标题（简洁描述任务，如 Agent底座维修10-xxx）",
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "信件正文 markdown（注意：不需要加'先读'头，工具会自动生成。只需写：背景、目标、范围、任务步骤、验收标准等章节）",
-                    },
-                    "note": {
-                        "type": "string",
-                        "description": "给收信 agent 的额外备注（可选）",
-                    },
-                },
-                "required": ["target", "category", "title", "body"],
-            },
-        ),
         Tool(
             name="mailbox_write_letter",
             description="标准化写投递信到邮箱/投递箱/：自动补系统指令、必读文档、交付要求和收件箱路径。",

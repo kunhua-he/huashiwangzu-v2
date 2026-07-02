@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import anyio
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -8,7 +9,15 @@ sys.path.insert(0, str(REPO_ROOT))
 
 pytest.importorskip("mcp")
 
-from dev_toolkit import server  # noqa: E402
+from dev_toolkit import code_tools, server  # noqa: E402
+
+
+def test_project_python_prefers_backend_venv() -> None:
+    expected = server.REPO_ROOT / "backend" / ".venv" / "bin" / "python"
+    if expected.exists():
+        assert server._project_python() == str(expected)
+    else:
+        assert server._project_python() == sys.executable
 
 
 @pytest.mark.parametrize(
@@ -82,6 +91,36 @@ def test_normalize_pytest_targets_accepts_repo_relative_path() -> None:
     target = "tests/test_agent_inline_tool_calls.py"
     normalized = server._normalize_pytest_targets(target)
     assert normalized == ["tests/test_agent_inline_tool_calls.py"]
+
+
+def test_normalize_pytest_targets_accepts_dev_toolkit_repo_path() -> None:
+    target = "dev_toolkit/test_server_helpers.py"
+    normalized = server._normalize_pytest_targets(target)
+    assert normalized == [str(server.REPO_ROOT / target)]
+
+
+def test_run_test_uses_repo_root_for_dev_toolkit_targets() -> None:
+    calls = []
+
+    async def fake_run_command_json(cmd, *, cwd: Path, timeout: int = 120):
+        calls.append({"cmd": cmd, "cwd": cwd, "timeout": timeout})
+        return {"success": True, "returncode": 0, "stdout": "ok", "stderr": ""}
+
+    async def run() -> None:
+        await code_tools.run_test(fake_run_command_json, server.REPO_ROOT, "dev_toolkit/test_server_helpers.py")
+
+    anyio.run(run)
+
+    assert calls
+    assert calls[0]["cwd"] == server.REPO_ROOT
+    assert calls[0]["cmd"][0] == "env"
+    assert str(server.REPO_ROOT) in calls[0]["cmd"][1]
+
+
+def test_normalize_pytest_targets_accepts_module_repo_path() -> None:
+    target = "modules/agent/backend/engine/test_fallback_chain.py"
+    normalized = server._normalize_pytest_targets(target)
+    assert normalized == [str(server.REPO_ROOT / target)]
 
 
 def test_normalize_pytest_targets_accepts_absolute_backend_path() -> None:

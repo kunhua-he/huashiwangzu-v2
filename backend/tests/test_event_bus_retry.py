@@ -39,14 +39,19 @@ async def _get_event(log_id: int) -> dict:
     async with AsyncSessionLocal() as db:
         row = await db.execute(
             text("""
-                SELECT status, retry_count, module_results
+                SELECT status, retry_count, module_results, last_error
                 FROM framework_event_log
                 WHERE id = :id
             """),
             {"id": log_id},
         )
-        status, retry_count, module_results = row.one()
-        return {"status": status, "retry_count": retry_count, "module_results": module_results}
+        status, retry_count, module_results, last_error = row.one()
+        return {
+            "status": status,
+            "retry_count": retry_count,
+            "module_results": module_results,
+            "last_error": last_error,
+        }
 
 
 @pytest.mark.asyncio
@@ -121,6 +126,75 @@ async def test_retry_only_replays_failed_handler() -> None:
             "success-module": True,
             "failed-module": True,
         }
+    finally:
+        if previous is None:
+            event_bus._event_handlers.pop(event_name, None)
+        else:
+            event_bus._event_handlers[event_name] = previous
+        await _cleanup(event_name)
+
+
+@pytest.mark.asyncio
+async def test_emit_marks_handler_semantic_failure_pending() -> None:
+    event_name = f"test.emit.semantic_failure.{uuid4().hex}"
+    await event_bus._ensure_event_log_table()
+    await _cleanup(event_name)
+
+    async def handler(_payload: dict, _caller: str, _caller_role: str) -> dict:
+        return {"success": False, "error": "semantic boom"}
+
+    previous = event_bus._event_handlers.get(event_name)
+    event_bus._event_handlers[event_name] = [{"module_key": "semantic-module", "handler": handler}]
+    try:
+        results = await event_bus.emit_module_event(event_name, {"id": event_name}, "test", "admin")
+        logs = await event_bus.get_event_log(event_name=event_name, limit=1)
+
+        assert results == [
+            {
+                "module_key": "semantic-module",
+                "success": False,
+                "result": {"success": False, "error": "semantic boom"},
+                "error": "semantic boom",
+            }
+        ]
+        assert logs[0]["status"] == "pending"
+        assert logs[0]["last_error"] == "semantic boom"
+        assert logs[0]["module_results"][0]["success"] is False
+        assert logs[0]["module_results"][0]["error"] == "semantic boom"
+    finally:
+        if previous is None:
+            event_bus._event_handlers.pop(event_name, None)
+        else:
+            event_bus._event_handlers[event_name] = previous
+        await _cleanup(event_name)
+
+
+@pytest.mark.asyncio
+async def test_retry_preserves_semantic_failure_for_retry() -> None:
+    event_name = f"test.retry.semantic_failure.{uuid4().hex}"
+    await event_bus._ensure_event_log_table()
+    await _cleanup(event_name)
+
+    async def handler(_payload: dict, _caller: str, _caller_role: str) -> dict:
+        return {"status": "failed", "error": "still broken"}
+
+    previous = event_bus._event_handlers.get(event_name)
+    event_bus._event_handlers[event_name] = [{"module_key": "semantic-module", "handler": handler}]
+    try:
+        log_id = await _insert_pending_event(
+            event_name,
+            [{"module_key": "semantic-module", "success": False, "error": "first failure"}],
+        )
+
+        retried = await event_bus.retry_failed_events()
+
+        event = await _get_event(log_id)
+        assert retried == 0
+        assert event["status"] == "pending"
+        assert event["retry_count"] == 1
+        assert event["last_error"] == "still broken"
+        assert event["module_results"][0]["success"] is False
+        assert event["module_results"][0]["error"] == "still broken"
     finally:
         if previous is None:
             event_bus._event_handlers.pop(event_name, None)

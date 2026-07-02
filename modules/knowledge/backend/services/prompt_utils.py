@@ -17,6 +17,8 @@ TPROFILE = "knowledge_profile_system"
 TENTITY = "knowledge_entity_extraction"
 TFUSION = "knowledge_page_fusion"
 TFUSION_LEGACY = "knowledge_page_fusion_legacy"
+TRAW_OCR = "knowledge_raw_ocr"
+TRAW_VISION = "knowledge_raw_vision"
 
 # Short inline fallbacks (last resort when DB is unreachable).
 # These are NOT the full prompts — see seed.py for the canonical versions.
@@ -36,20 +38,24 @@ _FALLBACK_FUSION_LEGACY = (
     "# System\nMerge chunked content into coherent paragraphs. "
     "Return plain text only."
 )
+_FALLBACK_RAW_OCR = "# System\nExtract all visible text from the image in reading order."
+_FALLBACK_RAW_VISION = "# System\nDescribe the page layout and visual composition."
 
 FALLBACKS: dict[str, str] = {
     TPROFILE: _FALLBACK_PROFILE,
     TENTITY: _FALLBACK_ENTITY,
     TFUSION: _FALLBACK_FUSION,
     TFUSION_LEGACY: _FALLBACK_FUSION_LEGACY,
+    TRAW_OCR: _FALLBACK_RAW_OCR,
+    TRAW_VISION: _FALLBACK_RAW_VISION,
 }
 
 
-async def load_prompt(db: AsyncSession, template_name: str) -> str:
+async def load_prompt(db: AsyncSession | None, template_name: str) -> str:
     """Load and render a prompt template from the framework DB.
 
     Args:
-        db: Active database session.
+        db: Active database session. ``None`` means the DB is unavailable.
         template_name: The ``name`` column value in ``framework_prompt_templates``.
 
     Returns:
@@ -58,12 +64,18 @@ async def load_prompt(db: AsyncSession, template_name: str) -> str:
     Raises:
         RuntimeError: If both DB lookup and fallback fail.
     """
+    fallback = FALLBACKS.get(template_name)
+    if db is None:
+        if fallback:
+            logger.warning("Prompt template '%s' requested without DB, using fallback", template_name)
+            return fallback
+        raise RuntimeError(f"Prompt template '{template_name}' not available")
+
     from app.services.prompt_service import render_template
 
     try:
         return await render_template(db, template_name)
     except Exception as exc:
-        fallback = FALLBACKS.get(template_name)
         if fallback:
             logger.warning(
                 "Prompt template '%s' not found in DB, using fallback: %s",

@@ -2,7 +2,7 @@
 import logging
 
 from app.models.base import Base
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.knowledge").getChild("init_db")
@@ -65,6 +65,103 @@ _MIGRATION_STATEMENTS = [
     "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS block_id VARCHAR(64)",
 ]
 
+_KNOWLEDGE_PROMPT_CATEGORY = {
+    "name": "knowledge",
+    "description": "Knowledge module runtime prompts",
+    "sort_order": 30,
+}
+
+_KNOWLEDGE_PROMPTS = [
+    {
+        "name": "knowledge_profile_system",
+        "description": "Knowledge document profile generation system prompt",
+        "content": """你是企业文档分析专家。请根据以下各页的融合内容，生成文件级画像。
+
+输出严格 JSON（不要 markdown 标记）：
+{
+  "subject": "文件主旨（一句话）",
+  "doc_type": "品牌介绍/产品说明/培训手册/数据报表/配方文件/会员方案/管理制度/其他",
+  "chapter_structure": [{"title": "章节标题", "page": 1, "summary": "该章节内容"}],
+  "core_conclusions": "核心结论（2-3句话）",
+  "key_entities": [{"name": "实体名", "type": "产品/品牌/成分/人物/事件/其他", "relevance": "high"}],
+  "doc_summary": "文档级摘要（3-5句话）",
+  "searchable_phrases": ["搜索短语1", "搜索短语2"],
+  "applicable_scenarios": "适用场景描述",
+  "expiry_risk": "none/low/medium/high"
+}""",
+    },
+    {
+        "name": "knowledge_entity_extraction",
+        "description": "Knowledge graph entity and relationship extraction prompt",
+        "content": """你是一个企业知识图谱实体抽取专家。请从以下文档内容中提取实体和关系。
+
+提取规则：
+1. 实体类型：人名、组织名、地名、产品名、术语、事件、其他
+2. 关系类型：属于、位于、产生、包含、引用、相关、领导、拥有、参与
+3. 每条实体/关系必须基于原文证据
+4. 提取出的实体名称要规范化（全称优先）
+
+返回 JSON 格式（不要加 markdown 代码块标记）：
+{
+  "entities": [
+    {"name": "实体名", "category": "实体类型", "description": "简要描述"}
+  ],
+  "relationships": [
+    {"source": "实体A", "target": "实体B", "relation": "关系类型", "description": "关系描述"}
+  ]
+}
+
+如果无实体可抽，返回 {"entities": [], "relationships": []}。""",
+    },
+    {
+        "name": "knowledge_page_fusion",
+        "description": "Knowledge raw collection cross-validation page fusion prompt",
+        "content": """你是企业文档内容融合专家。以下是对同一文档页的三轮独立采集结果，请交叉印证后输出融合内容。
+
+规则：
+1. 三轮一致的直接取信
+2. 有两轮一致、一轮偏离的，采信多数，在 conflicts 中记录不一致
+3. 三轮全不同时，按常识判断最合理的，置信度降低
+4. 保持原文信息不丢失，禁止编造
+5. 用中文输出
+
+输出严格 JSON（不要 markdown 代码块标记）：
+{
+  "fused_text": "交叉印证后的权威正文",
+  "page_summary": "一句话页面摘要",
+  "page_title": "页面标题(如有)",
+  "entities": [{"name": "实体名", "type": "人名/组织/产品/术语/事件/其他"}],
+  "attributes": {"键": "值"},
+  "tags": ["标签1", "标签2"],
+  "conflicts": [{"type": "内容矛盾/数量矛盾/格式矛盾", "detail": "具体描述", "rounds": [1,2,3]}],
+  "confidence": 0.85
+}""",
+    },
+    {
+        "name": "knowledge_page_fusion_legacy",
+        "description": "Knowledge legacy chunk-to-page text fusion prompt",
+        "content": """你是一个企业文档内容融合专家。请将以下分块内容合并为连贯的文本段落。
+
+规则：
+1. 保持原文信息不丢失
+2. 消除分块造成的内容断裂
+3. 保留原文的段落结构和逻辑顺序
+4. 不要添加原文不存在的信息
+
+返回融合后的纯文本（不要 markdown 标记）。""",
+    },
+    {
+        "name": "knowledge_raw_ocr",
+        "description": "Knowledge raw collection OCR prompt",
+        "content": "请识别并提取图片中所有可见的文字内容，包括标题、正文、表格中的文字等。按原顺序输出。",
+    },
+    {
+        "name": "knowledge_raw_vision",
+        "description": "Knowledge raw collection visual composition prompt",
+        "content": "请详细描述这张页面的版面和视觉构成，包括：1)整体布局结构 2)图表/图片的位置和内容 3)色彩和视觉层次 4)任何特殊视觉元素。",
+    },
+]
+
 
 async def ensure_kb_tables(db: AsyncSession) -> None:
     """确保所有 kb_* 表已创建。"""
@@ -121,11 +218,49 @@ async def ensure_migration_columns(db: AsyncSession) -> None:
     logger.info("Ensured migration columns on kb_documents and kb_page_fusions")
 
 
+async def ensure_prompt_templates(db: AsyncSession) -> None:
+    """Seed knowledge runtime prompts into the framework prompt registry."""
+    from app.models.prompt import PromptCategory, PromptTemplate
+
+    result = await db.execute(
+        select(PromptCategory).where(PromptCategory.name == _KNOWLEDGE_PROMPT_CATEGORY["name"])
+    )
+    category = result.scalar_one_or_none()
+    if category is None:
+        category = PromptCategory(**_KNOWLEDGE_PROMPT_CATEGORY)
+        db.add(category)
+        await db.flush()
+
+    seeded = 0
+    for item in _KNOWLEDGE_PROMPTS:
+        existing = await db.execute(
+            select(PromptTemplate.id).where(PromptTemplate.name == item["name"]).limit(1)
+        )
+        if existing.scalar_one_or_none():
+            continue
+        db.add(
+            PromptTemplate(
+                category_id=category.id,
+                name=item["name"],
+                content=item["content"],
+                variables={},
+                description=item["description"],
+                is_default=True,
+                is_enabled=True,
+            )
+        )
+        seeded += 1
+
+    await db.commit()
+    logger.info("Ensured knowledge prompt templates (seeded=%d)", seeded)
+
+
 async def run_init(db: AsyncSession) -> None:
     """知识库模块启动初始化入口。"""
     await ensure_kb_tables(db)
     await ensure_kb_indexes(db)
     await ensure_migration_columns(db)
+    await ensure_prompt_templates(db)
 
 
 def _run_startup_init():
@@ -143,6 +278,7 @@ def _run_startup_init():
             await ensure_kb_tables(db)
             await ensure_kb_indexes(db)
             await ensure_migration_columns(db)
+            await ensure_prompt_templates(db)
 
     try:
         loop = asyncio.get_event_loop()

@@ -15,29 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbPageFusion, KbRawData
+from .prompt_utils import TFUSION, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("fusion")
-
-FUSION_SYSTEM_PROMPT = """你是企业文档内容融合专家。以下是对同一文档页的三轮独立采集结果，请交叉印证后输出融合内容。
-
-规则：
-1. 三轮一致的直接取信
-2. 有两轮一致、一轮偏离的，采信多数，在 conflicts 中记录不一致
-3. 三轮全不同时，按常识判断最合理的，置信度降低
-4. 保持原文信息不丢失，禁止编造
-5. 用中文输出
-
-输出严格 JSON（不要 markdown 代码块标记）：
-{
-  "fused_text": "交叉印证后的权威正文",
-  "page_summary": "一句话页面摘要",
-  "page_title": "页面标题(如有)",
-  "entities": [{"name": "实体名", "type": "人名/组织/产品/术语/事件/其他"}],
-  "attributes": {"键": "值"},
-  "tags": ["标签1", "标签2"],
-  "conflicts": [{"type": "内容矛盾/数量矛盾/格式矛盾", "detail": "具体描述", "rounds": [1,2,3]}],
-  "confidence": 0.85
-}"""
 
 
 def _detect_simple_conflicts(
@@ -121,8 +101,9 @@ def classify_fusion_status(
     return "done"
 
 
-async def _llm_fuse(round_texts: dict[int, str]) -> dict:
+async def _llm_fuse(db: AsyncSession | None, round_texts: dict[int, str]) -> dict:
     """调用 LLM 进行交叉印证融合。"""
+    system_prompt = await load_prompt(db, TFUSION)
     user_message = f"""请交叉印证以下三轮采集结果，输出融合后的权威描述。
 
 === 第1轮：文本提取 ===
@@ -137,7 +118,7 @@ async def _llm_fuse(round_texts: dict[int, str]) -> dict:
     try:
         result = await gateway_router.chat(
             messages=[
-                {"role": "system", "content": FUSION_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             profile_key="deepseek-v4-flash",
@@ -195,7 +176,7 @@ async def fuse_page(
     simple_conflicts = _detect_simple_conflicts(round_texts)
 
     # 3. LLM 交叉印证融合
-    fusion_result = await _llm_fuse(round_texts)
+    fusion_result = await _llm_fuse(db, round_texts)
 
     # 4. 综合置信度（LLM 给的 + 启发式加权）
     llm_confidence = fusion_result.get("confidence", 0.7)

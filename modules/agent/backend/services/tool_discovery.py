@@ -2,6 +2,9 @@
 Agent 不硬编码任何模块工具——有什么技能就有什么工具。
 渐进式工具发现：只暴露 3 个元工具（skill_list/skill_describe/skill_use），
 模型需先查再调，默认 token 恒定不随模块膨胀。"""
+import re
+import time
+
 from app.services.module_registry import call_capability, list_capabilities
 
 # 工具名用 module__action（function name 不能含冒号）
@@ -162,14 +165,103 @@ async def handle_skill_use(params: dict, caller: str, caller_role: str) -> dict:
     if not module or not action:
         return {"error": f"Invalid skill name: {name}"}
 
+    started = time.perf_counter()
     # Content IR validate + correct loop
     if module == "content" and action == "write_ir" and args.get("content_ir"):
-        return await _handle_write_ir_with_correction(args, caller, caller_role)
+        try:
+            result = await _handle_write_ir_with_correction(args, caller, caller_role)
+            await record_skill_invocation(
+                name,
+                success=_skill_result_succeeded(result),
+                duration_ms=(time.perf_counter() - started) * 1000,
+                caller=caller,
+                error_detail=_skill_result_error(result),
+            )
+            return result
+        except Exception as exc:
+            await record_skill_invocation(
+                name,
+                success=False,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                caller=caller,
+                error_detail=str(exc),
+            )
+            return {"error": str(exc)}
 
     try:
-        return await call_capability(module, action, args, caller=caller, caller_role=caller_role)
+        result = await call_capability(module, action, args, caller=caller, caller_role=caller_role)
+        await record_skill_invocation(
+            name,
+            success=_skill_result_succeeded(result),
+            duration_ms=(time.perf_counter() - started) * 1000,
+            caller=caller,
+            error_detail=_skill_result_error(result),
+        )
+        return result
     except Exception as exc:
+        await record_skill_invocation(
+            name,
+            success=False,
+            duration_ms=(time.perf_counter() - started) * 1000,
+            caller=caller,
+            error_detail=str(exc),
+        )
         return {"error": str(exc)}
+
+
+def _skill_result_succeeded(result: object) -> bool:
+    if not isinstance(result, dict):
+        return True
+    if result.get("success") is False:
+        return False
+    return not bool(result.get("error"))
+
+
+def _skill_result_error(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    if result.get("success") is False:
+        return str(result.get("error") or "capability returned success=false")
+    if result.get("error"):
+        return str(result["error"])
+    return None
+
+
+def _parse_owner_id(caller: str) -> int | None:
+    match = re.search(r"\buser:(\d+)\b", caller or "")
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+async def record_skill_invocation(
+    skill_name: str,
+    *,
+    success: bool,
+    duration_ms: float,
+    caller: str,
+    conversation_id: int | None = None,
+    owner_id: int | None = None,
+    error_detail: str | None = None,
+) -> None:
+    """Persist skill usage without letting governance telemetry affect the flow."""
+    try:
+        from app.database import AsyncSessionLocal
+
+        from . import skill_governance_service as sgs
+
+        async with AsyncSessionLocal() as db:
+            await sgs.record_skill_usage(
+                db,
+                skill_name=skill_name,
+                success=success,
+                duration_ms=duration_ms,
+                conversation_id=conversation_id,
+                owner_id=owner_id if owner_id is not None else _parse_owner_id(caller),
+                error_detail=error_detail,
+            )
+    except Exception:
+        pass
 
 
 async def _handle_write_ir_with_correction(args: dict, caller: str, caller_role: str) -> dict:

@@ -245,6 +245,7 @@ class RuntimeTaskSink:
                 logger.warning(
                     "persist_pending_events record_event failed (non-fatal): %s", exc,
                 )
+                break
         logger.info(
             "[DIAG] persist_pending_events done (new=%d total=%d)",
             new_count, len(pending_events),

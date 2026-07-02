@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from dev_toolkit.mcp_entry import validate_declared_server_config
     from dev_toolkit.tool_usage_tools import read_tool_usage
 except ModuleNotFoundError:
+    from mcp_entry import validate_declared_server_config
     from tool_usage_tools import read_tool_usage
 
 TOOL_NAMES = {"mcp_self_check", "dev_toolkit_architecture_audit", "agent_activity_report"}
@@ -124,6 +126,7 @@ def _direct_server_tools(server_path: Path) -> list[str]:
 def mcp_self_check(repo_root: Path, usage_path: Path, include_tools: bool = True) -> str:
     components = _discover_components(repo_root)
     server_path = repo_root / "dev_toolkit" / "server.py"
+    entrypoint = validate_declared_server_config(repo_root)
     direct_tools = _direct_server_tools(server_path)
     component_tools = [tool for component in components for tool in component["tools"]]
     all_tools = direct_tools + component_tools
@@ -135,13 +138,16 @@ def mcp_self_check(repo_root: Path, usage_path: Path, include_tools: bool = True
     ]
     usage = read_tool_usage(usage_path)
     warnings = []
+    if not entrypoint.get("success", False):
+        warnings.append(".mcp.json does not match dev_toolkit/mcp_entry.py expected stdio declaration.")
     if _line_count(server_path) > 600:
         warnings.append("dev_toolkit/server.py is still larger than 600 lines; keep migrating tool groups into *_tools.py components.")
     if duplicates:
         warnings.append("Duplicate tool names found: " + ", ".join(duplicates))
     payload = {
-        "success": not duplicates,
+        "success": not duplicates and bool(entrypoint.get("success", False)),
         "server": {"path": _repo_rel(repo_root, server_path), "lines": _line_count(server_path)},
+        "entrypoint": entrypoint,
         "component_count": len(components),
         "components": components,
         "direct_tool_count": len(direct_tools),

@@ -28,6 +28,43 @@ RETRY_DELAY_SECONDS = 10
 PROCESSING_TIMEOUT_SECONDS = 1200
 
 
+def _semantic_failure(handler_result: object) -> str | None:
+    """Return a stable error message when a handler result represents failure."""
+    if not isinstance(handler_result, dict):
+        return None
+
+    explicit_success = handler_result.get("success")
+    if explicit_success is False:
+        return str(handler_result.get("error") or "Handler returned success=false")
+
+    status = str(handler_result.get("status") or "").lower()
+    if status in {"failed", "error"}:
+        return str(handler_result.get("error") or f"Handler returned status={status}")
+
+    if "error" in handler_result and explicit_success is not True:
+        return str(handler_result.get("error") or "Handler returned error")
+
+    data = handler_result.get("data")
+    if isinstance(data, dict):
+        inner_error = _semantic_failure(data)
+        if inner_error:
+            return inner_error
+
+    return None
+
+
+def _build_handler_result(module_key: str, handler_result: object) -> dict:
+    error_msg = _semantic_failure(handler_result)
+    result = {
+        "module_key": module_key,
+        "success": error_msg is None,
+        "result": handler_result,
+    }
+    if error_msg:
+        result["error"] = error_msg
+    return result
+
+
 def register_module_event_handler(
     event_name: str,
     handler: EventHandler,
@@ -118,26 +155,25 @@ async def emit_module_event(
 
     results: list[dict] = []
     for entry in handlers:
-        success = False
-        error_msg = None
         handler_result = None
         try:
             handler_result = await entry["handler"](payload, caller, caller_role)
-            success = True
+            result = _build_handler_result(entry["module_key"], handler_result)
+            if not result["success"]:
+                logger.warning(
+                    "Event '%s' handler for module '%s' returned failure: %s",
+                    event_name, entry["module_key"], result.get("error"),
+                )
         except Exception as exc:
-            error_msg = str(exc)
             logger.warning(
                 "Event '%s' handler for module '%s' failed: %s",
                 event_name, entry["module_key"], exc,
             )
-
-        result = {
+            result = {
                 "module_key": entry["module_key"],
-                "success": success,
-            "result": handler_result,
-        }
-        if not success:
-            result["error"] = error_msg
+                "success": False,
+                "error": str(exc),
+            }
         results.append(result)
 
     # Update event log with results
@@ -182,6 +218,14 @@ async def _update_event_log(log_id: int, results: list[dict]) -> None:
             from sqlalchemy import text
             has_failures = any(not r.get("success") for r in results)
             status = "pending" if has_failures else "completed"
+            last_error = next(
+                (
+                    str(r.get("error"))
+                    for r in results
+                    if isinstance(r, dict) and r.get("success") is not True and r.get("error")
+                ),
+                None,
+            )
             next_retry_at = (
                 datetime.now(timezone.utc) + timedelta(seconds=RETRY_DELAY_SECONDS)
                 if has_failures else None
@@ -192,6 +236,7 @@ async def _update_event_log(log_id: int, results: list[dict]) -> None:
                     UPDATE framework_event_log
                     SET status = :new_status,
                         module_results = CAST(:results AS jsonb),
+                        last_error = :last_error,
                         completed_at = :completed_at,
                         next_retry_at = :next_retry_at,
                         processing_started_at = NULL
@@ -200,6 +245,7 @@ async def _update_event_log(log_id: int, results: list[dict]) -> None:
                 {
                     "new_status": status,
                     "results": json.dumps(results, ensure_ascii=False, default=str),
+                    "last_error": last_error,
                     "completed_at": completed_at,
                     "next_retry_at": next_retry_at,
                     "id": log_id,
@@ -330,15 +376,22 @@ async def retry_failed_events() -> int:
                     continue
                 try:
                     handler_result = await entry["handler"](payload, caller, caller_role)
+                    result = _build_handler_result(entry["module_key"], handler_result)
+                    if not result["success"]:
+                        all_success = False
+                        last_error = str(result.get("error") or "Handler returned failure")
+                        logger.warning(
+                            "Retry %d for event '%s' handler '%s' returned failure: %s",
+                            retry_count + 1,
+                            event_name,
+                            entry["module_key"],
+                            last_error,
+                        )
                     retry_results = [
                         item for item in retry_results
                         if not (isinstance(item, dict) and item.get("module_key") == entry["module_key"])
                     ]
-                    retry_results.append({
-                        "module_key": entry["module_key"],
-                        "success": True,
-                        "result": handler_result,
-                    })
+                    retry_results.append(result)
                 except Exception as exc:
                     all_success = False
                     last_error = str(exc)

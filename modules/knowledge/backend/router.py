@@ -3,6 +3,7 @@
 业务接口全部在模块内；对外能力通过框架 register_capability 注册，供 Agent 自动发现和调用。
 """
 import logging
+from typing import Literal
 
 from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
@@ -40,7 +41,10 @@ from .services.governance_service import (
     reject_candidate,
 )
 from .services.ingest_status_service import get_ingest_status
-from .services.pipeline_debt_service import classify_pipeline_lifecycle_debt
+from .services.pipeline_debt_service import (
+    apply_pipeline_lifecycle_debt_action,
+    classify_pipeline_lifecycle_debt,
+)
 from .services.profile_service import get_document_profile
 from .services.progress_service import get_document_progress, list_documents_progress
 from .services.raw_collection_service import get_ocr_words, get_raw_data
@@ -84,6 +88,11 @@ class RelationComputeRequest(BaseModel):
     document_id: int
 class ProgressBatchRequest(BaseModel):
     document_ids: list[int] = Field(default_factory=list)
+class PipelineDebtApplyRequest(BaseModel):
+    action: Literal["archive_obsolete", "retry_live"]
+    limit: int = Field(default=500, ge=1, le=5000)
+    task_ids: list[int] = Field(default_factory=list)
+    dry_run: bool = True
 
 @router.get("/health")
 async def health():
@@ -592,10 +601,26 @@ async def api_pending_count(
 @router.get("/governance/pipeline-debt/dry-run")
 async def api_pipeline_debt_dry_run(
     limit: int = Query(default=500, ge=1, le=5000),
+    error_marker: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
-    result = await classify_pipeline_lifecycle_debt(db, limit=limit)
+    result = await classify_pipeline_lifecycle_debt(db, limit=limit, error_marker=error_marker)
+    return ApiResponse(data=result)
+
+@router.post("/governance/pipeline-debt/apply")
+async def api_pipeline_debt_apply(
+    payload: PipelineDebtApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    result = await apply_pipeline_lifecycle_debt_action(
+        db,
+        action=payload.action,
+        limit=payload.limit,
+        task_ids=payload.task_ids or None,
+        dry_run=payload.dry_run,
+    )
     return ApiResponse(data=result)
 
 # ── Cross-module capabilities ───────────────────────────────
@@ -710,6 +735,13 @@ async def _cap_get_pending_count(params: dict, caller: str) -> dict:
         count = await get_pending_count(db, owner_id)
         return {"pending_count": count}
 
+async def _cap_classify_pipeline_debt(params: dict, caller: str) -> dict:
+    resolve_user_id(caller)
+    limit = int(params.get("limit", 500) or 500)
+    limit = max(1, min(limit, 5000))
+    async with AsyncSessionLocal() as db:
+        return await classify_pipeline_lifecycle_debt(db, limit=limit)
+
 async def _cap_get_evidence_detail(params: dict, caller: str) -> dict:
     owner_id = resolve_user_id(caller)
     entity_id = int(params.get("entity_id", 0) or 0)
@@ -765,6 +797,15 @@ register_capability(
     brief="待治理数量",
     parameters={},
     min_role="viewer",
+)
+register_capability(
+    "knowledge", "classify_pipeline_debt", _cap_classify_pipeline_debt,
+    description="Dry-run classify historical knowledge pipeline debt without mutating queue rows",
+    brief="分类知识库管道债",
+    parameters={
+        "limit": {"type": "integer", "description": "Maximum failed tasks to inspect, default 500"},
+    },
+    min_role="admin",
 )
 register_capability(
     "knowledge", "get_evidence_detail", _cap_get_evidence_detail,

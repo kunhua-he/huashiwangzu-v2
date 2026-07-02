@@ -9,6 +9,7 @@ Usage:
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -19,6 +20,25 @@ BACKEND_PYTHON = REPO_ROOT / "backend" / ".venv" / "bin" / "python"
 MODULES_DIR = REPO_ROOT / "modules"
 
 MANDATORY_PARSERS = {"pdf", "docx", "xlsx", "xls", "pptx", "txt", "md", "csv"}
+
+
+def _frontend_install_needed(sandbox_dir: Path) -> bool:
+    package_json = sandbox_dir / "package.json"
+    if not package_json.exists():
+        return False
+    vite_bin = sandbox_dir / "node_modules" / ".bin" / "vite"
+    if not vite_bin.exists():
+        return True
+    package_lock = sandbox_dir / "node_modules" / ".package-lock.json"
+    if not package_lock.exists():
+        return True
+    return package_json.stat().st_mtime > package_lock.stat().st_mtime
+
+
+def _frontend_install_command(sandbox_dir: Path) -> list[str]:
+    if (sandbox_dir / "package-lock.json").exists():
+        return ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"]
+    return ["npm", "install", "--package-lock=false", "--no-audit", "--no-fund"]
 
 
 def scan_sandbox_matrix() -> list[dict]:
@@ -49,6 +69,7 @@ def scan_sandbox_matrix() -> list[dict]:
             if pkg_json.exists():
                 frontend_build = f"cd modules/{key}/sandbox && npm run build"
                 frontend_dev = f"cd modules/{key}/sandbox && npm run dev"
+                auto_runnable = True
 
         if has_test_module:
             backend_test_cmd = (
@@ -57,7 +78,7 @@ def scan_sandbox_matrix() -> list[dict]:
             if BACKEND_PYTHON.exists():
                 auto_runnable = True
             else:
-                reason = "backend .venv python not found"
+                reason = "backend .venv python not found" if not frontend_build else ""
         elif not has_sandbox:
             reason = "no sandbox directory"
         elif not has_test_module and has_backend:
@@ -87,59 +108,107 @@ def scan_sandbox_matrix() -> list[dict]:
 
 
 def check_sandbox_matrix(results: list[dict], quiet: bool = False) -> bool:
-    """Run each auto-runnable test_module.py and report pass/fail."""
+    """Run every available sandbox command and fail if any command fails."""
     all_pass = True
     for entry in results:
         if entry["check"] != "pass":
             continue
-        cmd = entry["backend_test_cmd"]
-        if not cmd:
+        commands = [
+            ("backend", entry.get("backend_test_cmd"), 60),
+            ("frontend", entry.get("frontend_build_cmd"), 120),
+        ]
+        commands = [(name, cmd, timeout) for name, cmd, timeout in commands if cmd]
+        if not commands:
+            entry["check"] = "skip"
+            entry["reason"] = entry.get("reason") or "no runnable sandbox command"
             continue
-        # PYTHONPATH=backend is a env prefix, not a CLI arg
-        env = os.environ.copy()
-        cmd_parts = cmd.split()
-        final_cmd = []
-        for part in cmd_parts:
-            if part.startswith("PYTHONPATH="):
-                env["PYTHONPATH"] = part.split("=", 1)[1]
-            else:
-                final_cmd.append(part)
         if not quiet:
             sys.stdout.write(f"\n── {entry['module']} ──\n")
-        try:
-            proc = subprocess.run(
-                final_cmd,
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=env,
-            )
-            passed = proc.returncode == 0
-            entry["check"] = "pass" if passed else "fail"
-            entry["exit_code"] = proc.returncode
-            entry["stdout_tail"] = proc.stdout.strip()[-500:] if proc.stdout else ""
-            entry["stderr_tail"] = proc.stderr.strip()[-500:] if proc.stderr else ""
-            if not passed:
+        command_results = []
+        entry_pass = True
+        for command_name, cmd, timeout in commands:
+            env = os.environ.copy()
+            cwd = REPO_ROOT
+            command_text = str(cmd)
+            if command_text.startswith("cd ") and " && " in command_text:
+                cd_part, command_text = command_text.split(" && ", 1)
+                cwd = REPO_ROOT / cd_part.removeprefix("cd ").strip()
+            final_cmd = []
+            for part in shlex.split(command_text):
+                if part.startswith("PYTHONPATH="):
+                    env["PYTHONPATH"] = part.split("=", 1)[1]
+                else:
+                    final_cmd.append(part)
+            try:
+                if command_name == "frontend" and _frontend_install_needed(cwd):
+                    install_cmd = _frontend_install_command(cwd)
+                    install_proc = subprocess.run(
+                        install_cmd,
+                        cwd=cwd,
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                        env=env,
+                    )
+                    command_results.append({
+                        "name": "frontend_install",
+                        "exit_code": install_proc.returncode,
+                        "stdout_tail": install_proc.stdout.strip()[-500:] if install_proc.stdout else "",
+                        "stderr_tail": install_proc.stderr.strip()[-500:] if install_proc.stderr else "",
+                    })
+                    if install_proc.returncode != 0:
+                        entry_pass = False
+                        all_pass = False
+                        if not quiet:
+                            sys.stdout.write(f"  frontend_install: FAIL (exit={install_proc.returncode})\n")
+                            if install_proc.stderr:
+                                sys.stdout.write(f"  stderr: {install_proc.stderr.strip()[-300:]}\n")
+                        continue
+                    if not quiet:
+                        sys.stdout.write("  frontend_install: PASS\n")
+                proc = subprocess.run(
+                    final_cmd,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=env,
+                )
+                passed = proc.returncode == 0
+                command_results.append({
+                    "name": command_name,
+                    "exit_code": proc.returncode,
+                    "stdout_tail": proc.stdout.strip()[-500:] if proc.stdout else "",
+                    "stderr_tail": proc.stderr.strip()[-500:] if proc.stderr else "",
+                })
+                if not passed:
+                    entry_pass = False
+                    all_pass = False
+                    if not quiet:
+                        sys.stdout.write(f"  {command_name}: FAIL (exit={proc.returncode})\n")
+                        if proc.stderr:
+                            sys.stdout.write(f"  stderr: {proc.stderr.strip()[-300:]}\n")
+                elif not quiet:
+                    sys.stdout.write(f"  {command_name}: PASS (exit={proc.returncode})\n")
+            except subprocess.TimeoutExpired:
+                command_results.append({"name": command_name, "exit_code": -1, "stderr_tail": f"timeout (>{timeout}s)"})
+                entry_pass = False
                 all_pass = False
                 if not quiet:
-                    sys.stdout.write(f"  FAIL (exit={proc.returncode})\n")
-                    if proc.stderr:
-                        sys.stdout.write(f"  stderr: {proc.stderr.strip()[-300:]}\n")
-            elif not quiet:
-                sys.stdout.write(f"  PASS (exit={proc.returncode})\n")
-        except subprocess.TimeoutExpired:
-            entry["check"] = "fail"
-            entry["exit_code"] = -1
-            entry["reason"] = "timeout (>60s)"
-            all_pass = False
-            if not quiet:
-                sys.stdout.write("  TIMEOUT\n")
-        except FileNotFoundError as e:
-            entry["check"] = "skip"
-            entry["reason"] = f"command not found: {e}"
-            if not quiet:
-                sys.stdout.write(f"  SKIP: {e}\n")
+                    sys.stdout.write(f"  {command_name}: TIMEOUT\n")
+            except FileNotFoundError as e:
+                command_results.append({"name": command_name, "exit_code": -127, "stderr_tail": f"command not found: {e}"})
+                entry_pass = False
+                all_pass = False
+                if not quiet:
+                    sys.stdout.write(f"  {command_name}: FAIL command not found: {e}\n")
+        entry["command_results"] = command_results
+        entry["check"] = "pass" if entry_pass else "fail"
+        first_failed = next((r for r in command_results if r.get("exit_code") != 0), None)
+        if first_failed:
+            entry["exit_code"] = first_failed.get("exit_code")
+            entry["stdout_tail"] = first_failed.get("stdout_tail", "")
+            entry["stderr_tail"] = first_failed.get("stderr_tail", "")
     return all_pass
 
 

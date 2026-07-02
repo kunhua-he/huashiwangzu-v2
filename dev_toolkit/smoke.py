@@ -102,6 +102,11 @@ async def _await_queue_settle(baseline_pending: int = 0, timeout: int = 30) -> d
     print(f"  超时: pending 未归零 (最后状态 pending={last_state.get('pending', '?')})")
     return last_state
 
+
+async def _read_queue_state() -> dict:
+    r = await probe("GET", "/api/tasks/worker/status")
+    return r.get("data", {}).get("data", r.get("data", {}))
+
 def _cap_ok(r: dict) -> bool:
     """Check capability inner success (data.data.success), fallback to data.success."""
     data = r.get("data", {})
@@ -504,6 +509,12 @@ async def main():
     print(f"时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print(f"后端: {BACKEND_BASE}  前端: {FRONTEND_BASE}")
 
+    # Capture the queue baseline before business steps create async work.
+    init_state = await _read_queue_state()
+    pre_failed = init_state.get("failed", 0)
+    pre_pending = init_state.get("pending", 0)
+    print(f"初始队列基线: failed={pre_failed}, pending={pre_pending}")
+
     for group_name, group in [
         ("健康检查", health_check),
         ("A. 框架主链路", test_a),
@@ -527,16 +538,8 @@ async def main():
     # ── 清理 & 异步队列验证 ──
     print("\n═══════════════════ 清理 + 异步队列验证 ═══════════════════\n")
 
-    # 记录初始队列状态
-    r0 = await probe("GET", "/api/tasks/worker/status")
-    init_state = r0.get("data", {}).get("data", r0.get("data", {}))
-    pre_failed = init_state.get("failed", 0)
-    pre_pending = init_state.get("pending", 0)
-    print(f"  初始队列: failed={pre_failed}, pending={pre_pending}")
-
-    # 等待 pending 任务被消费，记录消费完成后的 failed 作为基准
-    settled = await _await_queue_settle(baseline_pending=0, timeout=30)
-    baseline_failed = settled.get("failed", pre_failed)
+    # Wait for tasks created by this smoke run to drain back to the pre-run baseline.
+    await _await_queue_settle(baseline_pending=pre_pending, timeout=30)
 
     # 延后删除所有测试文件
     cleanup_count = len(_pending_deletions)
@@ -544,15 +547,15 @@ async def main():
     print(f"  清理: 删除了 {deleted} 个测试文件")
 
     # 再等待一轮：让本次操作的队列稳定
-    final = await _await_queue_settle(baseline_pending=0, timeout=30)
+    final = await _await_queue_settle(baseline_pending=pre_pending, timeout=30)
 
     # 查最终异步队列状态
     failed_now = final.get("failed", 0)
     pending_now = final.get("pending", 0)
     oldest = final.get("oldest_waiting_seconds", 0)
-    new_failures = _new_failed_delta(failed_now, baseline_failed)
-    add_result("Z1 异步队列无意外新增失败", _no_new_queue_failures(failed_now, baseline_failed),
-               f"failed: {pre_failed} → {baseline_failed}(基准) → {failed_now}(终), 新增={new_failures}, "
+    new_failures = _new_failed_delta(failed_now, pre_failed)
+    add_result("Z1 异步队列无意外新增失败", _no_new_queue_failures(failed_now, pre_failed),
+               f"failed: {pre_failed}(业务前基线) → {failed_now}(终), 新增={new_failures}, "
                f"清理文件数={cleanup_count}")
     add_result("Z2 异步队列积压可解释", pending_now <= 5,
                f"pending={pending_now}, oldest_waiting={oldest}s")

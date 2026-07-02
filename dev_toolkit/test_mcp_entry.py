@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import anyio
+import pytest
+
+from dev_toolkit.mcp_entry import expected_server_config, validate_declared_server_config
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+pytest.importorskip("mcp")
+from mcp import ClientSession  # noqa: E402
+from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: E402
+
+REQUIRED_TOOLS = {"db_reverse_audit", "release_gate", "module_sandbox_matrix"}
+
+
+def test_mcp_json_declares_stable_stdio_entrypoint() -> None:
+    result = validate_declared_server_config(REPO_ROOT)
+
+    assert result["success"] is True
+    assert result["declared"] == expected_server_config(REPO_ROOT)
+    assert result["script_exists"] is True
+
+
+def test_stdio_entrypoints_list_required_tools() -> None:
+    async def list_tool_names(command: str, args: list[str], cwd: str) -> set[str]:
+        params = StdioServerParameters(command=command, args=args, cwd=cwd)
+        async with stdio_client(params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                init = await session.initialize()
+                tools = await session.list_tools()
+        assert init.serverInfo.name == "项目工具台"
+        assert init.serverInfo.version == "1.0.0"
+        return {tool.name for tool in tools.tools}
+
+    declared = json.loads((REPO_ROOT / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["项目工具台"]
+
+    async def run() -> None:
+        declared_names = await list_tool_names(declared["command"], declared["args"], declared["cwd"])
+        direct_names = await list_tool_names("python3.14", ["dev_toolkit/server.py"], str(REPO_ROOT))
+        assert REQUIRED_TOOLS.issubset(declared_names)
+        assert REQUIRED_TOOLS.issubset(direct_names)
+
+    anyio.run(run)

@@ -27,6 +27,7 @@ ACTIVE_TASK_STATUSES = {"pending", "running"}
 FAILED_STAGE_STATUSES = {"failed", "error"}
 DEGRADED_STAGE_STATUSES = {"degraded", "partial", "done_with_errors"}
 RUNNING_STAGE_STATUSES = {"parsing", "indexing", "collecting", "running", "fusing"}
+PARSER_NO_CONTENT_MARKER = "Parser returned no content blocks"
 
 
 def _load_task_parameters(raw: str | None) -> dict[str, Any]:
@@ -128,16 +129,20 @@ def build_ingest_status_payload(
     fusion_status = getattr(doc, "fusion_status", "pending") or "pending"
     task_status = task.status if task is not None else None
     task_result = _json_or_none(task.result if task is not None else None) or {}
+    parse_ready = parse_status == "done" or (
+        parse_status == "degraded"
+        and PARSER_NO_CONTENT_MARKER.lower() in (doc.parse_error or "").lower()
+    )
 
     search_ready = (
         source_available
-        and parse_status == "done"
+        and parse_ready
         and vector_status == "done"
         and (doc.total_chunks or 0) > 0
     )
     deep_ready = source_available and raw_status == "done" and fusion_status == "done"
     stage_summary = {
-        "parse": _stage(parse_status, ready=parse_status == "done"),
+        "parse": _stage(parse_status, ready=parse_ready),
         "vector": _stage(vector_status, ready=search_ready, count=doc.total_chunks or 0),
         "raw": _stage(raw_status, ready=raw_status == "done"),
         "fusion": _stage(fusion_status, ready=fusion_status == "done"),

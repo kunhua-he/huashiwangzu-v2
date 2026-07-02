@@ -24,7 +24,9 @@
     },
     "local": {
       "type": "local",
-      "provider_name": "local"
+      "provider_name": "local",
+      "allow_echo": false,
+      "description": "Disabled echo provider for tests only; production local fallback uses llama.cpp or ollama."
     },
     "ollama": {
       "type": "openai_compat",
@@ -173,7 +175,20 @@
       "model_type": "local",
       "startup_script": "start_bge_m3_embedding.sh",
       "port": 30000,
-      "description": "BGE-M3 embedding model for vector retrieval"
+      "description": "BGE-M3 embedding model for vector retrieval",
+      "launch": {
+        "backend": "llama.cpp",
+        "model_path": "Embedding模型/bge-m3-q4_k_m.gguf",
+        "args": [
+          "-m", "{model_path}",
+          "--port", "{port}",
+          "--sleep-idle-seconds", "300",
+          "-c", "8192",
+          "-ngl", "99",
+          "--pooling", "cls",
+          "--embeddings"
+        ]
+      }
     },
     "bge-reranker": {
       "purpose": "rerank",
@@ -182,7 +197,19 @@
       "model_type": "local",
       "startup_script": "start_bge_reranker.sh",
       "port": 30001,
-      "description": "BGE-Reranker-V2-M3 for relevance sorting"
+      "description": "BGE-Reranker-V2-M3 for relevance sorting",
+      "launch": {
+        "backend": "llama.cpp",
+        "model_path": "Embedding模型/bge-reranker-v2-m3-Q4_K_M.gguf",
+        "args": [
+          "-m", "{model_path}",
+          "--port", "{port}",
+          "--sleep-idle-seconds", "300",
+          "-c", "8192",
+          "-ngl", "99",
+          "--rerank"
+        ]
+      }
     },
     "qwen3-vl": {
       "purpose": "vision",
@@ -191,7 +218,20 @@
       "model_type": "local",
       "startup_script": "start_qwen3_vl_vision.sh",
       "port": 30002,
-      "description": "Qwen3VL-8B vision-language model for image analysis"
+      "description": "Qwen3VL-8B vision-language model for image analysis",
+      "launch": {
+        "backend": "llama.cpp",
+        "model_path": "图片分析模型/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+        "mmproj_path": "图片分析模型/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+        "args": [
+          "-m", "{model_path}",
+          "--mmproj", "{mmproj_path}",
+          "--port", "{port}",
+          "--sleep-idle-seconds", "300",
+          "-c", "32768",
+          "-ngl", "99"
+        ]
+      }
     },
     "gemma-4": {
       "purpose": "text",
@@ -200,7 +240,18 @@
       "model_type": "local",
       "startup_script": "start_gemma4_text.sh",
       "port": 30003,
-      "description": "Gemma-4-26B local text model"
+      "description": "Gemma-4-26B local text model",
+      "launch": {
+        "backend": "llama.cpp",
+        "model_path": "文本模型/google_gemma-4-26B-A4B-it-Q4_K_M.gguf",
+        "args": [
+          "-m", "{model_path}",
+          "--port", "{port}",
+          "--sleep-idle-seconds", "300",
+          "-c", "8192",
+          "-ngl", "99"
+        ]
+      }
     },
     "opencode-go": {
       "purpose": "text",
@@ -223,7 +274,9 @@
   },
 
   "local_bin": {
+    "llama_server_env": "LLAMA_CPP_SERVER_BIN",
     "llama_server": "",
+    "model_root_env": "LOCAL_MODEL_ROOT",
     "model_root": "/Users/hekunhua/Documents/AI模型"
   }
 }

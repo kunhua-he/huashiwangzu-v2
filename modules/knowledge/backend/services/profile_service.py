@@ -6,32 +6,19 @@
 """
 import json
 import logging
-from sqlalchemy import select, delete as sa_delete
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
 from app.services.model_services import get_embedding
 from app.services.task_worker import register_task_handler
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import KbDocument, KbPageFusion, KbDocumentProfile
+from ..models import KbDocument, KbDocumentProfile, KbPageFusion
+from .prompt_utils import TPROFILE, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("profile")
-
-PROFILE_SYSTEM_PROMPT = """你是企业文档分析专家。请根据以下各页的融合内容，生成文件级画像。
-
-输出严格 JSON（不要 markdown 标记）：
-{
-  "subject": "文件主旨（一句话）",
-  "doc_type": "品牌介绍/产品说明/培训手册/数据报表/配方文件/会员方案/管理制度/其他",
-  "chapter_structure": [{"title": "章节标题", "page": 1, "summary": "该章节内容"}],
-  "core_conclusions": "核心结论（2-3句话）",
-  "key_entities": [{"name": "实体名", "type": "产品/品牌/成分/人物/事件/其他", "relevance": "high"}],
-  "doc_summary": "文档级摘要（3-5句话）",
-  "searchable_phrases": ["搜索短语1", "搜索短语2"],
-  "applicable_scenarios": "适用场景描述",
-  "expiry_risk": "none/low/medium/high"
-}"""
 
 
 async def generate_document_profile(
@@ -68,10 +55,11 @@ async def generate_document_profile(
     all_text = "\n\n".join(pages_text)
 
     # 2. LLM 提炼
+    system_prompt = await load_prompt(db, TPROFILE)
     try:
         result = await gateway_router.chat(
             messages=[
-                {"role": "system", "content": PROFILE_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"请分析以下文档内容，生成文件画像：\n\n{all_text[:12000]}"},
             ],
             profile_key=profile_key,
@@ -144,9 +132,6 @@ def _heuristic_profile(fusions: list) -> dict:
             "core_conclusions": "", "key_entities": [], "doc_summary": "",
             "searchable_phrases": [], "applicable_scenarios": "", "expiry_risk": "low", "confidence": 0.3,
         }
-
-    total_pages = len(fusions)
-    all_text = "\n".join(pf.fused_text for pf in fusions)
 
     # 简单启发式：取第一页前100字作为主题
     first_text = fusions[0].fused_text if fusions else ""

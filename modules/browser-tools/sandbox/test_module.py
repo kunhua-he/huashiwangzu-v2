@@ -3,7 +3,18 @@
 Validates parameter schemas, required fields, value ranges, and output shapes
 based on MANIFEST public_actions. No real browser calls.
 """
+from collections.abc import Callable
+from typing import Any
+
 # ── URL validation helpers ─────────────────────────────────────────────
+
+def _assert_rejected(fn: Callable[[], None], label: str) -> None:
+    try:
+        fn()
+    except AssertionError:
+        print(f"{label}: PASS")
+        return
+    raise AssertionError(f"{label}: expected AssertionError")
 
 def _validate_url(url: str) -> None:
     """Reject non-http/https URLs."""
@@ -50,18 +61,10 @@ def test_open_params() -> None:
     print("  [open] Valid params (full): PASS")
 
     # Missing url
-    try:
-        _validate_url("")
-        raise AssertionError("Should have rejected empty url")
-    except AssertionError:
-        print("  [open] Missing url rejected: PASS")
+    _assert_rejected(lambda: _validate_url(""), "  [open] Missing url rejected")
 
     # Bad protocol
-    try:
-        _validate_url("ftp://example.com")
-        raise AssertionError("Should have rejected ftp url")
-    except AssertionError:
-        print("  [open] Bad protocol rejected: PASS")
+    _assert_rejected(lambda: _validate_url("ftp://example.com"), "  [open] Bad protocol rejected")
 
 
 def test_read_text_params() -> None:
@@ -70,17 +73,9 @@ def test_read_text_params() -> None:
     _validate_session_id(params["session_id"])
     print("  [read_text] Valid params: PASS")
 
-    try:
-        _validate_session_id("")
-        raise AssertionError("Should have rejected empty session_id")
-    except AssertionError:
-        print("  [read_text] Empty session_id rejected: PASS")
+    _assert_rejected(lambda: _validate_session_id(""), "  [read_text] Empty session_id rejected")
 
-    try:
-        _validate_session_id(None)  # type: ignore[arg-type]
-        raise AssertionError("Should have rejected None session_id")
-    except AssertionError:
-        print("  [read_text] None session_id rejected: PASS")
+    _assert_rejected(lambda: _validate_session_id(None), "  [read_text] None session_id rejected")
 
 
 def test_list_links_params() -> None:
@@ -108,25 +103,23 @@ def test_click_params() -> None:
     print("  [click] Valid (text only): PASS")
 
     # Missing both selector and text
-    try:
+    def reject_missing_click_target() -> None:
         params = {"session_id": "sess_abc"}
         _validate_session_id(params["session_id"])
         assert "selector" in params or "text" in params, \
             "click requires either 'selector' or 'text' parameter"
-        raise AssertionError("Should have rejected missing selector and text")
-    except AssertionError:
-        print("  [click] Missing selector+text rejected: PASS")
+
+    _assert_rejected(reject_missing_click_target, "  [click] Missing selector+text rejected")
 
     # Both provided (manifest says "or" — mutually exclusive)
-    try:
+    def reject_both_click_targets() -> None:
         params = {"session_id": "sess_abc", "selector": "#btn", "text": "Click"}
         _validate_session_id(params["session_id"])
         both_provided = bool(params.get("selector")) and bool(params.get("text"))
         assert not both_provided, \
             "selector and text should not both be provided simultaneously"
-        raise AssertionError("Should have rejected both selector+text")
-    except AssertionError:
-        print("  [click] Both selector+text rejected (mutually exclusive): PASS")
+
+    _assert_rejected(reject_both_click_targets, "  [click] Both selector+text rejected (mutually exclusive)")
 
 
 def test_type_params() -> None:
@@ -140,13 +133,12 @@ def test_type_params() -> None:
     print("  [type] Valid params: PASS")
 
     # Missing text
-    try:
+    def reject_missing_text() -> None:
         params = {"session_id": "sess_abc", "selector": "#input"}
         assert isinstance(params.get("text"), str) and params["text"].strip(), \
             "type requires non-empty text"
-        raise AssertionError("Should have rejected missing text")
-    except AssertionError:
-        print("  [type] Missing text rejected: PASS")
+
+    _assert_rejected(reject_missing_text, "  [type] Missing text rejected")
 
 
 def test_wait_for_params() -> None:
@@ -176,13 +168,12 @@ def test_screenshot_params() -> None:
     print("  [screenshot] Valid params (full_page=True): PASS")
 
     # Invalid full_page type
-    try:
+    def reject_non_bool_full_page() -> None:
         params = {"session_id": "sess_abc", "full_page": "yes"}
         assert isinstance(params.get("full_page"), bool), \
             "full_page must be boolean"
-        raise AssertionError("Should have rejected non-boolean full_page")
-    except AssertionError:
-        print("  [screenshot] Non-bool full_page rejected: PASS")
+
+    _assert_rejected(reject_non_bool_full_page, "  [screenshot] Non-bool full_page rejected")
 
 
 def test_download_params() -> None:
@@ -200,13 +191,12 @@ def test_download_params() -> None:
     _validate_timeout(params["timeout"])
     print("  [download] Valid params (with url): PASS")
 
-    try:
+    def reject_download_non_http_url() -> None:
         params = {"session_id": "sess_abc", "url": "file:///etc/passwd"}
         _validate_session_id(params["session_id"])
         _validate_url(params["url"])
-        raise AssertionError("Should have rejected non-http URL")
-    except AssertionError:
-        print("  [download] Non-http URL rejected: PASS")
+
+    _assert_rejected(reject_download_non_http_url, "  [download] Non-http URL rejected")
 
 
 def test_close_params() -> None:
@@ -274,11 +264,7 @@ def test_session_id_flow() -> None:
 
     # Other actions require session_id
     for action in ["read_text", "list_links", "click", "type", "wait_for", "screenshot", "close"]:
-        try:
-            _validate_session_id(None)  # type: ignore[arg-type]
-            raise AssertionError(f"{action} should require session_id")
-        except AssertionError:
-            pass
+        _assert_rejected(lambda: _validate_session_id(None), f"  [session] {action} requires session_id")
     print("  [session] All other actions require session_id: PASS")
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
@@ -17,10 +18,26 @@ def test_mcp_self_check_discovers_new_components() -> None:
     result = json.loads(mcp_self_check(REPO_ROOT, REPO_ROOT / "backend" / "logs" / "tool_usage_stats.json"))
 
     assert result["success"] is True
+    assert result["direct_tool_count"] == 0
+    assert "brief" in result["tools"]
     assert "batch_quick_fix_apply" in result["tools"]
     assert "mcp_self_check" in result["tools"]
+    assert any(component["file"] == "dev_toolkit/core_tools.py" for component in result["components"])
     assert any(component["file"] == "dev_toolkit/edit_tools.py" for component in result["components"])
     assert any(component["file"] == "dev_toolkit/insight_tools.py" for component in result["components"])
+
+
+def test_every_tool_component_exposes_contract() -> None:
+    for path in sorted((REPO_ROOT / "dev_toolkit").glob("*_tools.py")):
+        if path.name.startswith("test_"):
+            continue
+        module = importlib.import_module(f"dev_toolkit.{path.stem}")
+        assert callable(getattr(module, "tool_definitions", None)), path.name
+        assert callable(getattr(module, "handles_tool", None)), path.name
+        assert callable(getattr(module, "handle_tool", None)), path.name
+        tool_names = {tool.name for tool in module.tool_definitions()}
+        assert tool_names, path.name
+        assert all(module.handles_tool(name) for name in tool_names), path.name
 
 
 def test_agent_activity_report_reads_feedback_and_usage(tmp_path: Path) -> None:

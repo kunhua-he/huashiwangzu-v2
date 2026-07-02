@@ -18,10 +18,12 @@ from .config import (
     MODEL_PROFILES,
     TEMPLATES,
     VariantTemplate,
-    get_fallback_chain as get_config_fallback_chain,
     get_provider_configs,
     resolve_api_key,
     resolve_template_for_role,
+)
+from .config import (
+    get_fallback_chain as get_config_fallback_chain,
 )
 from .local import LocalProvider
 from .openai_provider import OpenAIProvider, OpenCodeProvider
@@ -68,9 +70,10 @@ def get_model_provider(provider_name: str) -> BaseProvider:
             provider_name=cfg.get("provider_name", provider_name),
         )
     if ptype == "local":
-        return LocalProvider()
+        return LocalProvider(allow_echo=bool(cfg.get("allow_echo", False)))
     if providers_config.get("local"):
-        return LocalProvider()
+        local_cfg = providers_config.get("local") or {}
+        return LocalProvider(allow_echo=bool(local_cfg.get("allow_echo", False)))
     raise RuntimeError(f"Model provider '{provider_name}' is not configured")
 
 

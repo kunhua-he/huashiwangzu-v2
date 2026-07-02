@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from app.services.module_registry import call_capability
 from app.services.task_worker import register_task_handler
@@ -37,8 +38,22 @@ async def _handle_memory_dream(params: dict) -> dict:
         return {"error": "Missing owner_id"}
     try:
         from ..engine.layered_memory import trigger_dream
-        await trigger_dream(owner_id)
-        return {"status": "ok", "owner_id": owner_id}
+        result = await trigger_dream(owner_id)
+        if not result:
+            return {
+                "success": False,
+                "status": "failed",
+                "error": "memory dream returned no result",
+                "owner_id": owner_id,
+            }
+        if isinstance(result, dict) and result.get("success") is False:
+            return {
+                "success": False,
+                "status": "failed",
+                "error": str(result.get("error") or "memory dream capability failed"),
+                "owner_id": owner_id,
+            }
+        return {"status": "ok", "owner_id": owner_id, "result": result}
     except Exception as e:
         logger.warning("Memory dream handler failed (non-fatal): %s", e)
         return {"error": str(e)}
@@ -58,8 +73,12 @@ async def _handle_memory_distill(params: dict) -> dict:
     if not conversation_id or not owner_id:
         return {"error": "Missing required params"}
     try:
-        await _submit_memory_distill_task(conversation_id, owner_id, user_content, assistant_content)
-        return {"status": "ok"}
+        return await _submit_memory_distill_task(
+            conversation_id,
+            owner_id,
+            user_content,
+            assistant_content,
+        )
     except Exception as e:
         logger.warning("Memory distill handler failed: %s", e)
         return {"error": str(e)}
@@ -121,9 +140,12 @@ async def _handle_slow_tool(params: dict) -> dict:
     logger.info("Slow tool background exec: tool=%s conv=%s user=%s", tool_name, conversation_id, owner_id)
 
     failed_error = ""
+    usage_skill_name = tool_name
+    started = time.perf_counter()
     try:
         if tool_name.startswith("skill_use__"):
             inner_name = skill_args.get("name", "")
+            usage_skill_name = inner_name or tool_name
             inner_args = skill_args.get("args", {})
             if isinstance(inner_args, str):
                 import json as _j2
@@ -146,6 +168,16 @@ async def _handle_slow_tool(params: dict) -> dict:
         tool_result = {"error": str(exc)}
     if isinstance(tool_result, dict) and tool_result.get("error"):
         failed_error = str(tool_result["error"])
+    if usage_skill_name:
+        await tool_discovery.record_skill_invocation(
+            usage_skill_name,
+            success=not bool(failed_error),
+            duration_ms=(time.perf_counter() - started) * 1000,
+            caller=caller,
+            conversation_id=conversation_id,
+            owner_id=owner_id,
+            error_detail=failed_error or None,
+        )
 
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
@@ -538,66 +570,81 @@ register_task_handler("agent_context_compact", _handle_context_compact)
 async def _submit_memory_distill_task(
     conversation_id: int, owner_id: int,
     user_content: str, assistant_content: str,
-) -> None:
+) -> dict:
     """后台记忆蒸馏：从对话中提取值得记住的事实，保存到 memory 模块。
 
-    fire-and-forget，不阻塞主流程。异常只记日志不抛出。
+    No extractable facts are a skipped task. Gateway or memory-save failures
+    are real task failures so the worker can retry and surface them.
     """
+    from app.gateway.router import gateway_router as _gw
+
+    distill_messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是一个记忆提取助手。分析以下用户和AI的对话，提取出值得记住的事实性信息。\n\n"
+                "只提取明确的事实（如用户的偏好、重要日期、计划、项目信息、关键决策等）。\n"
+                "忽略闲聊、问候、确认等非事实内容。\n\n"
+                "以 JSON 数组格式输出，每项包含 text 字段：\n"
+                '[\n'
+                '  {"text": "用户偏好简洁的回答风格"},\n'
+                '  {"text": "用户正在开发一个电商项目"}\n'
+                "]\n\n"
+                "如果没有值得记住的事实，输出空数组 []。\n"
+                "只输出 JSON，不要额外文字。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"用户：{user_content[:1000]}\n\nAI：{assistant_content[:1000]}",
+        },
+    ]
+    result = await _gw.chat(messages=distill_messages, profile_key=MEMORY_DISTILL_MODEL_KEY)
+    if result.get("error"):
+        return {"success": False, "status": "failed", "error": str(result["error"])}
+    content = result.get("content", "")
+    if not content:
+        return {"status": "skipped", "reason": "empty_llm_response"}
+
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        cleaned = [line for line in lines if not line.strip().startswith("```")]
+        content = "\n".join(cleaned).strip()
+    start = content.find("[")
+    end = content.rfind("]")
+    if start < 0 or end <= start:
+        return {"status": "skipped", "reason": "unparseable_memory_json"}
     try:
-        from app.gateway.router import gateway_router as _gw
-
-        distill_messages = [
-            {
-                "role": "system",
-                "content": (
-                    "你是一个记忆提取助手。分析以下用户和AI的对话，提取出值得记住的事实性信息。\n\n"
-                    "只提取明确的事实（如用户的偏好、重要日期、计划、项目信息、关键决策等）。\n"
-                    "忽略闲聊、问候、确认等非事实内容。\n\n"
-                    "以 JSON 数组格式输出，每项包含 text 字段：\n"
-                    '[\n'
-                    '  {"text": "用户偏好简洁的回答风格"},\n'
-                    '  {"text": "用户正在开发一个电商项目"}\n'
-                    "]\n\n"
-                    "如果没有值得记住的事实，输出空数组 []。\n"
-                    "只输出 JSON，不要额外文字。"
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"用户：{user_content[:1000]}\n\nAI：{assistant_content[:1000]}",
-            },
-        ]
-        result = await _gw.chat(messages=distill_messages, profile_key=MEMORY_DISTILL_MODEL_KEY)
-        content = result.get("content", "")
-        if not content:
-            return
-
-        content = content.strip()
-        if content.startswith("```"):
-            lines = content.split("\n")
-            cleaned = [line for line in lines if not line.strip().startswith("```")]
-            content = "\n".join(cleaned).strip()
-        start = content.find("[")
-        end = content.rfind("]")
-        if start < 0 or end <= start:
-            return
         facts = json.loads(content[start:end + 1])
-        if not isinstance(facts, list) or not facts:
-            return
+    except json.JSONDecodeError as exc:
+        return {
+            "status": "skipped",
+            "reason": "unparseable_memory_json",
+            "error_detail": str(exc),
+        }
+    if not isinstance(facts, list) or not facts:
+        return {"status": "skipped", "reason": "no_memory_facts"}
 
-        for fact in facts:
-            text = fact.get("text", "") if isinstance(fact, dict) else str(fact)
-            if not text or len(text) < 10:
-                continue
-            try:
-                await call_capability(
-                    "memory", "save",
-                    {"text": text.strip(), "tags": "auto-distill"},
-                    caller=f"user:{owner_id}",
-                    caller_role="viewer",
-                )
-            except Exception as save_exc:
-                logger.warning("Memory distill save failed (non-fatal): %s", save_exc)
+    saved = 0
+    for fact in facts:
+        text = fact.get("text", "") if isinstance(fact, dict) else str(fact)
+        if not text or len(text) < 10:
+            continue
+        save_result = await call_capability(
+            "memory", "save",
+            {"text": text.strip(), "tags": "auto-distill"},
+            caller=f"user:{owner_id}",
+            caller_role="viewer",
+        )
+        if isinstance(save_result, dict) and save_result.get("success") is False:
+            return {
+                "success": False,
+                "status": "failed",
+                "error": str(save_result.get("error") or "memory save failed"),
+            }
+        saved += 1
 
-    except Exception as exc:
-        logger.warning("_submit_memory_distill_task failed (non-fatal): %s", exc)
+    if saved == 0:
+        return {"status": "skipped", "reason": "no_valid_memory_facts"}
+    return {"status": "ok", "saved": saved}

@@ -3,7 +3,17 @@
 Validates parameter schemas, required fields, value ranges, and output shapes
 based on MANIFEST public_actions. No real web requests.
 """
+from collections.abc import Callable
+
 # ── URL validation helpers ─────────────────────────────────────────────
+
+def _assert_rejected(fn: Callable[[], None], label: str) -> None:
+    try:
+        fn()
+    except AssertionError:
+        print(f"{label}: PASS")
+        return
+    raise AssertionError(f"{label}: expected AssertionError")
 
 _PRIVATE_PREFIXES = (
     "http://localhost",
@@ -70,13 +80,12 @@ def _validate_public_url(url: str) -> None:
 
 def test_search_query_required() -> None:
     """search: query is required and must be non-empty."""
-    try:
+    def reject_empty_query() -> None:
         query = ""
         assert isinstance(query, str) and len(query.strip()) > 0, \
             "query is required and must be a non-empty string"
-        raise AssertionError("Should have rejected empty query")
-    except AssertionError:
-        print("  [search] Empty query rejected: PASS")
+
+    _assert_rejected(reject_empty_query, "  [search] Empty query rejected")
 
     query = "Python async programming"
     assert isinstance(query, str) and query.strip(), \
@@ -102,20 +111,18 @@ def test_search_top_k_range() -> None:
     print(f"  [search] Max top_k={top_k}: PASS")
 
     # Below minimum
-    try:
+    def reject_zero_top_k() -> None:
         top_k = 0
         assert 1 <= top_k <= 20, "top_k must be at least 1"
-        raise AssertionError("Should have rejected top_k=0")
-    except AssertionError:
-        print("  [search] top_k=0 rejected: PASS")
+
+    _assert_rejected(reject_zero_top_k, "  [search] top_k=0 rejected")
 
     # Above maximum
-    try:
+    def reject_large_top_k() -> None:
         top_k = 21
         assert 1 <= top_k <= 20, "top_k must be at most 20"
-        raise AssertionError("Should have rejected top_k=21")
-    except AssertionError:
-        print("  [search] top_k=21 rejected: PASS")
+
+    _assert_rejected(reject_large_top_k, "  [search] top_k=21 rejected")
 
 
 def test_search_output_shape() -> None:
@@ -135,25 +142,13 @@ def test_search_output_shape() -> None:
 
 def test_fetch_url_required() -> None:
     """fetch: url required (http/https only)."""
-    try:
-        _validate_public_url("")
-    except AssertionError:
-        print("  [fetch] Empty URL rejected: PASS")
+    _assert_rejected(lambda: _validate_public_url(""), "  [fetch] Empty URL rejected")
 
-    try:
-        _validate_public_url("not-a-url")
-    except AssertionError:
-        print("  [fetch] Non-URL string rejected: PASS")
+    _assert_rejected(lambda: _validate_public_url("not-a-url"), "  [fetch] Non-URL string rejected")
 
-    try:
-        _validate_public_url("ftp://files.example.com")
-    except AssertionError:
-        print("  [fetch] FTP protocol rejected: PASS")
+    _assert_rejected(lambda: _validate_public_url("ftp://files.example.com"), "  [fetch] FTP protocol rejected")
 
-    try:
-        _validate_public_url("file:///etc/passwd")
-    except AssertionError:
-        print("  [fetch] File protocol rejected: PASS")
+    _assert_rejected(lambda: _validate_public_url("file:///etc/passwd"), "  [fetch] File protocol rejected")
 
     # Valid public URL
     _validate_public_url("https://example.com/article")
@@ -177,11 +172,7 @@ def test_fetch_ssrf_protection() -> None:
         "https://localhost/health",
     ]
     for url in bad_urls:
-        try:
-            _validate_public_url(url)
-            raise AssertionError(f"Should have rejected internal URL: {url}")
-        except AssertionError:
-            pass
+        _assert_rejected(lambda url=url: _validate_public_url(url), f"  [fetch] SSRF internal URL rejected {url[:24]}")
     print(f"  [fetch] SSRF: {len(bad_urls)} internal URLs rejected: PASS")
 
 
@@ -197,20 +188,18 @@ def test_fetch_max_chars() -> None:
     print(f"  [fetch] Custom max_chars={max_chars}: PASS")
 
     # Invalid negative
-    try:
+    def reject_negative_max_chars() -> None:
         max_chars = -100
         assert max_chars > 0, "max_chars must be positive"
-        raise AssertionError("Should have rejected negative max_chars")
-    except AssertionError:
-        print("  [fetch] Negative max_chars rejected: PASS")
+
+    _assert_rejected(reject_negative_max_chars, "  [fetch] Negative max_chars rejected")
 
     # Invalid zero
-    try:
+    def reject_zero_max_chars() -> None:
         max_chars = 0
         assert max_chars > 0, "max_chars must be positive"
-        raise AssertionError("Should have rejected zero max_chars")
-    except AssertionError:
-        print("  [fetch] Zero max_chars rejected: PASS")
+
+    _assert_rejected(reject_zero_max_chars, "  [fetch] Zero max_chars rejected")
 
 
 def test_fetch_output_shape() -> None:

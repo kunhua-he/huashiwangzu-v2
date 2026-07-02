@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import shlex
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,22 @@ def normalize_pytest_targets(repo_root: Path, target: str) -> list[str]:
         path_part, sep, suffix = raw_part.partition("::")
         if not path_part:
             continue
+        suffix_text = sep + suffix if sep else ""
+        if path_part.startswith("backend/"):
+            normalized.append(path_part.removeprefix("backend/") + suffix_text)
+            continue
+        try:
+            repo_resolved = resolve_repo_path(repo_root, path_part)
+            if repo_resolved.exists():
+                try:
+                    rel = repo_resolved.relative_to(backend_dir)
+                    normalized.append(str(rel) + suffix_text)
+                except ValueError:
+                    normalized.append(str(repo_resolved) + suffix_text)
+                continue
+        except ValueError:
+            normalized.append(raw_part)
+            continue
         try:
             resolved = resolve_repo_path(repo_root, path_part, base_dir=backend_dir)
         except ValueError:
@@ -64,15 +81,12 @@ def normalize_pytest_targets(repo_root: Path, target: str) -> list[str]:
         if resolved.exists():
             try:
                 rel = resolved.relative_to(backend_dir)
-                normalized.append(str(rel) + (sep + suffix if sep else ""))
+                normalized.append(str(rel) + suffix_text)
                 continue
             except ValueError:
-                normalized.append(str(resolved) + (sep + suffix if sep else ""))
+                normalized.append(str(resolved) + suffix_text)
                 continue
-        if path_part.startswith("backend/"):
-            normalized.append(path_part.removeprefix("backend/") + (sep + suffix if sep else ""))
-        else:
-            normalized.append(raw_part)
+        normalized.append(raw_part)
     return normalized
 
 
@@ -146,7 +160,14 @@ async def run_test(run_command_json, repo_root: Path, target: str, timeout: int 
     normalized_targets = normalize_pytest_targets(repo_root, target)
     backend_dir = repo_root / "backend"
     cmd = [str(backend_dir / ".venv" / "bin" / "pytest"), *normalized_targets]
-    result = await run_command_json(cmd, cwd=backend_dir, timeout=timeout)
+    cwd = backend_dir
+    if any(Path(item.partition("::")[0]).is_absolute() for item in normalized_targets):
+        cwd = repo_root
+        pythonpath = str(repo_root)
+        if os.environ.get("PYTHONPATH"):
+            pythonpath = f"{pythonpath}:{os.environ['PYTHONPATH']}"
+        cmd = ["env", f"PYTHONPATH={pythonpath}", *cmd]
+    result = await run_command_json(cmd, cwd=cwd, timeout=timeout)
     return json.dumps({
         "success": result.get("success", False),
         "target": target,

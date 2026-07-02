@@ -11,7 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument
-from .document_service import mark_document_source_unavailable, parse_and_index_document
+from .document_service import (
+    document_parse_allows_search,
+    mark_document_source_unavailable,
+    parse_and_index_document,
+)
 from .pipeline_orchestrator import run_pipeline as _run_orchestrated
 from .source_file_state import get_source_file_availability, raise_if_source_unavailable
 
@@ -29,7 +33,7 @@ async def _run_pipeline(
 ) -> dict:
     """委托给 PipelineOrchestrator。"""
     doc = await db.scalar(select(KbDocument).where(KbDocument.id == document_id))
-    if doc and (doc.parse_status != "done" or doc.vector_status != "done"):
+    if doc and (not document_parse_allows_search(doc) or doc.vector_status != "done"):
         await parse_and_index_document(
             db,
             document_id=document_id,
@@ -58,7 +62,13 @@ async def _pipeline_handler(params: dict) -> dict:
         df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
         doc = df.scalar_one_or_none()
         if not doc:
-            return {"error": f"Document {document_id} not found", "status": "failed"}
+            logger.info("Pipeline task obsolete for missing document_id=%d", document_id)
+            return {
+                "document_id": document_id,
+                "status": "skipped",
+                "reason": "doc_missing",
+                "classification": "obsolete",
+            }
         if doc.deleted:
             logger.info("Pipeline task obsolete for deleted document_id=%d", document_id)
             return {
@@ -76,10 +86,14 @@ async def _pipeline_handler(params: dict) -> dict:
                 force_raw=params.get("force_raw", False),
                 force_fusion=params.get("force_fusion", False),
             )
+            if result.get("error") and result.get("status") not in {"skipped", "degraded"}:
+                return {"status": "failed", **result}
             if result.get("status") == "failed":
                 return result
             if result.get("status") == "degraded":
                 return {"task_status": "completed", **result}
+            if result.get("status") == "skipped":
+                return result
             return {"status": "done", **result}
         except Exception as e:
             source_state = await get_source_file_availability(db, doc.file_id)

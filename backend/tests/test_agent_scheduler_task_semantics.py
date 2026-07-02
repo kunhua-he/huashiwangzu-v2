@@ -36,6 +36,38 @@ class _FakeSession:
 
 
 @pytest.mark.asyncio
+async def test_scheduler_list_invalid_caller_returns_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.exceptions import PermissionDenied
+
+    from modules.scheduler.backend import router as scheduler_router
+
+    def fake_resolve_caller_user_id(caller: str) -> int:
+        raise PermissionDenied(f"invalid caller: {caller}")
+
+    monkeypatch.setattr(scheduler_router, "resolve_caller_user_id", fake_resolve_caller_user_id)
+
+    result = await scheduler_router._cap_list({}, "bad-caller")
+
+    assert result["success"] is False
+    assert "invalid caller" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_list_empty_caller_user_id_returns_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modules.scheduler.backend import router as scheduler_router
+
+    monkeypatch.setattr(scheduler_router, "resolve_caller_user_id", lambda caller: 0)
+
+    result = await scheduler_router._cap_list({}, "system:unknown")
+
+    assert result == {"success": False, "error": "无法解析调用者身份"}
+
+
+@pytest.mark.asyncio
 async def test_slow_tool_failure_returns_failed_semantics_and_notifies_with_whitelisted_system(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -145,3 +177,107 @@ async def test_scheduler_uses_creator_or_whitelisted_system_callers(
     assert calls[1]["target_module"] == "im"
     assert calls[1]["caller"] == "system:task-worker"
     assert calls[1]["caller_role"] == "viewer"
+
+
+@pytest.mark.parametrize(
+    ("agent_result", "expected_error"),
+    [
+        ({"success": False, "error": "agent quota exhausted"}, "agent quota exhausted"),
+        ({"success": True, "status": "failed", "error": "agent failed"}, "agent failed"),
+        ({"success": True, "error": "agent returned error"}, "agent returned error"),
+        (
+            {"success": True, "data": {"results": [{"status": "failed", "error": "subagent failed"}]}},
+            "subagent failed",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_scheduler_agent_failure_result_returns_failed_task_semantics_and_notifies(
+    monkeypatch: pytest.MonkeyPatch,
+    agent_result: dict,
+    expected_error: str,
+) -> None:
+    from app.services import module_registry
+
+    from modules.scheduler.backend import router as scheduler_router
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_call_capability(
+        target_module: str,
+        action: str,
+        params: dict,
+        caller: str,
+        caller_role: str = "viewer",
+    ) -> dict:
+        calls.append({
+            "target_module": target_module,
+            "action": action,
+            "caller": caller,
+            "caller_role": caller_role,
+            "params": params,
+        })
+        if target_module == "agent":
+            return agent_result
+        return {"success": True}
+
+    monkeypatch.setattr(module_registry, "call_capability", fake_call_capability)
+
+    result = await scheduler_router._cap_scheduled_job_handler({
+        "title": "daily",
+        "action_description": "请总结今天的项目状态并提醒我。",
+        "creator_id": 42,
+    })
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert result["error"] == expected_error
+    assert "执行错误" in result["result"]
+    assert calls[0]["target_module"] == "agent"
+    assert calls[1]["target_module"] == "im"
+    assert calls[1]["caller"] == "system:task-worker"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_agent_exception_returns_failed_task_semantics_and_notifies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import module_registry
+
+    from modules.scheduler.backend import router as scheduler_router
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_call_capability(
+        target_module: str,
+        action: str,
+        params: dict,
+        caller: str,
+        caller_role: str = "viewer",
+    ) -> dict:
+        calls.append({
+            "target_module": target_module,
+            "action": action,
+            "caller": caller,
+            "caller_role": caller_role,
+            "params": params,
+        })
+        if target_module == "agent":
+            raise RuntimeError("agent offline")
+        return {"success": True}
+
+    monkeypatch.setattr(module_registry, "call_capability", fake_call_capability)
+
+    result = await scheduler_router._cap_scheduled_job_handler({
+        "title": "daily",
+        "action_description": "请总结今天的项目状态并提醒我。",
+        "creator_id": 42,
+    })
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert result["error"] == "agent offline"
+    assert "Agent 执行失败" in result["result"]
+    assert calls[0]["target_module"] == "agent"
+    assert calls[1]["target_module"] == "im"
+    assert calls[1]["caller"] == "system:task-worker"

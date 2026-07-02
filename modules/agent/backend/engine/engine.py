@@ -2,12 +2,8 @@
 import json
 import logging
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..services import conversation_service as conv_svc
-from ..prompt_seeds import CONTEXT_TOOL_GUIDANCE_KEY
-from ..services.runtime_prompt_provider import get_system_prompt as get_runtime_system_prompt
 from .budget_allocator import DiminishingBudgetTracker
 from .compressor import compress_middle_with_snapshot as _compress_with_snapshot
 from .compressor import hard_truncate_tail as _hard_truncate_tail
@@ -16,9 +12,7 @@ from .experience_memory import experience_feedback as _experience_feedback
 from .experience_memory import save_experience as _experience_save
 from .fallback_chain import chat_stream_with_fallback as _chat_stream_with_fallback
 from .fallback_chain import chat_with_fallback as _chat_with_fallback
-from .layered_memory import format_static_memory_for_injection as _format_static_memory
 from .layered_memory import fuse as _layered_memory_fuse
-from .layered_memory import read_static_memory_files as _read_static_memory_files
 from .layered_memory import recall as _layered_memory_recall
 from .layered_memory import record as _layered_memory_record
 from .post_turn_hooks import PostTurnHooks
@@ -45,158 +39,6 @@ async def assemble_context(
     """
     from .context_pipeline import run_pipeline
     return await run_pipeline(db, conversation_id, current_user_input, profile_key, owner_id, agent_code)
-
-
-
-async def read_agent_config(db: AsyncSession, agent_code: str) -> dict | None:
-    """Read agent config from agent_configs table.
-
-    Returns None if no config found for the given agent_code.
-    """
-    try:
-        from ..models import AgentConfig
-        r = await db.execute(
-            select(AgentConfig).where(AgentConfig.agent_code == agent_code)
-        )
-        c = r.scalar_one_or_none()
-        if not c:
-            return None
-        return {
-            "agent_code": c.agent_code,
-            "agent_name": c.agent_name,
-            "provider": c.provider,
-            "model": c.model,
-            "system_prompt": c.system_prompt,
-            "enabled": c.enabled,
-            "temperature": c.temperature,
-            "top_p": c.top_p,
-            "max_tokens": c.max_tokens,
-            "timeout_ms": c.timeout_ms,
-            "fallback_model": c.fallback_model,
-            "fallback_enabled": c.fallback_enabled,
-            "max_concurrency": c.max_concurrency,
-            "cooldown_seconds": c.cooldown_seconds,
-            "retry_count": c.retry_count,
-            "daily_call_limit": c.daily_call_limit,
-            "daily_budget": c.daily_budget,
-            "monthly_budget": c.monthly_budget,
-            "response_format": c.response_format,
-            "log_prompt_enabled": c.log_prompt_enabled,
-            "log_response_enabled": c.log_response_enabled,
-            "sensitive_action_policy": c.sensitive_action_policy,
-            "updated_by": c.updated_by,
-        }
-    except Exception as e:
-        logger.warning("Failed to read agent config for '%s': %s", agent_code, e)
-        return None
-
-
-# ── 工具调用指引（按模型差异化） ──────────────────────────────────
-# 鼓励模型在一次响应中批量返回独立工具调用，减少多轮交互。
-_TOOL_CALL_GUIDANCE: dict[str, str] = {
-    "deepseek": (
-        "【工具调用指引】当需要调用多个互相独立的工具时（例如同时查询多个信息），"
-        "请在同一次响应中一并返回所有工具调用（即多个 tool_calls），"
-        "不要分多轮逐个调用，这能大幅提升效率。"
-    ),
-    "gemma": (
-        "【工具调用指引】如果需要使用多个工具，尽量在一次响应中同时发起所有独立的工具调用。"
-    ),
-    "ollama": (
-        "【工具调用指引】如果需要使用工具，优先一次性返回所有可并行执行的工具调用。"
-    ),
-}
-
-_DEFAULT_TOOL_CALL_GUIDANCE = (
-    "【工具调用指引】当需要调用多个互相独立的工具时，"
-    "请在一次响应中同时返回所有工具调用，不要分多轮逐个调用。"
-)
-
-
-async def _get_tool_call_guidance(db: AsyncSession, profile_key: str) -> str:
-    """Resolve model-specific tool call guidance from DB prompt plus model hint."""
-    base = await get_runtime_system_prompt(db, CONTEXT_TOOL_GUIDANCE_KEY)
-    model_hint = ""
-    for prefix, guidance in _TOOL_CALL_GUIDANCE.items():
-        if profile_key.startswith(prefix):
-            model_hint = guidance
-            break
-    if not model_hint:
-        model_hint = _DEFAULT_TOOL_CALL_GUIDANCE
-    return "\n".join(part for part in (base, model_hint) if part)
-
-
-async def _build_system_content(db: AsyncSession, owner_id: int, conversation_id: int, agent_code: str = "erp_chat", profile_key: str = "") -> str:
-    sys_prompt = await conv_svc.get_system_prompt(db)
-    ent_prompt = await conv_svc.get_enterprise_prompt(db)
-    profile_data = await conv_svc.get_active_user_profile(db, owner_id)
-    profile_text = conv_svc._format_profile_text(profile_data)
-    layers = []
-    total_chars = 0
-    MAX_CHARS = 6000  # Total system content limit to prevent bloat
-
-    # Layer 0: Static file memory (zero-latency, deterministic)
-    try:
-        static_texts = _read_static_memory_files()
-        static_injection = _format_static_memory(static_texts)
-        if static_injection:
-            layers.append(static_injection)
-            total_chars += len(static_injection)
-    except Exception as e:
-        logger.warning("Static memory read failed (non-fatal): %s", e)
-
-    if sys_prompt:
-        layers.append(sys_prompt)
-        total_chars += len(sys_prompt)
-    if ent_prompt:
-        layers.append(ent_prompt)
-        total_chars += len(ent_prompt)
-
-    # Agent config override: if the agent has a custom system_prompt, append it
-    try:
-        agent_cfg = await read_agent_config(db, agent_code)
-        if agent_cfg and agent_cfg.get("system_prompt"):
-            layers.append(f"Agent 配置提示词：\n{agent_cfg['system_prompt']}")
-            total_chars += len(layers[-1])
-    except Exception as e:
-        logger.warning("Failed to read agent config prompt: %s", e)
-
-    if profile_text:
-        layers.append(profile_text)
-        total_chars += len(profile_text)
-
-    # Profile 2.0 injection: role + enterprise profiles with length control
-    try:
-        from ..services.profile_service import build_profile_injections
-        profile_injection = await build_profile_injections(
-            db, owner_id, role_key=None, max_chars=2000,
-        )
-        if profile_injection and total_chars < MAX_CHARS:
-            injection = profile_injection[:MAX_CHARS - total_chars]
-            layers.append(injection)
-            total_chars += len(injection)
-    except Exception as e:
-        logger.debug("Profile 2.0 injection failed (non-fatal): %s", e)
-
-    # ── 上下文变量注入（来自之前工具调用的提炼） ──────────────
-    try:
-        from ..models import AgentConversation
-        from .context_vars import format_context_vars_section
-        _conv = await db.get(AgentConversation, conversation_id)
-        if _conv and _conv.context_vars:
-            _cv_section = format_context_vars_section(_conv.context_vars)
-            if _cv_section and total_chars < MAX_CHARS:
-                layers.append(_cv_section)
-                total_chars += len(_cv_section)
-    except Exception as e:
-        logger.debug("Context vars injection failed (non-fatal): %s", e)
-
-    # ── 工具调用指引（按 profile 差异化） ──────────────────────────
-    tool_guidance = await _get_tool_call_guidance(db, profile_key)
-    if tool_guidance:
-        layers.append(tool_guidance)
-
-    return "\n\n---\n\n".join(layers)
 
 
 # ── 批5：模块级单例 ──────────────────────────────────────────────
@@ -336,7 +178,7 @@ async def trigger_dream(owner_id: int) -> None:
             logger.warning("dream enqueue failed (non-fatal): %s", e)
 
 
-# ── 批4 韧性：fallback_chain聊天（供 router 替换裸 gateway_router.chat） ──────
+# ── 模型调用兼容壳：fallback 由 gateway 统一裁决 ───────────────────────
 
 async def chat_with_degradation_chain(
     messages: list[dict],
@@ -344,11 +186,11 @@ async def chat_with_degradation_chain(
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
 ) -> dict:
-    """用fallback_chain包装模型调用。主模型失败 → fallback_chain → 本地兜底。"""
+    """Call the framework gateway once; gateway owns model fallback."""
     try:
         return await _chat_with_fallback(messages, profile_key, tools, conversation_id=conversation_id)
     except Exception as e:
-        logger.error("fallback_chainchat全部失败: %s", e)
+        logger.error("gateway chat failed: %s", e)
         return {"error": str(e), "content": f"(模型调用失败：{e})"}
 
 
@@ -358,14 +200,13 @@ async def chat_stream_with_degradation_chain(
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
 ):
-    """流式fallback_chain。首包失败可降级；已经开始流式中途断给清晰错误。"""
+    """Stream gateway events directly; gateway owns model fallback."""
     try:
         async for event in _chat_stream_with_fallback(messages, profile_key, tools, conversation_id=conversation_id):
             yield event
     except Exception as e:
-        logger.error("fallback_chain流式chat全部失败: %s", e)
+        logger.error("gateway stream chat failed: %s", e)
         yield {"type": "error", "content": f"(流式模型调用失败：{e})"}
-    yield {"type": "done"}
 
 
 # ── 批3 成功经验：蒸馏 + 结算 ──────────────────────────────

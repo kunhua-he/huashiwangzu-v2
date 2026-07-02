@@ -2,11 +2,15 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
+const sandboxNodeModules = path.resolve(__dirname, 'node_modules')
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      '@modules': path.resolve(__dirname, '..'),
+      '@modules': path.resolve(__dirname, '..', '..'),
+      'element-plus': path.resolve(sandboxNodeModules, 'element-plus'),
+      'element-plus/es': path.resolve(sandboxNodeModules, 'element-plus/es'),
     },
   },
   server: {

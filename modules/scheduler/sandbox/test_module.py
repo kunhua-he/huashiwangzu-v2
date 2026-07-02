@@ -4,7 +4,26 @@ Validates parameter schemas, required fields, value ranges, and output
 shapes for all public_actions — without creating real scheduled tasks.
 """
 
+from collections.abc import Callable
 from datetime import datetime
+
+
+def _assert_rejected(fn: Callable[[], None], label: str) -> None:
+    try:
+        fn()
+    except AssertionError:
+        print(f"{label}: PASS")
+        return
+    raise AssertionError(f"{label}: expected AssertionError")
+
+
+def _validate_action_description(value: str) -> None:
+    assert isinstance(value, str) and len(value.strip()) > 0, \
+        "action_description must be a non-empty string"
+
+
+def _validate_task_id(value: int) -> None:
+    assert isinstance(value, int) and value > 0, "task_id must be a positive integer"
 
 
 def test_create_params() -> None:
@@ -15,7 +34,7 @@ def test_create_params() -> None:
         "scheduled_at": "2026-07-08T09:00:00",
     }
     assert "action_description" in params_min
-    assert isinstance(params_min["action_description"], str) and len(params_min["action_description"]) > 0
+    _validate_action_description(params_min["action_description"])
     assert "scheduled_at" in params_min
     assert isinstance(params_min["scheduled_at"], str)
     _validate_datetime(params_min["scheduled_at"])
@@ -46,20 +65,17 @@ def _validate_datetime(dt_str: str) -> None:
 def test_create_params_rejects_invalid_datetime() -> None:
     """Create requires a parseable datetime."""
     bad_dt = "not-a-date"
-    try:
-        _validate_datetime(bad_dt)
-        assert False, "Should have raised AssertionError"
-    except AssertionError:
-        pass
-    print("  [CREATE] Invalid datetime detection valid")
+    _assert_rejected(lambda: _validate_datetime(bad_dt), "  [CREATE] Invalid datetime rejected")
 
 
 def test_create_params_rejects_empty_action() -> None:
     """Create requires non-empty action_description."""
     params = {"action_description": "", "scheduled_at": "2026-07-08T09:00:00"}
     assert "action_description" in params
-    assert len(params["action_description"].strip()) == 0
-    print("  [CREATE] Empty action detection valid")
+    _assert_rejected(
+        lambda: _validate_action_description(params["action_description"]),
+        "  [CREATE] Empty action rejected",
+    )
 
 
 def test_list_params() -> None:
@@ -73,16 +89,14 @@ def test_cancel_params() -> None:
     """cancel: task_id (int required)."""
     params = {"task_id": 5}
     assert "task_id" in params
-    assert isinstance(params["task_id"], int) and params["task_id"] > 0
+    _validate_task_id(params["task_id"])
     print("  [CANCEL] Parameter contract valid")
 
 
 def test_cancel_params_rejects_zero_id() -> None:
     """Cancel requires positive task_id."""
     params = {"task_id": 0}
-    assert isinstance(params["task_id"], int)
-    assert params["task_id"] <= 0, "task_id must be positive"
-    print("  [CANCEL] Zero task_id detection valid")
+    _assert_rejected(lambda: _validate_task_id(params["task_id"]), "  [CANCEL] Zero task_id rejected")
 
 
 def test_task_output_shape() -> None:

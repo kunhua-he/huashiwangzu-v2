@@ -25,6 +25,7 @@ from ..ir_models import to_legacy_dict
 from ..models import KbDocument, KbRawData
 from .parsing_service import IMAGE_FORMATS, parse_document
 from .pdf_render_service import get_pdf_page_count, render_page_to_image
+from .prompt_utils import TRAW_OCR, TRAW_VISION, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("raw_collection")
 
@@ -72,10 +73,6 @@ def _ocr_words_tesseract(img_bytes: bytes) -> dict | None:
 
 # 并发上限对齐 gate_pool.PER_GATE_MAX_CONCURRENT=5
 RAW_COLLECT_CONCURRENCY = 5
-
-ROUND_2_OCR_PROMPT = "请识别并提取图片中所有可见的文字内容，包括标题、正文、表格中的文字等。按原顺序输出。"
-ROUND_3_VISION_PROMPT = "请详细描述这张页面的版面和视觉构成，包括：1)整体布局结构 2)图表/图片的位置和内容 3)色彩和视觉层次 4)任何特殊视觉元素。"
-
 
 def _hash_content(content: str) -> str:
     return hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()
@@ -167,9 +164,10 @@ async def _exec_round_2_ocr(
                 }
             else:
                 # 回退：纯 VLM OCR（不产生词坐标）
+                prompt = await load_prompt(task_db, TRAW_OCR)
                 content = await describe_image(
                     img_bytes,
-                    prompt=ROUND_2_OCR_PROMPT,
+                    prompt=prompt,
                     mime_type="image/png",
                     profile_key="mimo",
                 )
@@ -211,9 +209,10 @@ async def _exec_round_3_vision(
         try:
             if img_bytes is None:
                 img_bytes = await render_page_to_image(file_id, page, user_id)
+            prompt = await load_prompt(task_db, TRAW_VISION)
             content = await describe_image(
                 img_bytes,
-                prompt=ROUND_3_VISION_PROMPT,
+                prompt=prompt,
                 mime_type="image/png",
                 profile_key="mimo",
             )

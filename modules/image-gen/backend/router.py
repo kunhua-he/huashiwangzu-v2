@@ -8,24 +8,21 @@ import logging
 import re
 import time
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, Integer, Text, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import declarative_base
-
-from app.core.exceptions import ValidationError
+from app.core.exceptions import AppException, ValidationError
 from app.database import AsyncSessionLocal, engine
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy import Column, DateTime, Integer, Text, desc, func, select
+from sqlalchemy.orm import declarative_base
 
 from .providers import (
     get_default_template,
     get_provider,
-    get_template_config,
     list_templates,
     resolve_provider,
 )
@@ -194,7 +191,7 @@ async def _generate(params: dict, caller: str) -> dict:
             owner_id=user_id, template=template_key, prompt=spec.prompt,
             image_count=0, file_ids=None, status="failed", error_msg=error_msg,
         )
-        return {"images": [], "placeholder": False, "error": friendly, "detail": error_msg}
+        raise ValidationError(friendly) from e
     except Exception as e:
         error_msg = str(e)
         logger.exception("Unexpected error in image generation: %s", error_msg)
@@ -202,7 +199,7 @@ async def _generate(params: dict, caller: str) -> dict:
             owner_id=user_id, template=template_key, prompt=spec.prompt,
             image_count=0, file_ids=None, status="failed", error_msg=error_msg,
         )
-        return {"images": [], "placeholder": False, "error": "生图异常，请稍后重试", "detail": error_msg}
+        raise ValidationError("生图异常，请稍后重试") from e
 
     from app.services.file_upload_service import upload_file
 
@@ -243,6 +240,14 @@ async def _generate(params: dict, caller: str) -> dict:
             if is_placeholder:
                 entry["explanation"] = "占位图，真实生成待接入"
             results.append(entry)
+
+    if not results:
+        error_msg = "image generation produced no downloadable images"
+        await _save_record(
+            owner_id=user_id, template=template_key, prompt=spec.prompt,
+            image_count=0, file_ids=None, status="failed", error_msg=error_msg,
+        )
+        raise ValidationError("生图失败：未生成可用图片")
 
     points_cost = None
     balance = None
@@ -310,7 +315,6 @@ async def _usage_history(params: dict, caller: str) -> dict:
     limit = min(int(params.get("limit", 20)), 100)
     try:
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select, desc
             stmt = (
                 select(ImageGenRecord)
                 .where(ImageGenRecord.owner_id == user_id)
@@ -335,7 +339,7 @@ async def _usage_history(params: dict, caller: str) -> dict:
             return {"records": records}
     except Exception as e:
         logger.warning("Failed to query usage history: %s", e)
-        return {"records": []}
+        raise AppException("生图历史查询失败") from e
 
 
 # ---------------------------------------------------------------------------

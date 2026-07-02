@@ -33,6 +33,22 @@ export_svc = ContentExportService()
 resource_svc = ResourceService()
 
 
+def _pipeline_failure(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    if result.get("success") is False:
+        return str(result.get("error") or "Content pipeline returned success=false")
+    status = str(result.get("status") or "").lower()
+    if status in {"failed", "error"}:
+        return str(result.get("error") or f"Content pipeline returned status={status}")
+    if "error" in result and result.get("success") is not True:
+        return str(result.get("error") or "Content pipeline returned error")
+    data = result.get("data")
+    if isinstance(data, dict):
+        return _pipeline_failure(data)
+    return None
+
+
 # ── Schemas ──────────────────────────────────────────────────────
 
 class PipelineRequest(BaseModel):
@@ -77,6 +93,9 @@ async def trigger_pipeline(
 ):
     caller = f"user:{user.id}"
     result = await pipeline_svc.run_pipeline(body.file_id, caller)
+    pipeline_error = _pipeline_failure(result)
+    if pipeline_error:
+        return ApiResponse(success=False, error=pipeline_error, data=result)
     return ApiResponse(data=result)
 
 
@@ -273,6 +292,9 @@ async def _cap_pipeline(params: dict, caller: str) -> dict:
         return {"success": False, "error": "file_id required"}
     try:
         result = await pipeline_svc.run_pipeline(file_id, caller)
+        pipeline_error = _pipeline_failure(result)
+        if pipeline_error:
+            return {"success": False, "error": pipeline_error, "data": result}
         return {"success": True, "data": result}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -339,11 +361,17 @@ async def _cap_get_file_content(params: dict, caller: str) -> dict:
                 caller_str = f"user:{owner_id}"
                 pipeline_result = await pipeline_svc.run_pipeline(file_id, caller_str)
             except Exception as e:
-                return {"success": True, "data": {
+                return {"success": False, "error": str(e), "data": {
                     "source": "none",
-                    "blocks": [],
                     "status": "parse_failed",
-                    "error": str(e),
+                    "download_url": f"/api/files/download/{file_id}/original",
+                }}
+
+            pipeline_error = _pipeline_failure(pipeline_result)
+            if pipeline_error:
+                return {"success": False, "error": pipeline_error, "data": {
+                    "source": "none",
+                    "status": "parse_failed",
                     "download_url": f"/api/files/download/{file_id}/original",
                 }}
 
@@ -798,6 +826,9 @@ async def _on_file_uploaded(payload: dict, caller: str, caller_role: str) -> dic
         return {"success": False, "error": "file_id required"}
     try:
         result = await pipeline_svc.handle_file_uploaded(payload, caller, caller_role)
+        pipeline_error = _pipeline_failure(result)
+        if pipeline_error:
+            return {"success": False, "error": pipeline_error, "data": result}
         return {"success": True, "data": result}
     except Exception as e:
         logger.warning("Content pipeline from file.uploaded failed: %s", e)

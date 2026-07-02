@@ -55,7 +55,7 @@ def test_output_contains_levels() -> None:
         if level in r.stdout:
             return
     # At least one of these should be present
-    assert False, f"no expected level found in output: {r.stdout[:500]}"
+    raise AssertionError(f"no expected level found in output: {r.stdout[:500]}")
 
 
 def test_final_verdict_distinguishes_clean_pass_from_debt() -> None:
@@ -93,6 +93,53 @@ def test_parse_prefixed_json_extracts_machine_summary() -> None:
     }
 
 
+def test_audit_failed_count_fails_closed_on_missing_summary() -> None:
+    try:
+        release_gate.audit_failed_count({"success": True, "data": {}})
+    except ValueError as exc:
+        assert "summary.failed" in str(exc)
+        return
+    raise AssertionError("missing summary.failed should not default to zero")
+
+
+def test_task_result_semantic_failure_contract() -> None:
+    assert release_gate._task_result_is_semantic_failure({"success": False, "error": "bad"}) == (
+        True,
+        "bad",
+    )
+    assert release_gate._task_result_is_semantic_failure({"status": "failed"}) == (
+        True,
+        "Task result status=failed",
+    )
+    assert release_gate._task_result_is_semantic_failure({"error": "bad"}) == (True, "bad")
+    assert release_gate._task_result_is_semantic_failure({"status": "skipped", "reason": "empty"}) == (
+        False,
+        None,
+    )
+    assert release_gate._task_result_is_semantic_failure({"success": True, "error": "legacy-note"}) == (
+        False,
+        None,
+    )
+
+
+def test_semantic_failed_completed_delta_is_blocker_only_for_new_growth() -> None:
+    level, detail = release_gate.classify_semantic_failed_completed(3, 3)
+    assert level == "DEBT"
+    assert "historical" in detail
+
+    level, detail = release_gate.classify_semantic_failed_completed(
+        4,
+        3,
+        [{"id": 12, "task_type": "memory_distill"}],
+    )
+    assert level == "BLOCKER"
+    assert "3 -> 4" in detail
+    assert "#12:memory_distill" in detail
+
+    assert release_gate.classify_semantic_failed_completed(0, 0)[0] == "PASS"
+    assert release_gate.classify_semantic_failed_completed(0, None)[0] == "BLOCKER"
+
+
 if __name__ == "__main__":
     test_help_output()
     test_release_gate_runs_with_skip_ui()
@@ -100,4 +147,7 @@ if __name__ == "__main__":
     test_final_verdict_distinguishes_clean_pass_from_debt()
     test_sandbox_matrix_skips_are_debt_not_clean_pass()
     test_parse_prefixed_json_extracts_machine_summary()
+    test_audit_failed_count_fails_closed_on_missing_summary()
+    test_task_result_semantic_failure_contract()
+    test_semantic_failed_completed_delta_is_blocker_only_for_new_growth()
     print("\nAll release gate tests PASS")

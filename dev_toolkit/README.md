@@ -1,12 +1,19 @@
 # 项目工具台 MCP Server
 
-开工先连我。`python3.14 dev_toolkit/server.py` (stdio), 注册在 `.mcp.json`。
+开工先连我。项目工具台有两套一致的入口：
+
+1. **标准 MCP 自动发现入口**：仓库根目录 `.mcp.json` 声明 `项目工具台`，命令为 `python3.14 dev_toolkit/server.py`，并显式设置仓库 `cwd`。
+2. **Python stdio 入口**：直接运行 `python3.14 dev_toolkit/server.py`，用于手动调试或 MCP 客户端按声明启动。
+
+两套入口共享 `dev_toolkit/mcp_entry.py` 中的 `SERVER_NAME` / `SERVER_VERSION` / `SERVER_SCRIPT` 口径，测试会校验 `.mcp.json` 与该声明一致。
 
 通过 MCP 协议暴露项目开发加速工具, 供 AI agent 直接调用。
 
 ## 组件化结构
 
-`server.py` 只做 MCP 启动、通用上下文和顶层路由。新增工具优先拆成独立组件：
+`server.py` 只做 MCP 启动、共享上下文和顶层路由。工具声明与分发必须通过组件三件套；少量历史实现函数仍留在 `server.py` 作为共享上下文，新的 schema 和路由入口已收口到 `core_tools.py`，后续迁移实现时也从组件内继续拆。
+
+新增工具优先拆成独立组件：
 
 ```text
 dev_toolkit/{domain}_tools.py
@@ -29,13 +36,23 @@ elif domain_handles_tool(name):
 
 | 组件 | 负责工具 |
 |------|----------|
-| `mailbox_tools.py` | `写封信`、`mailbox_write_letter`、`mailbox_create_delivery_bundle`、`mailbox_check_delivery_bundle` |
+| `mailbox_tools.py` | `mailbox_write_letter`、`mailbox_create_delivery_bundle`、`mailbox_check_delivery_bundle`（服务端仍兼容旧中文别名 `写封信`，但标准 MCP 工具列表不再公开非 ASCII 名称） |
 | `memory_tools.py` | `memory_search`、`memory_write`、`memory_recent`、`mcp_feedback`、`mcp_feedback_summary` |
 | `worktree_tools.py` | `worktree_guard` |
 | `tool_usage_tools.py` | `tool_usage_stats` + 全局工具调用统计落盘 |
 | `code_tools.py` | `code_explore`、`code_node`、`code_impact`、`quick_fix_preview`、`quick_fix_patch`、`apply_patch`、`lint`、`run_test` |
 | `edit_tools.py` | `batch_quick_fix_preview`、`batch_quick_fix_apply`、`edit_recipe_catalog`、`edit_recipe_preview`、`edit_recipe_apply` |
+| `db_reverse_tools.py` | `db_reverse_audit` |
 | `insight_tools.py` | `mcp_self_check`、`dev_toolkit_architecture_audit`、`agent_activity_report` |
+| `core_tools.py` | `brief`、`probe`、`call_capability`、`tail_log`、`routes`、`capabilities`、`db_schema`、`plan_task`、`finish_task`、`smoke_all`、`release_gate` 等核心工具 schema 与路由 |
+
+入口声明：
+
+| 文件 | 作用 |
+|------|------|
+| `.mcp.json` | 标准 MCP 自动发现入口，声明 `项目工具台` 的 stdio command/args/cwd |
+| `dev_toolkit/mcp_entry.py` | `.mcp.json` 与 `server.py` 共用的入口元数据和校验 helper |
+| `dev_toolkit/server.py` | Python stdio MCP 服务器入口，启动 MCP server 并把调用分发给各组件 |
 
 ## 标准工作流（所有任务必须遵守）
 
@@ -177,7 +194,7 @@ mailbox_check_delivery_bundle(task_name)
 | `tool_usage_stats(limit, reset, confirm)` | 查看项目工具台 MCP 工具调用热度 | 统计文件在 `backend/logs/tool_usage_stats.json`，可用于清理低价值工具和发现高频工作流 |
 | `mcp_feedback(agent, task_summary, rating, smoothness, tools_used, friction, missing_tools, upgrade_suggestions, remove_or_merge_suggestions)` | 收工工具体验反馈，写入结构化 Markdown 项目记忆 | 必填轻量反馈：本次是否顺畅、缺什么、建议升级/移除什么 |
 | `mcp_feedback_summary(limit)` | 汇总最近工具体验反馈 | 升级工具台前先看：平均评分、最新反馈、卡点和升级建议 |
-| `mailbox_write_letter(target, category, title, body, required_docs, delivery_mode, overwrite)` | 标准化写投递信到邮箱/投递箱 | 自动补系统指令、必读文档、交付要求和收件箱路径；旧别名 `写封信` 也走同一规范 |
+| `mailbox_write_letter(target, category, title, body, required_docs, delivery_mode, overwrite)` | 标准化写投递信到邮箱/投递箱 | 自动补系统指令、必读文档、交付要求和收件箱路径；服务端兼容旧别名 `写封信`，但标准 MCP 声明只公开 ASCII 工具名 |
 | `mailbox_create_delivery_bundle(task_name, summary, changed_files, verification_results, risks, ...)` | 生成回信标准五件套 | 写入邮箱/收件箱/{任务名}/，固定生成五个文件 |
 | `mailbox_check_delivery_bundle(task_name)` | 检查回信五件套齐全性 | 校验五个文件存在，并检查 `元信息.json` 必填字段 |
 
@@ -215,6 +232,7 @@ mailbox_check_delivery_bundle(task_name)
 | `routes(filter)` | 从 openapi.json 查端点(方法/路径/参数) |
 | `capabilities(module)` | 扫描模块 manifest.json 查准能力+参数 |
 | `db_schema(table)` | 查数据库表结构(列名/类型/nullable) |
+| `db_reverse_audit(table_filter, max_tables, include_code_references, count_rows)` | 从 DB 表反推 owner/module、router/capability/manifest/code 引用，分级输出 expected_empty / suspicious_empty / requires_flow_probe |
 
 ### 系统探测
 | 工具 | 说明 |
@@ -243,9 +261,10 @@ mailbox_check_delivery_bundle(task_name)
 | 工具 | 说明 |
 |------|------|
 | `mailbox_write_letter(target, category, title, body, required_docs, delivery_mode, overwrite)` | 标准化写投递信到 `华世王镞_v2邮箱/投递箱/`，自动补系统指令、必读文档、交付要求和收件箱目录 |
-| `写封信(target, category, title, body, note)` | 兼容旧别名，内部已转到 `mailbox_write_letter` 的标准格式 |
 | `mailbox_create_delivery_bundle(task_name, summary, changed_files, verification_results, risks, key_design, data_stats, ...)` | 标准化生成回信五件套到 `华世王镞_v2邮箱/收件箱/{任务名}/` |
 | `mailbox_check_delivery_bundle(task_name)` | 检查五件套是否齐全，验证 `元信息.json` 必填字段 |
+
+旧中文别名 `写封信` 仍由服务端兼容处理，但不再放入标准 MCP `tools/list`，避免新协议工具名校验警告。
 
 ### 测试 / 回归
 | 工具 | 说明 |

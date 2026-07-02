@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger("v2.scheduler").getChild("router")
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
+_FAILURE_STATUSES = {"failed", "error"}
 
 
 class CreateSchedulerRequest(BaseModel):
@@ -160,8 +161,10 @@ async def _cap_create(params: dict, caller: str) -> dict:
 async def _cap_list(params: dict, caller: str) -> dict:
     try:
         owner_id = resolve_caller_user_id(caller)
-    except PermissionDenied:
-        return {"success": True, "data": []}
+    except PermissionDenied as exc:
+        return {"success": False, "error": str(exc) or "无法解析调用者身份"}
+    if not owner_id:
+        return {"success": False, "error": "无法解析调用者身份"}
     async with AsyncSessionLocal() as db:
         stmt = select(SystemTaskQueue).where(
             and_(
@@ -178,6 +181,50 @@ async def _cap_list(params: dict, caller: str) -> dict:
          "result": t.result, "error_message": t.error_message}
         for t in tasks
     ]}
+
+
+def _stringify_error(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _agent_failure_message(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+
+    if result.get("success") is False:
+        return _stringify_error(result.get("error")) or "Agent capability returned success:false"
+
+    status = str(result.get("status") or "").lower()
+    if status in _FAILURE_STATUSES:
+        return _stringify_error(result.get("error")) or f"Agent capability status={status}"
+
+    if result.get("error"):
+        return _stringify_error(result.get("error"))
+
+    data = result.get("data")
+    if isinstance(data, dict):
+        data_status = str(data.get("status") or "").lower()
+        if data_status in _FAILURE_STATUSES:
+            return _stringify_error(data.get("error")) or f"Agent capability data.status={data_status}"
+        if data.get("error"):
+            return _stringify_error(data.get("error"))
+
+        results = data.get("results")
+        if isinstance(results, list):
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                item_status = str(item.get("status") or "").lower()
+                if item_status in _FAILURE_STATUSES:
+                    return _stringify_error(item.get("error")) or f"Agent result status={item_status}"
+                if item.get("error"):
+                    return _stringify_error(item.get("error"))
+
+    return None
 
 
 async def _cap_cancel(params: dict, caller: str) -> dict:
@@ -213,6 +260,7 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
 
     result_text = f"定时任务「{title}」已触发。动作: {action_desc[:200]}"
     execute_result = ""
+    failure_error = ""
 
     # Try to actually execute via Agent chat if action_description looks like a user query
     if action_desc and len(action_desc) > 10:
@@ -232,21 +280,24 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
                 caller_role="viewer",
             )
             if isinstance(conv_result, dict):
-                data = conv_result.get("data", {}) if conv_result.get("success") else {}
-                results = data.get("results", [])
-                if results:
-                    execute_result = results[0].get("conclusion", "")
-                elif conv_result.get("data", {}).get("conclusion"):
-                    execute_result = conv_result["data"]["conclusion"]
-                elif conv_result.get("error"):
-                    execute_result = f"执行错误: {conv_result['error']}"
+                failure_error = _agent_failure_message(conv_result) or ""
+                if failure_error:
+                    execute_result = f"执行错误: {failure_error}"
                 else:
-                    execute_result = json.dumps(conv_result, ensure_ascii=False)[:1000]
+                    data = conv_result.get("data", {}) if conv_result.get("success") else {}
+                    results = data.get("results", [])
+                    if results:
+                        execute_result = results[0].get("conclusion", "")
+                    elif conv_result.get("data", {}).get("conclusion"):
+                        execute_result = conv_result["data"]["conclusion"]
+                    else:
+                        execute_result = json.dumps(conv_result, ensure_ascii=False)[:1000]
             else:
                 execute_result = str(conv_result)[:1000]
 
         except Exception as agent_exc:
-            logger.warning("Agent scheduled execution failed, falling back to notify: %s", agent_exc)
+            logger.warning("Agent scheduled execution failed: %s", agent_exc)
+            failure_error = str(agent_exc)
             execute_result = f"Agent 执行失败: {agent_exc}"
 
     if execute_result:
@@ -265,6 +316,15 @@ async def _cap_scheduled_job_handler(params: dict) -> dict:
         )
     except Exception as exc:
         logger.warning("IM notify unavailable, falling back to log: %s", exc)
+
+    if failure_error:
+        return {
+            "success": False,
+            "status": "failed",
+            "error": failure_error,
+            "result": result_text[:2000],
+            "executed": False,
+        }
 
     return {"success": True, "result": result_text[:2000], "executed": bool(execute_result)}
 

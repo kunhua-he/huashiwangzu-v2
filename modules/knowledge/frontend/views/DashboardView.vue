@@ -89,6 +89,7 @@ import { getDashboardStats, startPipeline, type DashboardStats } from '../api'
 
 const s = ref<DashboardStats>({
   total_documents: 0, completed_documents: 0, running_documents: 0, failed_documents: 0,
+  source_unavailable_documents: 0,
   total_entities: 0, total_graph_relations: 0, total_file_relations: 0,
   duplicate_entity_count: 0, duplicate_entity_groups: [],
   entity_category_distribution: {}, document_progresses: [], stuck_documents: [],

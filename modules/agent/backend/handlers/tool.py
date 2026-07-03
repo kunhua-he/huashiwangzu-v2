@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+import uuid
 
 from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
@@ -121,6 +123,15 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
     track_trajectory = params.get("track_trajectory", False)
     enable_gates = params.get("gates", False)
     gate_retry = params.get("gate_retry", 1)
+    turn_index_offset = params.get("turn_index_offset")
+    trajectory_conversation_id = params.get("conversation_id")
+    trajectory_session_id = str(params.get("session_id") or "")
+    if track_trajectory:
+        if trajectory_conversation_id is None:
+            trajectory_conversation_id = -(uuid.uuid4().int >> 65)
+        trajectory_conversation_id = int(trajectory_conversation_id)
+        if not trajectory_session_id:
+            trajectory_session_id = f"subagent_{abs(trajectory_conversation_id)}"
 
     base_tools = tool_discovery.build_tools(caller_role)
     allowed_tools = params.get("tools") or []
@@ -132,13 +143,14 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
     results: list[dict] = []
     trajectory: list[dict] = []
 
-    for task_item in tasks:
+    for task_index, task_item in enumerate(tasks):
         desc = task_item.get("description", "") if isinstance(task_item, dict) else str(task_item)
         if not desc:
             continue
         ctx = task_item.get("context", "") if isinstance(task_item, dict) else ""
         task_tools = task_item.get("tools", []) if isinstance(task_item, dict) else []
         task_write = task_item.get("write_enabled", write_enabled) if isinstance(task_item, dict) else write_enabled
+        task_started = time.perf_counter()
 
         result = await run_single_task(
             task_desc=desc, task_context=ctx, extra_context=extra_context,
@@ -178,11 +190,48 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
 
         results.append(result)
         if track_trajectory:
-            trajectory.append({
+            trajectory_entry = {
                 "task": desc[:200],
                 "rounds": result.get("rounds_used", 0),
                 "status": result["status"],
-            })
+                "recorded": False,
+            }
+            if owner_id is not None:
+                try:
+                    from app.database import AsyncSessionLocal
+                    from sqlalchemy import func, select
+
+                    from ..models import AgentTrajectoryRecord
+                    from ..services.trajectory_service import record_turn
+                    async with AsyncSessionLocal() as db:
+                        if turn_index_offset is None:
+                            next_turn = await db.execute(
+                                select(func.coalesce(func.max(AgentTrajectoryRecord.turn_index), -1) + 1)
+                                .where(AgentTrajectoryRecord.conversation_id == trajectory_conversation_id)
+                            )
+                            turn_index = int(next_turn.scalar_one() or 0)
+                        else:
+                            turn_index = int(turn_index_offset or 0) + task_index
+                        record = await record_turn(
+                            db,
+                            conversation_id=trajectory_conversation_id,
+                            owner_id=owner_id,
+                            session_id=trajectory_session_id,
+                            turn_index=turn_index,
+                            user_input=desc,
+                            tool_calls=result.get("tool_calls", []),
+                            tool_results=result.get("tool_results", []),
+                            assistant_response=result.get("conclusion", ""),
+                            error_occurred=result.get("status") != "completed",
+                            duration_ms=round((time.perf_counter() - task_started) * 1000, 1),
+                        )
+                    trajectory_entry.update(record)
+                except Exception as exc:
+                    logger.warning("subagent trajectory persistence failed: %s", exc)
+                    trajectory_entry["error"] = str(exc)
+            else:
+                trajectory_entry["error"] = "owner_id unavailable; trajectory not persisted"
+            trajectory.append(trajectory_entry)
 
     resp: dict[str, object] = {
         "results": results,
@@ -192,6 +241,8 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
     }
     if track_trajectory:
         resp["trajectory"] = trajectory
+        resp["trajectory_session_id"] = trajectory_session_id
+        resp["trajectory_conversation_id"] = trajectory_conversation_id
     return resp
 
 
@@ -539,6 +590,9 @@ register_capability(
         "context": {"type": "string", "description": "参考上下文"},
         "write_enabled": {"type": "boolean", "description": "是否允许写操作"},
         "track_trajectory": {"type": "boolean", "description": "是否记录执行轨迹"},
+        "conversation_id": {"type": "integer", "description": "可选：将子 Agent 轨迹归属到指定对话；为空时使用临时负数编号"},
+        "session_id": {"type": "string", "description": "可选：轨迹会话标识"},
+        "turn_index_offset": {"type": "integer", "description": "可选：轨迹起始 turn_index；为空时自动追加到该对话当前最大 turn 后"},
         "max_rounds": {"type": "integer", "description": "最大工具轮数"},
         "gates": {"type": "boolean", "description": "是否启用质量门控校验"},
         "gate_retry": {"type": "integer", "description": "门控失败最多重试次数，默认 1"},

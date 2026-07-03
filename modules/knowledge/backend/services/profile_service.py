@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbDocumentProfile, KbPageFusion
+from .llm_diagnostics import timed_llm_chat
 from .prompt_utils import TPROFILE, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("profile")
@@ -57,12 +58,17 @@ async def generate_document_profile(
     # 2. LLM 提炼
     system_prompt = await load_prompt(db, TPROFILE)
     try:
-        result = await gateway_router.chat(
+        result = await timed_llm_chat(
+            logger=logger,
+            stage="profile",
+            profile_key=profile_key,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"请分析以下文档内容，生成文件画像：\n\n{all_text[:12000]}"},
             ],
-            profile_key=profile_key,
+            chat_func=gateway_router.chat,
+            document_id=document_id,
+            extra={"pages": len(fusions)},
         )
         content = (result.get("content") or "").strip()
         if content.startswith("```"):

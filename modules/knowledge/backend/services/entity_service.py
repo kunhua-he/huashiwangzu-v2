@@ -12,6 +12,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .llm_diagnostics import timed_llm_chat
 from .prompt_utils import TENTITY, TFUSION_LEGACY, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("entity")
@@ -31,7 +32,14 @@ async def extract_entities_from_text(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请提取以下内容的实体和关系：\n\n{text[:6000]}"},
         ]
-        resp = await gateway_router.chat(messages, profile_key=profile_key)
+        resp = await timed_llm_chat(
+            logger=logger,
+            stage="entity",
+            profile_key=profile_key,
+            messages=messages,
+            chat_func=gateway_router.chat,
+            extra={"text_chars": len(text)},
+        )
         content = resp.get("content", "")
         if not content:
             return {"entities": [], "relationships": []}
@@ -72,7 +80,14 @@ async def fuse_page_text(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请融合以下分块内容：\n\n{text[:8000]}"},
         ]
-        resp = await gateway_router.chat(messages, profile_key=profile_key)
+        resp = await timed_llm_chat(
+            logger=logger,
+            stage="legacy_page_fusion",
+            profile_key=profile_key,
+            messages=messages,
+            chat_func=gateway_router.chat,
+            extra={"text_chars": len(text)},
+        )
         result = resp.get("content", "")
         return result.strip() if result else text
     except Exception as e:

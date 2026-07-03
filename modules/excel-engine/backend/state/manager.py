@@ -3,9 +3,10 @@
 Central state management with DB persistence, history, snapshot, styles.
 """
 import os
+from copy import deepcopy
 from typing import Any
 
-from ..tool.config import DEFAULT_TOTAL_ROWS, DEFAULT_TOTAL_COLS
+from ..tool.config import DEFAULT_TOTAL_COLS, DEFAULT_TOTAL_ROWS
 
 TEMP_DIR: str = ''
 
@@ -59,11 +60,11 @@ def parse_addresses(params: dict) -> list[str]:
 
 def build_snapshot(state: dict) -> dict:
     return {
-        'cells': state.get('cells', {}),
-        'styles': state.get('styles', {}),
-        'merges': state.get('merges', {}),
-        'col_widths': state.get('col_widths', {}),
-        'row_heights': state.get('row_heights', {}),
+        'cells': deepcopy(state.get('cells', {})),
+        'styles': deepcopy(state.get('styles', {})),
+        'merges': deepcopy(state.get('merges', {})),
+        'col_widths': deepcopy(state.get('col_widths', {})),
+        'row_heights': deepcopy(state.get('row_heights', {})),
         'total_rows': state.get('total_rows', DEFAULT_TOTAL_ROWS),
         'total_cols': state.get('total_cols', DEFAULT_TOTAL_COLS),
     }

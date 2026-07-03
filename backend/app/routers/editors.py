@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.exceptions import AppException, ConflictError, ValidationError, PermissionDenied
+
+from app.core.exceptions import AppException, ConflictError, PermissionDenied, ValidationError
 from app.database import get_db
-from app.schemas.common import ApiResponse
 from app.middleware.auth import require_permission
 from app.models.user import User
-from app.services.office.text_editor_service import TextEditorService
-from app.services.office.csv_editor_service import CsvEditorService
+from app.schemas.common import ApiResponse
 from app.services.file_share_service import check_file_access
+from app.services.office.csv_editor_service import CsvEditorService
+from app.services.office.text_editor_service import TextEditorService
 
 router = APIRouter(prefix="/api/editors", tags=["editors"])
 
@@ -47,7 +48,7 @@ async def read_text(
 ):
     await _require_read_access(db, file_id, user.id)
     try:
-        result = await text_svc.read(db, file_id)
+        result = await text_svc.read(db, file_id, user.id)
         return ApiResponse(data=result)
     except AppException:
         raise
@@ -66,7 +67,7 @@ async def save_text(
 ):
     await _require_write_access(db, file_id, user.id)
     try:
-        await text_svc.save(db, file_id, body.get("content", ""), body.get("mtime"))
+        await text_svc.save(db, file_id, body.get("content", ""), user.id, body.get("mtime"))
         return ApiResponse(data={"message": "Saved successfully"})
     except AppException:
         raise
@@ -84,7 +85,7 @@ async def read_csv(
 ):
     await _require_read_access(db, file_id, user.id)
     try:
-        result = await csv_svc.read(db, file_id)
+        result = await csv_svc.read(db, file_id, user.id)
         return ApiResponse(data=result)
     except AppException:
         raise
@@ -103,7 +104,14 @@ async def save_csv(
 ):
     await _require_write_access(db, file_id, user.id)
     try:
-        await csv_svc.save(db, file_id, body.get("content", ""), body.get("delimiter", ","), body.get("mtime"))
+        await csv_svc.save(
+            db,
+            file_id,
+            body.get("content", ""),
+            user.id,
+            body.get("delimiter", ","),
+            body.get("mtime"),
+        )
         return ApiResponse(data={"message": "Saved successfully"})
     except AppException:
         raise

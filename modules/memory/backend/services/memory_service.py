@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from app.core.exceptions import ValidationError
 from huashiwangzu_modules.memory.init_db import run_init
 from huashiwangzu_modules.memory.models import MemoryChunk, MemoryRecord
 from sqlalchemy import text
@@ -16,6 +17,8 @@ MEMORY_DREAM_SIMILARITY_MERGE = 0.92
 MEMORY_DREAM_DECAY_DAYS = 30
 MEMORY_CHUNK_MAX_CHARS = 900
 MEMORY_CHUNK_OVERLAP_CHARS = 120
+MEMORY_RECALL_LIMIT_MAX = 50
+MEMORY_LIST_LIMIT_MAX = 100
 
 
 async def _ensure_init() -> None:
@@ -24,8 +27,62 @@ async def _ensure_init() -> None:
 
 def _parse_user_id(caller: str) -> int:
     if caller and caller.startswith("user:"):
-        return int(caller.split(":", 1)[1])
+        try:
+            user_id = int(caller.split(":", 1)[1])
+        except (TypeError, ValueError):
+            logger.warning("Invalid memory caller identity: %s", caller)
+            return 0
+        return user_id if user_id > 0 else 0
     return 0
+
+
+def _coerce_positive_int(value: object, name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"{name} must be an integer") from exc
+    if parsed <= 0:
+        raise ValidationError(f"{name} must be positive")
+    return parsed
+
+
+def _coerce_limit(value: object, *, default: int, max_value: int = MEMORY_RECALL_LIMIT_MAX) -> int:
+    if value in (None, ""):
+        return default
+    limit = _coerce_positive_int(value, "limit")
+    if limit > max_value:
+        raise ValidationError(f"limit must be between 1 and {max_value}")
+    return limit
+
+
+def _coerce_offset(value: object, *, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        offset = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("offset must be an integer") from exc
+    if offset < 0:
+        raise ValidationError("offset must be non-negative")
+    return offset
+
+
+def _require_non_empty_text(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValidationError(f"{name} must be a string")
+    text_value = value.strip()
+    if not text_value:
+        raise ValidationError(f"{name} cannot be empty")
+    return value
+
+
+def _coerce_id_list(value: object, name: str) -> list[int]:
+    if not isinstance(value, list) or not value:
+        raise ValidationError(f"{name} must be a non-empty list")
+    ids: list[int] = []
+    for item in value:
+        ids.append(_coerce_positive_int(item, name))
+    return ids
 
 
 async def _update_embedding(memory_id: int, content: str) -> bool:
@@ -34,7 +91,9 @@ async def _update_embedding(memory_id: int, content: str) -> bool:
         vec = await embedding_service._compute_embedding(content)
         if vec:
             async with AsyncSessionLocal() as db:
-                vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
+                vec_literal = embedding_service._vector_literal(vec)
+                if not vec_literal:
+                    return False
                 await _update_embedding_sql(db, memory_id, vec_literal)
             return True
     except Exception as e:
@@ -55,8 +114,9 @@ async def _post_save_process(memory_id: int, content: str, source: str | None) -
             if mem.embedding is None:
                 vec = await embedding_service._compute_embedding(content)
                 if vec:
-                    vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
-                    await _update_embedding_sql(db, memory_id, vec_literal)
+                    vec_literal = embedding_service._vector_literal(vec)
+                    if vec_literal:
+                        await _update_embedding_sql(db, memory_id, vec_literal)
             distilled = await distill_service._distill_summary(content, source)
             update_parts = []
             params = {"id": memory_id}
@@ -223,10 +283,7 @@ async def _do_dream(db: AsyncSession, owner_id: int) -> dict:
             new_conf = max(keep.confidence, drop.confidence)
             keep.confidence = new_conf
             keep.access_count = (keep.access_count or 0) + (drop.access_count or 0)
-            await db.execute(
-                text("DELETE FROM memory_links WHERE from_id = :id OR to_id = :id"),
-                {"id": drop_id},
-            )
+            await _delete_memory_dependents(db, drop_id)
             await db.delete(drop)
             dropped.add(drop_id)
             report["merged"] += 1
@@ -292,6 +349,17 @@ async def _do_dream(db: AsyncSession, owner_id: int) -> dict:
     return report
 
 
+async def _delete_memory_dependents(db: AsyncSession, memory_id: int) -> None:
+    await db.execute(
+        text("DELETE FROM memory_links WHERE from_id = :id OR to_id = :id"),
+        {"id": memory_id},
+    )
+    await db.execute(
+        text("DELETE FROM memory_chunks WHERE memory_record_id = :id"),
+        {"id": memory_id},
+    )
+
+
 async def _auto_link_memory(db: AsyncSession, memory_id: int, owner_id: int) -> int:
     """Auto-create memory_links between the given memory and semantically similar existing memories.
 
@@ -321,16 +389,16 @@ async def _auto_link_memory(db: AsyncSession, memory_id: int, owner_id: int) -> 
         vec = [float(x) for x in raw_embedding.strip("[]").split(",")]
     else:
         vec = list(raw_embedding)
-    vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
-    # Use f-string + quoting for the vector literal (matching _hybrid_recall pattern)
-    # to ensure proper pgvector cast in parameterized queries.
-    sql = text(f"""
-        SELECT id, (1 - (embedding <=> '{vec_literal}'::vector)) AS similarity
+    vec_literal = embedding_service._vector_literal(vec)
+    if not vec_literal:
+        return 0
+    sql = text("""
+        SELECT id, (1 - (embedding <=> CAST(:query_vec AS vector(1024)))) AS similarity
         FROM memory_records
         WHERE owner_id = :owner_id
           AND id != :memory_id
           AND embedding IS NOT NULL
-          AND (1 - (embedding <=> '{vec_literal}'::vector)) >= :threshold
+          AND (1 - (embedding <=> CAST(:query_vec AS vector(1024)))) >= :threshold
         ORDER BY similarity DESC
         LIMIT 10
     """)
@@ -338,6 +406,7 @@ async def _auto_link_memory(db: AsyncSession, memory_id: int, owner_id: int) -> 
         "owner_id": owner_id,
         "memory_id": memory_id,
         "threshold": 0.55,
+        "query_vec": vec_literal,
     })
     similar = r.mappings().all()
 

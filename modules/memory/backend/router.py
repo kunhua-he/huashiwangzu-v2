@@ -9,7 +9,7 @@ from app.services.module_registry import register_capability
 from app.services.task_worker import register_task_handler
 from fastapi import APIRouter, Depends
 from huashiwangzu_modules.memory.models import MemoryRecord
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .schemas import (
@@ -42,11 +42,10 @@ async def http_save(
     current_user: User = Depends(require_permission("viewer")),
 ):
     await memory_service._ensure_init()
-    if not req.text.strip():
-        raise ValidationError("内容不能为空")
+    text = memory_service._require_non_empty_text(req.text, "text")
     memory = MemoryRecord(
         owner_id=current_user.id,
-        text=req.text,
+        text=text,
         tags=req.tags if req.tags else None,
         source=req.source or "user-save",
         conversation_id=req.conversation_id,
@@ -54,8 +53,8 @@ async def http_save(
     db.add(memory)
     await db.commit()
     await db.refresh(memory)
-    await memory_service._update_embedding(memory.id, req.text)
-    await memory_service._enqueue_post_save(memory.id, req.text, req.source)
+    await memory_service._update_embedding(memory.id, text)
+    await memory_service._enqueue_post_save(memory.id, text, req.source)
     return ApiResponse(data={"id": memory.id, "status": "saved"})
 
 
@@ -66,7 +65,9 @@ async def http_recall(
     current_user: User = Depends(require_permission("viewer")),
 ):
     await memory_service._ensure_init()
-    results = await _hybrid_recall(db, current_user.id, req.query, req.limit, req.expand_chain)
+    query = memory_service._require_non_empty_text(req.query, "query")
+    limit = memory_service._coerce_limit(req.limit, default=MEMORY_TOP_K_DEFAULT)
+    results = await _hybrid_recall(db, current_user.id, query, limit, req.expand_chain)
     return ApiResponse(data=results)
 
 
@@ -78,12 +79,14 @@ async def http_list(
     offset: int = 0,
 ):
     await memory_service._ensure_init()
+    safe_limit = memory_service._coerce_limit(limit, default=50, max_value=memory_service.MEMORY_LIST_LIMIT_MAX)
+    safe_offset = memory_service._coerce_offset(offset, default=0)
     stmt = (
         select(MemoryRecord)
         .where(MemoryRecord.owner_id == current_user.id)
         .order_by(MemoryRecord.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+        .offset(safe_offset)
+        .limit(safe_limit)
     )
     r = await db.execute(stmt)
     items = r.scalars().all()
@@ -102,10 +105,7 @@ async def http_delete(
         raise NotFound("记忆不存在")
     if memory.owner_id != current_user.id:
         raise PermissionDenied("只能删除自己的记忆")
-    await db.execute(
-        text("DELETE FROM memory_links WHERE from_id = :id OR to_id = :id"),
-        {"id": req.id},
-    )
+    await memory_service._delete_memory_dependents(db, req.id)
     await db.delete(memory)
     await db.commit()
     return ApiResponse(data={"id": req.id, "status": "deleted"})
@@ -118,9 +118,9 @@ async def http_fuse(
     current_user: User = Depends(require_permission("viewer")),
 ):
     await memory_service._ensure_init()
-    if not req.ids:
-        raise ValidationError("ids 不能为空")
-    result = await memory_service._do_fuse(db, current_user.id, req.query, req.ids)
+    query = memory_service._require_non_empty_text(req.query, "query")
+    ids = memory_service._coerce_id_list(req.ids, "ids")
+    result = await memory_service._do_fuse(db, current_user.id, query, ids)
     return ApiResponse(data=result)
 
 
@@ -137,13 +137,14 @@ async def http_rethink(
     if memory.owner_id != current_user.id:
         raise PermissionDenied("只能编辑自己的记忆")
     old_text = memory.text
-    memory.text = req.text
+    text = memory_service._require_non_empty_text(req.text, "text")
+    memory.text = text
     if req.tags is not None:
         memory.tags = req.tags
     memory.source = "rethink"
     await db.commit()
-    await memory_service._update_embedding(memory.id, req.text)
-    await memory_service._enqueue_post_save(memory.id, req.text, "rethink")
+    await memory_service._update_embedding(memory.id, text)
+    await memory_service._enqueue_post_save(memory.id, text, "rethink")
     return ApiResponse(data={"id": memory.id, "status": "rethought", "old_text": old_text})
 
 
@@ -159,9 +160,12 @@ async def http_replace(
         raise NotFound("记忆不存在")
     if memory.owner_id != current_user.id:
         raise PermissionDenied("只能编辑自己的记忆")
-    if req.old_text not in memory.text:
+    old_text = memory_service._require_non_empty_text(req.old_text, "old_text")
+    if not isinstance(req.new_text, str):
+        raise ValidationError("new_text must be a string")
+    if old_text not in memory.text:
         raise ValidationError("未找到要替换的文本")
-    new_memory_text = memory.text.replace(req.old_text, req.new_text, 1)
+    new_memory_text = memory.text.replace(old_text, req.new_text, 1)
     memory.text = new_memory_text
     memory.source = "edit"
     await db.commit()
@@ -182,7 +186,8 @@ async def http_insert(
         raise NotFound("记忆不存在")
     if memory.owner_id != current_user.id:
         raise PermissionDenied("只能编辑自己的记忆")
-    new_memory_text = memory.text + "\n" + req.text
+    insert_text = memory_service._require_non_empty_text(req.text, "text")
+    new_memory_text = memory.text + "\n" + insert_text
     memory.text = new_memory_text
     memory.source = "edit"
     await db.commit()

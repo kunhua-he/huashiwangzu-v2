@@ -49,6 +49,14 @@ HTTP 前缀：`/api/knowledge`
 
 所有业务表使用 `kb_*` 前缀：catalogs、documents、chunks、page_fusions、entity_dictionary、entity_aliases、disambiguation、graph_nodes、graph_edges、chunk_entities、evidence、conclusion_evidence、entity_merge_log、governance_candidates。
 
+## 主链路质量契约
+
+- `ingest-status` 是 Agent 和前端判断入库状态的统一口径，必须同时暴露队列任务、源文件可用性、parse/vector/raw/fusion/profile/graph/relation 的阶段摘要。
+- 源文件被删除或缺失时，状态必须显示为 `source_unavailable`，不得把历史 `done` 的 raw/fusion/profile 结果继续计入看板完成数。
+- 图谱进度以本文档治理候选或 chunk-entity 关联数作为文档级完成信号，同时返回全局 graph node 计数用于诊断；不能只依赖可能为空的中间关联表。
+- LLM 调用必须记录 `LLM_CALL_START/END/ERROR` 或流式 TTFT 日志；流式无 fallback 失败必须抛错，不得返回空 content 伪装成功。
+- 后台 pipeline 必须把 stage 结果写入 `kb_pipeline_runs` / `kb_pipeline_stage_runs`，失败、降级和 source unavailable 都要能从状态接口或治理能力看到。
+
 ## 视频分析规划
 
 知识库视频分析体系建议按“先音频转写 + segment text RAG，再关键帧 OCR，再 VLM segment caption，最后视觉检索和 GraphRAG”的路线演进。详细方案已沉淀到 `开发文档/03_模块开发文档/knowledge_video_analysis_system_plan.md`。

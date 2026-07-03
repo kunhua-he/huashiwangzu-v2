@@ -13,7 +13,6 @@ class AgentUsageDaily(Base, TimestampMixin):
     """Daily aggregated model usage costs."""
     __tablename__ = "agent_usage_daily"
     __table_args__ = {"extend_existing": True}
-    __table_args__ = {"extend_existing": True}
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     usage_date: Mapped[date] = mapped_column(Date, nullable=False)
     model_key: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -294,11 +293,11 @@ class AgentCheckpoint(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    checkpoint_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    round_index: Mapped[int] = mapped_column(Integer, default=0)
-    state_data: Mapped[dict] = mapped_column(JSON, default=dict)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    parent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    checkpoint_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_checkpoint_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    channel_values: Mapped[dict] = mapped_column(JSON, default=dict)
+    extra_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class AgentTrajectoryRecord(Base, TimestampMixin):

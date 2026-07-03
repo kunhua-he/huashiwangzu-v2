@@ -110,6 +110,44 @@ def _refresh_middleware_stack(app: FastAPI) -> None:
     app.middleware_stack = app.build_middleware_stack()
 
 
+def _private_key(owner_id: int, module_key: str) -> str:
+    return f"__private__{owner_id}__{module_key}"
+
+
+def _is_runtime_registered(owner_id: int, module_key: str, router_prefix: str | None) -> bool:
+    private_key = _private_key(owner_id, module_key)
+    prefix = (router_prefix or "").rstrip("/")
+    return bool(prefix and _module_prefix_map.get(prefix) == private_key)
+
+
+async def restore_active_private_modules(db: AsyncSession) -> dict:
+    """Rehydrate active private module routes in the current worker process."""
+    result = await db.execute(
+        select(PrivateModule).where(PrivateModule.status == "active")
+    )
+    restored = 0
+    failed = 0
+    for record in result.scalars().all():
+        if _is_runtime_registered(record.owner_id, record.module_key, record.router_prefix):
+            continue
+        try:
+            await _activate_private_module_runtime(record, update_lkg=False)
+            restored += 1
+        except Exception as exc:
+            record.status = "failed"
+            record.error_message = f"Runtime restore failed: {exc}"
+            failed += 1
+            logger.error(
+                "Failed to restore active private module '%s' for owner %s: %s",
+                record.module_key,
+                record.owner_id,
+                exc,
+            )
+    if restored or failed:
+        await db.commit()
+    return {"restored": restored, "failed": failed}
+
+
 async def preview_private_module(
     db: AsyncSession, owner_id: int, module_key: str, module_type: str = "module"
 ) -> dict:
@@ -203,17 +241,40 @@ async def activate_private_module(
     db: AsyncSession, owner_id: int, module_key: str
 ) -> dict:
     record = await _get_active_or_installed(db, owner_id, module_key)
+    if record.status == "active" and _is_runtime_registered(owner_id, module_key, record.router_prefix):
+        return _record_to_dict(record)
+
+    try:
+        await _activate_private_module_runtime(record, update_lkg=record.status != "active")
+    except Exception as exc:
+        record.status = "failed"
+        record.error_message = str(exc)
+        logger.error("Failed to activate private module '%s': %s", module_key, exc)
+        await db.commit()
+        await db.refresh(record)
+        return _record_to_dict(record)
+
+    await db.commit()
+    await db.refresh(record)
+    return _record_to_dict(record)
+
+
+async def _activate_private_module_runtime(
+    record: PrivateModule,
+    *,
+    update_lkg: bool,
+) -> None:
+    owner_id = record.owner_id
+    module_key = record.module_key
     module_dir = Path(record.installed_path)
     manifest = record.manifest_json if isinstance(record.manifest_json, dict) else {}
 
-    if record.status == "active":
-        return _record_to_dict(record)
-
-    record.lkg_checksum = record.checksum
-    record.lkg_version = record.version
+    if update_lkg:
+        record.lkg_checksum = record.checksum
+        record.lkg_version = record.version
 
     registered_prefix = ""
-    private_key = f"__private__{owner_id}__{module_key}"
+    private_key = _private_key(owner_id, module_key)
     cap_snapshot_before = _current_capability_snapshot()
     try:
         backend_config = manifest.get("backend")
@@ -243,21 +304,12 @@ async def activate_private_module(
 
         record.status = "active"
         record.error_message = None
-    except Exception as exc:
+    except Exception:
         if registered_prefix:
             _unregister_private_module(owner_id, module_key, registered_prefix)
         _restore_capability_snapshot(cap_snapshot_before)
         _PRIVATE_MODULE_CAP_KEYS.pop(private_key, None)
-        record.status = "failed"
-        record.error_message = str(exc)
-        logger.error("Failed to activate private module '%s': %s", module_key, exc)
-        await db.commit()
-        await db.refresh(record)
-        return _record_to_dict(record)
-
-    await db.commit()
-    await db.refresh(record)
-    return _record_to_dict(record)
+        raise
 
 
 async def deactivate_private_module(
@@ -400,7 +452,7 @@ async def _get_active_or_installed(
 
 
 def _unregister_private_module(owner_id: int, module_key: str, router_prefix: str | None = None) -> None:
-    private_key = f"__private__{owner_id}__{module_key}"
+    private_key = _private_key(owner_id, module_key)
     prefix = router_prefix.rstrip("/") if router_prefix else ""
     if not prefix:
         prefix = next((k for k, v in _module_prefix_map.items() if v == private_key), "")

@@ -45,6 +45,8 @@ async def record_turn(
     replaying the same turn overwrites, never duplicates.
     """
     try:
+        if turn_index is None:
+            raise ValueError("turn_index is required")
         now = datetime.now(timezone.utc)
         values = {
             "conversation_id": conversation_id,

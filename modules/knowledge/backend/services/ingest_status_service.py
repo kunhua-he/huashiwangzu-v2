@@ -21,6 +21,8 @@ from ..models import (
     KbDocument,
     KbDocumentProfile,
     KbFileRelation,
+    KbGovernanceCandidate,
+    KbGraphNode,
 )
 
 ACTIVE_TASK_STATUSES = {"pending", "running"}
@@ -118,6 +120,8 @@ def build_ingest_status_payload(
     *,
     profile_count: int = 0,
     graph_entity_count: int = 0,
+    graph_node_count: int = 0,
+    chunk_entity_count: int = 0,
     relation_count: int = 0,
     source_available: bool = True,
     source_state: str = "available",
@@ -150,6 +154,8 @@ def build_ingest_status_payload(
         "graph": _stage("done" if graph_entity_count > 0 else "pending", count=graph_entity_count),
         "relation": _stage("done" if relation_count > 0 else "pending", count=relation_count),
     }
+    stage_summary["graph"]["node_count"] = graph_node_count
+    stage_summary["graph"]["chunk_entity_count"] = chunk_entity_count
 
     stage_order = ("parse", "vector", "raw", "fusion", "profile", "graph", "relation")
     current_stage = "source" if not source_available else next(
@@ -252,12 +258,22 @@ async def get_ingest_status(
             KbDocumentProfile.owner_id == owner_id,
         )
     ) or 0
-    graph_entity_count = await db.scalar(
+    candidate_count = await db.scalar(
+        select(func.count(KbGovernanceCandidate.id)).where(
+            KbGovernanceCandidate.document_id == document_id,
+            KbGovernanceCandidate.owner_id == owner_id,
+        )
+    ) or 0
+    chunk_entity_count = await db.scalar(
         select(func.count(KbChunkEntity.id)).where(
             KbChunkEntity.document_id == document_id,
             KbChunkEntity.owner_id == owner_id,
         )
     ) or 0
+    graph_node_count = await db.scalar(
+        select(func.count(KbGraphNode.id)).where(KbGraphNode.owner_id == owner_id)
+    ) or 0
+    graph_entity_count = max(candidate_count, chunk_entity_count)
     relation_count = await db.scalar(
         select(func.count(KbFileRelation.id)).where(
             KbFileRelation.owner_id == owner_id,
@@ -271,6 +287,8 @@ async def get_ingest_status(
         task,
         profile_count=profile_count,
         graph_entity_count=graph_entity_count,
+        graph_node_count=graph_node_count,
+        chunk_entity_count=chunk_entity_count,
         relation_count=relation_count,
         source_available=source.available,
         source_state=source.reason or "available",

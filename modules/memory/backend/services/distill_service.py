@@ -12,7 +12,7 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import MemoryLink, MemoryRecord
-from .embedding_service import _compute_embedding
+from .embedding_service import _compute_embedding, _vector_literal
 
 logger = logging.getLogger("v2.memory").getChild("distill_service")
 
@@ -88,21 +88,28 @@ async def _hybrid_recall(
     """Hybrid recall: vector cosine → rerank → fallback keyword → chain expand.
     Returns list of {id, text, summary, tags, confidence, recency_score,
     memory_type, keywords, raw_id, similarity, created_at}."""
+    try:
+        top_k = int(top_k)
+    except (TypeError, ValueError):
+        top_k = 5
+    top_k = max(1, min(top_k, 50))
     query_vec = await _compute_embedding(query)
     use_vector = query_vec is not None and len(query) > 3
 
     if use_vector:
         try:
-            vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
-            sql = text(f"""
+            vec_literal = _vector_literal(query_vec)
+            if not vec_literal:
+                raise ValueError("invalid embedding vector")
+            sql = text("""
                 SELECT id, owner_id, text, summary, tags, confidence,
                        recency_score, raw_id, conversation_id, source,
                        memory_type, keywords, access_count, created_at,
-                       (1 - (embedding <=> '{vec_literal}'::vector)) AS similarity
+                       (1 - (embedding <=> CAST(:query_vec AS vector(1024)))) AS similarity
                 FROM memory_records
                 WHERE owner_id = :owner_id
                   AND embedding IS NOT NULL
-                  AND (1 - (embedding <=> '{vec_literal}'::vector)) >= :threshold
+                  AND (1 - (embedding <=> CAST(:query_vec AS vector(1024)))) >= :threshold
                 ORDER BY similarity DESC
                 LIMIT :candidates
             """)
@@ -110,6 +117,7 @@ async def _hybrid_recall(
                 "owner_id": owner_id,
                 "threshold": MEMORY_SIMILARITY_THRESHOLD,
                 "candidates": MEMORY_RECALL_CANDIDATES,
+                "query_vec": vec_literal,
             })
             rows = r.mappings().all()
         except Exception as e:

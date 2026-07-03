@@ -3,6 +3,7 @@
 Extracted from router.py to follow Router → Service → Model layering.
 """
 import logging
+import math
 
 from huashiwangzu_modules.memory.models import MemoryChunk, MemoryRecord
 from sqlalchemy import func, select, text
@@ -10,12 +11,43 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("v2.memory").getChild("embedding_service")
 
+EXPECTED_EMBEDDING_DIM = 1024
+
+
+def _normalize_embedding(vec: object) -> list[float] | None:
+    """Return a finite 1024-dim vector, or None when the embedding backend drifted."""
+    if not isinstance(vec, list):
+        logger.warning("Embedding backend returned non-list payload: %s", type(vec).__name__)
+        return None
+    if len(vec) != EXPECTED_EMBEDDING_DIM:
+        logger.warning("Embedding dimension mismatch: expected %s, got %s", EXPECTED_EMBEDDING_DIM, len(vec))
+        return None
+    normalized: list[float] = []
+    for item in vec:
+        try:
+            value = float(item)
+        except (TypeError, ValueError):
+            logger.warning("Embedding contains non-numeric value")
+            return None
+        if not math.isfinite(value):
+            logger.warning("Embedding contains non-finite value")
+            return None
+        normalized.append(value)
+    return normalized
+
+
+def _vector_literal(vec: object) -> str | None:
+    normalized = _normalize_embedding(vec)
+    if normalized is None:
+        return None
+    return "[" + ",".join(str(v) for v in normalized) + "]"
+
 
 async def _compute_embedding(text: str) -> list[float] | None:
     """Compute embedding via framework model_services. Returns None on failure."""
     try:
         from app.services.model_services import get_embedding
-        return await get_embedding(text[:2048])
+        return _normalize_embedding(await get_embedding(text[:2048]))
     except Exception as e:
         logger.warning("Embedding computation failed: %s", e)
         return None
@@ -23,7 +55,7 @@ async def _compute_embedding(text: str) -> list[float] | None:
 
 async def _update_embedding_sql(db, memory_id: int, vec_literal: str) -> None:
     """Shared helper: update embedding vector using parameterized SQL."""
-    sql = "UPDATE memory_records SET embedding = CAST(:embedding AS vector(1024)) WHERE id = :id"
+    sql = f"UPDATE memory_records SET embedding = CAST(:embedding AS vector({EXPECTED_EMBEDDING_DIM})) WHERE id = :id"
     await db.execute(text(sql), {"embedding": vec_literal, "id": memory_id})
     await db.commit()
 
@@ -94,7 +126,11 @@ async def backfill_missing_record_embeddings(
                 result["failed"] += 1
                 result["failures"].append({"id": memory.id, "reason": "embedding_service_returned_empty"})
                 continue
-            vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
+            vec_literal = _vector_literal(vec)
+            if not vec_literal:
+                result["failed"] += 1
+                result["failures"].append({"id": memory.id, "reason": "embedding_dimension_mismatch"})
+                continue
             await _update_embedding_sql(db, memory.id, vec_literal)
             result["updated"] += 1
             updated_owner_ids.add(memory.owner_id)
@@ -188,8 +224,12 @@ async def backfill_missing_chunk_embeddings(
                 result["failed"] += 1
                 result["failures"].append({"id": chunk.id, "reason": "embedding_service_returned_empty"})
                 continue
-            vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
-            sql = "UPDATE memory_chunks SET embedding = CAST(:embedding AS vector(1024)) WHERE id = :id"
+            vec_literal = _vector_literal(vec)
+            if not vec_literal:
+                result["failed"] += 1
+                result["failures"].append({"id": chunk.id, "reason": "embedding_dimension_mismatch"})
+                continue
+            sql = f"UPDATE memory_chunks SET embedding = CAST(:embedding AS vector({EXPECTED_EMBEDDING_DIM})) WHERE id = :id"
             await db.execute(text(sql), {"embedding": vec_literal, "id": chunk.id})
             result["updated"] += 1
         except Exception as exc:

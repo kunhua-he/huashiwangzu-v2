@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
 
     # Idempotent migration: add origin_type to framework_content_packages
     from sqlalchemy import text as sa_text
+
     from app.database import engine
     try:
         async with engine.begin() as conn:
@@ -51,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     from app.database import AsyncSessionLocal
     from app.services.app_service import sync_apps_from_manifest
-    from app.services.private_module_service import set_app_instance
+    from app.services.private_module_service import restore_active_private_modules, set_app_instance
     from app.services.task_worker import start_worker, stop_worker
 
     # Register private module service app reference
@@ -60,6 +61,9 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         result = await sync_apps_from_manifest(db)
         logger.info("App manifest sync completed: %s", result)
+        private_restore = await restore_active_private_modules(db)
+        if private_restore["restored"] or private_restore["failed"]:
+            logger.info("Private module runtime restore completed: %s", private_restore)
 
     start_worker()
     logger.info("Background task worker started")
@@ -199,8 +203,18 @@ async def health_check():
 
     worker = worker_health()
     event_bus_status = "ok" if event_bus_ok else "error"
+    task_queue_ok = not (
+        task_queue_summary
+        and task_queue_summary.get("semantic_failed_completed_24h", 0) > 0
+    )
     status = "ok"
-    if database_status != "ok" or module_errors or not worker.get("running") or event_bus_status != "ok":
+    if (
+        database_status != "ok"
+        or module_errors
+        or not worker.get("running")
+        or event_bus_status != "ok"
+        or not task_queue_ok
+    ):
         status = "degraded" if database_status == "ok" else "error"
 
     return ApiResponse(data={

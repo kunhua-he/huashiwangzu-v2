@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbPageFusion, KbRawData
+from .llm_diagnostics import timed_llm_chat
 from .prompt_utils import TFUSION, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("fusion")
@@ -118,12 +119,16 @@ async def _llm_fuse(db: AsyncSession | None, round_texts: dict[int, str]) -> dic
 {round_texts.get(3, '(无)')[:4000]}"""
 
     try:
-        result = await gateway_router.chat(
+        result = await timed_llm_chat(
+            logger=logger,
+            stage="fusion",
+            profile_key="deepseek-v4-flash",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            profile_key="deepseek-v4-flash",
+            chat_func=gateway_router.chat,
+            extra={"rounds": len(round_texts)},
         )
         content = (result.get("content") or "").strip()
         # 去除可能的 markdown 代码块标记

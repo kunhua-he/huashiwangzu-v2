@@ -121,6 +121,16 @@ async def test_private_module_deactivate_removes_runtime_route(monkeypatch, tmp_
             assert route_resp.status_code == 200
             assert route_resp.json() == {"ok": True}
 
+            pms._unregister_private_module(owner_id, module_key, private_prefix)
+            removed_runtime_resp = await client.get(f"{private_prefix}/ping", headers=headers)
+            assert removed_runtime_resp.status_code == 404
+
+            reactivate_resp = await client.post(f"/api/private-modules/{module_key}/activate", headers=headers)
+            assert reactivate_resp.json()["success"] is True
+            restored_resp = await client.get(f"{private_prefix}/ping", headers=headers)
+            assert restored_resp.status_code == 200
+            assert restored_resp.json() == {"ok": True}
+
             deactivate_resp = await client.post(f"/api/private-modules/{module_key}/deactivate", headers=headers)
             assert deactivate_resp.json()["success"] is True
 

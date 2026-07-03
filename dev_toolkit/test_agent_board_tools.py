@@ -93,6 +93,27 @@ def test_agent_board_rejects_fresh_claim_and_non_owner_terminal_state(tmp_path: 
     anyio.run(run)
 
 
+def test_agent_board_heartbeat_missing_task_points_to_claim(tmp_path: Path) -> None:
+    path = tmp_path / "agent_board.json"
+
+    async def run() -> None:
+        heartbeat = _load(
+            await heartbeat_task(
+                path,
+                agent="agent-a",
+                task_id="missing-task",
+                node_note="node 1",
+            )
+        )
+        assert heartbeat["success"] is False
+        assert heartbeat["error"] == "task not found"
+        assert "agent_board_claim" in heartbeat["hint"]
+        assert heartbeat["claim_example"]["agent"] == "agent-a"
+        assert heartbeat["claim_example"]["task_id"] == "missing-task"
+
+    anyio.run(run)
+
+
 def test_agent_board_allows_stale_reclaim_and_records_block(tmp_path: Path) -> None:
     path = tmp_path / "agent_board.json"
 

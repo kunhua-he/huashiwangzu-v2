@@ -207,7 +207,7 @@ def test_embedding_update_sql_uses_asyncpg_safe_cast() -> None:
     ).read_text(encoding="utf-8")
 
     assert ":embedding::vector" not in service_src
-    assert "CAST(:embedding AS vector(1024))" in service_src
+    assert "CAST(:embedding AS vector({EXPECTED_EMBEDDING_DIM}))" in service_src
     assert "backfill_missing_record_embeddings" in service_src
     assert "dry_run" in service_src
 
@@ -306,6 +306,28 @@ def test_backfill_embeddings_output_shape() -> None:
     print("  [BACKFILL_EMBEDDINGS] Output shape valid")
 
 
+def test_memory_quality_guard_source_contracts() -> None:
+    """Source guards for limits, vector dimension, and chunk cleanup."""
+    module_root = Path(__file__).resolve().parents[1]
+    embedding_src = (module_root / "backend" / "services" / "embedding_service.py").read_text(encoding="utf-8")
+    memory_src = (module_root / "backend" / "services" / "memory_service.py").read_text(encoding="utf-8")
+    capability_src = (module_root / "backend" / "services" / "capabilities.py").read_text(encoding="utf-8")
+    experience_src = (module_root / "backend" / "services" / "experience_service.py").read_text(encoding="utf-8")
+    init_src = (module_root / "backend" / "init_db.py").read_text(encoding="utf-8")
+
+    assert "EXPECTED_EMBEDDING_DIM = 1024" in embedding_src
+    assert "Embedding dimension mismatch" in embedding_src
+    assert "CAST(:query_vec AS vector(1024))" in capability_src
+    assert "CAST(:query_vec AS vector(1024))" in memory_src
+    assert "_coerce_limit" in memory_src
+    assert "DELETE FROM memory_chunks WHERE memory_record_id = :id" in memory_src
+    assert ":note_payload IS NULL" not in experience_src
+    assert '"has_note": note_payload is not None' in experience_src
+    assert "orphan_chunk_cleanup_sql" in init_src
+    assert "ix_memory_chunks_embedding" in init_src
+    print("  [QUALITY_GUARDS] Source contracts valid")
+
+
 def test_backfill_dream_followup_is_degraded() -> None:
     """Backfill must report dream failures without hiding successful updates."""
     result = {
@@ -357,6 +379,7 @@ def main() -> None:
     test_experience_output_shape()
     test_stable_rule_output_shape()
     test_backfill_embeddings_output_shape()
+    test_memory_quality_guard_source_contracts()
     test_backfill_dream_followup_is_degraded()
     test_response_shape()
     print("=" * 60)

@@ -206,6 +206,8 @@ function getNodeLiveStatus(node: FileTreeNode): string | undefined {
     if (lp.overall_status === 'running') return 'running'
     if (lp.overall_status === 'done') return 'done'
     if (lp.overall_status === 'failed') return 'failed'
+    if (lp.overall_status === 'degraded') return 'failed'
+    if (lp.overall_status === 'source_unavailable') return 'failed'
     return 'pending'
   }
   // 兜底：liveProgressMap 无记录时用 doc 粗状态字段
@@ -344,8 +346,8 @@ const analyzing = computed(() => progress.value?.overall_status === 'running')
 const runningCount = computed(() => Object.values(liveProgressMap.value).filter(p => p.overall_status === 'running').length)
 const hasResult = computed(() => progress.value?.overall_status === 'done' || fusions.value.length > 0)
 const showProgress = computed(() => !!progress.value && progress.value.overall_status !== 'done')
-const headStatusText = computed(() => { const p = progress.value; if (!p) return '尚未分析'; if (p.overall_status === 'done') return '分析完成'; if (p.overall_status === 'failed') return '分析出错'; if (p.overall_status === 'running') return p.current_stage + '…'; return '待分析' })
-const progressHeadline = computed(() => { const p = progress.value; if (!p) return ''; if (p.overall_status === 'done') return '全部完成'; if (p.overall_status === 'failed') return '分析出错,可重新分析'; return '正在「' + p.current_stage + '」' })
+const headStatusText = computed(() => { const p = progress.value; if (!p) return '尚未分析'; if (p.overall_status === 'done') return '分析完成'; if (p.overall_status === 'failed') return '分析出错'; if (p.overall_status === 'degraded') return '分析有缺损'; if (p.overall_status === 'source_unavailable') return '源文件不可用'; if (p.overall_status === 'running') return p.current_stage + '…'; return '待分析' })
+const progressHeadline = computed(() => { const p = progress.value; if (!p) return ''; if (p.overall_status === 'done') return '全部完成'; if (p.overall_status === 'failed') return '分析出错,可重新分析'; if (p.overall_status === 'degraded') return '分析有缺损,可重新分析'; if (p.overall_status === 'source_unavailable') return '源文件已删除或不可用'; return '正在「' + p.current_stage + '」' })
 const ringStyle = computed(() => { const pct = progress.value?.overall_percent ?? 0; return { background: `conic-gradient(#2395bc ${pct * 3.6}deg, #e6eef5 0deg)` } })
 const overallPercent = computed(() => Math.max(0, Math.min(100, progress.value?.overall_percent ?? 0)))
 const profileEntities = computed(() => parseJsonField<Array<{ name: string }>>(profile.value?.key_entities, []).slice(0, 12))
@@ -534,13 +536,15 @@ async function retryPendingDocuments() {
     const lp = liveProgressMap.value[d.id]
     const lpRunning = lp?.overall_status === 'running'
     const lpFailed = lp?.overall_status === 'failed'
+    const lpDegraded = lp?.overall_status === 'degraded'
+    const lpUnavailable = lp?.overall_status === 'source_unavailable'
     const lpDone = lp?.overall_status === 'done'
-    const lpPending = !lp || (!lpDone && !lpFailed && !lpRunning)
+    const lpPending = !lp || (!lpDone && !lpFailed && !lpDegraded && !lpUnavailable && !lpRunning)
 
     // 综合判断：两个维度都认为 pending 才 retry（防误判）
     if (!docStatusPending && !lpPending) continue
     // 任一维度认为是 running/failed/done 的不处理
-    if (docStatusRunning || lpRunning || docStatusDone || lpDone || docStatusFailed || lpFailed) continue
+    if (docStatusRunning || lpRunning || docStatusDone || lpDone || docStatusFailed || lpFailed || lpDegraded || lpUnavailable) continue
 
     toRetry.push(d.id)
   }

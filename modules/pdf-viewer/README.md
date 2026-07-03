@@ -19,3 +19,19 @@ The desktop shell opens this viewer automatically when a user double-clicks a `.
 - Frontend-only module; no backend or runtime.
 - Relies on the framework's file preview API for fetching PDF content.
 - Window default size 950×700, supports multiple instances.
+
+## Sandbox verification
+
+```bash
+cd modules/pdf-viewer/sandbox
+npm install
+npm run build
+
+cd ../../../frontend
+npm run build
+
+cd ..
+backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check
+```
+
+Expected result: `pdf-viewer` passes through its sandbox frontend build. There is no `sandbox/test_module.py` because this module has no backend router, no samples, and no cross-module capability.

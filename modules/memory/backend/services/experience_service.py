@@ -18,6 +18,7 @@ EXPERIENCE_SCOPE_USER = "user"
 EXPERIENCE_SCOPE_TEAM = "team"
 EXPERIENCE_SCOPE_GLOBAL = "global"
 EXPERIENCE_SCOPES = {EXPERIENCE_SCOPE_USER, EXPERIENCE_SCOPE_TEAM, EXPERIENCE_SCOPE_GLOBAL}
+EXPERIENCE_MATCH_LIMIT_MAX = 20
 
 
 def _is_system_caller(caller: str) -> bool:
@@ -38,6 +39,18 @@ def _parse_team_owner_ids(raw: object) -> list[int]:
         if value > 0:
             result.append(value)
     return result
+
+
+def _coerce_match_limit(raw: object, default: int = 2) -> int:
+    if raw in (None, ""):
+        return default
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("limit must be an integer") from exc
+    if limit < 1 or limit > EXPERIENCE_MATCH_LIMIT_MAX:
+        raise ValidationError(f"limit must be between 1 and {EXPERIENCE_MATCH_LIMIT_MAX}")
+    return limit
 
 
 def _resolve_experience_write_scope(
@@ -156,15 +169,17 @@ async def _save_experience(
     trigger_vec = await embedding_service._compute_embedding(trigger_condition)
     if trigger_vec:
         try:
-            vec_literal = "[" + ",".join(str(v) for v in trigger_vec) + "]"
+            vec_literal = embedding_service._vector_literal(trigger_vec)
+            if not vec_literal:
+                raise ValueError("invalid embedding vector")
             sql = text(f"""
                 SELECT id, trigger_condition, steps, success_weight
                 FROM memory_experiences
                 WHERE active = true
                   AND {scope_owner_sql}
                   AND trigger_embedding IS NOT NULL
-                  AND (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) >= :threshold
-                ORDER BY (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) DESC
+                  AND (1 - (trigger_embedding <=> CAST(:query_vec AS vector(1024)))) >= :threshold
+                ORDER BY (1 - (trigger_embedding <=> CAST(:query_vec AS vector(1024)))) DESC
                 LIMIT 3
             """)
             r = await db.execute(sql, {**scope_owner_params, "threshold": EXPERIENCE_DEDUP_THRESHOLD, "query_vec": vec_literal})
@@ -202,7 +217,7 @@ async def _save_experience(
                     "success_weight": updated["success_weight"] if updated else (cand["success_weight"] or 1) + 1,
                 }
 
-    trigger_vec_literal = "[" + ",".join(str(v) for v in trigger_vec) + "]" if trigger_vec else None
+    trigger_vec_literal = embedding_service._vector_literal(trigger_vec) if trigger_vec else None
     inserted = await db.execute(
         text("""
             INSERT INTO memory_experiences (
@@ -210,7 +225,7 @@ async def _save_experience(
                 tools_used, source_conversation_id, active, created_at, updated_at
             )
             VALUES (
-                :owner_id, :scope, :trigger_condition, CAST(:trigger_vec AS vector), :steps,
+                :owner_id, :scope, :trigger_condition, CAST(:trigger_vec AS vector(1024)), :steps,
                 :tools_used, :source_conversation_id, true, NOW(), NOW()
             )
             ON CONFLICT DO NOTHING
@@ -263,17 +278,20 @@ async def _match_experience(
     owner_id: int | None = None,
     team_owner_ids: list[int] | None = None,
 ) -> list[dict]:
+    limit = _coerce_match_limit(limit)
     query_vec = await embedding_service._compute_embedding(query)
     access_sql, access_params = _access_condition(owner_id, team_owner_ids or [])
     if query_vec:
         try:
-            vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
+            vec_literal = embedding_service._vector_literal(query_vec)
+            if not vec_literal:
+                raise ValueError("invalid embedding vector")
             sql = text(f"""
                 SELECT id, owner_id, COALESCE(scope, 'global') AS scope,
                        trigger_condition, steps, tools_used,
                        success_weight, fail_count, fail_notes,
                        source_conversation_id, created_at, updated_at,
-                       (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) AS similarity,
+                       (1 - (trigger_embedding <=> CAST(:query_vec AS vector(1024)))) AS similarity,
                        CASE COALESCE(scope, 'global')
                            WHEN 'user' THEN 0
                            WHEN 'team' THEN 1
@@ -283,7 +301,7 @@ async def _match_experience(
                 WHERE active = true
                   AND {access_sql}
                   AND trigger_embedding IS NOT NULL
-                  AND (1 - (trigger_embedding <=> CAST(:query_vec AS vector))) >= :threshold
+                  AND (1 - (trigger_embedding <=> CAST(:query_vec AS vector(1024)))) >= :threshold
                 ORDER BY scope_rank ASC,
                          (success_weight - fail_count * :penalty) DESC,
                          similarity DESC
@@ -348,7 +366,7 @@ async def _experience_feedback(
                 UPDATE memory_experiences
                 SET fail_count = COALESCE(fail_count, 0) + 1,
                     fail_notes = CASE
-                        WHEN :note_payload IS NULL THEN fail_notes
+                        WHEN :has_note = false THEN fail_notes
                         ELSE (COALESCE(NULLIF(fail_notes, ''), '[]')::jsonb || CAST(:note_payload AS jsonb))::text
                     END,
                     updated_at = NOW()
@@ -356,7 +374,12 @@ async def _experience_feedback(
                   AND {access_sql}
                 RETURNING id, success_weight, fail_count
             """),
-            {**access_params, "id": experience_id, "note_payload": note_payload},
+            {
+                **access_params,
+                "id": experience_id,
+                "has_note": note_payload is not None,
+                "note_payload": note_payload or "[]",
+            },
         )
     row = result.mappings().first()
     if not row:

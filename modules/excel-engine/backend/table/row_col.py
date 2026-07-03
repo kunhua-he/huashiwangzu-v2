@@ -1,7 +1,6 @@
 """Row/Column operations - 1:1 from old 表格/表格_行列操作.php"""
 import re
-from typing import Any
-from ..state.manager import cell_get_text, cell_set_text
+
 from ..tool.address import rc_to_address
 
 
@@ -50,6 +49,48 @@ class RowColOperations:
             c, r = RowColOperations._parse_cell_ref(addr)
             result.append((r, c, addr))
         return sorted(result)
+
+    @staticmethod
+    def _bounds(addrs: list[str]) -> tuple[int, int, int, int] | None:
+        parsed = [RowColOperations._parse_cell_ref(addr) for addr in addrs]
+        parsed = [(col, row) for col, row in parsed if row > 0 and col >= 0]
+        if not parsed:
+            return None
+        cols = [col for col, _ in parsed]
+        rows = [row for _, row in parsed]
+        return min(cols), max(cols), min(rows), max(rows)
+
+    @staticmethod
+    def _move_cell_maps(state: dict, transform) -> None:
+        new_cells = {}
+        new_styles = {}
+        for addr, val in state.get('cells', {}).items():
+            col, row = RowColOperations._parse_cell_ref(addr)
+            new_addr = transform(col, row)
+            if new_addr:
+                new_cells[new_addr] = val
+                if addr in state.get('styles', {}):
+                    new_styles[new_addr] = state['styles'][addr]
+        for addr, style in state.get('styles', {}).items():
+            if addr in state.get('cells', {}):
+                continue
+            col, row = RowColOperations._parse_cell_ref(addr)
+            new_addr = transform(col, row)
+            if new_addr:
+                new_styles[new_addr] = style
+        state['cells'] = new_cells
+        state['styles'] = new_styles
+
+    @staticmethod
+    def _drop_merges_touching_bounds(state: dict, min_col: int, max_col: int, min_row: int, max_row: int) -> None:
+        kept = {}
+        for merge_ref, info in state.get('merges', {}).items():
+            tl = info.get('topLeft', '')
+            col, row = RowColOperations._parse_cell_ref(tl)
+            if min_col <= col <= max_col and min_row <= row <= max_row:
+                continue
+            kept[merge_ref] = info
+        state['merges'] = kept
 
     @staticmethod
     async def _delete_row(state: dict, addrs: list[str]) -> dict:
@@ -197,18 +238,76 @@ class RowColOperations:
 
     @staticmethod
     async def _delete_shift_right(state: dict, addrs: list[str]) -> dict:
+        bounds = RowColOperations._bounds(addrs)
+        if not bounds:
+            return {'code': 1, 'msg': 'No address'}
+        min_col, max_col, min_row, max_row = bounds
+        width = max_col - min_col + 1
+
+        def transform(col: int, row: int) -> str | None:
+            if min_row <= row <= max_row and min_col <= col <= max_col:
+                return None
+            if min_row <= row <= max_row and col > max_col:
+                return rc_to_address(row, col - width)
+            return rc_to_address(row, col)
+
+        RowColOperations._move_cell_maps(state, transform)
+        RowColOperations._drop_merges_touching_bounds(state, min_col, max_col, min_row, max_row)
         return {'code': 0}
 
     @staticmethod
     async def _delete_shift_up(state: dict, addrs: list[str]) -> dict:
+        bounds = RowColOperations._bounds(addrs)
+        if not bounds:
+            return {'code': 1, 'msg': 'No address'}
+        min_col, max_col, min_row, max_row = bounds
+        height = max_row - min_row + 1
+
+        def transform(col: int, row: int) -> str | None:
+            if min_col <= col <= max_col and min_row <= row <= max_row:
+                return None
+            if min_col <= col <= max_col and row > max_row:
+                return rc_to_address(row - height, col)
+            return rc_to_address(row, col)
+
+        RowColOperations._move_cell_maps(state, transform)
+        RowColOperations._drop_merges_touching_bounds(state, min_col, max_col, min_row, max_row)
         return {'code': 0}
 
     @staticmethod
     async def _insert_shift_right(state: dict, addrs: list[str]) -> dict:
+        bounds = RowColOperations._bounds(addrs)
+        if not bounds:
+            return {'code': 1, 'msg': 'No address'}
+        min_col, max_col, min_row, max_row = bounds
+        width = max_col - min_col + 1
+
+        def transform(col: int, row: int) -> str | None:
+            if min_row <= row <= max_row and col >= min_col:
+                return rc_to_address(row, col + width)
+            return rc_to_address(row, col)
+
+        RowColOperations._move_cell_maps(state, transform)
+        state['total_cols'] = max(state.get('total_cols', 10) + width, max_col + width + 1)
+        RowColOperations._drop_merges_touching_bounds(state, min_col, max_col, min_row, max_row)
         return {'code': 0}
 
     @staticmethod
     async def _insert_shift_down(state: dict, addrs: list[str]) -> dict:
+        bounds = RowColOperations._bounds(addrs)
+        if not bounds:
+            return {'code': 1, 'msg': 'No address'}
+        min_col, max_col, min_row, max_row = bounds
+        height = max_row - min_row + 1
+
+        def transform(col: int, row: int) -> str | None:
+            if min_col <= col <= max_col and row >= min_row:
+                return rc_to_address(row + height, col)
+            return rc_to_address(row, col)
+
+        RowColOperations._move_cell_maps(state, transform)
+        state['total_rows'] = max(state.get('total_rows', 40) + height, max_row + height)
+        RowColOperations._drop_merges_touching_bounds(state, min_col, max_col, min_row, max_row)
         return {'code': 0}
 
     @staticmethod

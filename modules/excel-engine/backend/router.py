@@ -28,8 +28,9 @@ from .engine.csv_parser import parse_csv
 from .engine.xlsx_generator import generate_csv, generate_xlsx
 from .engine.xlsx_parser import parse_xlsx
 from .init_db import _run_startup_init
-from .models import ExcelRedoStack, ExcelVersion, ExcelWorkbook
+from .models import ExcelVersion, ExcelWorkbook
 from .state.db_ops import (
+    clear_redo_stack,
     find_or_create_sheet,
     find_or_create_workbook,
     find_sheet,
@@ -39,12 +40,10 @@ from .state.db_ops import (
     read_state_full,
     record_snapshot,
     redo_operation,
-    sync_cells,
-    sync_col_widths,
-    sync_row_heights,
+    sync_state,
     undo_operation,
 )
-from .state.manager import cell_set_text, empty_state, init_state, parse_addresses
+from .state.manager import build_snapshot, cell_set_text, empty_state, init_state, parse_addresses
 from .table.clipboard import ClipboardOperations
 from .table.edit import EditOperations
 from .table.row_col import RowColOperations
@@ -256,19 +255,7 @@ async def _dispatch(
 
     addrs = parse_addresses(params)
     op_key = f'{module}.{method}'
-
-    if op_key in WRITE_OPERATIONS:
-        await record_snapshot(db, state, state_key, op_key, addrs[0] if addrs else '',
-                              _generate_description(op_key, addrs[0] if addrs else '', addrs, params),
-                              owner_id=effective_owner_id)
-        # Clear redo stack
-        sheet_id = state.get('_sheet_id')
-        if sheet_id and hasattr(db, 'execute'):
-            await db.execute(
-                text(f"DELETE FROM {ExcelRedoStack.__tablename__} WHERE sheet_id = :sid"),
-                {'sid': sheet_id}
-            )
-            await db.commit()
+    before_snapshot = build_snapshot(state) if op_key in WRITE_OPERATIONS else {}
 
     result = None
     if module == 'edit':
@@ -282,30 +269,39 @@ async def _dispatch(
     elif module == 'state':
         result = await _handle_state(method, state, state_key, params, sheet, db, effective_owner_id)
     elif module == 'export':
-        result = await _handle_export(method, state, state_key, sheet, params, db)
+        result = await _handle_export(method, state, state_key, sheet, params, db, effective_owner_id)
     elif module == 'import':
         result = await _handle_import_method(method, state, state_key, params, db)
 
     if result is None:
         result = {'code': 1, 'msg': f'Unknown module: {module}'}
 
-    # Persist state after write operations (skip for download exports)
-    if op_key in WRITE_OPERATIONS and not (module == 'export' and method == 'download'):
+    if op_key in WRITE_OPERATIONS and result.get('code') == 0:
         workbook_id = state.get('_workbook_id') or (await find_or_create_workbook(db, state_key, owner_id=effective_owner_id))['id']
         sheet_id = state.get('_sheet_id')
         if not sheet_id:
             sheet_rec = await find_or_create_sheet(db, workbook_id, state.get('_current_sheet', sheet))
             sheet_id = sheet_rec['id']
+            state['_sheet_id'] = sheet_id
         state['total_rows'] = state.get('total_rows', DEFAULT_TOTAL_ROWS)
         state['total_cols'] = state.get('total_cols', DEFAULT_TOTAL_COLS)
-        await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
-        await sync_col_widths(db, sheet_id, state.get('col_widths', {}))
-        await sync_row_heights(db, sheet_id, state.get('row_heights', {}))
+        await _persist_successful_write(
+            db,
+            state,
+            state_key,
+            op_key,
+            addrs[0] if addrs else '',
+            _generate_description(op_key, addrs[0] if addrs else '', addrs, params),
+            effective_owner_id,
+            before_snapshot,
+        )
 
     if result and result.get('code') == 0:
         result.setdefault('cells', state.get('cells', {}))
         result.setdefault('styles', state.get('styles', {}))
         result.setdefault('merges', state.get('merges', {}))
+        result.setdefault('col_widths', state.get('col_widths', {}))
+        result.setdefault('row_heights', state.get('row_heights', {}))
         result.setdefault('total_rows', state.get('total_rows', DEFAULT_TOTAL_ROWS))
         result.setdefault('total_cols', state.get('total_cols', DEFAULT_TOTAL_COLS))
         hist_list = await read_history(db, state_key, owner_id=effective_owner_id)
@@ -351,10 +347,14 @@ async def _handle_state(method: str, state: dict, state_key: str, params: dict, 
         }
     elif method == 'undo':
         success = await undo_operation(db, state, state_key)
-        return {'code': 0 if success else 1, 'msg': '' if success else '无可撤销操作'}
+        if not success:
+            return {'code': 1, 'msg': '无可撤销操作'}
+        return {'code': 0, 'msg': '', **_state_payload(state)}
     elif method == 'redo':
         success = await redo_operation(db, state, state_key)
-        return {'code': 0 if success else 1, 'msg': '' if success else '无可恢复操作'}
+        if not success:
+            return {'code': 1, 'msg': '无可恢复操作'}
+        return {'code': 0, 'msg': '', **_state_payload(state)}
     elif method == 'history_list':
         hist = await read_history(db, state_key, owner_id=owner_id)
         return {'code': 0, 'history': hist}
@@ -387,7 +387,17 @@ async def _handle_state_direct(method: str, params: dict, db: AsyncSession, owne
     return {'code': 1, 'msg': f'Unknown direct state method: {method}'}
 
 
-async def _handle_export(method: str, state: dict, state_key: str, sheet: str, params: dict, db: AsyncSession) -> dict:
+async def _handle_export(
+    method: str,
+    state: dict,
+    state_key: str,
+    sheet: str,
+    params: dict,
+    db: AsyncSession,
+    owner_id: int = 0,
+) -> dict:
+    import tempfile
+
     if method == 'download':
         all_sheet_data = {}
         sheet_set_raw = state.get('sheet_set', {})
@@ -417,7 +427,6 @@ async def _handle_export(method: str, state: dict, state_key: str, sheet: str, p
             'total_cols': state.get('total_cols', DEFAULT_TOTAL_COLS),
         })
 
-        import tempfile
         fd, tmp_path = tempfile.mkstemp(suffix='.xlsx')
         os.close(fd)
         success = generate_xlsx(tmp_path, all_sheet_data)
@@ -440,6 +449,9 @@ async def _handle_export(method: str, state: dict, state_key: str, sheet: str, p
         os.close(fd)
         csv_content = generate_csv(tmp_path, state, sheet)
         return {'code': 0, 'csv': csv_content}
+    elif method == 'save_version':
+        version = await _save_version_record(db, state_key, state, owner_id, params.get('version_name'))
+        return {'code': 0, 'version': version}
     return {'code': 1, 'msg': f'Unknown export method: {method}'}
 
 
@@ -463,15 +475,77 @@ def _legacy_result_to_api(result: dict) -> ApiResponse:
 
 
 async def _sync_sheet_data(db: AsyncSession, sheet_id: int, sheet_data: dict) -> None:
-    await sync_cells(
-        db,
-        sheet_id,
-        sheet_data.get('cells', {}),
-        sheet_data.get('styles', {}),
-        sheet_data.get('merges', {}),
+    await sync_state(db, sheet_id, sheet_data)
+
+
+def _state_payload(state: dict) -> dict:
+    return {
+        'cells': state.get('cells', {}),
+        'styles': state.get('styles', {}),
+        'merges': state.get('merges', {}),
+        'col_widths': state.get('col_widths', {}),
+        'row_heights': state.get('row_heights', {}),
+        'total_rows': state.get('total_rows', DEFAULT_TOTAL_ROWS),
+        'total_cols': state.get('total_cols', DEFAULT_TOTAL_COLS),
+    }
+
+
+async def _save_version_record(
+    db: AsyncSession,
+    state_key: str,
+    state: dict,
+    owner_id: int,
+    version_name: str | None = None,
+) -> dict:
+    file_id = _knowledge_file_id(state_key)
+    if file_id is None:
+        raise ValidationError("Versions require a knowledge file state_key")
+    snapshot_json = json.dumps(build_snapshot(state), ensure_ascii=False)
+    version = ExcelVersion(
+        file_id=file_id,
+        version_name=version_name or f"{state_key} manual",
+        file_size=len(snapshot_json.encode("utf-8")),
+        snapshot_json=snapshot_json,
+        operation_steps=len(await read_history(db, state_key, owner_id=owner_id)),
+        creator_id=owner_id,
     )
-    await sync_col_widths(db, sheet_id, sheet_data.get('col_widths', {}))
-    await sync_row_heights(db, sheet_id, sheet_data.get('row_heights', {}))
+    db.add(version)
+    await db.commit()
+    await db.refresh(version)
+    return {
+        "id": version.id,
+        "version_name": version.version_name,
+        "file_size": version.file_size,
+        "operation_steps": version.operation_steps,
+        "created_at": version.created_at.isoformat() if version.created_at else "",
+    }
+
+
+async def _persist_successful_write(
+    db: AsyncSession,
+    state: dict,
+    state_key: str,
+    action: str,
+    addr: str,
+    description: str,
+    owner_id: int,
+    before_snapshot: dict,
+) -> None:
+    sheet_id = state.get('_sheet_id')
+    if not sheet_id:
+        return
+    await record_snapshot(
+        db,
+        state,
+        state_key,
+        action,
+        addr,
+        description,
+        owner_id=owner_id,
+        snapshot=before_snapshot,
+    )
+    await clear_redo_stack(db, sheet_id)
+    await sync_state(db, sheet_id, state)
 
 
 # ── API Endpoints ──
@@ -594,17 +668,17 @@ async def edit_cell(payload: CellEditRequest, db: AsyncSession = Depends(get_db)
         addrs = ['A1']
 
     state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=state_owner_id)
+    before_snapshot = build_snapshot(state)
     result = await EditOperations.execute(payload.method, state, payload.state_key, addrs, params)
 
     op_key = f'edit.{payload.method}'
-    if op_key in WRITE_OPERATIONS:
-        await record_snapshot(db, state, payload.state_key, op_key, addrs[0],
-                              _generate_description(op_key, addrs[0], addrs, params),
-                              owner_id=state_owner_id)
-        # Persist
-        sheet_id = state.get('_sheet_id')
-        if sheet_id:
-            await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
+    if op_key in WRITE_OPERATIONS and result.get('code') == 0:
+        await _persist_successful_write(
+            db, state, payload.state_key, op_key, addrs[0],
+            _generate_description(op_key, addrs[0], addrs, params),
+            state_owner_id, before_snapshot,
+        )
+        result.update(_state_payload(state))
 
     return _legacy_result_to_api(result)
 
@@ -616,16 +690,17 @@ async def edit_style(payload: StyleRequest, db: AsyncSession = Depends(get_db),
     state_owner_id = await _resolve_state_owner_id(db, payload.state_key, user.id, write=True)
     addrs = payload.address_list or ['A1']
     state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=state_owner_id)
+    before_snapshot = build_snapshot(state)
     result = await StyleOperations.execute(payload.method, state, payload.state_key, addrs, payload.params)
 
     op_key = f'style.{payload.method}'
-    if op_key in WRITE_OPERATIONS:
-        await record_snapshot(db, state, payload.state_key, op_key, addrs[0],
-                              _generate_description(op_key, addrs[0], addrs, payload.params),
-                              owner_id=state_owner_id)
-        sheet_id = state.get('_sheet_id')
-        if sheet_id:
-            await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
+    if op_key in WRITE_OPERATIONS and result.get('code') == 0:
+        await _persist_successful_write(
+            db, state, payload.state_key, op_key, addrs[0],
+            _generate_description(op_key, addrs[0], addrs, payload.params),
+            state_owner_id, before_snapshot,
+        )
+        result.update(_state_payload(state))
 
     return _legacy_result_to_api(result)
 
@@ -639,7 +714,17 @@ async def clipboard(payload: ClipboardRequest, db: AsyncSession = Depends(get_db
         db, payload.state_key, user.id, write=f"clipboard.{payload.method}" in WRITE_OPERATIONS
     )
     state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=state_owner_id)
+    before_snapshot = build_snapshot(state)
     result = await ClipboardOperations.execute(payload.method, state, payload.state_key, addrs, payload.params)
+    op_key = f'clipboard.{payload.method}'
+    if op_key in WRITE_OPERATIONS and result.get('code') == 0:
+        target_addr = addrs[0] if addrs else payload.address
+        await _persist_successful_write(
+            db, state, payload.state_key, op_key, target_addr,
+            _generate_description(op_key, target_addr, addrs, payload.params),
+            state_owner_id, before_snapshot,
+        )
+        result.update(_state_payload(state))
     return _legacy_result_to_api(result)
 
 
@@ -650,16 +735,18 @@ async def table_op(payload: TableRequest, db: AsyncSession = Depends(get_db),
     state_owner_id = await _resolve_state_owner_id(db, payload.state_key, user.id, write=True)
     addrs = payload.address_list or ([payload.address] if payload.address else [])
     state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=state_owner_id)
+    before_snapshot = build_snapshot(state)
     result = await RowColOperations.execute(payload.method, state, payload.state_key, addrs, payload.params)
 
     op_key = f'table.{payload.method}'
-    if op_key in WRITE_OPERATIONS:
-        await record_snapshot(db, state, payload.state_key, op_key, addrs[0] if addrs else '',
-                              _generate_description(op_key, addrs[0] if addrs else '', addrs, payload.params),
-                              owner_id=state_owner_id)
-        sheet_id = state.get('_sheet_id')
-        if sheet_id:
-            await sync_cells(db, sheet_id, state.get('cells', {}), state.get('styles', {}), state.get('merges', {}))
+    if op_key in WRITE_OPERATIONS and result.get('code') == 0:
+        target_addr = addrs[0] if addrs else ''
+        await _persist_successful_write(
+            db, state, payload.state_key, op_key, target_addr,
+            _generate_description(op_key, target_addr, addrs, payload.params),
+            state_owner_id, before_snapshot,
+        )
+        result.update(_state_payload(state))
 
     return _legacy_result_to_api(result)
 
@@ -684,7 +771,7 @@ async def export_op(payload: ExcelRequest, db: AsyncSession = Depends(get_db),
     """Export operations"""
     state_owner_id = await _resolve_state_owner_id(db, payload.state_key, user.id)
     state = await read_state_full(db, payload.state_key, payload.sheet, owner_id=state_owner_id)
-    result = await _handle_export(payload.method, state, payload.state_key, payload.sheet, payload.params, db)
+    result = await _handle_export(payload.method, state, payload.state_key, payload.sheet, payload.params, db, state_owner_id)
     return _legacy_result_to_api(result)
 
 
@@ -695,7 +782,7 @@ async def download_file(state_key: str, db: AsyncSession = Depends(get_db),
     from fastapi.responses import FileResponse
     state_owner_id = await _resolve_state_owner_id(db, state_key, user.id)
     state = await read_state_full(db, state_key, owner_id=state_owner_id)
-    result = await _handle_export('download', state, state_key, 'Sheet1', {}, db)
+    result = await _handle_export('download', state, state_key, 'Sheet1', {}, db, state_owner_id)
     if result.get('code') != 0:
         raise NotFound(result.get('msg', 'Export failed'))
     file_path = result.get('file', '')
@@ -769,11 +856,17 @@ async def _create_workbook_capability(params: dict, caller: str) -> dict:
     async with AsyncSessionLocal() as db:
         state_owner_id = await _resolve_state_owner_id(db, state_key, user_id, write=True)
         wb = await find_or_create_workbook(db, state_key, owner_id=state_owner_id)
+        await db.execute(
+            text(f"UPDATE {ExcelWorkbook.__tablename__} SET name = :name WHERE id = :id"),
+            {"name": name, "id": wb["id"]},
+        )
+        await db.commit()
+        wb["name"] = name
         sheet = await find_or_create_sheet(db, wb['id'], 'Sheet1')
         state = empty_state()
         state['_workbook_id'] = wb['id']
         state['_sheet_id'] = sheet['id']
-        await sync_cells(db, sheet['id'], {}, {}, {})
+        await sync_state(db, sheet['id'], state)
 
     return {
         'state_key': state_key,
@@ -856,6 +949,7 @@ async def _update_range_capability(params: dict, caller: str) -> dict:
     async with AsyncSessionLocal() as db:
         state_owner_id = await _resolve_state_owner_id(db, state_key, user_id, write=True)
         state = await read_state_full(db, state_key, sheet, owner_id=state_owner_id)
+        before_snapshot = build_snapshot(state)
 
         start_col = params.get('start_col', 0)
         start_row = params.get('start_row', 0)
@@ -864,13 +958,22 @@ async def _update_range_capability(params: dict, caller: str) -> dict:
             for ci, val in enumerate(row):
                 addr = rc_to_address(start_row + ri + 1, start_col + ci)
                 cell_set_text(state, addr, str(val) if val is not None else '')
+        max_width = max((len(row) for row in rows_data), default=0)
+        state['total_rows'] = max(state.get('total_rows', DEFAULT_TOTAL_ROWS), start_row + len(rows_data))
+        state['total_cols'] = max(state.get('total_cols', DEFAULT_TOTAL_COLS), start_col + max_width)
 
-        await record_snapshot(db, state, state_key, 'edit.input', 'A1',
-                              f'Update range {len(rows_data)} rows', owner_id=state_owner_id)
         sheet_id = state.get('_sheet_id')
         if sheet_id:
-            await sync_cells(db, sheet_id, state.get('cells', {}),
-                             state.get('styles', {}), state.get('merges', {}))
+            await _persist_successful_write(
+                db,
+                state,
+                state_key,
+                'edit.input',
+                rc_to_address(start_row + 1, start_col),
+                f'Update range {len(rows_data)} rows',
+                state_owner_id,
+                before_snapshot,
+            )
 
     return {
         'state_key': state_key,
@@ -896,6 +999,7 @@ async def _append_rows_capability(params: dict, caller: str) -> dict:
     async with AsyncSessionLocal() as db:
         state_owner_id = await _resolve_state_owner_id(db, state_key, user_id, write=True)
         state = await read_state_full(db, state_key, sheet, owner_id=state_owner_id)
+        before_snapshot = build_snapshot(state)
 
         import re
         current_cells = state.get('cells', {})
@@ -908,16 +1012,24 @@ async def _append_rows_capability(params: dict, caller: str) -> dict:
         start_row = max_row + 1
         for ri, row in enumerate(rows_data):
             for ci, val in enumerate(row):
-                addr = rc_to_address(start_row + ri, ci + 1)
+                addr = rc_to_address(start_row + ri, ci)
                 cell_set_text(state, addr, str(val) if val is not None else '')
+        max_width = max((len(row) for row in rows_data), default=0)
+        state['total_rows'] = max(state.get('total_rows', DEFAULT_TOTAL_ROWS), start_row + len(rows_data) - 1)
+        state['total_cols'] = max(state.get('total_cols', DEFAULT_TOTAL_COLS), max_width)
 
-        await record_snapshot(db, state, state_key, 'edit.input', f'A{start_row}',
-                              f'Append {len(rows_data)} rows starting at row {start_row}',
-                              owner_id=state_owner_id)
         sheet_id = state.get('_sheet_id')
         if sheet_id:
-            await sync_cells(db, sheet_id, state.get('cells', {}),
-                             state.get('styles', {}), state.get('merges', {}))
+            await _persist_successful_write(
+                db,
+                state,
+                state_key,
+                'edit.input',
+                f'A{start_row}',
+                f'Append {len(rows_data)} rows starting at row {start_row}',
+                state_owner_id,
+                before_snapshot,
+            )
 
     return {
         'state_key': state_key,
@@ -941,6 +1053,7 @@ async def _undo_capability(params: dict, caller: str) -> dict:
         'state_key': state_key,
         'success': success,
         'message': '' if success else 'No operations to undo',
+        **(_state_payload(state) if success else {}),
     }
 
 
@@ -958,6 +1071,7 @@ async def _redo_capability(params: dict, caller: str) -> dict:
         'state_key': state_key,
         'success': success,
         'message': '' if success else 'No operations to redo',
+        **(_state_payload(state) if success else {}),
     }
 
 
@@ -1036,13 +1150,14 @@ async def _restore_version_capability(params: dict, caller: str) -> dict:
             raise ValueError("Version not found")
 
         snapshot = json.loads(row[0]) if row[0] else empty_state()
+        restored_state = {}
         if isinstance(snapshot, dict):
             sheet_rec = await find_sheet(db, wb['id'], params.get('sheet', 'Sheet1'))
             if sheet_rec:
-                await sync_cells(db, sheet_rec['id'], snapshot.get('cells', {}),
-                                 snapshot.get('styles', {}), snapshot.get('merges', {}))
+                await sync_state(db, sheet_rec['id'], snapshot)
+                restored_state = await read_state_full(db, state_key, params.get('sheet', 'Sheet1'), owner_id=state_owner_id)
 
-    return {'state_key': state_key, 'version_id': version_id, 'restored': True}
+    return {'state_key': state_key, 'version_id': version_id, 'restored': True, **_state_payload(restored_state)}
 
 
 async def _export_xlsx_capability(params: dict, caller: str) -> dict:
@@ -1056,7 +1171,7 @@ async def _export_xlsx_capability(params: dict, caller: str) -> dict:
         state_owner_id = await _resolve_state_owner_id(db, state_key, user_id)
         state = await read_state_full(db, state_key, sheet, owner_id=state_owner_id)
 
-        result = await _handle_export('download', state, state_key, sheet, {}, db)
+        result = await _handle_export('download', state, state_key, sheet, {}, db, state_owner_id)
         if result.get('code') != 0:
             raise ValueError(result.get('msg', 'Export failed'))
 
@@ -1108,7 +1223,7 @@ async def _publish_to_desktop_capability(params: dict, caller: str) -> dict:
         state_owner_id = await _resolve_state_owner_id(db, state_key, user_id)
         state = await read_state_full(db, state_key, sheet, owner_id=state_owner_id)
 
-        result = await _handle_export('download', state, state_key, sheet, {}, db)
+        result = await _handle_export('download', state, state_key, sheet, {}, db, state_owner_id)
         if result.get('code') != 0:
             raise ValueError(result.get('msg', 'Export failed'))
 
@@ -1323,7 +1438,7 @@ async def _compile_xlsx_capability(params: dict, caller: str) -> dict:
 
         state = await read_state_full(db, state_key, sheet, owner_id=state_owner_id)
 
-        result = await _handle_export('download', state, state_key, sheet, {}, db)
+        result = await _handle_export('download', state, state_key, sheet, {}, db, state_owner_id)
         if result.get('code') != 0:
             return {"success": False, "error": result.get('msg', 'Export failed')}
 
@@ -1340,12 +1455,9 @@ async def _compile_xlsx_capability(params: dict, caller: str) -> dict:
             return {"success": False, "error": "Invalid filename"}
 
     return {
-        "success": True,
-        "data": {
-            "file_path": str(file_path_obj),
-            "filename": filename,
-            "state_key": state_key,
-        },
+        "file_path": str(file_path_obj),
+        "filename": filename,
+        "state_key": state_key,
     }
 
 

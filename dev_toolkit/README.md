@@ -150,7 +150,7 @@ worktree_guard(allowed_prefixes="backend/app,dev_toolkit,开发文档")
 | 跨模块调用 | `call_capability(module, action, params)` | 调模块能力，不走直接 import |
 | 日志排查 | `tail_log(module, lines)` | 先看日志尾部，确认无新增错误 |
 | 端口/状态 | `sanity_check()` | 前端端口 + 后端健康 + 模块导入 + 知识图谱 |
-| 静态检查 | `lint(path, diff)` | ruff 检查 Python 代码 |
+| 静态检查 | `lint(path, diff)` | ruff 检查 Python 代码；`path` 可传单个路径，也可用逗号/换行分隔多个路径 |
 
 **修改后必须有验证结果，不能停留在推测。**
 
@@ -230,7 +230,7 @@ mailbox_check_delivery_bundle(task_name)
 | `batch_quick_fix_apply(operations, max_workers, lint_paths, test_targets)` | 并发应用多个精准替换: 先全量预览, 全部通过后写盘, 可选 lint/test |
 | `edit_recipe_catalog()` | 列出确定性精准编辑 recipe |
 | `edit_recipe_preview / edit_recipe_apply(recipe, parameters, lint_paths, test_targets)` | 用 recipe 生成精准替换并预览/应用, 常见场景包括 exact_replace、insert_after、replace_between_markers |
-| `lint(path, diff)` | ruff 静态检查 Python 文件；`diff=true` 只预览 ruff 建议 diff，不写盘 |
+| `lint(path, diff)` | ruff 静态检查 Python 文件；`path` 支持单个路径或逗号/换行分隔多路径；`diff=true` 只预览 ruff 建议 diff，不写盘 |
 | `worktree_guard(module_key, allowed_prefixes, forbidden_prefixes, include_untracked)` | 开工/收工边界守卫：统计 dirty 文件(含 untracked)、按路径分组、校验模块/允许路径/禁止路径 |
 | `finish_task(summary, agent, lint_paths, test_targets, module_key, verification_summary, risk_note)` | **【收工检查】** 汇总 Git dirty + 边界检查(模块路径越界校验) + 可选 lint/test + 风险评估 + 生成 memory_write 留痕模板；不提交、不写记忆 |
 
@@ -260,7 +260,7 @@ mailbox_check_delivery_bundle(task_name)
 | `memory_recent(n)` | 最近 N 条记忆 |
 | `tool_usage_stats(limit, reset, confirm)` | 工具调用热度统计：按调用次数排序，返回成功/失败次数、平均耗时、最近调用时间；`reset=true` 需 `confirm="RESET"` |
 | `agent_board_claim(agent, task_id, title, objective, labels, node_note)` | 创建或认领持久化任务；活跃 owner 未 stale 时拒绝，避免多个子代理抢同一节点 |
-| `agent_board_heartbeat(agent, task_id, node_note)` | 当前 owner 刷新任务心跳并追加节点进度 |
+| `agent_board_heartbeat(agent, task_id, node_note)` | 当前 owner 刷新任务心跳并追加节点进度；任务必须先由 `agent_board_claim` 创建/认领，heartbeat 不会隐式创建任务 |
 | `agent_board_complete(agent, task_id, result_summary, node_note)` | 当前 owner 将任务标记 completed |
 | `agent_board_block(agent, task_id, reason, node_note)` | 当前 owner 将任务标记 blocked 并记录卡点 |
 | `agent_board_snapshot(status, agent, include_events, limit)` | 查看持久化任务板，可按状态/agent 过滤，含最近事件 |

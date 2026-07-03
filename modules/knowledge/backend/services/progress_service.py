@@ -17,6 +17,7 @@ from ..models import (
     KbPageFusion,
     KbRawData,
 )
+from .source_file_state import get_source_file_availability
 
 logger = logging.getLogger("v2.knowledge").getChild("progress")
 
@@ -54,6 +55,7 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
         raise NotFound("Document not found")
 
     total_pages = doc.total_pages or 0
+    source = await get_source_file_availability(db, int(doc.file_id or 0))
 
     # 原始三轮:按 round 统计已落库的不同页数(逐页 commit 后实时增长)
     rr = await db.execute(
@@ -107,7 +109,9 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
     # 整体状态:raw_status / fusion_status 为权威态;细分阶段算百分比
     raw_status = doc.raw_status or "pending"
     fusion_status = doc.fusion_status or "pending"
-    if raw_status == "failed" or fusion_status == "failed":
+    if not source.available:
+        overall_status = "source_unavailable"
+    elif raw_status == "failed" or fusion_status == "failed":
         overall_status = "failed"
     elif raw_status == "degraded" or fusion_status == "degraded":
         overall_status = "degraded"
@@ -119,7 +123,7 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
         overall_status = "running"
 
     # 当前正在跑的阶段(第一个非 done 的页级阶段)
-    current = next((s["label"] for s in stages if s["status"] != "done"), "已完成")
+    current = "源文件不可用" if not source.available else next((s["label"] for s in stages if s["status"] != "done"), "已完成")
 
     # 整体百分比:页级阶段(前4个)平均
     page_stages = [s for s in stages if s["key"] in ("text", "ocr", "vision", "fusion")]
@@ -132,9 +136,11 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
         "filename": doc.filename,
         "total_pages": total_pages,
         "overall_status": overall_status,
-        "quality_status": "degraded" if overall_status == "degraded" else "ok",
+        "quality_status": "degraded" if overall_status == "degraded" else ("unavailable" if overall_status == "source_unavailable" else "ok"),
         "overall_percent": overall_percent,
         "current_stage": current,
+        "source_available": source.available,
+        "source_state": source.reason or "available",
         "stages": stages,
     }
 

@@ -19,3 +19,19 @@ The desktop shell automatically opens this viewer when a user double-clicks a `.
 - Frontend-only module; no backend router.
 - Relies on the framework's file preview endpoint to fetch document content.
 - Uses `sort_order: 40` for file-open scheduling (priority between pdf-viewer 30 and ppt-viewer 50).
+
+## Sandbox verification
+
+```bash
+cd modules/doc-viewer/sandbox
+npm install
+npm run build
+
+cd ../../../frontend
+npm run build
+
+cd ..
+backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check
+```
+
+Expected result: `doc-viewer` passes through its sandbox frontend build. There is no `sandbox/test_module.py` because this module has no backend router, no samples, and no cross-module capability.

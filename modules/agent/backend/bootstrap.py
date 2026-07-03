@@ -98,6 +98,9 @@ def register_agent_capabilities() -> None:
           "context": {"type": "string", "description": "参考上下文"},
           "write_enabled": {"type": "boolean", "description": "是否允许写操作"},
           "track_trajectory": {"type": "boolean", "description": "是否记录执行轨迹"},
+          "conversation_id": {"type": "integer", "description": "可选：将子 Agent 轨迹归属到指定对话；为空时使用临时负数编号"},
+          "session_id": {"type": "string", "description": "可选：轨迹会话标识"},
+          "turn_index_offset": {"type": "integer", "description": "可选：轨迹起始 turn_index；为空时自动追加到该对话当前最大 turn 后"},
           "max_rounds": {"type": "integer", "description": "最大工具轮数"}}, "viewer"),
         ("agent", "skill_manage", _cap_skill_manage,
          "管理技能：列表、创建、更新、删除、扫描、使用统计和来源追溯。"

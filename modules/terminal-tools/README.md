@@ -35,6 +35,8 @@ CLI 的 cwd 永远锁死在该用户工作区，它眼里的"文件/当前目录
 - 所有文件操作（write/read/list/publish/import）的文件路径参数，必须先经过 `_resolve_workspace_path()` 规范化+resolve（基于 `app.core.workspace_security.resolve_workspace_path` + `app.core.path_security.validate_within_dir`），再检查 resolve 后的绝对路径是否在用户工作区内。
 - 越界路径（绝对路径如 `/Users/...`、`~`、`../` 逃逸、symlink 逃逸）一律拒绝，返回简洁错误信息（不泄漏宿主机敏感路径）。
 - 工作区根: `backend/data/workspaces/{user_id}/`，按 `user_id` 隔离，用户间互不可见。
+- API 返回只暴露工作区相对路径，不返回 `absolute_path`。
+- `publish.filename` 和框架文件默认导入名会折叠成单个安全文件名；显式 `import.target_path` 仍允许工作区内子目录，但必须通过同一套边界校验。
 
 ### 2. 危险命令拦截（exec 前置检查）
 - 黑名单匹配基于 `app.core.command_safety.check_dangerous_command`（从 terminal-tools 本地模式迁移至框架公共 helper，并参考 Hermes 扩充了更多模式）。
@@ -43,8 +45,10 @@ CLI 的 cwd 永远锁死在该用户工作区，它眼里的"文件/当前目录
 
 ### 3. 资源限制
 - 超时: 默认 60s，最大 600s。`subprocess.run(timeout=...)` 硬超时。
-- 输出截断: stdout/stderr 各最大 1MB，超出部分截断并加标记。
-- `HOME` 和 `WORKSPACE` 环境变量重定向到工作区目录。
+- 输出截断: stdout/stderr 各最大 1MB，子进程输出先写工作区临时文件再按上限读取，避免先把无限输出吃进内存。
+- `read_file` 文本内容最多返回 1MB，超出时 `truncated: true`；二进制文件不返回内容正文。
+- `list_workspace` 最多返回 1000 项，超出时 `truncated: true`。
+- `HOME`、`WORKSPACE` 和 `TMPDIR` 环境变量重定向到工作区目录。
 
 ### 4. CWD 锁定
 - 所有命令的 cwd 固定为该用户工作区根目录。
@@ -60,6 +64,8 @@ CLI 的 cwd 永远锁死在该用户工作区，它眼里的"文件/当前目录
 - **显式交付**:Agent 完成任务，主动 `publish` 成果文件 → 框架文件系统 → 用户桌面可见。
 - **导入**:Agent 可 `import` 框架文件进工作区，用 CLI 工具处理后再 `publish` 回去。
 - **临时清理**:当前由 Agent 脚本自行清理临时文件；将来可加后台定时清理任务（超时 24h / 超大小 500MB 自动清）。
+- `run_python` 每次运行使用 `.da_{run_id}` 临时目录，输入文件经 owner 校验后复制到该目录，结束后 `finally` 清理。
+- `chart` 基于 `run_python`，如果 Python 返回成功但没有成功上传图表文件，会转为 `success:false`，避免假成功。
 
 ## 模块结构
 
@@ -94,13 +100,24 @@ modules/terminal-tools/
 
 ```bash
 # 边界守卫
-git diff --name-only  # 应仅在 modules/terminal-tools/ + .gitignore
+git diff --name-only  # 应仅在 modules/terminal-tools/
 
-# 框架测试
-cd backend && .venv/bin/python -m pytest
+# 模块静态检查
+backend/.venv/bin/ruff check modules/terminal-tools/backend/handlers modules/terminal-tools/backend/router.py
+
+# 模块 sandbox 契约测试
+python3.14 modules/terminal-tools/sandbox/test_module.py
 
 # 技能注册确认
 curl /api/modules/capabilities | grep terminal-tools
+
+# 活系统能力验证（推荐经项目工具台 call_capability/probe）
+# - write_file/read_file/list_workspace 正常路径
+# - read_file 大文件截断
+# - exec 危险命令与越界路径拦截
+# - exec 超时与 stdout/stderr 截断
+# - run_python 临时目录清理
+# - chart 无图表上传时 success:false
 ```
 
 ## 边界验证清单
@@ -109,6 +126,11 @@ curl /api/modules/capabilities | grep terminal-tools
 - [x] 越界路径（cat /Users/...、cd / 后操作）→ 被拒绝
 - [x] 危险命令（sudo、rm -rf /）→ 被拦截
 - [x] 超时命令（sleep 999）→ 被超时终止
+- [x] stdout/stderr 先落工作区临时文件再按 1MB 截断返回
+- [x] read_file/list_workspace 有返回上限并带 `truncated` 标记
+- [x] API 响应不返回宿主机绝对路径
+- [x] run_python 临时目录 finally 清理，input_files 不落工作区根目录
+- [x] chart 无上传图表时不报假成功
 - [x] publish 后文件出现在框架文件系统
 - [x] import 后框架文件出现在工作区
 - [x] owner 隔离: 用户只能操作自己的工作区

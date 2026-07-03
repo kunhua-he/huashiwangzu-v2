@@ -20,3 +20,19 @@ The desktop shell opens this editor when a user double-clicks or selects "Edit" 
 - `editable_formats` excludes csv (view-only), all others are editable.
 - Supports 10 text/code formats.
 - Default window 900×650, supports multiple instances.
+
+## Sandbox verification
+
+```bash
+cd modules/text-editor/sandbox
+npm install
+npm run build
+
+cd ../../../frontend
+npm run build
+
+cd ..
+backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check
+```
+
+Expected result: `text-editor` passes through its sandbox frontend build. There is no `sandbox/test_module.py` because this module has no backend router, no samples, and no cross-module capability.

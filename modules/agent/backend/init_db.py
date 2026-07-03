@@ -535,14 +535,47 @@ async def ensure_checkpoint_table(db: AsyncSession) -> None:
             "  id BIGSERIAL PRIMARY KEY,"
             "  conversation_id BIGINT NOT NULL,"
             "  owner_id INTEGER NOT NULL,"
-            "  checkpoint_type VARCHAR(32) NOT NULL,"
-            "  round_index INTEGER DEFAULT 0,"
-            "  state_data JSONB DEFAULT '{}'::jsonb,"
-            "  summary TEXT,"
-            "  parent_id BIGINT,"
+            "  checkpoint_id VARCHAR(64) NOT NULL,"
+            "  parent_checkpoint_id VARCHAR(64),"
+            "  step INTEGER NOT NULL DEFAULT 0,"
+            "  channel_values JSONB NOT NULL DEFAULT '{}'::jsonb,"
+            "  extra_meta JSONB DEFAULT '{}'::jsonb,"
             "  created_at TIMESTAMPTZ DEFAULT NOW(),"
-            "  updated_at TIMESTAMPTZ DEFAULT NOW()"
+            "  updated_at TIMESTAMPTZ DEFAULT NOW(),"
+            "  CONSTRAINT uq_agent_checkpoints_conv_checkpoint UNIQUE (conversation_id, checkpoint_id)"
             ")"
+        ))
+        for sql in (
+            "ALTER TABLE agent_checkpoints ADD COLUMN IF NOT EXISTS checkpoint_id VARCHAR(64)",
+            "ALTER TABLE agent_checkpoints ADD COLUMN IF NOT EXISTS parent_checkpoint_id VARCHAR(64)",
+            "ALTER TABLE agent_checkpoints ADD COLUMN IF NOT EXISTS step INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE agent_checkpoints ADD COLUMN IF NOT EXISTS channel_values JSONB NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE agent_checkpoints ADD COLUMN IF NOT EXISTS extra_meta JSONB DEFAULT '{}'::jsonb",
+        ):
+            await db.execute(text(sql))
+        await db.execute(text(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'agent_checkpoints'
+                      AND column_name = 'checkpoint_type'
+                      AND is_nullable = 'NO'
+                ) THEN
+                    ALTER TABLE agent_checkpoints ALTER COLUMN checkpoint_type DROP NOT NULL;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.table_constraints
+                    WHERE table_name = 'agent_checkpoints'
+                      AND constraint_name = 'uq_agent_checkpoints_conv_checkpoint'
+                ) THEN
+                    ALTER TABLE agent_checkpoints
+                    ADD CONSTRAINT uq_agent_checkpoints_conv_checkpoint
+                    UNIQUE (conversation_id, checkpoint_id);
+                END IF;
+            END $$;
+            """
         ))
         await db.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_checkpoints_conv ON agent_checkpoints(conversation_id)"

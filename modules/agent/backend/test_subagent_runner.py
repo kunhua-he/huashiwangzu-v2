@@ -69,3 +69,66 @@ async def test_subagent_skill_describe_receives_owner_id(
     assert result["status"] == "completed"
     assert result["conclusion"] == "done"
     assert captured_owner_ids == [55]
+    assert result["tool_calls"][0]["name"] == "skill_describe"
+    assert result["tool_results"][0]["result"]["name"] == "knowledge__search"
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_track_trajectory_persists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import database
+
+    from modules.agent.backend.handlers import tool as tool_handler
+    from modules.agent.backend.services import (
+        subagent_runner,
+        trajectory_service,
+    )
+
+    class DummySession:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_run_single_task(**kwargs: object) -> dict:
+        return {
+            "task": kwargs["task_desc"],
+            "status": "completed",
+            "error": None,
+            "conclusion": "subagent done",
+            "rounds_used": 1,
+            "tool_calls": [{"name": "skill_list", "arguments": {}}],
+            "tool_results": [{"name": "skill_list", "result": {"skills": []}}],
+        }
+
+    captured: dict[str, object] = {}
+
+    async def fake_record_turn(db: object, **kwargs: object) -> dict:
+        captured.update(kwargs)
+        return {"id": 123, "turn_index": kwargs["turn_index"], "recorded": True}
+
+    monkeypatch.setattr(database, "AsyncSessionLocal", lambda: DummySession())
+    monkeypatch.setattr(subagent_runner, "run_single_task", fake_run_single_task)
+    monkeypatch.setattr(trajectory_service, "record_turn", fake_record_turn)
+
+    result = await tool_handler._cap_spawn_subagent(
+        {
+            "task": "inspect data",
+            "track_trajectory": True,
+            "conversation_id": 777,
+            "session_id": "subagent-test",
+            "turn_index_offset": 0,
+        },
+        caller="user:55",
+    )
+
+    assert result["completed"] == 1
+    assert result["trajectory"][0]["recorded"] is True
+    assert result["trajectory"][0]["id"] == 123
+    assert captured["conversation_id"] == 777
+    assert captured["owner_id"] == 55
+    assert captured["session_id"] == "subagent-test"
+    assert captured["tool_calls"] == [{"name": "skill_list", "arguments": {}}]
+    assert captured["assistant_response"] == "subagent done"

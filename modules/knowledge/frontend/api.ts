@@ -64,7 +64,7 @@ export interface ProgressStage {
   done: number
   total: number
   percent: number
-  status: 'done' | 'running' | 'pending'
+  status: 'done' | 'running' | 'pending' | 'failed' | 'degraded' | 'source_unavailable'
   count?: number
 }
 
@@ -72,9 +72,11 @@ export interface DocumentProgress {
   document_id: number
   filename: string
   total_pages: number
-  overall_status: 'done' | 'running' | 'pending' | 'failed'
+  overall_status: 'done' | 'running' | 'pending' | 'failed' | 'degraded' | 'source_unavailable'
   overall_percent: number
   current_stage: string
+  source_available?: boolean
+  source_state?: string
   stages: ProgressStage[]
 }
 
@@ -271,6 +273,8 @@ export interface DocProgressEntry {
   fusion_status: string
   parse_status: string
   created_at: string
+  source_available?: boolean
+  source_state?: string
 }
 
 export interface DashboardStats {
@@ -278,6 +282,7 @@ export interface DashboardStats {
   completed_documents: number
   running_documents: number
   failed_documents: number
+  source_unavailable_documents?: number
   total_entities: number
   total_graph_relations: number
   total_file_relations: number

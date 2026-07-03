@@ -32,8 +32,11 @@ class FakeScalar:
 
 
 class FakeConnectionContext:
+    def __init__(self, connection: FakeConnection | None = None) -> None:
+        self.connection = connection or FakeConnection()
+
     async def __aenter__(self) -> FakeConnection:
-        return FakeConnection()
+        return self.connection
 
     async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
         return None
@@ -42,6 +45,23 @@ class FakeConnectionContext:
 class FakeEngine:
     def connect(self) -> FakeConnectionContext:
         return FakeConnectionContext()
+
+
+class SemanticFailureConnection(FakeConnection):
+    async def execute(self, statement: object) -> object:
+        sql = str(statement)
+        if "GROUP BY status" in sql:
+            return FakeRows([])
+        if "status = 'completed'" in sql and "SELECT count(*)" in sql:
+            return FakeScalar(2)
+        if "SELECT count(*)" in sql:
+            return FakeScalar(0)
+        return FakeScalar(1)
+
+
+class SemanticFailureEngine:
+    def connect(self) -> FakeConnectionContext:
+        return FakeConnectionContext(SemanticFailureConnection())
 
 
 class BrokenEngine:
@@ -136,3 +156,22 @@ async def test_health_endpoint_reports_module_errors_as_degraded() -> None:
     data = response.json()
     assert data["data"]["status"] == "degraded"
     assert data["data"]["module_errors"] == {"bad": "boom"}
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_reports_task_semantic_failures_as_degraded() -> None:
+    transport = ASGITransport(app=app)
+
+    with patch("app.database.engine", SemanticFailureEngine()), patch(
+        "app.services.task_worker.worker_health",
+        return_value={"running": True, "registered_handlers": [], "last_active": None},
+    ), patch("app.services.event_bus.get_event_log", return_value=[]), patch(
+        "app.routers.registry.get_module_load_errors", return_value={}
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/health")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "degraded"
+    assert data["task_queue"]["semantic_failed_completed_24h"] == 2

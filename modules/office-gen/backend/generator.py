@@ -15,12 +15,74 @@ except ImportError:
 
 # ── DOCX generator ──────────────────────────────────────────────────────
 
+def _block_type(block: dict, default: str = "段落") -> str:
+    return str(block.get("类型", block.get("type", default)) or default).lower()
+
+
+def _block_text(block: dict) -> str:
+    return str(block.get("文本", block.get("text", "")) or "")
+
+
+def _block_level(block: dict) -> int:
+    raw = block.get("级别", block.get("level", block.get("data", {}).get("level", 1)))
+    try:
+        return int(raw or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _block_align(block: dict) -> str:
+    return str(block.get("对齐", block.get("align", "left")) or "left").lower()
+
+
+def _block_bold(block: dict) -> bool:
+    return bool(block.get("加粗", block.get("bold", False)))
+
+
+def _is_heading(block_type: str) -> bool:
+    return block_type in {"标题", "heading", "head", "title", "h1", "h2", "h3", "h4"}
+
+
+def _is_paragraph(block_type: str) -> bool:
+    return block_type in {"段落", "paragraph", "text", "textbox", "list", "code"}
+
+
+def _is_table(block_type: str) -> bool:
+    return block_type in {"表格", "table"}
+
+
+def _is_image(block_type: str) -> bool:
+    return block_type in {"图片", "image"}
+
+
+def _is_page_break(block_type: str) -> bool:
+    return block_type in {"分页", "page_break", "pagebreak"}
+
+
+def _table_header(block: dict) -> list:
+    return block.get("表头", block.get("header", block.get("table_header", []))) or []
+
+
+def _table_rows(block: dict) -> list:
+    rows = block.get("行", block.get("rows", block.get("table_rows", []))) or []
+    if not rows and isinstance(block.get("data"), dict):
+        rows = block["data"].get("rows", []) or []
+    return rows
+
+
+def _cell_value(value) -> str:
+    if isinstance(value, dict):
+        for key in ("name", "label", "text", "value", "key"):
+            if key in value:
+                return "" if value[key] is None else str(value[key])
+        return str(value)
+    return "" if value is None else str(value)
+
+
 def generate_docx(params: dict) -> bytes:
     try:
         from docx import Document
-        from docx.shared import Pt, Inches, Cm, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.oxml.ns import qn
+        from docx.shared import Pt
     except ImportError:
         raise RuntimeError("python-docx is not installed. Run: pip install python-docx")
 
@@ -28,23 +90,23 @@ def generate_docx(params: dict) -> bytes:
     content = params.get("content", [])
 
     for block in content:
-        block_type = block.get("type", "段落")
-        text = block.get("text", "")
-        bold = block.get("bold", False)
-        align = block.get("align", "left")
-        level = block.get("level", 1)
+        block_type = _block_type(block)
+        text = _block_text(block)
+        bold = _block_bold(block)
+        align = _block_align(block)
+        level = _block_level(block)
 
-        if block_type == "标题":
-            p = doc.add_heading(text, level=min(level, 4))
-        elif block_type == "段落":
+        if _is_heading(block_type):
+            doc.add_heading(text, level=min(level, 4))
+        elif _is_paragraph(block_type):
             p = doc.add_paragraph()
             run = p.add_run(text)
             run.bold = bold
             run.font.size = Pt(12)
             _set_alignment(p, align)
-        elif block_type == "表格":
-            header = block.get("表头", block.get("header", []))
-            rows = block.get("行", block.get("rows", []))
+        elif _is_table(block_type):
+            header = _table_header(block)
+            rows = _table_rows(block)
             if header:
                 rows = [header] + rows
             if rows:
@@ -53,8 +115,8 @@ def generate_docx(params: dict) -> bytes:
                 for i, row_data in enumerate(rows):
                     for j, cell_text in enumerate(row_data):
                         if j < len(table.rows[i].cells):
-                            table.rows[i].cells[j].text = str(cell_text)
-        elif block_type == "图片":
+                            table.rows[i].cells[j].text = _cell_value(cell_text)
+        elif _is_image(block_type):
             _add_image_block(doc, block)
 
     buf = io.BytesIO()
@@ -99,7 +161,7 @@ def _add_image_block(doc, block: dict):
 def generate_xlsx(params: dict) -> bytes:
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.styles import Alignment, Font, PatternFill
     except ImportError:
         raise RuntimeError("openpyxl is not installed. Run: pip install openpyxl")
 
@@ -117,14 +179,20 @@ def generate_xlsx(params: dict) -> bytes:
         rows = sheet_spec.get("行", sheet_spec.get("rows", []))
 
         if columns:
-            ws.append(columns)
+            ws.append([_cell_value(column) for column in columns])
             for cell in ws[1]:
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill(start_color="2395BC", end_color="2395BC", fill_type="solid")
                 cell.alignment = Alignment(horizontal="center")
 
         for row_data in rows:
-            ws.append(list(row_data))
+            if isinstance(row_data, dict):
+                row_values = [_cell_value(row_data.get(_cell_value(column))) for column in columns] if columns else [
+                    _cell_value(value) for value in row_data.values()
+                ]
+            else:
+                row_values = [_cell_value(value) for value in list(row_data)]
+            ws.append(row_values)
 
         for col in ws.columns:
             max_len = max((len(str(c.value or "")) for c in col), default=8)
@@ -141,9 +209,7 @@ def generate_xlsx(params: dict) -> bytes:
 def generate_pptx(params: dict) -> bytes:
     try:
         from pptx import Presentation
-        from pptx.util import Inches, Pt, Emu
-        from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Inches
     except ImportError:
         raise RuntimeError("python-pptx is not installed. Run: pip install python-pptx")
 
@@ -162,11 +228,17 @@ def generate_pptx(params: dict) -> bytes:
         layout = prs.slide_layouts[1]
         slide = prs.slides.add_slide(layout)
         title = slide.shapes.title
-        title_text = slide_spec.get("标题", slide_spec.get("title", ""))
+        title_text = slide_spec.get("标题", slide_spec.get("title", slide_spec.get("name", "")))
         if title:
             title.text = title_text
 
         bullets = slide_spec.get("要点", slide_spec.get("bullets", []))
+        if not bullets and isinstance(slide_spec.get("elements"), list):
+            bullets = [
+                {"text": elem.get("text", ""), "level": elem.get("level", 0)}
+                for elem in slide_spec["elements"]
+                if isinstance(elem, dict) and elem.get("text")
+            ]
         if bullets:
             body = slide.shapes.placeholders[1]
             tf = body.text_frame
@@ -197,12 +269,12 @@ def generate_pptx(params: dict) -> bytes:
 
 def generate_pdf(params: dict) -> bytes:
     try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import mm, cm
         from reportlab.lib.colors import HexColor
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import cm
+        from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError:
         raise RuntimeError("reportlab is not installed. Run: pip install reportlab")
 
@@ -218,16 +290,16 @@ def generate_pdf(params: dict) -> bytes:
     elements = []
 
     for block in content:
-        block_type = block.get("类型", block.get("type", "段落"))
-        text = block.get("文本", block.get("text", ""))
-        bold = block.get("加粗", block.get("bold", False))
-        align = block.get("对齐", block.get("align", "left"))
-        level = block.get("级别", block.get("level", 1))
+        block_type = _block_type(block)
+        text = _block_text(block)
+        bold = _block_bold(block)
+        align = _block_align(block)
+        level = _block_level(block)
 
         align_map = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT, "justify": TA_JUSTIFY}
         para_align = align_map.get(align, TA_LEFT)
 
-        if block_type == "标题":
+        if _is_heading(block_type):
             font_size = {1: 22, 2: 18, 3: 16, 4: 14}.get(level, 18)
             style = ParagraphStyle(f"heading{level}", parent=styles["Heading1"],
                                    fontSize=font_size, alignment=para_align,
@@ -237,7 +309,7 @@ def generate_pdf(params: dict) -> bytes:
             elements.append(Paragraph(text, style))
             elements.append(Spacer(1, 6))
 
-        elif block_type == "段落":
+        elif _is_paragraph(block_type):
             font_name = "STSong-Bold" if bold else "STSong"
             style = ParagraphStyle("body", parent=styles["Normal"],
                                    fontSize=12, alignment=para_align,
@@ -245,14 +317,14 @@ def generate_pdf(params: dict) -> bytes:
                                    fontName=font_name)
             elements.append(Paragraph(text, style))
 
-        elif block_type in ("表格", "table"):
-            header = block.get("表头", block.get("header", []))
-            rows = block.get("行", block.get("rows", []))
+        elif _is_table(block_type):
+            header = _table_header(block)
+            rows = _table_rows(block)
             if header:
                 rows = [header] + rows
             if rows:
                 col_count = max(len(r) for r in rows) if rows else 1
-                table_data = [[str(c) if c else "" for c in r] + [""] * (col_count - len(r)) for r in rows]
+                table_data = [[_cell_value(c) for c in r] + [""] * (col_count - len(r)) for r in rows]
                 table = Table(table_data, colWidths=[4.5*cm] * col_count)
                 header_color = HexColor("#2395bc")
                 style_cmds = [
@@ -270,7 +342,7 @@ def generate_pdf(params: dict) -> bytes:
                 elements.append(table)
                 elements.append(Spacer(1, 12))
 
-        elif block_type == "分页":
+        elif _is_page_break(block_type):
             elements.append(PageBreak())
 
     doc.build(elements)
@@ -281,9 +353,10 @@ def generate_pdf(params: dict) -> bytes:
 def _register_cn_font(styles):
     """Register Chinese-supporting fonts for reportlab."""
     try:
+        import os
+
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
-        import os
 
         font_paths = [
             "/System/Library/Fonts/PingFang.ttc",

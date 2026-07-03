@@ -8,18 +8,17 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import subprocess
 import sys
 
 from .sandbox import (
-    _resolve_user_id,
-    _user_workspace,
+    _DEFAULT_TIMEOUT,
+    _build_sandbox_profile,
     _check_dangerous_command,
     _check_path_escape,
-    _build_sandbox_profile,
+    _resolve_user_id,
+    _run_process_capped,
     _safe_env,
-    _DEFAULT_TIMEOUT,
-    _MAX_OUTPUT_BYTES,
+    _user_workspace,
 )
 
 logger = logging.getLogger("v2.terminal-tools")
@@ -77,41 +76,37 @@ async def _exec(params: dict, caller: str) -> dict:
 
     logger.info("user=%s exec(sandbox): %s", user_id, command[:200])
 
-    try:
-        proc = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True,
-            timeout=timeout, env=safe_env,
-        )
-    except subprocess.TimeoutExpired:
+    result = _run_process_capped(argv, cwd, timeout, safe_env)
+    if result["timed_out"]:
         return {
             "success": False,
-            "error": f"Command timed out after {timeout}s",
-            "timed_out": True, "return_code": -1,
-            "stdout": "", "stderr": f"Timeout after {timeout}s",
+            "error": result["error"],
+            "timed_out": True,
+            "return_code": result["return_code"],
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+            "stdout_truncated": result["stdout_truncated"],
+            "stderr_truncated": result["stderr_truncated"],
             "command": command,
         }
-    except Exception as exc:
+    if result["error"]:
         return {
             "success": False,
-            "error": f"Command execution failed: {exc}",
-            "return_code": -1, "stdout": "", "stderr": str(exc),
+            "error": result["error"],
+            "return_code": result["return_code"],
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+            "stdout_truncated": result["stdout_truncated"],
+            "stderr_truncated": result["stderr_truncated"],
             "command": command,
         }
-
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
-    stdout_truncated = len(stdout) > _MAX_OUTPUT_BYTES
-    stderr_truncated = len(stderr) > _MAX_OUTPUT_BYTES
-    if stdout_truncated:
-        stdout = stdout[:_MAX_OUTPUT_BYTES] + "\n... [stdout truncated at 1MB]"
-    if stderr_truncated:
-        stderr = stderr[:_MAX_OUTPUT_BYTES] + "\n... [stderr truncated at 1MB]"
 
     return {
-        "success": proc.returncode == 0,
-        "return_code": proc.returncode,
-        "stdout": stdout, "stderr": stderr,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
+        "success": result["return_code"] == 0,
+        "return_code": result["return_code"],
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "stdout_truncated": result["stdout_truncated"],
+        "stderr_truncated": result["stderr_truncated"],
         "command": command,
     }

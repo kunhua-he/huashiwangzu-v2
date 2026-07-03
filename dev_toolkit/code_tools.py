@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,10 @@ def resolve_repo_path(repo_root: Path, path: str, *, base_dir: Path | None = Non
     if repo_root.resolve() not in resolved.parents and resolved != repo_root.resolve():
         raise ValueError(f"路径必须在仓库内: {path}")
     return resolved
+
+
+def split_path_list(raw: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[,\n]", raw or "") if item.strip()]
 
 
 def normalize_pytest_targets(repo_root: Path, target: str) -> list[str]:
@@ -152,20 +157,20 @@ async def code_impact(codegraph_cli: str, path: str) -> str:
     return stdout.decode() or "(空结果)"
 
 
-async def lint(run_command_json, repo_root: Path, ruff_cli: str, path: str, diff: bool = False) -> str:
+async def lint_one(run_command_json, repo_root: Path, ruff_cli: str, path: str, diff: bool = False) -> dict[str, Any]:
     try:
         abs_path = resolve_repo_path(repo_root, path)
     except ValueError as exc:
-        return json.dumps({"success": False, "error": str(exc)}, ensure_ascii=False)
+        return {"success": False, "path": path, "error": str(exc)}
     if not abs_path.is_file():
-        return json.dumps({"success": False, "error": f"文件不存在: {abs_path}"}, ensure_ascii=False)
+        return {"success": False, "path": path, "error": f"文件不存在: {abs_path}"}
     cmd = [ruff_cli, "check"]
     if diff:
         cmd.extend(["--diff"])
     cmd.append(str(abs_path))
     result = await run_command_json(cmd, cwd=repo_root, timeout=60)
     output = (result.get("stdout") or "") + (result.get("stderr") or "")
-    payload = {
+    return {
         "success": result.get("success", False),
         "path": repo_relative(repo_root, abs_path),
         "diff": diff,
@@ -174,6 +179,22 @@ async def lint(run_command_json, repo_root: Path, ruff_cli: str, path: str, diff
         "duration_seconds": result.get("duration_seconds"),
         "output": output or "All checks passed!",
         "output_tail": tail_text(output) if output else "All checks passed!",
+    }
+
+
+async def lint(run_command_json, repo_root: Path, ruff_cli: str, path: str, diff: bool = False) -> str:
+    paths = split_path_list(path)
+    if not paths:
+        return json.dumps({"success": False, "error": "path is required"}, ensure_ascii=False)
+    results = [await lint_one(run_command_json, repo_root, ruff_cli, item, diff) for item in paths]
+    if len(results) == 1:
+        return json.dumps(results[0], ensure_ascii=False, indent=2)
+    payload = {
+        "success": all(item.get("success") for item in results),
+        "paths": [item.get("path", "") for item in results],
+        "diff": diff,
+        "results": results,
+        "failed_count": sum(1 for item in results if not item.get("success")),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -278,11 +299,11 @@ def tool_definitions() -> list[Any]:
         ),
         Tool(
             name="lint",
-            description="用 ruff 静态检查 Python 文件。支持 diff=true 只预览可修复 diff，不写盘。",
+            description="用 ruff 静态检查 Python 文件。path 支持单个路径或逗号/换行分隔多路径；diff=true 只预览可修复 diff，不写盘。",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Python 文件路径(绝对或相对仓库根)"},
+                    "path": {"type": "string", "description": "Python 文件路径(绝对或相对仓库根)，可逗号/换行分隔多个"},
                     "diff": {"type": "boolean", "description": "只返回 ruff --diff 预览", "default": False},
                 },
                 "required": ["path"],

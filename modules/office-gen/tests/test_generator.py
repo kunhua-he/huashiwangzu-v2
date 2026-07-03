@@ -11,8 +11,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 # ── Build package hierarchy for "modules/office-gen/backend/" ──
 # Since the directory has a hyphen, we use the normalized name "office_gen"
 
@@ -41,7 +39,7 @@ gen = _load_backend_module("generator")
 def _check_docx(data: bytes) -> bool:
     try:
         from docx import Document
-        doc = Document(io.BytesIO(data))
+        Document(io.BytesIO(data))
         return True
     except Exception:
         return False
@@ -59,7 +57,7 @@ def _check_xlsx(data: bytes) -> bool:
 def _check_pptx(data: bytes) -> bool:
     try:
         from pptx import Presentation
-        prs = Presentation(io.BytesIO(data))
+        Presentation(io.BytesIO(data))
         return True
     except Exception:
         return False
@@ -107,6 +105,20 @@ class TestDocxGenerator:
         })
         assert _check_docx(data)
 
+    def test_content_ir_english_blocks(self):
+        data = gen.generate_docx({
+            "filename": "content_ir",
+            "content": [
+                {"type": "heading", "text": "Content IR Title", "data": {"level": 1}},
+                {"type": "paragraph", "text": "Paragraph from Content IR"},
+                {"type": "table", "table_header": ["Name", "Count"], "table_rows": [["Alpha", 0]]},
+            ],
+        })
+        doc = __import__("docx").Document(io.BytesIO(data))
+        assert "Content IR Title" in [p.text for p in doc.paragraphs]
+        assert "Paragraph from Content IR" in [p.text for p in doc.paragraphs]
+        assert doc.tables[0].cell(1, 1).text == "0"
+
 
 class TestXlsxGenerator:
     def test_basic_spreadsheet(self):
@@ -137,6 +149,20 @@ class TestXlsxGenerator:
         data = gen.generate_xlsx({"filename": "empty", "sheets": []})
         assert _check_xlsx(data)
 
+    def test_content_ir_column_dicts_and_row_dicts(self):
+        data = gen.generate_xlsx({
+            "filename": "ir_sheet",
+            "sheets": [{
+                "name": "Sheet1",
+                "columns": [{"name": "item"}, {"name": "count"}],
+                "rows": [{"item": "Alpha", "count": 0}],
+            }],
+        })
+        wb = __import__("openpyxl").load_workbook(io.BytesIO(data))
+        ws = wb["Sheet1"]
+        assert ws["A1"].value == "item"
+        assert ws["B2"].value == "0"
+
 
 class TestPptxGenerator:
     def test_basic_presentation(self):
@@ -153,6 +179,22 @@ class TestPptxGenerator:
     def test_empty_slides(self):
         data = gen.generate_pptx({"filename": "empty", "slides": []})
         assert _check_pptx(data)
+
+    def test_content_ir_slide_elements(self):
+        data = gen.generate_pptx({
+            "filename": "ir_deck",
+            "slides": [{
+                "name": "Content IR Slide",
+                "elements": [
+                    {"type": "heading", "text": "First point"},
+                    {"type": "paragraph", "text": "Second point", "level": 1},
+                ],
+            }],
+        })
+        prs = __import__("pptx").Presentation(io.BytesIO(data))
+        assert prs.slides[0].shapes.title.text == "Content IR Slide"
+        slide_text = "\n".join(shape.text for shape in prs.slides[0].shapes if hasattr(shape, "text"))
+        assert "First point" in slide_text
 
 
 class TestPdfGenerator:
@@ -180,6 +222,18 @@ class TestPdfGenerator:
 
     def test_empty_content_pdf(self):
         data = gen.generate_pdf({"filename": "empty", "content": []})
+        assert _check_pdf(data)
+
+    def test_content_ir_english_pdf_blocks(self):
+        data = gen.generate_pdf({
+            "filename": "ir_pdf",
+            "content": [
+                {"type": "heading", "text": "PDF IR Title", "data": {"level": 1}},
+                {"type": "paragraph", "text": "PDF paragraph"},
+                {"type": "table", "header": ["Name", "Count"], "rows": [["Alpha", 0]]},
+            ],
+        })
+        assert len(data) > 500
         assert _check_pdf(data)
 
 

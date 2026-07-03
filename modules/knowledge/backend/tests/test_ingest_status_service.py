@@ -124,7 +124,31 @@ def test_ingest_status_done_is_search_and_deep_ready() -> None:
     assert payload["deep_ready"] is True
     assert payload["stage_summary"]["vector"]["count"] == 8
     assert payload["stage_summary"]["profile"]["ready"] is True
+    assert payload["stage_summary"]["graph"]["count"] == 2
     assert payload["next_action"] == "ready"
+
+
+def test_ingest_status_graph_ready_can_use_candidate_or_node_counts() -> None:
+    payload = build_ingest_status_payload(
+        _doc(
+            parse_status="done",
+            vector_status="done",
+            raw_status="done",
+            fusion_status="done",
+            total_chunks=8,
+        ),
+        _task(status="completed", result='{"status":"done"}'),
+        profile_count=1,
+        graph_entity_count=3,
+        graph_node_count=5,
+        chunk_entity_count=0,
+    )
+
+    graph = payload["stage_summary"]["graph"]
+    assert graph["ready"] is True
+    assert graph["count"] == 3
+    assert graph["node_count"] == 5
+    assert graph["chunk_entity_count"] == 0
 
 
 def test_ingest_status_error_surfaces_last_error() -> None:

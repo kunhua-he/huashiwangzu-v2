@@ -206,6 +206,26 @@ async def _async_test_row_col_operations():
     assert state.get('cells', {}).get('A2', '') != old_a2_value
     assert state.get('total_rows', 0) == 39
 
+    state = {'cells': {'A1': 'left', 'B1': 'right'}, 'styles': {}, 'merges': {}, 'total_rows': 40, 'total_cols': 10}
+    result = await RowColOperations._insert_shift_right(state, ['A1'])
+    assert result['code'] == 0
+    assert state['cells'].get('B1') == 'left'
+    assert state['cells'].get('C1') == 'right'
+
+    result = await RowColOperations._delete_shift_right(state, ['B1'])
+    assert result['code'] == 0
+    assert state['cells'].get('B1') == 'right'
+
+    state = {'cells': {'A1': 'top', 'A2': 'bottom'}, 'styles': {}, 'merges': {}, 'total_rows': 40, 'total_cols': 10}
+    result = await RowColOperations._insert_shift_down(state, ['A1'])
+    assert result['code'] == 0
+    assert state['cells'].get('A2') == 'top'
+    assert state['cells'].get('A3') == 'bottom'
+
+    result = await RowColOperations._delete_shift_up(state, ['A2'])
+    assert result['code'] == 0
+    assert state['cells'].get('A2') == 'bottom'
+
     print('  ✓ test_row_col_operations passed')
 
 
@@ -437,6 +457,168 @@ def test_version_restore_rejects_cross_file_version_id():
     asyncio.run(_async_test_version_restore_rejects_cross_file_version_id())
 
 
+async def _async_test_live_capability_history_versions_compile():
+    from pathlib import Path
+
+    import openpyxl
+    from app.config import get_settings
+    from app.database import AsyncSessionLocal
+    from backend.init_db import run_init
+    from backend.router import (
+        _append_rows_capability,
+        _compile_xlsx_capability,
+        _dispatch,
+        _import_file_to_workbook_capability,
+        _list_versions_capability,
+        _redo_capability,
+        _restore_version_capability,
+        _undo_capability,
+        _update_range_capability,
+    )
+    from backend.state.db_ops import read_state_full
+    from sqlalchemy import text
+
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    file_name_prefix = f"w3_excel_file_{stamp}"
+    upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+    storage_dir = Path("excel_engine_test")
+    storage_path = storage_dir / f"{file_name_prefix}.xlsx"
+    full_path = upload_root / storage_path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "seed"
+    ws.column_dimensions["A"].width = 22
+    ws.row_dimensions[1].height = 28
+    wb.save(full_path)
+    wb.close()
+
+    created_file_ids: list[int] = []
+    compiled_path = ""
+    async with AsyncSessionLocal() as db:
+        await run_init(db)
+        owner_id, _ = await _get_two_user_ids(db)
+        await _cleanup_db_state(db, f"unused_{stamp}", file_name_prefix)
+        try:
+            file_result = await db.execute(
+                text(
+                    "INSERT INTO framework_file_items "
+                    "(name, extension, size, owner_id, storage_path, mime_type, ref_count, deleted) "
+                    "VALUES (:name, 'xlsx', :size, :owner_id, :storage_path, "
+                    "'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 1, false) "
+                    "RETURNING id"
+                ),
+                {
+                    "name": f"{file_name_prefix}_import",
+                    "size": full_path.stat().st_size,
+                    "owner_id": owner_id,
+                    "storage_path": str(storage_path),
+                },
+            )
+            file_id = int(file_result.scalar_one())
+            created_file_ids.append(file_id)
+            await db.commit()
+            state_key = f"knowledge_{file_id}"
+            caller = f"user:{owner_id}"
+
+            imported = await _import_file_to_workbook_capability({"file_id": file_id}, caller)
+            assert imported["state_key"] == state_key
+
+            width_count = await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM excel_col_widths cw "
+                    "JOIN excel_sheets s ON s.id = cw.sheet_id "
+                    "JOIN excel_workbooks w ON w.id = s.workbook_id "
+                    "WHERE w.state_key = :state_key"
+                ),
+                {"state_key": state_key},
+            )
+            height_count = await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM excel_row_heights rh "
+                    "JOIN excel_sheets s ON s.id = rh.sheet_id "
+                    "JOIN excel_workbooks w ON w.id = s.workbook_id "
+                    "WHERE w.state_key = :state_key"
+                ),
+                {"state_key": state_key},
+            )
+            assert int(width_count.scalar_one()) > 0
+            assert int(height_count.scalar_one()) > 0
+
+            updated = await _update_range_capability(
+                {"state_key": state_key, "start_row": 0, "start_col": 0, "rows": [["updated", "B"]]},
+                caller,
+            )
+            assert updated["rows_updated"] == 1
+            appended = await _append_rows_capability({"state_key": state_key, "rows": [["append-a", "append-b"]]}, caller)
+            assert appended["start_row"] == 2
+
+            state = await read_state_full(db, state_key, owner_id=owner_id)
+            assert state["cells"].get("A1") == "updated"
+            assert state["cells"].get("A2") == "append-a"
+            assert state["cells"].get("B2") == "append-b"
+
+            undo = await _undo_capability({"state_key": state_key}, caller)
+            assert undo["success"] is True
+            assert "A2" not in undo["cells"]
+            redo_stack_count = await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM excel_redo_stack rs "
+                    "JOIN excel_sheets s ON s.id = rs.sheet_id "
+                    "JOIN excel_workbooks w ON w.id = s.workbook_id "
+                    "WHERE w.state_key = :state_key"
+                ),
+                {"state_key": state_key},
+            )
+            assert int(redo_stack_count.scalar_one()) == 1
+
+            redo = await _redo_capability({"state_key": state_key}, caller)
+            assert redo["success"] is True
+            assert redo["cells"].get("A2") == "append-a"
+
+            saved = await _dispatch(
+                "export",
+                "save_version",
+                {"version_name": "manual-test"},
+                state_key,
+                "Sheet1",
+                db,
+                owner_id=owner_id,
+            )
+            assert saved["code"] == 0
+            version_id = int(saved["version"]["id"])
+            versions = await _list_versions_capability({"state_key": state_key}, caller)
+            assert any(int(v["id"]) == version_id for v in versions["versions"])
+
+            await _update_range_capability({"state_key": state_key, "rows": [["changed-after-version"]]}, caller)
+            restored = await _restore_version_capability({"state_key": state_key, "version_id": version_id}, caller)
+            assert restored["restored"] is True
+            assert restored["cells"].get("A1") == "updated"
+            assert restored["cells"].get("A2") == "append-a"
+
+            compiled = await _compile_xlsx_capability({"state_key": state_key}, caller)
+            compiled_path = compiled["file_path"]
+            assert os.path.exists(compiled_path)
+            assert os.path.getsize(compiled_path) > 100
+        finally:
+            await db.rollback()
+            if compiled_path and os.path.exists(compiled_path):
+                os.unlink(compiled_path)
+            if created_file_ids:
+                await _cleanup_db_workbooks_by_state_keys(db, [f"knowledge_{file_id}" for file_id in created_file_ids])
+                await _cleanup_db_state(db, f"unused_{stamp}", file_name_prefix)
+            if full_path.exists():
+                full_path.unlink()
+
+    print('  ✓ test_live_capability_history_versions_compile passed')
+
+
+def test_live_capability_history_versions_compile():
+    asyncio.run(_async_test_live_capability_history_versions_compile())
+
+
 if __name__ == '__main__':
     print('\n=== Excel Engine Module Tests ===\n')
     test_address_tool()
@@ -450,4 +632,5 @@ if __name__ == '__main__':
     test_clipboard()
     test_db_state_key_owner_isolation()
     test_version_restore_rejects_cross_file_version_id()
+    test_live_capability_history_versions_compile()
     print('\n✓ All tests passed!\n')

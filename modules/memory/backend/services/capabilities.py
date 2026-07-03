@@ -15,15 +15,13 @@ MEMORY_TOP_K_DEFAULT = 5
 
 
 async def _cap_save(params: dict, caller: str) -> dict:
-    text = params.get("text", "")
+    text = memory_service._require_non_empty_text(params.get("text", ""), "text")
     tags = params.get("tags")
     source = params.get("source", "auto-distill")
     conversation_id = params.get("conversation_id")
     owner_id = memory_service._parse_user_id(caller)
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
-    if not text.strip():
-        raise ValidationError("内容不能为空")
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
         memory = MemoryRecord(
@@ -42,9 +40,11 @@ async def _cap_save(params: dict, caller: str) -> dict:
 
 
 async def _cap_recall(params: dict, caller: str) -> dict:
-    query = params.get("query", "")
-    limit = params.get("limit", MEMORY_TOP_K_DEFAULT)
+    query = memory_service._require_non_empty_text(params.get("query", ""), "query")
+    limit = memory_service._coerce_limit(params.get("limit"), default=MEMORY_TOP_K_DEFAULT)
     expand_chain = params.get("expand_chain", False)
+    if not isinstance(expand_chain, bool):
+        raise ValidationError("expand_chain must be boolean")
     owner_id = memory_service._parse_user_id(caller)
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
@@ -56,8 +56,8 @@ async def _cap_recall(params: dict, caller: str) -> dict:
 
 
 async def _cap_fuse(params: dict, caller: str) -> dict:
-    query = params.get("query", "")
-    ids = params.get("ids", [])
+    query = memory_service._require_non_empty_text(params.get("query", ""), "query")
+    ids = memory_service._coerce_id_list(params.get("ids", []), "ids")
     owner_id = memory_service._parse_user_id(caller)
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
@@ -81,11 +81,11 @@ async def _cap_dream(params: dict, caller: str) -> dict:
 
 
 async def _cap_rethink(params: dict, caller: str) -> dict:
-    mem_id = params.get("id")
-    text = params.get("text", "")
+    mem_id = memory_service._coerce_positive_int(params.get("id"), "id")
+    text = memory_service._require_non_empty_text(params.get("text", ""), "text")
     tags = params.get("tags")
     owner_id = memory_service._parse_user_id(caller)
-    if not owner_id or not mem_id:
+    if not owner_id:
         raise ValidationError("参数不完整")
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
@@ -105,11 +105,13 @@ async def _cap_rethink(params: dict, caller: str) -> dict:
 
 
 async def _cap_replace(params: dict, caller: str) -> dict:
-    mem_id = params.get("id")
-    old_text = params.get("old_text", "")
+    mem_id = memory_service._coerce_positive_int(params.get("id"), "id")
+    old_text = memory_service._require_non_empty_text(params.get("old_text", ""), "old_text")
     new_text = params.get("new_text", "")
+    if not isinstance(new_text, str):
+        raise ValidationError("new_text must be a string")
     owner_id = memory_service._parse_user_id(caller)
-    if not owner_id or not mem_id:
+    if not owner_id:
         raise ValidationError("参数不完整")
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
@@ -129,10 +131,10 @@ async def _cap_replace(params: dict, caller: str) -> dict:
 
 
 async def _cap_insert(params: dict, caller: str) -> dict:
-    mem_id = params.get("id")
-    text = params.get("text", "")
+    mem_id = memory_service._coerce_positive_int(params.get("id"), "id")
+    text = memory_service._require_non_empty_text(params.get("text", ""), "text")
     owner_id = memory_service._parse_user_id(caller)
-    if not owner_id or not mem_id:
+    if not owner_id:
         raise ValidationError("参数不完整")
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
@@ -153,8 +155,8 @@ async def _cap_list(params: dict, caller: str) -> dict:
     owner_id = memory_service._parse_user_id(caller)
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
-    limit = params.get("limit", 50)
-    offset = params.get("offset", 0)
+    limit = memory_service._coerce_limit(params.get("limit"), default=50, max_value=memory_service.MEMORY_LIST_LIMIT_MAX)
+    offset = memory_service._coerce_offset(params.get("offset"), default=0)
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
         stmt = (
@@ -170,7 +172,7 @@ async def _cap_list(params: dict, caller: str) -> dict:
 
 
 async def _cap_delete(params: dict, caller: str) -> dict:
-    mem_id = params.get("id")
+    mem_id = memory_service._coerce_positive_int(params.get("id"), "id")
     owner_id = memory_service._parse_user_id(caller)
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
@@ -181,17 +183,14 @@ async def _cap_delete(params: dict, caller: str) -> dict:
             raise NotFound("记忆不存在")
         if memory.owner_id != owner_id:
             raise PermissionDenied("只能删除自己的记忆")
-        await db.execute(
-            text("DELETE FROM memory_links WHERE from_id = :id OR to_id = :id"),
-            {"id": mem_id},
-        )
+        await memory_service._delete_memory_dependents(db, mem_id)
         await db.delete(memory)
         await db.commit()
     return {"success": True, "data": {"id": mem_id, "status": "deleted"}}
 
 
 async def _cap_save_experience(params: dict, caller: str) -> dict:
-    trigger_condition = params.get("trigger_condition", "")
+    trigger_condition = memory_service._require_non_empty_text(params.get("trigger_condition", ""), "trigger_condition")
     steps = params.get("steps", "")
     tools_used = params.get("tools_used")
     source_conversation_id = params.get("source_conversation_id")
@@ -217,10 +216,8 @@ async def _cap_save_experience(params: dict, caller: str) -> dict:
 
 
 async def _cap_match_experience(params: dict, caller: str) -> dict:
-    query = params.get("query", "")
-    limit = params.get("limit", 2)
-    if not query.strip():
-        return {"success": True, "data": []}
+    query = memory_service._require_non_empty_text(params.get("query", ""), "query")
+    limit = experience_service._coerce_match_limit(params.get("limit"), default=2)
     owner_id = memory_service._parse_user_id(caller)
     is_system = caller.startswith("system:")
     if not owner_id and not is_system:
@@ -421,6 +418,10 @@ async def _cap_recall_stable_rules(params: dict, caller: str) -> dict:
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
     rule_types = params.get("rule_types", [])
+    if rule_types in (None, ""):
+        rule_types = []
+    if not isinstance(rule_types, list) or not all(isinstance(item, str) for item in rule_types):
+        raise ValidationError("rule_types must be a list of strings")
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
         from ..models import MemoryStableRule
@@ -452,22 +453,24 @@ async def _cap_recall_chunk(params: dict, caller: str) -> dict:
     owner_id = memory_service._parse_user_id(caller)
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
-    query = params.get("query", "")
-    limit = params.get("limit", 5)
+    query = memory_service._require_non_empty_text(params.get("query", ""), "query")
+    limit = memory_service._coerce_limit(params.get("limit"), default=5)
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
         query_vec = await embedding_service._compute_embedding(query)
         if query_vec and len(query) > 3:
-            vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
+            vec_literal = embedding_service._vector_literal(query_vec)
+            if not vec_literal:
+                return {"success": True, "data": []}
             sql = text("""
                 SELECT id, memory_record_id, owner_id, text, summary, source, provenance,
                        conversation_id, chunk_index, confidence,
                        start_char, end_char, created_at,
-                       (1 - (embedding <=> CAST(:query_vec AS vector))) AS similarity
+                       (1 - (embedding <=> CAST(:query_vec AS vector(1024)))) AS similarity
                 FROM memory_chunks
                 WHERE owner_id = :owner_id
                   AND embedding IS NOT NULL
-                  AND (1 - (embedding <=> CAST(:query_vec AS vector))) >= 0.3
+                  AND (1 - (embedding <=> CAST(:query_vec AS vector(1024)))) >= 0.3
                 ORDER BY similarity DESC
                 LIMIT :limit
             """)
@@ -512,12 +515,13 @@ async def _cap_save_stable_rule(params: dict, caller: str) -> dict:
     owner_id = memory_service._parse_user_id(caller)
     if not owner_id:
         raise PermissionDenied("无法解析调用者身份")
-    rule_type = params.get("rule_type", "general")
-    content = params.get("content", "")
-    priority = params.get("priority", 0)
+    rule_type = memory_service._require_non_empty_text(params.get("rule_type", "general"), "rule_type")
+    content = memory_service._require_non_empty_text(params.get("content", ""), "content")
+    try:
+        priority = int(params.get("priority", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("priority must be an integer") from exc
     source = params.get("source")
-    if not content.strip():
-        raise ValidationError("规则内容不能为空")
     await memory_service._ensure_init()
     async with AsyncSessionLocal() as db:
         from ..models import MemoryStableRule

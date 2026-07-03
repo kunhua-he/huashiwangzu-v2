@@ -101,6 +101,32 @@ async def sync_row_heights(db: AsyncSession, sheet_id: int, row_heights: dict[st
     await db.commit()
 
 
+async def sync_state(db: AsyncSession, sheet_id: int, state: dict):
+    await db.execute(
+        text(
+            f"UPDATE {ExcelSheet.__tablename__} "
+            "SET total_rows = :total_rows, total_cols = :total_cols "
+            "WHERE id = :sid"
+        ),
+        {
+            "sid": sheet_id,
+            "total_rows": int(state.get("total_rows", DEFAULT_TOTAL_ROWS)),
+            "total_cols": int(state.get("total_cols", DEFAULT_TOTAL_COLS)),
+        },
+    )
+    await sync_cells(db, sheet_id, state.get("cells", {}), state.get("styles", {}), state.get("merges", {}))
+    await sync_col_widths(db, sheet_id, state.get("col_widths", {}))
+    await sync_row_heights(db, sheet_id, state.get("row_heights", {}))
+
+
+async def clear_redo_stack(db: AsyncSession, sheet_id: int) -> None:
+    await db.execute(
+        text(f"DELETE FROM {ExcelRedoStack.__tablename__} WHERE sheet_id = :sid"),
+        {"sid": sheet_id},
+    )
+    await db.commit()
+
+
 async def read_history(db: AsyncSession, state_key: str, owner_id: int = 0) -> list[dict]:
     wb = await find_workbook(db, state_key, owner_id=owner_id)
     if not wb:
@@ -112,7 +138,16 @@ async def read_history(db: AsyncSession, state_key: str, owner_id: int = 0) -> l
     return [{'id': r[0], 'action': r[1], 'cell_addr': r[2], 'description': r[3], 'created_at': r[4].isoformat() if r[4] else ''} for r in result.fetchall()]
 
 
-async def record_snapshot(db: AsyncSession, state: dict, state_key: str, action: str, addr: str = '', description: str = '', owner_id: int = 0):
+async def record_snapshot(
+    db: AsyncSession,
+    state: dict,
+    state_key: str,
+    action: str,
+    addr: str = '',
+    description: str = '',
+    owner_id: int = 0,
+    snapshot: dict | None = None,
+):
     sheet_id = state.get('_sheet_id')
     if not sheet_id:
         wb = await find_or_create_workbook(db, state_key, owner_id)
@@ -120,8 +155,8 @@ async def record_snapshot(db: AsyncSession, state: dict, state_key: str, action:
         sheet_id = sheet['id'] if sheet else None
     if not sheet_id:
         return
-    snapshot = build_snapshot(state)
-    db.add(ExcelHistory(sheet_id=sheet_id, action=action, cell_addr=addr, description=description, snapshot_json=json.dumps(snapshot, ensure_ascii=False)))
+    snapshot_data = snapshot if snapshot is not None else build_snapshot(state)
+    db.add(ExcelHistory(sheet_id=sheet_id, action=action, cell_addr=addr, description=description, snapshot_json=json.dumps(snapshot_data, ensure_ascii=False)))
     await db.commit()
     result = await db.execute(text(f"SELECT COUNT(*) FROM {ExcelHistory.__tablename__} WHERE sheet_id = :sid"), {'sid': sheet_id})
     count = result.scalar() or 0

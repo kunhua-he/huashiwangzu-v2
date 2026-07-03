@@ -435,8 +435,19 @@ async function sendStateOp(method: string) {
 }
 
 async function sendSave() {
-  // State is auto-persisted on every write operation
-  // This is a manual save trigger
+  if (!stateKey.value) return
+  try {
+    operationError.value = ''
+    await api.dispatch({
+      module: 'export',
+      method: 'save_version',
+      params: { version_name: `manual-${new Date().toISOString()}` },
+      state_key: stateKey.value,
+      sheet: currentSheetName.value,
+    })
+  } catch (e: unknown) {
+    showOperationError(e, '版本保存失败')
+  }
 }
 
 async function exportXlsx() {

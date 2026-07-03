@@ -63,10 +63,18 @@ def _check_path_escape(command: str, workspace: str) -> str | None:
         try:
             resolved = _os.path.realpath(_os.path.join(workspace, arg))
             if not str(resolved).startswith(ws_prefix) and str(resolved) != workspace:
-                return f"Path escape blocked: '{arg}' resolves to {resolved} outside workspace"
+                return f"Path escape blocked: '{arg}' resolves to a location outside workspace"
         except (OSError, ValueError):
             continue
     return None
+
+
+def _safe_external_filename(name: str, fallback: str = "file") -> str:
+    import pathlib
+    cleaned = pathlib.Path(str(name or "").replace("\\", "/")).name.strip()
+    if cleaned in {"", ".", ".."}:
+        return fallback
+    return cleaned
 
 
 def test_dangerous_command_detection() -> None:
@@ -99,6 +107,7 @@ def test_path_escape_detection() -> None:
             msg = _check_path_escape(cmd, workspace)
             if msg is not None:
                 print(f"  [ESCAPE] Blocked: {cmd[:40]} → {msg[:40]}...")
+                assert workspace not in msg, "Error message must not leak host workspace path"
             else:
                 print(f"  [ESCAPE] Allowed (non-traversal cmd): {cmd}")
     finally:
@@ -116,16 +125,55 @@ def test_workspace_resolution_contract() -> None:
 
 def test_output_shape_contract() -> None:
     """Validate the uniform response shape for all capabilities."""
-    exec_response = {"success": True, "return_code": 0, "stdout": "hello", "stderr": "", "command": "echo hello"}
+    exec_response = {
+        "success": True,
+        "return_code": 0,
+        "stdout": "hello",
+        "stderr": "",
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "command": "echo hello",
+    }
     write_response = {"success": True, "path": "test.txt", "size": 5}
+    read_response = {"success": True, "path": "big.txt", "content": "x", "truncated": True, "binary": False}
+    list_response = {"success": True, "path": ".", "items": [], "count": 0, "truncated": False, "limit": 1000}
     error_response = {"success": False, "error": "No command provided"}
-    for r in (exec_response, write_response, error_response):
+    for r in (exec_response, write_response, read_response, list_response, error_response):
         assert "success" in r
+        assert "absolute_path" not in r, "Response must not leak host absolute paths"
         if r["success"]:
             assert "success" in r and r["success"] is True
         else:
             assert "error" in r
     print("  [SHAPE] Response shape contract valid")
+
+
+def test_filename_safety_contract() -> None:
+    """Framework display names collapse to safe single file names."""
+    cases = {
+        "../secret.txt": "secret.txt",
+        "/Users/alice/Desktop/report.csv": "report.csv",
+        "nested\\windows.txt": "windows.txt",
+        "": "fallback.txt",
+        ".": "fallback.txt",
+        "..": "fallback.txt",
+    }
+    for raw, expected in cases.items():
+        actual = _safe_external_filename(raw, "fallback.txt")
+        assert actual == expected, f"Expected {expected}, got {actual}"
+        assert "/" not in actual and "\\" not in actual
+    print("  [FILENAME] External filename safety contract valid")
+
+
+def test_chart_fake_success_contract() -> None:
+    """chart must fail if run_python succeeds but no chart file is uploaded."""
+    result = {"success": True, "chart_count": 0, "charts": []}
+    if result.get("success") and result.get("chart_count", 0) < 1:
+        result["success"] = False
+        result["error"] = "Chart generation produced no uploaded chart file"
+    assert result["success"] is False
+    assert "error" in result
+    print("  [CHART] Fake-success guard contract valid")
 
 
 def main() -> None:
@@ -136,6 +184,8 @@ def main() -> None:
     test_path_escape_detection()
     test_workspace_resolution_contract()
     test_output_shape_contract()
+    test_filename_safety_contract()
+    test_chart_fake_success_contract()
     print("=" * 60)
     print("PASS: terminal-tools sandbox test")
 

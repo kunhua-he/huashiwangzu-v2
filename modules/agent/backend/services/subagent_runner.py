@@ -145,6 +145,8 @@ async def _execute_tool_loop(
     full_content = ""
     rounds_used = 0
     task_error = None
+    tool_call_trace: list[dict] = []
+    tool_result_trace: list[dict] = []
 
     for _round in range(max_rounds):
         tool_cfg = (
@@ -187,6 +189,13 @@ async def _execute_tool_loop(
                     args = json.loads(args)
             except Exception:
                 args = {}
+            tool_call_id = str(tc.get("id", "") or "")
+            tool_call_trace.append({
+                "round": _round + 1,
+                "name": name,
+                "tool_call_id": tool_call_id,
+                "arguments": args,
+            })
 
             if not task_write_enabled and not _is_read_only_tool(name):
                 tool_result = {
@@ -211,12 +220,18 @@ async def _execute_tool_loop(
                 tool_result = await call_capability(
                     module_key, action, args, caller=caller, caller_role=caller_role,
                 )
+            tool_result_trace.append({
+                "round": _round + 1,
+                "name": name,
+                "tool_call_id": tool_call_id,
+                "result": tool_result,
+            })
 
             messages.append({
                 "role": "tool",
                 "name": name,
                 "content": _j(tool_result),
-                "tool_call_id": tc.get("id", ""),
+                "tool_call_id": tool_call_id,
             })
 
     if not full_content:
@@ -233,4 +248,6 @@ async def _execute_tool_loop(
         "error": task_error,
         "conclusion": full_content or "子 Agent 未生成结论",
         "rounds_used": rounds_used,
+        "tool_calls": tool_call_trace,
+        "tool_results": tool_result_trace,
     }

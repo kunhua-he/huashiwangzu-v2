@@ -26,6 +26,7 @@ pipeline_orchestrator = _load_service("pipeline_orchestrator")
 document_service = _load_service("document_service")
 fusion_service = _load_service("fusion_service")
 raw_collection_service = _load_service("raw_collection_service")
+llm_diagnostics_stream = _load_service("llm_diagnostics_stream")
 StageDef = pipeline_orchestrator.StageDef
 classify_fusion_status = fusion_service.classify_fusion_status
 classify_raw_collection_status = raw_collection_service.classify_raw_collection_status
@@ -422,6 +423,21 @@ async def test_parse_empty_degraded_branch_refreshes_before_payload(monkeypatch)
     assert result["document"]["parse_status"] == "degraded"
     assert result["document"]["parse_error"] == "Parser returned no content blocks: empty_result"
     assert db.refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_failure_without_fallback_raises():
+    async def failing_stream(**_kwargs):
+        yield {"type": "error", "content": "gateway unavailable"}
+
+    with pytest.raises(RuntimeError, match="gateway unavailable"):
+        await llm_diagnostics_stream.timed_llm_chat_stream(
+            logger=llm_diagnostics_stream.logging.getLogger("test"),
+            stage="fusion",
+            profile_key="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            chat_stream_func=failing_stream,
+        )
 
 
 async def _always_stale(*_args, **_kwargs):

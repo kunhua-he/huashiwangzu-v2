@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -145,6 +146,34 @@ def test_run_test_uses_absolute_backend_target_when_mixed_with_repo_target() -> 
     assert calls[0]["cwd"] == server.REPO_ROOT
     assert str(server.REPO_ROOT / "backend/tests/test_agent_inline_tool_calls.py") in calls[0]["cmd"]
     assert str(server.REPO_ROOT / "dev_toolkit/test_server_helpers.py") in calls[0]["cmd"]
+
+
+def test_lint_accepts_comma_and_newline_separated_paths() -> None:
+    calls = []
+
+    async def fake_run_command_json(cmd, *, cwd: Path, timeout: int = 120):
+        calls.append({"cmd": cmd, "cwd": cwd, "timeout": timeout})
+        return {"success": True, "returncode": 0, "stdout": "", "stderr": "", "duration_seconds": 0.01}
+
+    async def run() -> dict:
+        raw = await code_tools.lint(
+            fake_run_command_json,
+            server.REPO_ROOT,
+            "ruff",
+            "dev_toolkit/code_tools.py,\ndev_toolkit/agent_board_tools.py",
+        )
+        data = json.loads(raw)
+        assert isinstance(data, dict)
+        return data
+
+    data = anyio.run(run)
+
+    assert data["success"] is True
+    assert data["failed_count"] == 0
+    assert data["paths"] == ["dev_toolkit/code_tools.py", "dev_toolkit/agent_board_tools.py"]
+    assert len(calls) == 2
+    assert calls[0]["cmd"][-1].endswith("dev_toolkit/code_tools.py")
+    assert calls[1]["cmd"][-1].endswith("dev_toolkit/agent_board_tools.py")
 
 
 def test_normalize_pytest_targets_accepts_module_repo_path() -> None:

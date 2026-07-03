@@ -275,10 +275,27 @@ async def claim_task(
 async def heartbeat_task(path: Path, *, agent: str, task_id: str, node_note: str = "") -> str:
     clean_agent = agent.strip()
     clean_task_id = _slug(task_id)
+    if not clean_agent:
+        return json.dumps({"success": False, "error": "agent is required"}, ensure_ascii=False, indent=2)
     with locked_board(path) as board:
         task = board.get("tasks", {}).get(clean_task_id)
         if not isinstance(task, dict):
-            return json.dumps({"success": False, "error": "task not found", "task_id": clean_task_id}, ensure_ascii=False, indent=2)
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "task not found",
+                    "task_id": clean_task_id,
+                    "hint": "Call agent_board_claim before heartbeat; heartbeat never creates tasks implicitly.",
+                    "claim_example": {
+                        "agent": clean_agent,
+                        "task_id": clean_task_id,
+                        "title": clean_task_id,
+                        "node_note": node_note or "claim before heartbeat",
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
         if task.get("status") != "claimed" or task.get("owner_agent") != clean_agent:
             return json.dumps(
                 {

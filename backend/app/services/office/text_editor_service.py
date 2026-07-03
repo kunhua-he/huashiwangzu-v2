@@ -1,21 +1,20 @@
-import os
 import logging
+import os
 from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.file import File
-from app.core.exceptions import NotFound
+
 from app.config import get_settings
+from app.core.exceptions import NotFound
+from app.services.file_service import check_file_access, check_file_write_access
 
 logger = logging.getLogger(__name__)
 
 
 class TextEditorService:
 
-    async def read(self, db: AsyncSession, file_id: int) -> dict:
-        file = await db.get(File, file_id)
-        if not file or file.deleted:
-            raise NotFound("文件不存在")
-
+    async def read(self, db: AsyncSession, file_id: int, user_id: int) -> dict:
+        file = await check_file_access(db, file_id, user_id)
         storage_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (storage_root / file.storage_path).resolve()
         if os.path.commonpath([str(storage_root), str(full_path)]) != str(storage_root):
@@ -34,11 +33,15 @@ class TextEditorService:
             "mtime": str(mtime),
         }
 
-    async def save(self, db: AsyncSession, file_id: int, content: str, client_mtime: str | None = None) -> None:
-        file = await db.get(File, file_id)
-        if not file or file.deleted:
-            raise NotFound("文件不存在")
-
+    async def save(
+        self,
+        db: AsyncSession,
+        file_id: int,
+        content: str,
+        user_id: int,
+        client_mtime: str | None = None,
+    ) -> None:
+        file = await check_file_write_access(db, file_id, user_id)
         storage_root = Path(get_settings().UPLOAD_DIR).resolve()
         full_path = (storage_root / file.storage_path).resolve()
         if os.path.commonpath([str(storage_root), str(full_path)]) != str(storage_root):

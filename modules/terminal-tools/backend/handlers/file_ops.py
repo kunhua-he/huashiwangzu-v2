@@ -17,9 +17,14 @@ import os
 from app.core.exceptions import NotFound, PermissionDenied
 
 from .sandbox import (
+    _MAX_FILE_READ_BYTES,
+    _MAX_LIST_ITEMS,
     _resolve_user_id,
-    _user_workspace,
     _resolve_workspace_path,
+    _safe_external_filename,
+    _user_workspace,
+    _workspace_boundary_error,
+    _workspace_relative_path,
 )
 
 logger = logging.getLogger("v2.terminal-tools")
@@ -41,15 +46,15 @@ async def _write_file(params: dict, caller: str) -> dict:
         target = _resolve_workspace_path(user_id, path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-    except ValueError as exc:
-        return {"success": False, "error": str(exc), "path": path}
+    except ValueError:
+        logger.warning("user=%s blocked write path escape: %s", user_id, path)
+        return {"success": False, "error": _workspace_boundary_error(), "path": path}
     except Exception as exc:
         return {"success": False, "error": f"Write failed: {exc}", "path": path}
 
     return {
         "success": True,
-        "path": str(target.relative_to(_user_workspace(user_id))),
-        "absolute_path": str(target),
+        "path": _workspace_relative_path(target, _user_workspace(user_id)),
         "size": target.stat().st_size,
     }
 
@@ -67,24 +72,31 @@ async def _read_file(params: dict, caller: str) -> dict:
 
     try:
         target = _resolve_workspace_path(user_id, path)
-    except ValueError as exc:
-        return {"success": False, "error": str(exc), "path": path}
+    except ValueError:
+        logger.warning("user=%s blocked read path escape: %s", user_id, path)
+        return {"success": False, "error": _workspace_boundary_error(), "path": path}
 
     if not target.exists():
         return {"success": False, "error": f"File not found: {path}", "path": path}
     if not target.is_file():
         return {"success": False, "error": f"Not a file: {path}", "path": path}
 
+    size = target.stat().st_size
     try:
-        content = target.read_text(encoding="utf-8")
+        with target.open("rb") as handle:
+            raw = handle.read(_MAX_FILE_READ_BYTES + 1)
+        truncated = len(raw) > _MAX_FILE_READ_BYTES
+        if truncated:
+            raw = raw[:_MAX_FILE_READ_BYTES]
+        content = raw.decode("utf-8")
     except UnicodeDecodeError:
-        raw = target.read_bytes()
         return {
             "success": True,
             "path": path,
-            "size": len(raw),
+            "size": size,
             "binary": True,
             "content": None,
+            "truncated": size > _MAX_FILE_READ_BYTES,
             "note": "Binary file — cannot display as text",
         }
     except Exception as exc:
@@ -93,9 +105,10 @@ async def _read_file(params: dict, caller: str) -> dict:
     return {
         "success": True,
         "path": path,
-        "size": len(content),
+        "size": size,
         "content": content,
         "binary": False,
+        "truncated": truncated,
     }
 
 
@@ -109,8 +122,9 @@ async def _list_workspace(params: dict, caller: str) -> dict:
 
     try:
         target = _resolve_workspace_path(user_id, path)
-    except ValueError as exc:
-        return {"success": False, "error": str(exc), "path": path}
+    except ValueError:
+        logger.warning("user=%s blocked list path escape: %s", user_id, path)
+        return {"success": False, "error": _workspace_boundary_error(), "path": path}
 
     if not target.exists():
         return {"success": False, "error": f"Path not found: {path}", "path": path}
@@ -118,9 +132,13 @@ async def _list_workspace(params: dict, caller: str) -> dict:
         return {"success": False, "error": f"Not a directory: {path}", "path": path}
 
     items = []
+    truncated = False
     try:
         with os.scandir(target) as entries:
             for entry in entries:
+                if len(items) >= _MAX_LIST_ITEMS:
+                    truncated = True
+                    break
                 stat = entry.stat()
                 items.append({
                     "name": entry.name,
@@ -139,6 +157,8 @@ async def _list_workspace(params: dict, caller: str) -> dict:
         "path": str(target.relative_to(_user_workspace(user_id))) if target != _user_workspace(user_id) else ".",
         "items": items,
         "count": len(items),
+        "truncated": truncated,
+        "limit": _MAX_LIST_ITEMS,
     }
 
 
@@ -159,8 +179,9 @@ async def _publish(params: dict, caller: str) -> dict:
 
     try:
         source = _resolve_workspace_path(user_id, path)
-    except ValueError as exc:
-        return {"success": False, "error": str(exc), "path": path}
+    except ValueError:
+        logger.warning("user=%s blocked publish path escape: %s", user_id, path)
+        return {"success": False, "error": _workspace_boundary_error(), "path": path}
 
     if not source.exists():
         return {"success": False, "error": f"File not found: {path}", "path": path}
@@ -172,7 +193,7 @@ async def _publish(params: dict, caller: str) -> dict:
     except Exception as exc:
         return {"success": False, "error": f"Read failed: {exc}", "path": path}
 
-    filename = display_name if display_name else source.name
+    filename = _safe_external_filename(display_name, source.name) if display_name else source.name
     target_folder = folder_id if (folder_id and folder_id > 0) else None
 
     try:
@@ -201,7 +222,7 @@ async def _publish(params: dict, caller: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════
 async def _import(params: dict, caller: str) -> dict:
     """Import a framework file into the user workspace."""
-    from app.services import file_service, file_preview_service
+    from app.services import file_preview_service, file_service
 
     user_id = _resolve_user_id(caller)
     file_id = int(params.get("file_id", 0))
@@ -230,19 +251,22 @@ async def _import(params: dict, caller: str) -> dict:
         filename = target_path
     else:
         ext = file_record.extension
-        filename = f"{file_record.name}.{ext}" if ext else file_record.name
+        source_name = f"{file_record.name}.{ext}" if ext else file_record.name
+        filename = _safe_external_filename(source_name, "imported_file")
 
     try:
         target = _resolve_workspace_path(user_id, filename)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(file_bytes)
-    except ValueError as exc:
-        return {"success": False, "error": str(exc), "path": filename}
+    except ValueError:
+        logger.warning("user=%s blocked import target path escape: %s", user_id, filename)
+        return {"success": False, "error": _workspace_boundary_error(), "path": filename}
+    except Exception as exc:
+        return {"success": False, "error": f"Import write failed: {exc}", "path": filename}
 
     return {
         "success": True,
-        "path": str(target.relative_to(_user_workspace(user_id))),
-        "absolute_path": str(target),
+        "path": _workspace_relative_path(target, _user_workspace(user_id)),
         "size": target.stat().st_size,
         "source_file_id": file_id,
         "source_file_name": f"{file_record.name}.{file_record.extension}"

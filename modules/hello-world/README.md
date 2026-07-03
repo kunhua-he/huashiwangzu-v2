@@ -9,8 +9,15 @@ No HTTP API or capability registered. Used as a minimal verification target in f
 ## Verification
 
 ```bash
-# Module is registered in app manifest: hello-world
-# Verified via framework health endpoint:
-curl http://127.0.0.1:33000/api/health | python3 -m json.tool
+cd modules/hello-world/sandbox
+npm install
+npm run build
+
+cd ../../../frontend
+npm run build
+
+cd ..
+backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check
 ```
 
+Expected result: `hello-world` passes through its sandbox frontend build and remains registered in the main frontend build. There is no `sandbox/test_module.py` because this sample has no backend router, samples, data tables, or cross-module capability.

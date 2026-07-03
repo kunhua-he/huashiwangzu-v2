@@ -52,6 +52,20 @@ call_capability("excel-engine", "parse", {"file_id": 123}, caller="user:1")
 
 `excel_workbooks`、`excel_sheets`、`excel_cells`、`excel_col_widths`、`excel_row_heights`、`excel_history`、`excel_redo_stack`、`excel_versions`。
 
+### 2026-07-03 反向审计结论
+
+本轮从数据库空表反查 `create_workbook/import_file_to_workbook/update_range/append_rows/undo/redo/list_history/list_versions/restore_version/compile_xlsx` 链路，修复点如下：
+
+- `excel_col_widths`、`excel_row_heights`：导入和写回链路已统一经完整状态持久化，写入 cells/styles/merges 的同时写入宽高和 sheet 尺寸。
+- `excel_redo_stack`：undo 会保存当前状态到 redo，redo 后清栈；新增写操作成功后清 redo，避免旧 redo 误恢复。
+- `excel_versions`：`export.save_version` 已落库版本快照，`list_versions/restore_version` 覆盖 file_id + owner 过滤，恢复时同步 cells/styles/merges/宽高/尺寸。
+- 快照从浅引用改为深拷贝，避免“操作前快照”被后续原地修改污染，导致 undo/redo 看似成功但状态没变。
+- `append_rows` 修正列偏移，追加行从 A 列开始；`create_workbook` 现在把传入 name 写入数据库。
+- `table.delete_shift_right/delete_shift_up/insert_shift_right/insert_shift_down` 从空实现改为真实移位，避免 `code:0` 假成功。
+- `compile_xlsx` 成功返回临时文件信息；缺失 workbook 返回结构化业务失败，不产生文件记录。
+
+验证时会创建临时 workbook/file/version/compile 文件，测试结束必须删除。当前 sandbox 测试已覆盖导入带宽高 XLSX、update/append、undo/redo、history、save/list/restore version、compile_xlsx，并清理测试数据；因此生产库中这些可选表为空不再单独视为链路不可用，需要结合流程探针判断。
+
 ## 边界
 
 - 表名前缀固定为 `excel_*`。
@@ -62,6 +76,6 @@ call_capability("excel-engine", "parse", {"file_id": 123}, caller="user:1")
 ## 验证
 
 ```bash
-cd modules/excel-engine/sandbox && python3 test_module.py
+cd modules/excel-engine/sandbox && ../../../backend/.venv/bin/python test_module.py
 cd frontend && npm run build
 ```

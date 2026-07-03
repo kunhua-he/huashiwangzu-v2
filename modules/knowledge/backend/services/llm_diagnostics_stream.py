@@ -189,7 +189,7 @@ async def timed_llm_chat_stream(
             _RETRY_COUNT_NOTE,
             extra_fields,
         )
-        return {"content": "", "tokens": 0}
+        raise RuntimeError(f"LLM stream failed without fallback: {fail_reason}")
 
     stream_total_ms = (time.perf_counter() - started) * 1000
     full_content = "".join(content_parts)

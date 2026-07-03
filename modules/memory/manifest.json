@@ -272,6 +272,44 @@
       "min_role": "admin"
     },
     {
+      "action": "backfill_links",
+      "description": "安全回填历史记忆之间缺失的语义链接，默认 dry-run",
+      "parameters": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "仅诊断不写入，默认 true"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "本次最多处理条数，1-500，默认 50"
+        },
+        "owner_id": {
+          "type": "integer",
+          "description": "只治理指定 owner 的记忆，可选"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
+      "action": "backfill_chunk_embeddings",
+      "description": "安全回填 chunk 级记忆缺失向量，默认 dry-run",
+      "parameters": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "仅诊断不写入，默认 true"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "本次最多处理条数，1-100，默认 20"
+        },
+        "owner_id": {
+          "type": "integer",
+          "description": "只治理指定 owner 的 chunk，可选"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
       "action": "recall_stable_rules",
       "description": "获取当前用户所有活跃的稳定规则记忆（项目边界、用户偏好、硬约束等）",
       "parameters": {

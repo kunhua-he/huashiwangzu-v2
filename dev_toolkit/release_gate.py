@@ -63,9 +63,9 @@ def add_result(check: str, level: str, detail: str) -> None:
     print(f"  {icon} [{level:>20}] {check}: {detail[:200]}")
 
 
-async def _ensure_token() -> str:
+async def _ensure_token(*, force_refresh: bool = False) -> str:
     now = time.monotonic()
-    if "admin" in _token_cache:
+    if not force_refresh and "admin" in _token_cache:
         cached_token, cached_at = _token_cache["admin"]
         if now - cached_at < _TOKEN_MAX_AGE:
             return cached_token
@@ -88,6 +88,10 @@ async def probe(method: str, path: str, body: dict | None = None) -> dict:
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=30, trust_env=False) as client:
         resp = await client.request(method, path, json=body, headers=headers)
+        if resp.status_code == 401:
+            token = await _ensure_token(force_refresh=True)
+            headers["Authorization"] = f"Bearer {token}"
+            resp = await client.request(method, path, json=body, headers=headers)
         try:
             return resp.json()
         except Exception:

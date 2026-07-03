@@ -60,6 +60,8 @@ def test_worktree_guard_baseline_existing_outside_change_does_not_fail() -> None
     assert data["outside_allowed"] == ["modules/knowledge/backend/router.py"]
     assert data["new_outside_allowed"] == []
     assert data["acknowledged_outside_changes"] == ["modules/knowledge/backend/router.py"]
+    assert data["acknowledged_outside_changes_by_group"] == {"modules/knowledge": 1}
+    assert data["new_since_baseline_by_group"] == {}
 
 
 def test_worktree_guard_new_outside_change_after_baseline_fails() -> None:
@@ -74,6 +76,7 @@ def test_worktree_guard_new_outside_change_after_baseline_fails() -> None:
 
     assert data["success"] is False
     assert data["new_outside_allowed"] == ["backend/app/routers/files.py"]
+    assert data["new_outside_allowed_by_group"] == {"backend/app": 1}
     assert data["acknowledged_outside_changes"] == ["modules/knowledge/backend/router.py"]
 
 
@@ -94,5 +97,32 @@ def test_worktree_guard_allowed_prefixes_baseline_and_memory_pass() -> None:
         "dev_toolkit/worktree_tools.py",
         "开发文档/项目记忆/r5-mcp-baseline.md",
     ]
+    assert data["changed_entries"] == [
+        {
+            "path": "dev_toolkit/worktree_tools.py",
+            "status": "M",
+            "group": "dev_toolkit/worktree_tools.py",
+            "is_baseline": False,
+            "is_new": True,
+        },
+        {
+            "path": "modules/knowledge/backend/router.py",
+            "status": "??",
+            "group": "modules/knowledge",
+            "is_baseline": True,
+            "is_new": False,
+        },
+        {
+            "path": "开发文档/项目记忆/r5-mcp-baseline.md",
+            "status": "??",
+            "group": "开发文档/项目记忆",
+            "is_baseline": False,
+            "is_new": True,
+        },
+    ]
+    assert data["new_since_baseline_by_group"] == {
+        "dev_toolkit/worktree_tools.py": 1,
+        "开发文档/项目记忆": 1,
+    }
     assert data["new_outside_allowed"] == []
     assert data["acknowledged_outside_changes"] == ["modules/knowledge/backend/router.py"]

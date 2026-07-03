@@ -227,13 +227,20 @@ def _parse_result(tool_name: str, returncode: int, output: str) -> dict[str, Any
     if tool_name == "release_gate":
         summary = _extract_prefixed_json(output, "RELEASE_GATE_JSON:")
         verdict = summary.get("verdict") if summary else ("PASS" if returncode == 0 else "FAIL")
-        clean_pass = bool(summary.get("clean_pass")) if summary else verdict == "PASS"
-        release_safe = bool(summary.get("release_safe")) if summary else returncode == 0
+        release_safe_verdicts = {"PASS", "PASS_WITH_DEBT"}
+        if summary and "clean_pass" in summary:
+            clean_pass = bool(summary.get("clean_pass"))
+        else:
+            clean_pass = verdict == "PASS"
+        if summary and "release_safe" in summary:
+            release_safe = bool(summary.get("release_safe"))
+        else:
+            release_safe = returncode == 0 and verdict in release_safe_verdicts
         return {
             "success": returncode == 0 and clean_pass,
             "clean_pass": clean_pass,
             "release_safe": release_safe,
-            "has_debt": bool(summary.get("has_debt")) if summary else False,
+            "has_debt": bool(summary.get("has_debt")) if summary and "has_debt" in summary else verdict == "PASS_WITH_DEBT",
             "verdict": verdict,
             "summary": summary,
         }

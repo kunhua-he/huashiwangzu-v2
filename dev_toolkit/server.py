@@ -69,6 +69,7 @@ try:
     from dev_toolkit.release_response import build_release_gate_response as build_release_gate_payload
     from dev_toolkit.response_shaping import ResponseShapeOptions, dumps_response
     from dev_toolkit.sql_guard import check_sql_readonly, readonly_psql_env
+    from dev_toolkit.timing_tools import append_timing_item, parse_timing_data
     from dev_toolkit.tool_job_tools import handle_tool as tool_job_handle_tool
     from dev_toolkit.tool_job_tools import handles_tool as tool_job_handles_tool
     from dev_toolkit.tool_job_tools import tool_definitions as tool_job_tool_definitions
@@ -128,6 +129,7 @@ except ModuleNotFoundError:
     from release_response import build_release_gate_response as build_release_gate_payload
     from response_shaping import ResponseShapeOptions, dumps_response
     from sql_guard import check_sql_readonly, readonly_psql_env
+    from timing_tools import append_timing_item, parse_timing_data
     from tool_job_tools import handle_tool as tool_job_handle_tool
     from tool_job_tools import handles_tool as tool_job_handles_tool
     from tool_job_tools import tool_definitions as tool_job_tool_definitions
@@ -1180,6 +1182,7 @@ async def _finish_task(
     allowed_prefixes: str = "",
     baseline_paths: str = "",
     baseline_status_json: str = "",
+    timing_data: str = "",
     verification_summary: str = "",
     risk_note: str = "",
 ) -> str:
@@ -1192,6 +1195,7 @@ async def _finish_task(
         "boundary_check": {},
         "lint": [],
         "tests": [],
+        "test_timing": parse_timing_data(timing_data),
         "verification_summary": verification_summary or "(未填写验证结果)",
         "risk_note": risk_note or "(未填写)",
         "memory_write_template": {
@@ -1261,6 +1265,13 @@ async def _finish_task(
         except json.JSONDecodeError as exc:
             test_result = {"success": False, "target": test_targets, "error": str(exc)}
         report["tests"].append(test_result)
+        append_timing_item(report["test_timing"], {
+            "name": test_targets,
+            "status": "pass" if test_result.get("success") else "fail",
+            "duration_seconds": test_result.get("duration_seconds"),
+            "command": "pytest",
+            "source": "finish_task.test_targets",
+        })
         if not test_result.get("success"):
             report["success"] = False
     return json.dumps(report, ensure_ascii=False, indent=2)

@@ -294,12 +294,51 @@ def test_finish_task_forwards_allowed_prefixes_to_worktree_guard(monkeypatch: py
     }]
 
 
+def test_finish_task_collects_timing_data_and_test_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_git_status_summary(*_args, **_kwargs) -> dict:
+        return {"branch": "codex/test", "is_main": False, "dirty_count": 0, "sample": []}
+
+    async def fake_worktree_guard(*_args, **_kwargs) -> str:
+        return json.dumps({"success": True, "outside_allowed": []})
+
+    async def fake_code_run_test(*_args, **_kwargs) -> str:
+        return json.dumps({"success": True, "target": "dev_toolkit/test_x.py", "duration_seconds": 0.75})
+
+    monkeypatch.setattr(server, "git_status_summary", fake_git_status_summary)
+    monkeypatch.setattr(server, "worktree_guard", fake_worktree_guard)
+    monkeypatch.setattr(server, "code_run_test", fake_code_run_test)
+
+    async def run() -> dict:
+        raw = await server._finish_task(
+            "finish with timing",
+            test_targets="dev_toolkit/test_x.py",
+            timing_data=json.dumps([{"name": "release preflight", "status": "PASS_WITH_DEBT", "duration_seconds": 1.25}]),
+        )
+        return json.loads(raw)
+
+    data = anyio.run(run)
+
+    assert data["success"] is True
+    assert data["test_timing"]["items"] == [
+        {"name": "release preflight", "status": "PASS_WITH_DEBT", "duration_seconds": 1.25},
+        {
+            "name": "dev_toolkit/test_x.py",
+            "status": "pass",
+            "duration_seconds": 0.75,
+            "command": "pytest",
+            "source": "finish_task.test_targets",
+        },
+    ]
+    assert data["test_timing"]["summary"] == {"count": 2, "timed_count": 2, "total_duration_seconds": 2.0}
+
+
 def test_finish_task_schema_exposes_baseline_parameters() -> None:
     finish_tool = next(tool for tool in core_tools.tool_definitions() if tool.name == "finish_task")
     properties = finish_tool.inputSchema["properties"]
 
     assert "baseline_paths" in properties
     assert "baseline_status_json" in properties
+    assert "timing_data" in properties
 
 
 def test_normalize_pytest_targets_accepts_module_repo_path() -> None:

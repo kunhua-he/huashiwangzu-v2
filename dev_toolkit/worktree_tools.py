@@ -142,6 +142,10 @@ def group_changed_path(path: str) -> str:
     return parts[0]
 
 
+def group_counts(paths: list[str]) -> dict[str, int]:
+    return dict(sorted(Counter(group_changed_path(path) for path in paths).items()))
+
+
 async def worktree_guard(
     run_command_json,
     repo_root: Path,
@@ -180,7 +184,17 @@ async def worktree_guard(
         else not outside_allowed and not forbidden_hits
     )
 
-    by_group = Counter(group_changed_path(path) for path in paths)
+    entry_by_path = {entry["path"]: entry.get("status", "").strip() for entry in entries}
+    changed_entries = [
+        {
+            "path": path,
+            "status": entry_by_path.get(path, ""),
+            "group": group_changed_path(path),
+            "is_baseline": path in baseline,
+            "is_new": path not in baseline,
+        }
+        for path in paths
+    ]
     payload = {
         "success": success,
         "module_key": module_key,
@@ -190,18 +204,25 @@ async def worktree_guard(
         "baseline_count": len(baseline),
         "changed_count": len(paths),
         "changed_files": paths[:200],
-        "changed_by_group": dict(sorted(by_group.items())),
+        "changed_entries": changed_entries[:200],
+        "changed_by_group": group_counts(paths),
         "new_since_baseline_count": len(new_since_baseline),
         "new_since_baseline": new_since_baseline[:100],
+        "new_since_baseline_by_group": group_counts(new_since_baseline),
         "outside_allowed_count": len(outside_allowed),
         "outside_allowed": outside_allowed[:100],
+        "outside_allowed_by_group": group_counts(outside_allowed),
         "new_outside_allowed_count": len(new_outside_allowed),
         "new_outside_allowed": new_outside_allowed[:100],
+        "new_outside_allowed_by_group": group_counts(new_outside_allowed),
         "acknowledged_outside_changes": acknowledged_outside_changes[:100],
+        "acknowledged_outside_changes_by_group": group_counts(acknowledged_outside_changes),
         "forbidden_hit_count": len(forbidden_hits),
         "forbidden_hits": forbidden_hits[:100],
+        "forbidden_hits_by_group": group_counts(forbidden_hits),
         "new_forbidden_hit_count": len(new_forbidden_hits),
         "new_forbidden_hits": new_forbidden_hits[:100],
+        "new_forbidden_hits_by_group": group_counts(new_forbidden_hits),
         "hint": (
             "模块任务建议传 module_key；框架/全局任务可传 allowed_prefixes。"
             "本工具会包含 untracked 文件，比 git diff --name-only 更适合验收边界。"

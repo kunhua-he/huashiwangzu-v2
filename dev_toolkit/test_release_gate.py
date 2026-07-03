@@ -130,6 +130,48 @@ def test_project_python_prefers_backend_venv_then_current_interpreter(tmp_path, 
     assert release_gate._project_python() == str(fallback_python)
 
 
+def test_probe_refreshes_token_once_on_401(monkeypatch) -> None:
+    token_calls = []
+
+    async def fake_ensure_token(*, force_refresh: bool = False) -> str:
+        token_calls.append(force_refresh)
+        return "fresh-token" if force_refresh else "stale-token"
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: dict) -> None:
+            self.status_code = status_code
+            self._payload = payload
+            self.text = str(payload)
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def request(self, method, path, json=None, headers=None):
+            self.calls += 1
+            if self.calls == 1:
+                assert headers["Authorization"] == "Bearer stale-token"
+                return FakeResponse(401, {"success": False, "error": "expired"})
+            assert headers["Authorization"] == "Bearer fresh-token"
+            return FakeResponse(200, {"success": True, "data": {"ok": True}})
+
+    monkeypatch.setattr(release_gate, "_ensure_token", fake_ensure_token)
+    monkeypatch.setattr(release_gate.httpx, "AsyncClient", FakeClient)
+
+    result = anyio.run(release_gate.probe, "GET", "/api/tasks/worker/audit")
+    assert result == {"success": True, "data": {"ok": True}}
+    assert token_calls == [False, True]
+
+
 def test_skip_ui_marks_release_summary_as_debt() -> None:
     original = list(release_gate.results)
     try:

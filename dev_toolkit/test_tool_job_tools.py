@@ -109,6 +109,17 @@ def test_release_gate_pass_with_debt_is_not_clean_success() -> None:
     assert result["has_debt"] is True
 
 
+def test_release_gate_pass_with_debt_without_release_safe_still_release_safe() -> None:
+    output = 'RELEASE_GATE_JSON: {"verdict": "PASS_WITH_DEBT", "has_debt": true}\n'
+
+    result = tool_job_tools._parse_result("release_gate", 0, output)
+
+    assert result["success"] is False
+    assert result["clean_pass"] is False
+    assert result["release_safe"] is True
+    assert result["has_debt"] is True
+
+
 def test_release_gate_pass_with_debt_status_fields_are_explicit(tmp_path: Path) -> None:
     job_id = "job_debt"
     state = {

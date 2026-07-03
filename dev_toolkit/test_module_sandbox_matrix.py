@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -23,11 +25,14 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
     )
 
 
-def test_scan_json_output() -> None:
-    """--json should produce valid JSON array of module entries."""
-    r = _run(["--json"])
-    assert r.returncode == 0, f"exit={r.returncode}, stderr={r.stderr[:500]}"
-    data = json.loads(r.stdout)
+@pytest.fixture(scope="module")
+def matrix_results() -> list[dict]:
+    return module_sandbox_matrix.scan_sandbox_matrix()
+
+
+def test_scan_json_output(matrix_results: list[dict]) -> None:
+    """Matrix entries should serialize to a valid JSON array."""
+    data = json.loads(json.dumps(matrix_results, ensure_ascii=False))
     assert isinstance(data, list)
     assert len(data) > 0, "should have at least one module entry"
     required_keys = {"module", "has_sandbox", "has_test_module", "check", "reason"}
@@ -38,55 +43,67 @@ def test_scan_json_output() -> None:
     assert checks.issubset({"pass", "skip", "fail"}), f"unexpected check values: {checks}"
 
 
-def test_markdown_output() -> None:
-    """Default output should be markdown with a table."""
-    r = _run([])
-    assert r.returncode == 0, f"exit={r.returncode}"
-    assert "# Module Sandbox Verification Matrix" in r.stdout
-    assert "| Module | Sandbox |" in r.stdout
-    assert "**Summary**" in r.stdout
-
-
-def test_scan_includes_known_modules() -> None:
-    """Should find modules with sandboxes like agent, excel-engine, etc."""
-    r = _run(["--json"])
+def test_cli_single_module_json_smoke() -> None:
+    """Keep one subprocess smoke test for CLI wiring."""
+    r = _run(["--json", "--module", "agent"])
+    assert r.returncode == 0, f"exit={r.returncode}, stderr={r.stderr[:500]}"
     data = json.loads(r.stdout)
-    keys = [e["module"] for e in data]
+    assert [entry["module"] for entry in data] == ["agent"]
+
+
+def test_markdown_output(matrix_results: list[dict]) -> None:
+    """Default output should be markdown with a table."""
+    output = module_sandbox_matrix.format_markdown(matrix_results, run_all=False, passed=True)
+    assert "# Module Sandbox Verification Matrix" in output
+    assert "| Module | Sandbox |" in output
+    assert "**Summary**" in output
+
+
+def test_scan_includes_known_modules(matrix_results: list[dict]) -> None:
+    """Should find modules with sandboxes like agent, excel-engine, etc."""
+    keys = [e["module"] for e in matrix_results]
     # At least a few known modules should be present
     found = {k for k in keys if k in {"agent", "excel-engine", "image-vision", "desktop-tools"}}
     assert len(found) >= 3, f"expected 3+ known modules, got {found}"
 
 
-def test_agent_has_sandbox() -> None:
+def test_agent_has_sandbox(matrix_results: list[dict]) -> None:
     """agent module should have a sandbox and backend."""
-    r = _run(["--json"])
-    data = json.loads(r.stdout)
-    agent = next((e for e in data if e["module"] == "agent"), None)
+    agent = next((e for e in matrix_results if e["module"] == "agent"), None)
     assert agent is not None, "agent entry not found"
     assert agent["has_sandbox"] is True
     assert agent["has_backend"] is True
 
 
-def test_excel_engine_has_test_module() -> None:
+def test_excel_engine_has_test_module(matrix_results: list[dict]) -> None:
     """excel-engine should have test_module.py in sandbox."""
-    r = _run(["--json"])
-    data = json.loads(r.stdout)
-    ee = next((e for e in data if e["module"] == "excel-engine"), None)
+    ee = next((e for e in matrix_results if e["module"] == "excel-engine"), None)
     assert ee is not None
     assert ee["has_test_module"] is True, "excel-engine should have test_module.py"
 
 
-def test_edge_cases() -> None:
-    """Edge cases: no args should not crash, --help should work."""
-    r = subprocess.run(
-        [str(BACKEND_PYTHON), str(MATRIX_SCRIPT), "--help"],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert r.returncode == 0
-    assert "usage:" in r.stdout.lower()
+def test_parser_help_mentions_targeted_options() -> None:
+    help_text = module_sandbox_matrix.build_arg_parser().format_help()
+    assert "--module" in help_text
+    assert "--modules" in help_text
+    assert "--jobs" in help_text
+
+
+def test_parse_requested_modules_dedupes_in_order() -> None:
+    assert module_sandbox_matrix.parse_requested_modules(
+        ["agent", "agent"],
+        "knowledge, excel-engine,knowledge",
+    ) == ["agent", "knowledge", "excel-engine"]
+
+
+def test_scan_can_target_multiple_modules() -> None:
+    results = module_sandbox_matrix.scan_sandbox_matrix(["knowledge", "agent"])
+    assert [entry["module"] for entry in results] == ["knowledge", "agent"]
+
+
+def test_scan_rejects_unknown_module() -> None:
+    with pytest.raises(ValueError, match="unknown module"):
+        module_sandbox_matrix.scan_sandbox_matrix(["__missing_module__"])
 
 
 def test_check_runs_frontend_build_command(monkeypatch) -> None:
@@ -197,13 +214,3 @@ def test_sandbox_frontend_external_element_plus_imports_are_aliased() -> None:
             missing_alias.append(module_dir.name)
 
     assert not missing_alias, "sandbox missing element-plus alias for external frontend imports: " + ", ".join(missing_alias)
-
-
-if __name__ == "__main__":
-    test_scan_json_output()
-    test_markdown_output()
-    test_scan_includes_known_modules()
-    test_agent_has_sandbox()
-    test_excel_engine_has_test_module()
-    test_edge_cases()
-    print("\nAll sandbox matrix tests PASS")

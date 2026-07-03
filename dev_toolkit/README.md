@@ -124,6 +124,12 @@ worktree_guard(allowed_prefixes="backend/app,dev_toolkit,开发文档")
 - 是否碰到 `.git`、`node_modules`、虚拟环境、废弃目录等 forbidden 前缀
 - dirty 样本是否来自本任务范围
 
+并行 agent 场景下，优先看这些字段做归因：
+- `changed_entries` — 每个 dirty 文件的 `path/status/group/is_baseline/is_new`
+- `new_since_baseline_by_group` — 本轮相对开工基线新增的 dirty 分组
+- `acknowledged_outside_changes_by_group` — 开工前已存在、被基线承认的越界 dirty 分组
+- `new_outside_allowed_by_group` / `new_forbidden_hits_by_group` — 本轮新增边界风险分组
+
 #### 阶段 4：执行修改
 基于证据确定具体改动，用 `quick_fix_preview` 预览 → `quick_fix_patch` 落盘。
 
@@ -156,13 +162,14 @@ worktree_guard(allowed_prefixes="backend/app,dev_toolkit,开发文档")
 
 #### 阶段 6：收尾留痕 → `finish_task` + `memory_write` + `mcp_feedback` + `mailbox_create_delivery_bundle`
 
-**`finish_task(summary, agent, lint_paths, test_targets, module_key, verification_summary, risk_note)`**
+**`finish_task(summary, agent, lint_paths, test_targets, module_key, timing_data, verification_summary, risk_note)`**
 
 收尾检查，不是仅做摘要。输出包含：
 - `git` — Git 工作区状态（分支、dirty 数、变更样本）
 - `boundary_check` — 边界校验（复用 `worktree_guard`，包含 untracked 文件；模块任务会校验所有改动是否在允许目录内，有越界标记为失败）
 - `lint` — lint 结果列表
 - `tests` — 测试结果列表
+- `test_timing` — 可选机器可读耗时表；`timing_data` 支持 JSON 数组或 `{ "items": [...] }`，每项常用字段为 `name/status/duration_seconds/command/level`
 - `verification_summary` — 验证摘要（你填了什么验证结果）
 - `risk_note` — 残留风险评估
 - `memory_write_template` — 带格式的记忆模板，含三节：改了什么 / 验证了什么 / 是否还有残留风险
@@ -305,6 +312,9 @@ mailbox_check_delivery_bundle(task_name)
 | `smoke_all(skip_ui)` | 一键全模块回归红绿矩阵(也可 `python3.14 dev_toolkit/smoke.py`) |
 | `release_gate(skip_ui)` | **发布前 gate**：聚合 health/system-status/smoke/队列审计/sandbox 矩阵，输出 BLOCKER/DEBT/PASS |
 | `module_sandbox_matrix(check)` | 模块 sandbox 验收矩阵：列出全部模块的 sandbox/test/可运行状态，`--check` 运行 auto-runnable 用例 |
+| `tool_job_submit(tool_name, arguments, title, timeout_seconds)` | 将 `release_gate/run_test/smoke_all/module_sandbox_matrix/lint` 放入后台 job，避免长测试占住单次 MCP 调用 |
+| `tool_job_status(job_id, refresh)` | 查询后台 job。`command_success` 表示进程退出码为 0；`clean_success/success` 表示工具结果无债务且干净；`release_safe` 表示 release gate 可发布，可能与 `clean_success=false` 同时出现 |
+| `tool_job_notifications(since_notification_id, limit)` | 读取后台 job 完成/失败通知 |
 | `start_frontend()` | 启动前端开发服务器（等价 `cd frontend && npm run dev`） |
 
 ## Test And Release Gate Policy
@@ -314,7 +324,7 @@ The live stack is a long-running fixture: backend defaults to `33000`, and front
 | Level | When to use it | Command |
 |------|----------------|---------|
 | fast | Quick confirmation after docs, small Python tooling, or pure unit changes | `backend/.venv/bin/python -m pytest <target> -q` |
-| targeted | Focused validation for one backend file, toolkit component, or module sandbox | `backend/.venv/bin/python -m pytest <test-file-or-node> -q`; for one module sandbox use `PYTHONPATH=backend backend/.venv/bin/python modules/<module>/sandbox/test_module.py` |
+| targeted | Focused validation for one backend file, toolkit component, or module sandbox | `backend/.venv/bin/python -m pytest <test-file-or-node> -q`; for one module sandbox use `backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check --module <module>` |
 | integration | Live backend, module capability, task queue, smoke, or UI validation | `python3.14 dev_toolkit/smoke.py`; UI-only run: `cd frontend && npm run test:browser` |
 | full | Pre-release gate combining health, system status, smoke, queue audit, and sandbox matrix | `backend/.venv/bin/python dev_toolkit/release_gate.py` |
 
@@ -327,28 +337,32 @@ backend/.venv/bin/python dev_toolkit/release_gate.py --preflight
 # Backend preflight: skips UI, so the result can only be PASS_WITH_DEBT / backend preflight.
 backend/.venv/bin/python dev_toolkit/release_gate.py --skip-ui
 
-# Full sandbox matrix.
+# Full sandbox matrix, serial by default for compatibility.
 backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check
 
-# Current single-module sandbox path.
-PYTHONPATH=backend backend/.venv/bin/python modules/<module>/sandbox/test_module.py
+# Single-module or selected-module matrix.
+backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --json --module knowledge
+backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check --modules knowledge,agent,codemap
+
+# Explicit parallel full matrix, with frontend build/install concurrency capped.
+backend/.venv/bin/python dev_toolkit/module_sandbox_matrix.py --check --jobs 4 --frontend-jobs 2
 ```
 
-`module_sandbox_matrix --module <module>` / `--modules a,b,c` is the recommended target filter contract: `--module` should run one module, `--modules` should run a comma-separated set, and both should compose with `--check` / `--json`. The current script has not implemented these two filter flags yet; until that lands, do not treat them as executable commands. Use the direct single-module sandbox command above.
+`module_sandbox_matrix --module <module>` / `--modules a,b,c` is the targeted sandbox contract. Both filters compose with `--check` and `--json`. `--jobs` enables module-level parallelism only when explicitly requested; `--frontend-jobs` separately caps frontend install/build concurrency so npm work does not fan out without a limit.
 
-Suggested pytest markers:
+Current marker baseline in `backend/pytest.ini`:
 
 ```ini
 [pytest]
 markers =
-    fast: pure unit/contract tests that do not require the live stack
-    targeted: focused regression tests for one file, service, or module
-    integration: tests that require the live backend, database, worker, or module capability calls
-    e2e: browser/UI tests that require the frontend dev server
-    slow: long-running suites, release gates, or broad regression checks
+    slow: slow tests
+    live: tests requiring live backend
+    ui: playwright or browser-related tests
+    integration: release/smoke/sandbox integration tests
+    serial_db: tests that mutate shared database state
 ```
 
-Recommended usage: use `-m "fast or targeted"` for quick local confirmation, `-m integration` for live-stack validation, and `release_gate.py` as the source of truth before release.
+Suggested marker direction: keep `integration` for live-stack and release/smoke/sandbox suites; use `ui` for Playwright/browser cases; use `serial_db` for tests that mutate shared production-like state. If `fast` or `targeted` markers are added later, they should mean pure no-live-stack checks and focused single-area regressions respectively. Until those markers are registered, prefer explicit file/node targets for fast and targeted runs.
 
 UI screenshots are opt-in with `UI_E2E_SCREENSHOTS=1`. Current `frontend/tests/ui-e2e.spec.mjs` writes enabled screenshots to `$HOME/Downloads/ui-e2e`; reports should use that actual path unless a later change adds a separate screenshot directory variable.
 

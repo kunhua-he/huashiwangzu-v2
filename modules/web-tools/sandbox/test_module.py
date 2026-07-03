@@ -3,7 +3,36 @@
 Validates parameter schemas, required fields, value ranges, and output shapes
 based on MANIFEST public_actions. No real web requests.
 """
+import importlib.util
+import os
+import sys
 from collections.abc import Callable
+from pathlib import Path
+from types import ModuleType
+
+os.environ.setdefault("JWT_SECRET", "web-tools-sandbox-secret")
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = REPO_ROOT / "backend"
+for path in (REPO_ROOT, BACKEND_ROOT):
+    path_text = str(path)
+    if path_text not in sys.path:
+        sys.path.insert(0, path_text)
+
+from app.core.exceptions import ValidationError  # noqa: E402
+
+
+def _load_web_router() -> ModuleType:
+    router_path = REPO_ROOT / "modules" / "web-tools" / "backend" / "router.py"
+    spec = importlib.util.spec_from_file_location("web_tools_router_under_test", router_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load web-tools router from {router_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+web_router = _load_web_router()
 
 # ── URL validation helpers ─────────────────────────────────────────────
 
@@ -275,6 +304,27 @@ def test_fetch_valid_urls() -> None:
     print(f"  [fetch] {len(valid_urls)} valid public URLs accepted: PASS")
 
 
+def test_production_router_uses_direct_fetch_without_default_proxy() -> None:
+    assert web_router._proxy_candidates() == [None]
+    print("  [fetch] Production router defaults to direct network path: PASS")
+
+
+def test_production_router_rejects_false_success_response() -> None:
+    try:
+        web_router._web_response({"success": False, "error": "blocked"})
+    except ValidationError:
+        print("  [response] Production web response rejects success false: PASS")
+        return
+    raise AssertionError("success false response should raise ValidationError")
+
+
+def test_production_router_content_guards() -> None:
+    assert web_router._is_binary_content_type("application/pdf") is True
+    assert web_router._is_binary_content_type("text/html; charset=utf-8") is False
+    assert web_router._decode_content("正文".encode("utf-8"), "utf-8") == "正文"
+    print("  [fetch] Production content guards valid: PASS")
+
+
 def main() -> None:
     print("=" * 60)
     print("web-tools sandbox test")
@@ -289,6 +339,9 @@ def main() -> None:
     test_fetch_output_shape()
     test_fetch_truncation_contract()
     test_fetch_valid_urls()
+    test_production_router_uses_direct_fetch_without_default_proxy()
+    test_production_router_rejects_false_success_response()
+    test_production_router_content_guards()
 
     print("=" * 60)
     print("PASS: web-tools sandbox test")

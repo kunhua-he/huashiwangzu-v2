@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import hashlib
-import re
+import json
+import math
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -9,37 +11,46 @@ from .base import MediaContext, MediaProvider, StageResult
 
 
 class LocalAlgorithmProvider(MediaProvider):
-    provider_key = "local_algorithms.placeholder"
+    provider_key = "local_algorithms.local_facts"
 
     async def run(self, context: MediaContext) -> StageResult:
         action = str(context.options.get("action", "analyze"))
-        data: dict[str, Any] = {
-            "metadata": _metadata(context),
-        }
+        degraded: list[dict[str, str]] = []
+        metadata = _metadata(context, degraded)
+        data: dict[str, Any] = {"metadata": metadata}
 
-        if action in {"analyze_image", "analyze_video", "extract_keyframes"}:
-            if context.media_type == "video":
-                data["keyframes"] = _placeholder_keyframes(context)
+        if action in {"analyze_image", "analyze_video", "extract_keyframes"} and context.media_type == "video":
+            keyframes = _timeline_keyframes(context, metadata)
+            data["keyframes"] = keyframes
+            if not keyframes:
+                degraded.append(_degraded(
+                    code="keyframes_unavailable",
+                    dependency="ffprobe",
+                    message="Video duration is unavailable, so timeline keyframe markers could not be derived.",
+                    install_command="brew install ffmpeg",
+                ))
         if action in {"analyze_image", "analyze_video", "ocr"}:
-            data["ocr"] = _placeholder_ocr(context)
+            data["ocr"] = _ocr_result(context, degraded)
         if action in {"analyze_image", "analyze_video", "detect_objects"}:
-            data["objects"] = _placeholder_objects(context)
+            data["objects"] = _object_result(context, degraded)
         if action in {"analyze_image", "embed_image"} and context.media_type == "image":
-            data["embedding"] = _deterministic_embedding(context)
+            embedding = _image_fingerprint(context, degraded)
+            if embedding is not None:
+                data["embedding"] = embedding
 
+        if degraded:
+            data["degraded"] = degraded
         return StageResult(
             stage="local_algorithms",
             provider=self.provider_key,
-            status="placeholder",
+            status="degraded" if degraded else "ok",
             data=data,
-            warnings=[
-                "OpenCV/Pillow/OCR/object-detection providers are not wired yet; deterministic local placeholders are active."
-            ],
-            confidence=0.35,
+            warnings=[item["message"] for item in degraded],
+            confidence=0.72 if not degraded else 0.55,
         )
 
 
-def _metadata(context: MediaContext) -> dict[str, Any]:
+def _metadata(context: MediaContext, degraded: list[dict[str, str]]) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "file_id": context.file_id,
         "file_name": context.file_name,
@@ -49,108 +60,246 @@ def _metadata(context: MediaContext) -> dict[str, Any]:
         "head_sha256": context.head_sha256,
     }
     if context.media_type == "image":
-        dimensions = _read_image_dimensions(context.path)
-        if dimensions is not None:
-            metadata["width"] = dimensions[0]
-            metadata["height"] = dimensions[1]
+        metadata.update(_image_metadata(context.path, degraded))
+    else:
+        metadata.update(_video_metadata(context.path, degraded))
     return metadata
 
 
-def _read_image_dimensions(path: Path) -> tuple[int, int] | None:
+def _image_metadata(path: Path, degraded: list[dict[str, str]]) -> dict[str, Any]:
     try:
-        header = path.read_bytes()[:65536]
-    except OSError:
-        return None
-    if header.startswith(b"\x89PNG\r\n\x1a\n") and len(header) >= 24:
-        return int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")
-    if header.startswith(b"\xff\xd8"):
-        return _read_jpeg_dimensions(header)
-    if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
-        if len(header) >= 10:
-            return int.from_bytes(header[6:8], "little"), int.from_bytes(header[8:10], "little")
-    return None
+        from PIL import Image, UnidentifiedImageError
+    except ImportError:
+        degraded.append(_degraded(
+            code="pillow_missing",
+            dependency="Pillow",
+            message="Pillow is not installed; image dimensions and format metadata are unavailable.",
+            install_command="backend/.venv/bin/python -m pip install Pillow",
+        ))
+        return {}
+
+    try:
+        with Image.open(path) as image:
+            image.load()
+            metadata: dict[str, Any] = {
+                "width": int(image.width),
+                "height": int(image.height),
+                "format": str(image.format or "").lower() or None,
+                "mode": image.mode,
+                "frame_count": getattr(image, "n_frames", 1),
+                "is_animated": bool(getattr(image, "is_animated", False)),
+            }
+            dpi = image.info.get("dpi")
+            if isinstance(dpi, tuple) and len(dpi) >= 2:
+                metadata["dpi"] = [float(dpi[0]), float(dpi[1])]
+            return metadata
+    except (OSError, UnidentifiedImageError) as exc:
+        degraded.append(_degraded(
+            code="image_metadata_failed",
+            dependency="Pillow",
+            message=f"Pillow could not read image metadata: {exc}",
+            install_command="Verify the file is a supported image or install Pillow codec extras.",
+        ))
+        return {}
 
 
-def _read_jpeg_dimensions(header: bytes) -> tuple[int, int] | None:
-    idx = 2
-    while idx + 9 < len(header):
-        if header[idx] != 0xFF:
-            idx += 1
-            continue
-        marker = header[idx + 1]
-        idx += 2
-        if marker in {0xD8, 0xD9, 0x01}:
-            continue
-        if idx + 2 > len(header):
-            return None
-        segment_len = int.from_bytes(header[idx:idx + 2], "big")
-        if segment_len < 2 or idx + segment_len > len(header):
-            return None
-        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
-            height = int.from_bytes(header[idx + 3:idx + 5], "big")
-            width = int.from_bytes(header[idx + 5:idx + 7], "big")
-            return width, height
-        idx += segment_len
-    return None
+def _video_metadata(path: Path, degraded: list[dict[str, str]]) -> dict[str, Any]:
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        degraded.append(_degraded(
+            code="ffprobe_missing",
+            dependency="ffprobe",
+            message="ffprobe is not installed; video duration, dimensions, frame rate, and codec are unavailable.",
+            install_command="brew install ffmpeg",
+        ))
+        return {}
+
+    command = [
+        ffprobe,
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        str(path),
+    ]
+    try:
+        completed = subprocess.run(command, capture_output=True, check=False, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        degraded.append(_degraded(
+            code="ffprobe_failed",
+            dependency="ffprobe",
+            message=f"ffprobe execution failed: {exc}",
+            install_command="brew install ffmpeg",
+        ))
+        return {}
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or "ffprobe returned a non-zero exit code."
+        degraded.append(_degraded(
+            code="ffprobe_unreadable",
+            dependency="ffprobe",
+            message=message,
+            install_command="Verify the file is a supported video and ffmpeg is installed.",
+        ))
+        return {}
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        degraded.append(_degraded(
+            code="ffprobe_invalid_json",
+            dependency="ffprobe",
+            message=f"ffprobe returned invalid JSON: {exc}",
+            install_command="brew install ffmpeg",
+        ))
+        return {}
+    return _parse_ffprobe(payload)
 
 
-def _placeholder_keyframes(context: MediaContext) -> list[dict[str, Any]]:
+def _parse_ffprobe(payload: dict[str, Any]) -> dict[str, Any]:
+    streams = payload.get("streams") if isinstance(payload.get("streams"), list) else []
+    video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
+    audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
+    format_info = payload.get("format") if isinstance(payload.get("format"), dict) else {}
+    duration = _float_or_none(video_stream.get("duration")) or _float_or_none(format_info.get("duration"))
+    metadata: dict[str, Any] = {
+        "duration_seconds": round(duration, 3) if duration is not None else None,
+        "bit_rate": _int_or_none(format_info.get("bit_rate")),
+        "format_name": format_info.get("format_name"),
+        "video_codec": video_stream.get("codec_name"),
+        "width": _int_or_none(video_stream.get("width")),
+        "height": _int_or_none(video_stream.get("height")),
+        "frame_rate": _parse_rate(video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate")),
+        "frame_count": _int_or_none(video_stream.get("nb_frames")),
+        "audio_stream_count": len(audio_streams),
+    }
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _timeline_keyframes(context: MediaContext, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    duration = _float_or_none(metadata.get("duration_seconds"))
+    if duration is None or duration <= 0:
+        return []
     max_keyframes = _bounded_int(context.options.get("max_keyframes"), 5, 1, 12)
-    count = max(1, min(max_keyframes, 1 + context.size_bytes // 10_000_000))
+    count = max(1, min(max_keyframes, math.ceil(duration / 30)))
+    if count == 1:
+        timestamps = [min(duration / 2, duration)]
+    else:
+        step = duration / (count + 1)
+        timestamps = [step * (idx + 1) for idx in range(count)]
     return [
         {
             "index": idx,
-            "timestamp_seconds": round(idx * 2.5, 2),
-            "source": "placeholder",
-            "description": f"Placeholder keyframe {idx + 1} for {context.file_name}",
+            "timestamp_seconds": round(timestamp, 3),
+            "source": "ffprobe_timeline",
+            "artifact_path": None,
         }
-        for idx in range(count)
+        for idx, timestamp in enumerate(timestamps)
     ]
 
 
-def _placeholder_ocr(context: MediaContext) -> dict[str, Any]:
+def _ocr_result(context: MediaContext, degraded: list[dict[str, str]]) -> dict[str, Any]:
+    degraded.append(_degraded(
+        code="ocr_engine_missing",
+        dependency="ocr_engine",
+        message="No OCR engine is configured; text extraction is unavailable for this local pass.",
+        install_command="Install and wire PaddleOCR or Tesseract in the media-intelligence local layer.",
+    ))
     return {
         "engine": "not_configured",
         "text": "",
         "regions": [],
         "language": None,
-        "status": "placeholder",
-        "note": "Wire PaddleOCR/Tesseract/vision OCR provider here.",
+        "status": "degraded",
+        "media_type": context.media_type,
     }
 
 
-def _placeholder_objects(context: MediaContext) -> list[dict[str, Any]]:
-    tokens = [
-        token.lower()
-        for token in re.split(r"[^A-Za-z0-9]+", Path(context.file_name).stem)
-        if len(token) >= 3
-    ]
-    label = tokens[0] if tokens else context.media_type
-    return [
-        {
-            "label": label,
-            "confidence": 0.2,
-            "box": None,
-            "source": "filename_hint",
-        }
-    ]
+def _object_result(context: MediaContext, degraded: list[dict[str, str]]) -> list[dict[str, Any]]:
+    degraded.append(_degraded(
+        code="object_detector_missing",
+        dependency="object_detector",
+        message="No object detector is configured; object boxes are unavailable for this local pass.",
+        install_command="Install and wire OpenCV/YOLO or another detector in the media-intelligence local layer.",
+    ))
+    return []
 
 
-def _deterministic_embedding(context: MediaContext) -> dict[str, Any]:
-    dimensions = _bounded_int(context.options.get("dimensions"), 32, 8, 1024)
-    seed = hashlib.sha256(f"{context.file_id}:{context.head_sha256}:{context.size_bytes}".encode("utf-8")).digest()
-    values: list[float] = []
-    while len(values) < dimensions:
-        for byte in seed:
-            values.append(round((byte / 127.5) - 1.0, 6))
-            if len(values) >= dimensions:
-                break
-        seed = hashlib.sha256(seed).digest()
+def _image_fingerprint(context: MediaContext, degraded: list[dict[str, str]]) -> dict[str, Any] | None:
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except ImportError:
+        degraded.append(_degraded(
+            code="pillow_missing_for_fingerprint",
+            dependency="Pillow",
+            message="Pillow is not installed; image perceptual fingerprint is unavailable.",
+            install_command="backend/.venv/bin/python -m pip install Pillow",
+        ))
+        return None
+
+    try:
+        with Image.open(context.path) as image:
+            dimensions = _bounded_int(context.options.get("dimensions"), 64, 8, 1024)
+            side = math.ceil(math.sqrt(dimensions))
+            grayscale = image.convert("L").resize((side, side))
+            if hasattr(grayscale, "get_flattened_data"):
+                pixels = list(grayscale.get_flattened_data())[:dimensions]
+            else:
+                pixels = list(grayscale.getdata())[:dimensions]
+    except (OSError, UnidentifiedImageError) as exc:
+        degraded.append(_degraded(
+            code="image_fingerprint_failed",
+            dependency="Pillow",
+            message=f"Pillow could not build an image fingerprint: {exc}",
+            install_command="Verify the file is a supported image or install Pillow codec extras.",
+        ))
+        return None
+
+    average = sum(pixels) / len(pixels)
+    bits = [1 if pixel >= average else 0 for pixel in pixels]
     return {
-        "model": "deterministic-placeholder",
-        "dimensions": dimensions,
-        "vector": values,
+        "algorithm": "average_intensity_hash",
+        "hash": _bits_to_hex(bits),
+        "dimensions": len(bits),
+        "vector": bits,
+        "purpose": "local_dedupe",
     }
+
+
+def _bits_to_hex(bits: list[int]) -> str:
+    value = 0
+    for bit in bits:
+        value = (value << 1) | bit
+    return f"{value:0{math.ceil(len(bits) / 4)}x}"
+
+
+def _parse_rate(value: object) -> float | None:
+    if not isinstance(value, str) or value in {"", "0/0"}:
+        return None
+    if "/" in value:
+        numerator, denominator = value.split("/", 1)
+        top = _float_or_none(numerator)
+        bottom = _float_or_none(denominator)
+        if top is None or bottom in {None, 0.0}:
+            return None
+        return round(top / bottom, 3)
+    parsed = _float_or_none(value)
+    return round(parsed, 3) if parsed is not None else None
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _bounded_int(value: object, default: int, minimum: int, maximum: int) -> int:
@@ -159,3 +308,12 @@ def _bounded_int(value: object, default: int, minimum: int, maximum: int) -> int
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _degraded(code: str, dependency: str, message: str, install_command: str) -> dict[str, str]:
+    return {
+        "code": code,
+        "dependency": dependency,
+        "message": message,
+        "install_command": install_command,
+    }

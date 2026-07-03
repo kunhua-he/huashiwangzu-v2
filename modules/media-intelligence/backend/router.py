@@ -297,8 +297,8 @@ register_capability(
     brief="Analyze image",
     parameters={
         "file_id": {"type": "int", "description": "Image file ID"},
-        "include_embedding": {"type": "bool", "description": "Return deterministic placeholder embedding"},
-        "refine": {"type": "bool", "description": "Run VLM refine placeholder"},
+        "include_embedding": {"type": "bool", "description": "Return local image fingerprint"},
+        "refine": {"type": "bool", "description": "Run VLM refine when configured"},
     },
     min_role="viewer",
 )
@@ -311,8 +311,8 @@ register_capability(
     brief="Analyze video",
     parameters={
         "file_id": {"type": "int", "description": "Video file ID"},
-        "max_keyframes": {"type": "int", "description": "Maximum placeholder keyframes"},
-        "refine": {"type": "bool", "description": "Run VLM refine placeholder"},
+        "max_keyframes": {"type": "int", "description": "Maximum timeline keyframe markers"},
+        "refine": {"type": "bool", "description": "Run VLM refine when configured"},
     },
     min_role="viewer",
 )
@@ -321,7 +321,7 @@ register_capability(
     "media-intelligence",
     "extract_keyframes",
     _extract_keyframes,
-    description="Extract deterministic placeholder keyframe records from a video file",
+    description="Extract ffprobe-derived timeline keyframe markers from a video file",
     brief="Extract keyframes",
     parameters={
         "file_id": {"type": "int", "description": "Video file ID"},
@@ -344,7 +344,7 @@ register_capability(
     "media-intelligence",
     "embed_image",
     _embed_image,
-    description="Return a deterministic placeholder image embedding vector",
+    description="Return a local image fingerprint vector",
     brief="Embed image",
     parameters={
         "file_id": {"type": "int", "description": "Image file ID"},
@@ -357,7 +357,7 @@ register_capability(
     "media-intelligence",
     "detect_objects",
     _detect_objects,
-    description="Return deterministic placeholder object detections from media metadata",
+    description="Return object detections or a structured degraded result when no detector is configured",
     brief="Detect objects",
     parameters={"file_id": {"type": "int", "description": "Image or video file ID"}},
     min_role="viewer",

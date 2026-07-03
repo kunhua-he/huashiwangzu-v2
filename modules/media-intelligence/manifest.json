@@ -25,27 +25,27 @@
   "public_actions": [
     {
       "action": "analyze_image",
-      "description": "Analyze an uploaded image through local algorithm, small-model, and optional VLM refine layers",
+      "description": "Analyze an uploaded image through local facts, rule-based summary, and optional VLM refine layers",
       "parameters": {
         "file_id": {"type": "int", "description": "Image file ID"},
-        "include_embedding": {"type": "bool", "description": "Return deterministic placeholder embedding"},
-        "refine": {"type": "bool", "description": "Run VLM refine placeholder"}
+        "include_embedding": {"type": "bool", "description": "Return local image fingerprint"},
+        "refine": {"type": "bool", "description": "Run VLM refine when configured"}
       },
       "min_role": "viewer"
     },
     {
       "action": "analyze_video",
-      "description": "Analyze an uploaded video with deterministic metadata, keyframe, summary, and optional VLM refine placeholders",
+      "description": "Analyze an uploaded video with ffprobe metadata, timeline markers, summary, and optional VLM refine",
       "parameters": {
         "file_id": {"type": "int", "description": "Video file ID"},
-        "max_keyframes": {"type": "int", "description": "Maximum placeholder keyframes"},
-        "refine": {"type": "bool", "description": "Run VLM refine placeholder"}
+        "max_keyframes": {"type": "int", "description": "Maximum timeline keyframe markers"},
+        "refine": {"type": "bool", "description": "Run VLM refine when configured"}
       },
       "min_role": "viewer"
     },
     {
       "action": "extract_keyframes",
-      "description": "Extract deterministic placeholder keyframe records from a video file",
+      "description": "Extract ffprobe-derived timeline keyframe markers from a video file",
       "parameters": {
         "file_id": {"type": "int", "description": "Video file ID"},
         "max_keyframes": {"type": "int", "description": "Maximum keyframes"}
@@ -54,7 +54,7 @@
     },
     {
       "action": "ocr",
-      "description": "Run OCR layer contract for image/video files; currently returns deterministic placeholder status",
+      "description": "Run OCR layer contract for image/video files; returns structured degraded status when OCR is not configured",
       "parameters": {
         "file_id": {"type": "int", "description": "Image or video file ID"}
       },
@@ -62,7 +62,7 @@
     },
     {
       "action": "embed_image",
-      "description": "Return a deterministic placeholder image embedding vector for contract testing",
+      "description": "Return a local image fingerprint vector for dedupe-oriented contract testing",
       "parameters": {
         "file_id": {"type": "int", "description": "Image file ID"},
         "dimensions": {"type": "int", "description": "Embedding vector dimensions, default 32"}
@@ -71,7 +71,7 @@
     },
     {
       "action": "detect_objects",
-      "description": "Return deterministic placeholder object detections from media metadata",
+      "description": "Return object detections or structured degraded status when no detector is configured",
       "parameters": {
         "file_id": {"type": "int", "description": "Image or video file ID"}
       },

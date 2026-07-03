@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+try:
+    from dev_toolkit.agent_board_conductor import build_conductor_summary
+except ModuleNotFoundError:
+    from agent_board_conductor import build_conductor_summary
+
 TOOL_NAMES = {
     "agent_board_claim",
     "agent_board_heartbeat",
@@ -372,7 +377,18 @@ async def block_task(path: Path, *, agent: str, task_id: str, reason: str, node_
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-async def snapshot(path: Path, *, status: str = "", agent: str = "", include_events: bool = True, limit: int = 50) -> str:
+async def snapshot(
+    path: Path,
+    *,
+    status: str = "",
+    agent: str = "",
+    include_events: bool = True,
+    limit: int = 50,
+    repo_root: Path | None = None,
+    include_conductor: bool = True,
+    stale_after_seconds: int = DEFAULT_STALE_AFTER_SECONDS,
+    memory_limit: int = 8,
+) -> str:
     try:
         board = read_board(path)
     except BoardReadError as exc:
@@ -397,6 +413,13 @@ async def snapshot(path: Path, *, status: str = "", agent: str = "", include_eve
         "summary": _task_summary(board),
         "tasks": tasks[: max(int(limit), 1)],
     }
+    if include_conductor and repo_root is not None:
+        payload["conductor"] = build_conductor_summary(
+            repo_root,
+            tasks,
+            stale_after_seconds=stale_after_seconds,
+            memory_limit=memory_limit,
+        )
     if include_events:
         payload["events"] = board.get("events", [])[-max(int(limit), 1):]
     return json.dumps(payload, ensure_ascii=False, indent=2)
@@ -465,6 +488,9 @@ def tool_definitions() -> list[Any]:
                     "agent": {"type": "string", "description": "可选 owner agent 过滤", "default": ""},
                     "include_events": {"type": "boolean", "description": "是否返回最近事件", "default": True},
                     "limit": {"type": "number", "description": "返回任务/事件数量上限", "default": 50},
+                    "include_conductor": {"type": "boolean", "description": "是否返回多代理收工控制台汇总", "default": True},
+                    "stale_after_seconds": {"type": "number", "description": "claimed 心跳超过该秒数列入 stale_tasks", "default": DEFAULT_STALE_AFTER_SECONDS},
+                    "memory_limit": {"type": "number", "description": "recent_memory_links 返回条数", "default": 8},
                 },
             },
         ),
@@ -519,5 +545,9 @@ async def handle_tool(repo_root: Path, name: str, arguments: dict[str, Any]) -> 
             agent=arguments.get("agent", ""),
             include_events=bool(arguments.get("include_events", True)),
             limit=int(arguments.get("limit", 50)),
+            repo_root=repo_root,
+            include_conductor=bool(arguments.get("include_conductor", True)),
+            stale_after_seconds=int(arguments.get("stale_after_seconds", DEFAULT_STALE_AFTER_SECONDS)),
+            memory_limit=int(arguments.get("memory_limit", 8)),
         )
     raise ValueError(f"未知 agent board 工具: {name}")

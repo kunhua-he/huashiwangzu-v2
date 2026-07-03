@@ -4,7 +4,7 @@ from .base import MediaContext, MediaProvider, StageResult
 
 
 class VlmRefineProvider(MediaProvider):
-    provider_key = "vlm_refine.placeholder"
+    provider_key = "vlm_refine.not_configured"
 
     async def run(self, context: MediaContext) -> StageResult:
         prompt = str(context.options.get("prompt", "") or "").strip()
@@ -12,15 +12,22 @@ class VlmRefineProvider(MediaProvider):
         return StageResult(
             stage="vlm_refine",
             provider=self.provider_key,
-            status="placeholder",
+            status="degraded",
             data={
                 "refined_summary": (
-                    "VLM refine layer is reserved for expensive visual reasoning after local and small-model "
-                    f"signals are assembled.{suffix}"
+                    "VLM refine is not configured; local and rule-based facts are returned without visual reasoning."
+                    f"{suffix}"
                 ),
                 "model": "not_configured",
-                "adapter_boundary": "Use framework model gateway VLM or an approved local VLM adapter here.",
+                "degraded": [
+                    {
+                        "code": "vlm_missing",
+                        "dependency": "vlm",
+                        "message": "No VLM adapter is configured for media-intelligence refine.",
+                        "install_command": "Wire the framework model gateway VLM or an approved local VLM adapter.",
+                    }
+                ],
             },
-            warnings=["VLM refine is intentionally a placeholder to keep the initial module dependency-light."],
+            warnings=["No VLM adapter is configured; refine returned a structured degraded result."],
             confidence=0.3,
         )

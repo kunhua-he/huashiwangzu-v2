@@ -31,7 +31,7 @@
 
       <label class="toggle">
         <input v-model="refine" type="checkbox" />
-        <span>VLM refine placeholder</span>
+        <span>VLM refine</span>
       </label>
 
       <label class="toggle">

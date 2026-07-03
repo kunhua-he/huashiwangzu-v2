@@ -41,6 +41,12 @@ from .services.governance_service import (
     reject_candidate,
 )
 from .services.ingest_status_service import get_ingest_status
+from .services.pipeline_debt_api import (
+    cap_apply_pipeline_debt,
+    cap_classify_pipeline_debt,
+    merge_category_params,
+    parse_category_limits_query,
+)
 from .services.pipeline_debt_service import (
     apply_pipeline_lifecycle_debt_action,
     classify_pipeline_lifecycle_debt,
@@ -97,6 +103,11 @@ class PipelineDebtApplyRequest(BaseModel):
     limit: int = Field(default=500, ge=1, le=5000)
     task_ids: list[int] = Field(default_factory=list)
     dry_run: bool = True
+    category: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    category_limits: dict[str, int] = Field(default_factory=dict)
+    limit_each: int | None = Field(default=None, ge=1, le=5000)
+    order: Literal["newest", "oldest"] = "newest"
 class PipelineRunReconcileRequest(BaseModel):
     limit: int = Field(default=500, ge=1, le=5000)
     run_ids: list[int] = Field(default_factory=list)
@@ -612,10 +623,22 @@ async def api_pending_count(
 async def api_pipeline_debt_dry_run(
     limit: int = Query(default=500, ge=1, le=5000),
     error_marker: str | None = Query(default=None),
+    category: list[str] | None = Query(default=None),
+    category_limits: str | None = Query(default=None),
+    limit_each: int | None = Query(default=None, ge=1, le=5000),
+    order: Literal["newest", "oldest"] = Query(default="newest"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
-    result = await classify_pipeline_lifecycle_debt(db, limit=limit, error_marker=error_marker)
+    result = await classify_pipeline_lifecycle_debt(
+        db,
+        limit=limit,
+        error_marker=error_marker,
+        categories=merge_category_params(None, category),
+        category_limits=parse_category_limits_query(category_limits),
+        limit_each=limit_each,
+        order=order,
+    )
     return ApiResponse(data=result)
 
 @router.post("/governance/pipeline-debt/apply")
@@ -630,6 +653,10 @@ async def api_pipeline_debt_apply(
         limit=payload.limit,
         task_ids=payload.task_ids or None,
         dry_run=payload.dry_run,
+        categories=merge_category_params(payload.category, payload.categories),
+        category_limits=payload.category_limits,
+        limit_each=payload.limit_each,
+        order=payload.order,
     )
     return ApiResponse(data=result)
 
@@ -772,13 +799,6 @@ async def _cap_get_pending_count(params: dict, caller: str) -> dict:
         count = await get_pending_count(db, owner_id)
         return {"pending_count": count}
 
-async def _cap_classify_pipeline_debt(params: dict, caller: str) -> dict:
-    resolve_user_id(caller)
-    limit = int(params.get("limit", 500) or 500)
-    limit = max(1, min(limit, 5000))
-    async with AsyncSessionLocal() as db:
-        return await classify_pipeline_lifecycle_debt(db, limit=limit)
-
 async def _cap_reconcile_orphan_pipeline_runs(params: dict, caller: str) -> dict:
     resolve_user_id(caller)
     limit = int(params.get("limit", 500) or 500)
@@ -851,11 +871,34 @@ register_capability(
     min_role="viewer",
 )
 register_capability(
-    "knowledge", "classify_pipeline_debt", _cap_classify_pipeline_debt,
+    "knowledge", "classify_pipeline_debt", cap_classify_pipeline_debt,
     description="Dry-run classify historical knowledge pipeline debt without mutating queue rows",
     brief="分类知识库管道债",
     parameters={
         "limit": {"type": "integer", "description": "Maximum failed tasks to inspect, default 500"},
+        "category": {"type": "string", "description": "Optional comma-separated category filter"},
+        "categories": {"type": "array", "description": "Optional category filters"},
+        "category_limits": {"type": "object", "description": "Optional per-category limits, e.g. {doc_missing: 20}"},
+        "limit_each": {"type": "integer", "description": "Optional default per-category limit"},
+        "order": {"type": "string", "description": "Candidate order: newest or oldest"},
+        "task_ids": {"type": "array", "description": "Optional exact task IDs; bypasses per-category limits"},
+    },
+    min_role="admin",
+)
+register_capability(
+    "knowledge", "apply_pipeline_debt", cap_apply_pipeline_debt,
+    description="Dry-run or apply guarded remediation for historical knowledge pipeline debt",
+    brief="治理知识库管道债",
+    parameters={
+        "action": {"type": "string", "description": "archive_obsolete or retry_live"},
+        "limit": {"type": "integer", "description": "Maximum failed tasks to inspect, default 500"},
+        "task_ids": {"type": "array", "description": "Optional exact task IDs; bypasses per-category limits"},
+        "dry_run": {"type": "boolean", "description": "Preview only when true, default true"},
+        "category": {"type": "string", "description": "Optional comma-separated category filter"},
+        "categories": {"type": "array", "description": "Optional category filters"},
+        "category_limits": {"type": "object", "description": "Optional per-category limits, e.g. {doc_missing: 20}"},
+        "limit_each": {"type": "integer", "description": "Optional default per-category limit"},
+        "order": {"type": "string", "description": "Candidate order: newest or oldest"},
     },
     min_role="admin",
 )

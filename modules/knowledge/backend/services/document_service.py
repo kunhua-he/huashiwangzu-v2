@@ -30,6 +30,7 @@ _ACTIVE_OR_SOURCE_ERROR_STATUSES = {
 }
 SOURCE_UNAVAILABLE_REASONS = {"source_file_deleted", "source_file_missing"}
 PARSER_NO_CONTENT_MARKER = "Parser returned no content blocks"
+PARSE_LOCK_STALE_AFTER_SECONDS = 30 * 60
 
 
 def document_source_unavailable_reason(doc) -> str | None:
@@ -93,6 +94,42 @@ async def _find_inflight_pipeline_task(db: AsyncSession, document_id: int):
         if int(params.get("document_id", 0) or 0) == int(document_id):
             return task
     return None
+
+
+def _seconds_since(value: datetime | None, now: datetime) -> float | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return (now - value).total_seconds()
+
+
+async def _release_stale_parse_lock_if_safe(db: AsyncSession, doc) -> bool:
+    """Release a stale parser lock only when no queue task can still own it."""
+    if doc.parse_status != "parsing":
+        return False
+
+    now = datetime.now(timezone.utc)
+    lock_age = _seconds_since(doc.parse_started_at, now)
+    if lock_age is not None and lock_age < PARSE_LOCK_STALE_AFTER_SECONDS:
+        return False
+
+    existing = await _find_inflight_pipeline_task(db, int(doc.id))
+    if existing:
+        return False
+
+    logger.warning(
+        "Releasing stale parse lock for document_id=%d age_seconds=%s worker=%s",
+        int(doc.id),
+        int(lock_age) if lock_age is not None else None,
+        doc.parse_worker_id,
+    )
+    doc.parse_status = "pending"
+    if doc.vector_status == "indexing":
+        doc.vector_status = "pending"
+    doc.parse_worker_id = None
+    doc.parse_error = "stale_parse_lock_released"
+    return True
 
 
 async def enqueue_pipeline_task(
@@ -552,8 +589,12 @@ async def parse_and_index_document(
     if not doc:
         raise NotFound("Document not found")
 
-    if doc.parse_status == "parsing":
+    if doc.parse_status == "parsing" and not await _release_stale_parse_lock_if_safe(db, doc):
         raise AppException("Document is already parsing", status_code=409)
+
+    source_file_id = int(doc.file_id)
+    source_extension = str(doc.extension or "")
+    content_package_id = doc.content_package_id
 
     # 清理旧解析产物（重新解析）
     await db.execute(sa_delete(KbChunk).where(KbChunk.document_id == document_id))
@@ -569,7 +610,6 @@ async def parse_and_index_document(
     try:
         # First try to get blocks from Content Package (framework canonical source)
         blocks = []
-        content_package_id = getattr(doc, "content_package_id", None)
         if content_package_id:
             try:
                 from app.models.content import ContentPackageVersion
@@ -620,7 +660,7 @@ async def parse_and_index_document(
         ir_parse_status = "ok"
         ir_resource_diagnostics: list[dict] = []
         if not blocks:
-            parsed_ir = await parse_document(doc.file_id, doc.extension, caller)
+            parsed_ir = await parse_document(source_file_id, source_extension, caller)
             ir_parse_status = parsed_ir.parse_status
             ir_resource_diagnostics = list(parsed_ir.resource_diagnostics)
             parsed = to_legacy_dict(parsed_ir)
@@ -654,6 +694,7 @@ async def parse_and_index_document(
 
         # 写页级融合
         total_pages = await create_page_fusions(db, document_id, owner_id, blocks)
+        await db.refresh(doc)
 
         # 分块 + 向量化
         doc.vector_status = "indexing"

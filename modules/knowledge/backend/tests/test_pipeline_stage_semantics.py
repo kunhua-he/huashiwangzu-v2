@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,22 @@ class _ScalarResult:
 
     def scalar_one_or_none(self):
         return self._value
+
+
+class _ScalarList:
+    def __init__(self, values):
+        self._values = values
+
+    def all(self):
+        return self._values
+
+
+class _ListResult:
+    def __init__(self, values):
+        self._values = values
+
+    def scalars(self):
+        return _ScalarList(self._values)
 
 
 class _FakeDocument:
@@ -146,6 +163,17 @@ class _EmptyParseDocument:
     deleted = False
 
 
+class _LazyTrapDocument(_EmptyParseDocument):
+    def __init__(self):
+        self._expired = False
+
+    def __getattribute__(self, name):
+        if name in {"file_id", "extension", "content_package_id"}:
+            if object.__getattribute__(self, "_expired"):
+                raise AssertionError(f"lazy access after commit: {name}")
+        return super().__getattribute__(name)
+
+
 class _EmptyParseDb:
     def __init__(self):
         self.doc = _EmptyParseDocument()
@@ -161,6 +189,44 @@ class _EmptyParseDb:
     async def refresh(self, obj):
         assert obj is self.doc
         self.refreshes += 1
+        if hasattr(obj, "_expired"):
+            obj._expired = False
+
+
+class _SnapshotParseDb(_EmptyParseDb):
+    def __init__(self):
+        super().__init__()
+        self.doc = _LazyTrapDocument()
+
+    async def commit(self):
+        self.commits += 1
+        self.doc._expired = True
+
+
+class _StaleParseDocument(_EmptyParseDocument):
+    id = 987
+    file_id = 654
+    filename = "stale.txt"
+    extension = "txt"
+    parse_status = "parsing"
+    vector_status = "indexing"
+    parse_worker_id = "user:1"
+    parse_started_at = datetime.now(timezone.utc) - timedelta(hours=2)
+
+
+class _StaleParseDb(_EmptyParseDb):
+    def __init__(self):
+        super().__init__()
+        self.doc = _StaleParseDocument()
+        self.executes = 0
+
+    async def execute(self, _stmt):
+        self.executes += 1
+        if self.executes == 1:
+            return _ScalarResult(self.doc)
+        if self.executes == 2:
+            return _ListResult([])
+        return _ScalarResult(None)
 
 
 class _ParsedIr:
@@ -454,6 +520,52 @@ async def test_parse_empty_degraded_branch_refreshes_before_payload(monkeypatch)
     assert result["document"]["parse_status"] == "degraded"
     assert result["document"]["parse_error"] == "Parser returned no content blocks: empty_result"
     assert db.refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_parse_uses_document_snapshot_after_initial_commit(monkeypatch):
+    calls = []
+
+    async def empty_parse_document(file_id, extension, caller):
+        calls.append((file_id, extension, caller))
+        return _ParsedIr()
+
+    monkeypatch.setattr(document_service, "parse_document", empty_parse_document)
+    monkeypatch.setattr(document_service, "to_legacy_dict", lambda _ir: {"blocks": []})
+
+    db = _SnapshotParseDb()
+    result = await document_service.parse_and_index_document(
+        db,
+        document_id=db.doc.id,
+        owner_id=db.doc.owner_id,
+        caller="user:1",
+    )
+
+    assert calls == [(654, "docx", "user:1")]
+    assert result["status"] == "degraded"
+    assert result["document"]["file_id"] == 654
+
+
+@pytest.mark.asyncio
+async def test_parse_releases_stale_lock_without_inflight_task(monkeypatch):
+    async def empty_parse_document(*_args, **_kwargs):
+        return _ParsedIr()
+
+    monkeypatch.setattr(document_service, "parse_document", empty_parse_document)
+    monkeypatch.setattr(document_service, "to_legacy_dict", lambda _ir: {"blocks": []})
+
+    db = _StaleParseDb()
+    result = await document_service.parse_and_index_document(
+        db,
+        document_id=db.doc.id,
+        owner_id=db.doc.owner_id,
+        caller="user:1",
+    )
+
+    assert result["status"] == "degraded"
+    assert db.doc.parse_status == "degraded"
+    assert db.doc.vector_status == "pending"
+    assert db.doc.parse_worker_id == "user:1"
 
 
 @pytest.mark.asyncio

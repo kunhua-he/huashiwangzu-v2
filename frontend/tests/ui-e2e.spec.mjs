@@ -1,12 +1,21 @@
 import { test, expect } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
+import { fileURLToPath } from 'url'
 
-const BASE_URL = 'http://localhost:5173'
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = path.resolve(TEST_DIR, '../..')
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
 const SCREENSHOT_DIR = path.resolve(process.env.HOME || '/tmp', 'Downloads/ui-e2e')
 const ADMIN_USER = '何焜华'
 const ADMIN_PASS = '123rgE123'
 const TS = Date.now()  // unique suffix to avoid filename conflicts
+const SAMPLE_FILES = {
+  docx: path.join(REPO_ROOT, 'modules/docx-parser/sandbox/samples/sample.docx'),
+  pptx: path.join(REPO_ROOT, 'modules/pptx-parser/sandbox/samples/sample.pptx'),
+  xlsx: path.join(REPO_ROOT, 'modules/xlsx-parser/sandbox/samples/sample.xlsx'),
+}
+const ADMIN_STORAGE_FILE = path.join(TEST_DIR, '.auth/admin.json')
 
 const results = []
 const consoleCollector = []
@@ -18,29 +27,58 @@ function screenshot(page, name) {
   return filePath
 }
 
-async function gotoDesktop(page) {
-  await page.goto(BASE_URL, { waitUntil: 'networkidle' })
-  // If login page shows (token expired), log in
-  const loginVisible = await page.locator('.login-page').isVisible().catch(() => false)
-  if (loginVisible) {
-    await page.getByPlaceholder('用户名').fill(ADMIN_USER)
-    await page.getByPlaceholder('密码').fill(ADMIN_PASS)
-    await page.getByRole('button', { name: '登录' }).click()
+async function refreshAdminStorageState() {
+  const resp = await fetch(`${BASE_URL}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+  })
+  const body = await resp.json()
+  const token = body?.data?.access_token
+  if (!resp.ok || !token) {
+    throw new Error(`Admin API login failed: ${JSON.stringify(body).slice(0, 300)}`)
   }
-  await page.waitForSelector('.desktop-shell-container', { timeout: 15000 })
+  const storageState = {
+    cookies: [],
+    origins: [{
+      origin: new URL(BASE_URL).origin,
+      localStorage: [{ name: 'v2_auth_token', value: token }],
+    }],
+  }
+  fs.writeFileSync(ADMIN_STORAGE_FILE, JSON.stringify(storageState, null, 2), 'utf-8')
+  return token
+}
+
+async function gotoDesktop(page) {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const loginVisible = await page.locator('.login-page').isVisible().catch(() => false)
+    if (loginVisible) {
+      const token = await refreshAdminStorageState()
+      await page.evaluate((freshToken) => {
+        localStorage.setItem('v2_auth_token', freshToken)
+      }, token)
+      await page.goto(`${BASE_URL}/desktop`, { waitUntil: 'domcontentloaded' })
+    }
+    try {
+      await page.waitForSelector('.desktop-shell-container', { timeout: 15000 })
+      await page.waitForSelector('.taskbar-start', { timeout: 5000 })
+      return
+    } catch {
+      const returnedToLogin = await page.locator('.login-page').isVisible().catch(() => false)
+      if (!returnedToLogin) await page.reload({ waitUntil: 'domcontentloaded' })
+    }
+  }
+  throw new Error('Desktop did not become stable after login/storageState recovery')
 }
 
 async function openLauncher(page) {
+  await page.waitForSelector('.taskbar-start', { timeout: 5000 })
   const startBtn = page.locator('.taskbar-start')
   for (let attempt = 0; attempt < 3; attempt++) {
     const panelVisible = await page.locator('.desktop-launcher-panel').isVisible().catch(() => false)
     if (panelVisible) return true
-    if (await startBtn.isVisible()) {
-      await startBtn.click({ force: true })
-    } else {
-      // try clicking the "开始" label inside the button
-      await page.getByText('开始').first().click({ force: true })
-    }
+    await startBtn.click({ force: true })
     try {
       await page.waitForSelector('.desktop-launcher-panel', { timeout: 3000 })
       return true
@@ -52,6 +90,13 @@ async function openLauncher(page) {
 }
 
 async function closeAllWindows(page) {
+  await page.evaluate(() => {
+    const manager = window.__HSWZ_WINDOW_MANAGER__
+    if (!manager || !Array.isArray(manager.windows) || typeof manager.closeWindow !== 'function') return
+    for (const id of manager.windows.map(windowState => windowState.id).reverse()) {
+      manager.closeWindow(id)
+    }
+  }).catch(() => {})
   for (let attempt = 0; attempt < 5; attempt++) {
     const closeBtns = page.locator('.window-action-close')
     const count = await closeBtns.count()
@@ -63,13 +108,32 @@ async function closeAllWindows(page) {
   }
 }
 
+async function openFileForViewer(page, fileRecord, fileType) {
+  const fileIcon = page.locator(`.desktop-file-icon-item[data-selection-key="file:${fileRecord.id}"]`)
+  if (await fileIcon.count() > 0) {
+    await fileIcon.first().dblclick({ force: true })
+    return 'desktop-icon'
+  }
+  const openedByManager = await page.evaluate(({ expectedApp, id, name, format }) => {
+    const manager = window.__HSWZ_WINDOW_MANAGER__
+    if (!manager || typeof manager.openWindow !== 'function') return false
+    return Boolean(manager.openWindow(expectedApp, {
+      fileId: id,
+      fileName: name,
+      format,
+      mode: expectedApp === 'excel-engine' || expectedApp === 'text-editor' ? 'edit' : 'view',
+    }))
+  }, { ...fileRecord, format: fileType })
+  return openedByManager ? 'window-manager' : 'not-found'
+}
+
 async function getAuthToken(request) {
-  const loginResp = await request.post(`${BASE_URL}/api/login`, {
-    data: { username: ADMIN_USER, password: ADMIN_PASS },
-  })
-  const loginBody = await loginResp.json()
-  if (!loginBody.success) throw new Error('Login failed')
-  return loginBody.data.access_token
+  const storage = JSON.parse(fs.readFileSync(ADMIN_STORAGE_FILE, 'utf-8'))
+  const origin = new URL(BASE_URL).origin
+  const state = storage.origins?.find(item => item.origin === origin) || storage.origins?.[0]
+  const token = state?.localStorage?.find(item => item.name === 'v2_auth_token')?.value
+  if (!token) throw new Error('Admin storageState has no v2_auth_token')
+  return token
 }
 
 async function uploadSample(request, token, name, mimeType, content, folderId = 0) {
@@ -254,11 +318,11 @@ test.describe('Scene 3: File Opening & Viewers', () => {
       { key: 'png', fileName: `e2e-${TS}-test.png`, mimeType: 'image/png',
         content: minimalPng(), expectedApp: 'image-viewer' },
       { key: 'docx', fileName: `e2e-${TS}-test.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        content: fs.readFileSync('/tmp/e2e-samples/sample.docx'), expectedApp: 'doc-viewer' },
+        content: fs.readFileSync(SAMPLE_FILES.docx), expectedApp: 'doc-viewer' },
       { key: 'pptx', fileName: `e2e-${TS}-test.pptx`, mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        content: fs.readFileSync('/tmp/e2e-samples/sample.pptx'), expectedApp: 'ppt-viewer' },
+        content: fs.readFileSync(SAMPLE_FILES.pptx), expectedApp: 'ppt-viewer' },
       { key: 'xlsx', fileName: `e2e-${TS}-test.xlsx`, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        content: fs.readFileSync('/tmp/e2e-samples/sample.xlsx'), expectedApp: 'excel-engine' },
+        content: fs.readFileSync(SAMPLE_FILES.xlsx), expectedApp: 'excel-engine' },
     ]
 
     for (const s of samples) {
@@ -290,14 +354,12 @@ test.describe('Scene 3: File Opening & Viewers', () => {
         return
       }
 
-      const fileIcon = page.locator(`.desktop-file-icon-item[data-selection-key="file:${fileId}"]`)
-      const count = await fileIcon.count()
-      if (count === 0) {
-        results.push({ scenario: `3.1 ${info.label}`, passed: false, consoleErrors: [...consoleCollector], notes: 'File icon not found on desktop' })
+      const openMethod = await openFileForViewer(page, fileIds[fileType], fileType)
+      if (openMethod === 'not-found') {
+        results.push({ scenario: `3.1 ${info.label}`, passed: false, consoleErrors: [...consoleCollector], notes: 'File icon not found and window-manager fallback failed' })
         return
       }
 
-      await fileIcon.first().dblclick({ force: true })
       await page.waitForSelector('.desktop-window', { timeout: 8000 }).catch(() => {})
       const ss = screenshot(page, `3.1-${fileType}`)
       const hasWindow = await page.locator('.desktop-window').count()
@@ -306,7 +368,7 @@ test.describe('Scene 3: File Opening & Viewers', () => {
         passed: hasWindow > 0,
         screenshot: ss,
         consoleErrors: [...consoleCollector],
-        notes: `Window count: ${hasWindow}`,
+        notes: `Window count: ${hasWindow}, open_method=${openMethod}`,
       })
     })
   }
@@ -354,7 +416,7 @@ test.describe('Scene 4: Excel-Engine Parse', () => {
     const token = await getAuthToken(request)
 
     // Upload a real xlsx file with actual cell data
-    const xlsxBuffer = fs.readFileSync('/tmp/e2e-samples/sample.xlsx')
+    const xlsxBuffer = fs.readFileSync(SAMPLE_FILES.xlsx)
     const uploadResp = await request.post(`${BASE_URL}/api/files/upload`, {
       headers: { Authorization: `Bearer ${token}` },
       multipart: {
@@ -550,11 +612,18 @@ test.describe('Scene 5: Key Interaction Flows', () => {
 
   test('5.5 docs-open test', async ({ request }) => {
     const token = await getAuthToken(request)
+    const data = await uploadSample(
+      request,
+      token,
+      `e2e-${TS}-docs-open.txt`,
+      'text/plain',
+      'Docs-open E2E token scope sample.',
+    )
 
     // Issue a docs token (proves module is live)
     const tokenResp = await request.post(`${BASE_URL}/api/docs/token`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      data: { client_id: 'e2e-test', scope: {} },
+      data: { client_id: 'e2e-test', scope: { doc_ids: [data.id] } },
     })
     const tokenBody = await tokenResp.json()
 

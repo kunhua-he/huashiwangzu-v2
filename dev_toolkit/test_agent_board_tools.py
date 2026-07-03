@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -152,8 +153,52 @@ def test_agent_board_allows_stale_reclaim_and_records_block(tmp_path: Path) -> N
     anyio.run(run)
 
 
+def test_agent_board_snapshot_includes_conductor_summary(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    path = tmp_path / "backend" / "logs" / "agent_board.json"
+    memory_dir = tmp_path / "开发文档" / "项目记忆"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "r6-worker.md").write_text(
+        '---\nname: "R6 worker done"\nagent: "agent-a"\ncreated: "2026-07-03T12:00:00+00:00"\n---\n\n完成。',
+        encoding="utf-8",
+    )
+    (tmp_path / "dev_toolkit").mkdir()
+    (tmp_path / "dev_toolkit" / "agent_board_tools.py").write_text("# dirty\n", encoding="utf-8")
+
+    async def run() -> None:
+        claimed = _load(await claim_task(path, agent="agent-a", task_id="lane-a", title="Lane A"))
+        completed = _load(await claim_task(path, agent="agent-b", task_id="lane-b", title="Lane B"))
+        assert completed["success"] is True
+        await complete_task(path, agent="agent-b", task_id="lane-b", result_summary="ready to stage")
+
+        board = read_board(path)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=40)).isoformat()
+        board["tasks"][claimed["task"]["task_id"]]["heartbeat_at"] = old
+        write_board(path, board)
+
+        board_view = _load(
+            await snapshot(
+                path,
+                repo_root=tmp_path,
+                include_events=False,
+                stale_after_seconds=60,
+                memory_limit=3,
+            )
+        )
+        conductor = board_view["conductor"]
+        assert conductor["lanes"]["claimed"]["count"] == 1
+        assert conductor["lanes"]["completed"]["tasks"][0]["result_summary"] == "ready to stage"
+        assert conductor["stale_tasks"][0]["task_id"] == "lane-a"
+        assert conductor["recent_memory_links"][0]["path"] == "开发文档/项目记忆/r6-worker.md"
+        assert "dev_toolkit" in conductor["stage_plan"]["grouped_pathspecs"]
+        assert any(command.startswith("git add -- ") for command in conductor["stage_plan"]["suggested_git_add"])
+
+    anyio.run(run)
+
+
 def test_agent_board_tool_contract_names() -> None:
-    names = {tool.name for tool in tool_definitions()}
+    tools = tool_definitions()
+    names = {tool.name for tool in tools}
     assert names == {
         "agent_board_claim",
         "agent_board_heartbeat",
@@ -161,6 +206,11 @@ def test_agent_board_tool_contract_names() -> None:
         "agent_board_block",
         "agent_board_snapshot",
     }
+    snapshot_tool = next(tool for tool in tools if tool.name == "agent_board_snapshot")
+    properties = snapshot_tool.inputSchema["properties"]
+    assert "include_conductor" in properties
+    assert "stale_after_seconds" in properties
+    assert "memory_limit" in properties
 
 
 def test_agent_board_snapshot_reports_corrupt_file(tmp_path: Path) -> None:

@@ -25,7 +25,7 @@ class MediaContext:
 class StageResult:
     stage: StageName
     provider: str
-    status: Literal["ok", "skipped", "placeholder"]
+    status: Literal["ok", "skipped", "degraded"]
     data: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     confidence: float = 0.0

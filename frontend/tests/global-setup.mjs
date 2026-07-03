@@ -1,4 +1,3 @@
-import { chromium } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
@@ -15,21 +14,27 @@ async function globalSetup() {
   fs.mkdirSync(AUTH_DIR, { recursive: true })
 
   const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
+  const origin = new URL(baseURL).origin
 
   for (const acct of ACCOUNTS) {
-    const browser = await chromium.launch({ headless: true })
-    const context = await browser.newContext({ baseURL })
-    const page = await context.newPage()
-
-    await page.goto('/')
-    await page.waitForSelector('.login-page', { timeout: 10000 })
-    await page.getByPlaceholder('用户名').fill(acct.username)
-    await page.getByPlaceholder('密码').fill(acct.password)
-    await page.getByRole('button', { name: '登录' }).click()
-    await page.waitForSelector('.desktop-shell-container', { timeout: 15000 })
-
-    await context.storageState({ path: path.join(AUTH_DIR, acct.storageFile) })
-    await browser.close()
+    const resp = await fetch(`${baseURL}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: acct.username, password: acct.password }),
+    })
+    const body = await resp.json()
+    const token = body?.data?.access_token
+    if (!resp.ok || !token) {
+      throw new Error(`Failed to create ${acct.role} storageState: ${JSON.stringify(body).slice(0, 300)}`)
+    }
+    const storageState = {
+      cookies: [],
+      origins: [{
+        origin,
+        localStorage: [{ name: 'v2_auth_token', value: token }],
+      }],
+    }
+    fs.writeFileSync(path.join(AUTH_DIR, acct.storageFile), JSON.stringify(storageState, null, 2), 'utf-8')
   }
 }
 

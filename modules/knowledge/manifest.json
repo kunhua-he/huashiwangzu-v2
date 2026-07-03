@@ -128,6 +128,73 @@
         "limit": {
           "type": "integer",
           "description": "最多检查的失败任务数（默认500）"
+        },
+        "category": {
+          "type": "string",
+          "description": "可选，单个或逗号分隔分类过滤"
+        },
+        "categories": {
+          "type": "array",
+          "description": "可选，分类过滤列表"
+        },
+        "category_limits": {
+          "type": "object",
+          "description": "可选，按分类限制数量，如 {\"doc_missing\":20}"
+        },
+        "limit_each": {
+          "type": "integer",
+          "description": "可选，每个分类默认选取数量"
+        },
+        "order": {
+          "type": "string",
+          "description": "候选排序：newest 或 oldest"
+        },
+        "task_ids": {
+          "type": "array",
+          "description": "可选，精确 task id 列表；不受 limit_each 影响"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
+      "action": "apply_pipeline_debt",
+      "description": "dry-run 或 guarded apply 历史知识库管道债治理动作",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "description": "archive_obsolete 或 retry_live"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "最多检查的失败任务数（默认500）"
+        },
+        "task_ids": {
+          "type": "array",
+          "description": "可选，精确 task id 列表；不受 limit_each 影响"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "为 true 时只预览，默认 true"
+        },
+        "category": {
+          "type": "string",
+          "description": "可选，单个或逗号分隔分类过滤"
+        },
+        "categories": {
+          "type": "array",
+          "description": "可选，分类过滤列表"
+        },
+        "category_limits": {
+          "type": "object",
+          "description": "可选，按分类限制数量，如 {\"doc_missing\":20}"
+        },
+        "limit_each": {
+          "type": "integer",
+          "description": "可选，每个分类默认选取数量"
+        },
+        "order": {
+          "type": "string",
+          "description": "候选排序：newest 或 oldest"
         }
       },
       "min_role": "admin"

@@ -6,15 +6,15 @@ Media Intelligence is the contract and module skeleton for the layered media-ana
 local algorithms -> small model providers -> VLM refine
 ```
 
-This first version does not train or ship heavy models. It establishes the module boundary, result schema, provider registry, HTTP endpoints, cross-module capabilities, and sandbox validation with deterministic placeholders.
+This first version does not train or ship heavy models. It establishes the module boundary, result schema, provider registry, HTTP endpoints, cross-module capabilities, and sandbox validation with a real local facts layer. Missing optional dependencies return structured `degraded` reasons instead of fake success.
 
 ## Architecture
 
 | Layer | Current implementation | Future adapter boundary |
 |---|---|---|
-| Local algorithms | File header metadata, deterministic keyframe records, OCR/object/embedding placeholders | OpenCV, Pillow, ffmpeg frame sampling, PaddleOCR/Tesseract, classical detectors |
-| Small model providers | Deterministic summary and tags | CLIP, YOLO, lightweight image classifiers, local embedding models, ASR summary adapters |
-| VLM refine | Placeholder refine stage | Framework model gateway VLM or approved local VLM adapter |
+| Local algorithms | Pillow image metadata, ffprobe video metadata, ffprobe timeline markers, image average-intensity fingerprint | OpenCV/ffmpeg thumbnail extraction, PaddleOCR/Tesseract, classical detectors |
+| Small model providers | Rule-based summary and tags with structured degraded status | CLIP, YOLO, lightweight image classifiers, local embedding models, ASR summary adapters |
+| VLM refine | Structured degraded result when no VLM is configured | Framework model gateway VLM or approved local VLM adapter |
 
 The backend keeps each layer behind `backend/providers/`. `backend/pipeline.py` owns result assembly and schema stability. `backend/router.py` owns HTTP, auth, framework file access through `run_uploaded_file_capability`, and capability registration.
 
@@ -48,6 +48,7 @@ All analysis actions return:
   "tags": [],
   "confidence": 0.0,
   "warnings": [],
+  "degraded": [],
   "providers": []
 }
 ```
@@ -58,12 +59,12 @@ All analysis actions return:
 
 | Action | Role | Input | Notes |
 |---|---|---|---|
-| `analyze_image` | viewer | `file_id`, `include_embedding`, `refine` | Local metadata + small-model summary + optional VLM refine |
-| `analyze_video` | viewer | `file_id`, `max_keyframes`, `refine` | Local metadata/keyframes + small-model summary + optional VLM refine |
-| `extract_keyframes` | viewer | `file_id`, `max_keyframes` | Placeholder records only; no frame files yet |
-| `ocr` | viewer | `file_id` | OCR contract placeholder |
-| `embed_image` | viewer | `file_id`, `dimensions` | Deterministic placeholder vector |
-| `detect_objects` | viewer | `file_id` | Filename/metadata hint placeholder |
+| `analyze_image` | viewer | `file_id`, `include_embedding`, `refine` | Pillow metadata + local fingerprint + rule-based summary + optional VLM refine |
+| `analyze_video` | viewer | `file_id`, `max_keyframes`, `refine` | ffprobe metadata/timeline markers + rule-based summary + optional VLM refine |
+| `extract_keyframes` | viewer | `file_id`, `max_keyframes` | ffprobe-derived timeline markers; no frame files yet |
+| `ocr` | viewer | `file_id` | Structured degraded result until OCR is configured |
+| `embed_image` | viewer | `file_id`, `dimensions` | Local average-intensity fingerprint vector |
+| `detect_objects` | viewer | `file_id` | Structured degraded result until a detector is configured |
 | `summarize_media` | viewer | `file_id` or `analysis` | Summarize from file or existing analysis payload |
 | `vlm_refine` | viewer | `analysis`, `prompt` | Refine an existing result through the VLM contract |
 
@@ -90,10 +91,20 @@ All file-based actions use the framework uploaded-file runner, which performs fi
 | Image | jpg, jpeg, png, gif, webp, bmp, ico |
 | Video | mp4, mov, m4v, webm, mkv, avi |
 
+## Local Dependencies
+
+The module detects optional local dependencies at runtime:
+
+| Dependency | Used for | Missing behavior | Suggested install |
+|---|---|---|---|
+| Pillow | Image dimensions, format, mode, frame count, local fingerprint | `degraded` with `pillow_missing` or related code | `backend/.venv/bin/python -m pip install Pillow` |
+| ffprobe | Video duration, dimensions, frame rate, codec, timeline markers | `degraded` with `ffprobe_missing` | `brew install ffmpeg` |
+| OCR/detector adapters | OCR text and object boxes | `degraded` with `ocr_engine_missing` / `object_detector_missing` | Wire PaddleOCR/Tesseract/OpenCV/YOLO in module providers |
+
 ## Verification
 
 ```bash
-PYTHONPATH=. backend/.venv/bin/python -m pytest modules/media-intelligence/sandbox/test_module.py
+PYTHONPATH=backend:. backend/.venv/bin/python -m pytest modules/media-intelligence/sandbox/test_module.py
 mcp lint path=modules/media-intelligence/backend/router.py,modules/media-intelligence/backend/pipeline.py,modules/media-intelligence/backend/providers/base.py,modules/media-intelligence/backend/providers/local_algorithms.py,modules/media-intelligence/backend/providers/small_model.py,modules/media-intelligence/backend/providers/vlm.py,modules/media-intelligence/backend/providers/registry.py
 ```
 

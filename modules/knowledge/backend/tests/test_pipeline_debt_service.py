@@ -260,7 +260,7 @@ async def test_archive_obsolete_only_archives_guarded_lifecycle_categories(monke
         _Task(107, 6, "some transient gateway failure"),
     ]
 
-    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None):
+    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None, order="newest"):
         return tasks
 
     monkeypatch.setattr(
@@ -313,7 +313,7 @@ async def test_archive_obsolete_dry_run_has_same_shape_without_commit(monkeypatc
     docs = {1: _MutableDoc(1, 10)}
     tasks = [_Task(201, 1, "File not found: /missing.pdf")]
 
-    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None):
+    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None, order="newest"):
         return tasks
 
     monkeypatch.setattr(
@@ -361,9 +361,10 @@ async def test_archive_obsolete_precise_task_ids_apply_all_requested(monkeypatch
     ]
     seen = {}
 
-    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None):
+    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None, order="newest"):
         seen["limit"] = limit
         seen["task_ids"] = task_ids
+        seen["order"] = order
         return tasks
 
     monkeypatch.setattr(
@@ -378,11 +379,173 @@ async def test_archive_obsolete_precise_task_ids_apply_all_requested(monkeypatch
         action="archive_obsolete",
         limit=1,
         task_ids=[301, 302],
+        limit_each=1,
         dry_run=False,
     )
 
-    assert seen == {"limit": 1, "task_ids": [301, 302]}
+    assert seen == {"limit": 1, "task_ids": [301, 302], "order": "newest"}
     assert result["matched"] == 2
+    assert result["selected"] == 2
+    assert result["selection"]["mode"] == "task_ids"
     assert result["changed"] == 2
     assert result["changed_by_category"] == {"source_file_missing": 2}
     assert [task.status for task in tasks] == ["completed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_archive_obsolete_selects_each_lifecycle_category_limit(monkeypatch):
+    docs = {
+        1: _MutableDoc(1, 10),
+        2: _MutableDoc(2, 20),
+        3: _MutableDoc(3, 30),
+        4: _MutableDoc(4, 40),
+        5: _MutableDoc(5, 50),
+        6: _MutableDoc(6, 60),
+        7: _MutableDoc(7, 70),
+    }
+    files = {
+        30: _MutableFile(30, deleted=True),
+        40: _MutableFile(40, deleted=True),
+        60: _MutableFile(60, deleted=True),
+        70: _MutableFile(70),
+    }
+    tasks = [
+        _Task(401, 9001, "Document 9001 not found"),
+        _Task(402, 9002, "Document 9002 not found"),
+        _Task(403, 9003, "Document 9003 not found"),
+        _Task(404, 1, "File not found: /missing-one.pdf"),
+        _Task(405, 2, "File not found: /missing-two.pdf"),
+        _Task(406, 5, "File not found: /missing-three.pdf"),
+        _Task(407, 3, "Task result status=failed"),
+        _Task(408, 4, "Task result status=failed"),
+        _Task(409, 6, "Task result status=failed"),
+        _Task(410, 7, "Parser returned no content blocks"),
+    ]
+
+    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None, order="newest"):
+        return tasks
+
+    monkeypatch.setattr(
+        pipeline_debt_service,
+        "_load_candidate_tasks",
+        fake_load_candidate_tasks,
+    )
+    db = _FakeDb(docs=docs, files=files)
+
+    result = await pipeline_debt_service.apply_pipeline_lifecycle_debt_action(
+        db,
+        action="archive_obsolete",
+        dry_run=True,
+        category_limits={
+            "doc_missing": 2,
+            "source_file_missing": 2,
+            "source_file_deleted": 2,
+        },
+    )
+
+    assert result["matched"] == 10
+    assert result["selected"] == 6
+    assert result["not_selected"] == 4
+    assert result["selection"]["mode"] == "category_selection"
+    assert result["selected_by_category"] == {
+        "doc_missing": 2,
+        "source_file_missing": 2,
+        "source_file_deleted": 2,
+    }
+    assert result["changed"] == 6
+    assert result["skipped"] == 0
+    assert result["changed_by_category"] == {
+        "doc_missing": 2,
+        "source_file_missing": 2,
+        "source_file_deleted": 2,
+    }
+    assert result["not_selected_by_category"] == {
+        "doc_missing": 1,
+        "source_file_missing": 1,
+        "source_file_deleted": 1,
+        "parser_no_content_blocks": 1,
+    }
+    assert [task.status for task in tasks] == ["failed"] * len(tasks)
+    assert db.commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_archive_obsolete_keeps_non_lifecycle_selection_skipped(monkeypatch):
+    docs = {
+        1: _MutableDoc(1, 10),
+        2: _MutableDoc(2, 20),
+    }
+    files = {20: _MutableFile(20)}
+    tasks = [
+        _Task(501, 1, "File not found: /missing.pdf"),
+        _Task(502, 2, "Parser returned no content blocks"),
+    ]
+
+    async def fake_load_candidate_tasks(db, *, limit=500, error_marker=None, task_ids=None, order="newest"):
+        return tasks
+
+    monkeypatch.setattr(
+        pipeline_debt_service,
+        "_load_candidate_tasks",
+        fake_load_candidate_tasks,
+    )
+    db = _FakeDb(docs=docs, files=files)
+
+    result = await pipeline_debt_service.apply_pipeline_lifecycle_debt_action(
+        db,
+        action="archive_obsolete",
+        dry_run=False,
+        categories=["source_file_missing", "parser_no_content_blocks"],
+        limit_each=1,
+    )
+
+    assert result["selected"] == 2
+    assert result["changed"] == 1
+    assert result["skipped"] == 1
+    assert result["changed_by_category"] == {"source_file_missing": 1}
+    assert result["skipped_by_category"] == {"parser_no_content_blocks": 1}
+    assert result["skipped_items"][0]["skip_reason"] == "action_not_allowed_for_category"
+    assert tasks[0].status == "completed"
+    assert tasks[1].status == "failed"
+    assert db.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_archive_obsolete_dry_run_and_apply_return_same_shape(monkeypatch):
+    def make_case():
+        docs = {1: _MutableDoc(1, 10)}
+        return docs, {}, [_Task(601, 1, "File not found: /missing.pdf")]
+
+    docs, files, tasks = make_case()
+
+    async def fake_load_dry(db, *, limit=500, error_marker=None, task_ids=None, order="newest"):
+        return tasks
+
+    monkeypatch.setattr(pipeline_debt_service, "_load_candidate_tasks", fake_load_dry)
+    dry_result = await pipeline_debt_service.apply_pipeline_lifecycle_debt_action(
+        _FakeDb(docs=docs, files=files),
+        action="archive_obsolete",
+        dry_run=True,
+        categories=["source_file_missing"],
+        limit_each=1,
+    )
+
+    docs, files, tasks = make_case()
+
+    async def fake_load_apply(db, *, limit=500, error_marker=None, task_ids=None, order="newest"):
+        return tasks
+
+    monkeypatch.setattr(pipeline_debt_service, "_load_candidate_tasks", fake_load_apply)
+    apply_result = await pipeline_debt_service.apply_pipeline_lifecycle_debt_action(
+        _FakeDb(docs=docs, files=files),
+        action="archive_obsolete",
+        dry_run=False,
+        categories=["source_file_missing"],
+        limit_each=1,
+    )
+
+    assert set(dry_result) == set(apply_result)
+    assert dry_result["dry_run"] is True
+    assert apply_result["dry_run"] is False
+    assert dry_result["selection"] == apply_result["selection"]
+    assert dry_result["changed_by_category"] == apply_result["changed_by_category"]

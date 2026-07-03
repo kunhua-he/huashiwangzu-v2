@@ -195,6 +195,7 @@ def _empty_result(context: MediaContext) -> dict[str, Any]:
         "tags": [],
         "confidence": 0.0,
         "warnings": [],
+        "degraded": [],
         "providers": list_providers(),
     }
 
@@ -224,6 +225,8 @@ def _merge_stage(result: dict[str, Any], stage: StageResult) -> None:
         result["summary"] = data["refined_summary"]
     if "tags" in data:
         result["tags"] = _dedupe([*result.get("tags", []), *data["tags"]])
+    if "degraded" in data:
+        result["degraded"] = _dedupe([*result.get("degraded", []), *data["degraded"]])
 
 
 def _aggregate_confidence(stages: list[dict[str, Any]]) -> float:

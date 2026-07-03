@@ -29,6 +29,7 @@ LIFECYCLE_ARCHIVE_CATEGORIES = {
 RETRYABLE_CATEGORIES = {"file_row_live"}
 ACTIVE_DOCUMENT_STATUSES = {"parsing", "indexing", "collecting", "running", "fusing"}
 FAILED_DOCUMENT_STATUSES = {"error", "failed"}
+PIPELINE_DEBT_ORDER_VALUES = {"newest", "oldest"}
 
 
 def _load_task_parameters(raw: str | None) -> dict[str, Any]:
@@ -131,6 +132,7 @@ async def _load_candidate_tasks(
     limit: int = 500,
     error_marker: str | None = None,
     task_ids: list[int] | None = None,
+    order: str = "newest",
 ) -> list[SystemTaskQueue]:
     error_filter = _build_error_filter(error_marker)
     filters = [
@@ -141,15 +143,122 @@ async def _load_candidate_tasks(
     ]
     if task_ids:
         filters.append(SystemTaskQueue.id.in_(task_ids))
-    query = (
-        select(SystemTaskQueue)
-        .where(*filters)
-        .order_by(SystemTaskQueue.id.desc())
-    )
+    order_by = SystemTaskQueue.id.asc() if order == "oldest" else SystemTaskQueue.id.desc()
+    query = select(SystemTaskQueue).where(*filters).order_by(order_by)
     if not task_ids:
         query = query.limit(limit)
     result = await db.execute(query)
     return list(result.scalars().all())
+
+
+def _normalize_category_tokens(values: list[str] | None) -> list[str]:
+    categories: list[str] = []
+    for raw in values or []:
+        for part in str(raw).split(","):
+            category = part.strip()
+            if category and category not in categories:
+                categories.append(category)
+    return categories
+
+
+def _normalize_category_limits(raw_limits: dict[str, int] | None) -> dict[str, int]:
+    limits: dict[str, int] = {}
+    for raw_category, raw_limit in (raw_limits or {}).items():
+        category = str(raw_category).strip()
+        if not category:
+            continue
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            continue
+        if limit > 0:
+            limits[category] = limit
+    return limits
+
+
+def _select_items_by_category(
+    items: list[dict[str, Any]],
+    *,
+    categories: list[str] | None = None,
+    category_limits: dict[str, int] | None = None,
+    limit_each: int | None = None,
+    precise_task_ids: bool = False,
+) -> dict[str, Any]:
+    """Select classified rows with stable per-category limits.
+
+    Explicit task_ids are an exact mode: callers already narrowed the SQL query,
+    so category limits must not silently drop requested rows.
+    """
+    normalized_categories = _normalize_category_tokens(categories)
+    normalized_limits = _normalize_category_limits(category_limits)
+    normalized_limit_each = int(limit_each) if limit_each is not None else None
+    if normalized_limit_each is not None and normalized_limit_each <= 0:
+        normalized_limit_each = None
+
+    if precise_task_ids:
+        return {
+            "applied": False,
+            "mode": "task_ids",
+            "categories": [],
+            "category_limits": {},
+            "limit_each": normalized_limit_each,
+            "selected_items": list(items),
+            "not_selected_items": [],
+            "selected_by_category": _count_by_category(items),
+            "not_selected_by_category": {},
+        }
+
+    if not normalized_categories and not normalized_limits and normalized_limit_each is None:
+        return {
+            "applied": False,
+            "mode": "all",
+            "categories": [],
+            "category_limits": {},
+            "limit_each": None,
+            "selected_items": list(items),
+            "not_selected_items": [],
+            "selected_by_category": _count_by_category(items),
+            "not_selected_by_category": {},
+        }
+
+    requested_categories = list(normalized_categories)
+    for category in normalized_limits:
+        if category not in requested_categories:
+            requested_categories.append(category)
+    if not requested_categories:
+        for item in items:
+            category = str(item["category"])
+            if category not in requested_categories:
+                requested_categories.append(category)
+
+    requested_set = set(requested_categories)
+    selected: list[dict[str, Any]] = []
+    not_selected: list[dict[str, Any]] = []
+    selected_counts: Counter[str] = Counter()
+
+    for item in items:
+        category = str(item["category"])
+        if category not in requested_set:
+            not_selected.append({**item, "not_selected_reason": "category_not_requested"})
+            continue
+        category_limit = normalized_limits.get(category, normalized_limit_each)
+        if category_limit is not None and selected_counts[category] >= category_limit:
+            not_selected.append({**item, "not_selected_reason": "category_limit_reached"})
+            continue
+        selected.append(item)
+        selected_counts[category] += 1
+
+    return {
+        "applied": True,
+        "mode": "category_selection",
+        "categories": requested_categories,
+        "category_limits": normalized_limits,
+        "limit_each": normalized_limit_each,
+        "selected_items": selected,
+        "not_selected_items": not_selected,
+        "selected_by_category": dict(selected_counts),
+        "not_selected_by_category": _count_by_category(not_selected),
+    }
 
 
 async def _classify_tasks(db: AsyncSession, tasks: list[SystemTaskQueue]) -> dict:
@@ -373,6 +482,10 @@ async def classify_pipeline_lifecycle_debt(
     limit: int = 500,
     error_marker: str | None = None,
     task_ids: list[int] | None = None,
+    categories: list[str] | None = None,
+    category_limits: dict[str, int] | None = None,
+    limit_each: int | None = None,
+    order: str = "newest",
 ) -> dict:
     """Classify kb_pipeline debt without mutating queue rows."""
     tasks = await _load_candidate_tasks(
@@ -380,10 +493,32 @@ async def classify_pipeline_lifecycle_debt(
         limit=limit,
         error_marker=error_marker,
         task_ids=task_ids,
+        order=order,
     )
     classification = await _classify_tasks(db, tasks)
+    selection = _select_items_by_category(
+        classification["items"],
+        categories=categories,
+        category_limits=category_limits,
+        limit_each=limit_each,
+        precise_task_ids=bool(task_ids),
+    )
     orphan_running_runs = await _classify_orphan_running_runs(db)
     status_machine_audit = await _audit_document_status_machine(db)
+    classification["order"] = order if order in PIPELINE_DEBT_ORDER_VALUES else "newest"
+    classification["selected"] = len(selection["selected_items"])
+    classification["not_selected"] = len(selection["not_selected_items"])
+    classification["selected_by_category"] = selection["selected_by_category"]
+    classification["not_selected_by_category"] = selection["not_selected_by_category"]
+    classification["selected_items"] = selection["selected_items"]
+    classification["not_selected_items"] = selection["not_selected_items"]
+    classification["selection"] = {
+        "applied": selection["applied"],
+        "mode": selection["mode"],
+        "categories": selection["categories"],
+        "category_limits": selection["category_limits"],
+        "limit_each": selection["limit_each"],
+    }
     classification["orphan_running_runs"] = orphan_running_runs
     classification["status_machine_audit"] = status_machine_audit
     classification["problem_queue"] = _build_problem_queue(
@@ -457,6 +592,10 @@ async def apply_pipeline_lifecycle_debt_action(
     limit: int = 500,
     task_ids: list[int] | None = None,
     dry_run: bool = True,
+    categories: list[str] | None = None,
+    category_limits: dict[str, int] | None = None,
+    limit_each: int | None = None,
+    order: str = "newest",
 ) -> dict:
     """Apply a guarded governance action to classified historical debt.
 
@@ -467,14 +606,21 @@ async def apply_pipeline_lifecycle_debt_action(
     if action not in {"archive_obsolete", "retry_live"}:
         raise ValueError("Unsupported pipeline debt action")
 
-    tasks = await _load_candidate_tasks(db, limit=limit, task_ids=task_ids)
+    tasks = await _load_candidate_tasks(db, limit=limit, task_ids=task_ids, order=order)
     classification = await _classify_tasks(db, tasks)
+    selection = _select_items_by_category(
+        classification["items"],
+        categories=categories,
+        category_limits=category_limits,
+        limit_each=limit_each,
+        precise_task_ids=bool(task_ids),
+    )
     tasks_by_id = {int(task.id): task for task in tasks}
     changed: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc)
 
-    for item in classification["items"]:
+    for item in selection["selected_items"]:
         task = tasks_by_id.get(int(item["task_id"]))
         if task is None:
             continue
@@ -499,12 +645,25 @@ async def apply_pipeline_lifecycle_debt_action(
     return {
         "dry_run": dry_run,
         "action": action,
+        "order": order if order in PIPELINE_DEBT_ORDER_VALUES else "newest",
         "matched": classification["matched"],
+        "selected": len(selection["selected_items"]),
+        "not_selected": len(selection["not_selected_items"]),
         "changed": len(changed),
         "skipped": len(skipped),
         "summary": classification["summary"],
+        "selected_by_category": selection["selected_by_category"],
+        "not_selected_by_category": selection["not_selected_by_category"],
         "changed_by_category": _count_by_category(changed),
         "skipped_by_category": _count_by_category(skipped),
         "changed_items": changed,
         "skipped_items": skipped,
+        "not_selected_items": selection["not_selected_items"],
+        "selection": {
+            "applied": selection["applied"],
+            "mode": selection["mode"],
+            "categories": selection["categories"],
+            "category_limits": selection["category_limits"],
+            "limit_each": selection["limit_each"],
+        },
     }

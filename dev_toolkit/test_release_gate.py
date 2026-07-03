@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import anyio
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -32,6 +34,7 @@ def test_help_output() -> None:
     )
     assert r.returncode == 0
     assert "usage:" in r.stdout.lower()
+    assert "--preflight" in r.stdout
 
 
 def test_release_gate_runs_with_skip_ui() -> None:
@@ -83,6 +86,84 @@ def test_sandbox_matrix_skips_are_debt_not_clean_pass() -> None:
     )
     assert level == "DEBT"
     assert "skip" in detail
+
+
+def test_skip_ui_marks_release_summary_as_debt() -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = [{"check": "clean", "level": "PASS", "detail": "ok"}]
+        direct_summary = release_gate.build_release_summary("PASS", skip_ui=True)
+        assert direct_summary["verdict"] == "PASS_WITH_DEBT"
+        assert direct_summary["has_debt"] is True
+
+        preflight_summary = release_gate.build_release_summary("PASS", preflight=True)
+        assert preflight_summary["verdict"] == "PASS_WITH_DEBT"
+        assert preflight_summary["clean_pass"] is False
+        assert preflight_summary["release_safe"] is True
+        assert preflight_summary["has_debt"] is True
+        assert preflight_summary["gate_mode"] == "preflight"
+
+        release_gate.check_ui_coverage(skip_ui=True)
+        verdict = release_gate.get_final_verdict()
+        summary = release_gate.build_release_summary(verdict, skip_ui=True)
+
+        assert verdict == "PASS_WITH_DEBT"
+        assert summary["clean_pass"] is False
+        assert summary["release_safe"] is True
+        assert summary["has_debt"] is True
+        assert summary["ui_skipped"] is True
+        assert summary["gate_mode"] == "backend_preflight"
+    finally:
+        release_gate.results[:] = original
+
+
+def test_preflight_does_not_run_smoke_or_sandbox(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+
+        async def fake_check_health() -> None:
+            release_gate.add_result("Health check", "PASS", "ok")
+
+        async def fake_check_system_status() -> None:
+            release_gate.add_result("System status", "PASS", "ok")
+
+        async def fake_fetch_task_queue_audit() -> dict:
+            return {
+                "summary": {"failed": 0, "pending": 0, "completed": 0},
+                "classification": {},
+                "recent_failed_count": 0,
+                "historical_debt_total": 0,
+                "metadata": {},
+            }
+
+        async def forbidden_smoke(_skip_ui: bool) -> None:
+            raise AssertionError("preflight must not run smoke")
+
+        async def forbidden_sandbox() -> None:
+            raise AssertionError("preflight must not run sandbox")
+
+        monkeypatch.setattr(sys, "argv", ["release_gate.py", "--preflight"])
+        monkeypatch.setattr(release_gate, "check_health", fake_check_health)
+        monkeypatch.setattr(release_gate, "check_system_status", fake_check_system_status)
+        monkeypatch.setattr(release_gate, "fetch_task_queue_audit", fake_fetch_task_queue_audit)
+        monkeypatch.setattr(release_gate, "find_semantic_failed_completed_tasks", lambda *_args, **_kwargs: (0, []))
+        monkeypatch.setattr(release_gate, "check_smoke", forbidden_smoke)
+        monkeypatch.setattr(release_gate, "check_sandbox_matrix", forbidden_sandbox)
+
+        anyio.run(release_gate.main)
+
+        summary = release_gate.build_release_summary(
+            release_gate.get_final_verdict(),
+            preflight=True,
+        )
+        checks = {item["check"]: item for item in release_gate.results}
+        assert checks["Smoke test (backends)"]["level"] == "DEBT"
+        assert checks["Sandbox matrix"]["level"] == "DEBT"
+        assert summary["gate_mode"] == "preflight"
+        assert summary["clean_pass"] is False
+    finally:
+        release_gate.results[:] = original
 
 
 def test_parse_prefixed_json_extracts_machine_summary() -> None:
@@ -146,6 +227,7 @@ if __name__ == "__main__":
     test_output_contains_levels()
     test_final_verdict_distinguishes_clean_pass_from_debt()
     test_sandbox_matrix_skips_are_debt_not_clean_pass()
+    test_skip_ui_marks_release_summary_as_debt()
     test_parse_prefixed_json_extracts_machine_summary()
     test_audit_failed_count_fails_closed_on_missing_summary()
     test_task_result_semantic_failure_contract()

@@ -58,7 +58,7 @@ class CoreToolContext:
     start_frontend: Callable[[], Awaitable[str]]
     sanity_check: Callable[[], Awaitable[str]]
     smoke_all: Callable[[bool], Awaitable[str]]
-    release_gate: Callable[[bool], Awaitable[str]]
+    release_gate: Callable[[bool, str], Awaitable[str]]
     module_sandbox_matrix: Callable[[bool], Awaitable[str]]
     routes: Callable[[str], Awaitable[str]]
     capabilities: Callable[[str], Awaitable[str]]
@@ -194,11 +194,17 @@ def tool_definitions() -> list[Any]:
         ),
         Tool(
             name="release_gate",
-            description="发布前 release gate: 聚合 health/system-status/smoke/队列审计/sandbox 矩阵, 输出 BLOCKER/DEBT/PASS.",
+            description="发布前 release gate: preflight 快速检查或 full 完整聚合 health/system-status/smoke/队列审计/sandbox 矩阵.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "skip_ui": {"type": "boolean", "description": "跳过前端UI测试", "default": False},
+                    "mode": {
+                        "type": "string",
+                        "description": "运行模式: preflight(默认，跳过耗时 smoke/sandbox) / full",
+                        "enum": ["preflight", "full"],
+                        "default": "preflight",
+                    },
                 },
             },
         ),
@@ -392,7 +398,10 @@ async def handle_tool(context: CoreToolContext, name: str, arguments: dict[str, 
     if name == "smoke_all":
         return await context.smoke_all(bool(arguments.get("skip_ui", False)))
     if name == "release_gate":
-        return await context.release_gate(bool(arguments.get("skip_ui", False)))
+        return await context.release_gate(
+            bool(arguments.get("skip_ui", False)),
+            str(arguments.get("mode", "preflight")),
+        )
     if name == "module_sandbox_matrix":
         return await context.module_sandbox_matrix(bool(arguments.get("check", False)))
     if name == "routes":

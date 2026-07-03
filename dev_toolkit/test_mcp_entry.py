@@ -40,7 +40,7 @@ def test_mcp_json_declares_stable_stdio_entrypoint() -> None:
 
 
 def test_stdio_entrypoints_list_required_tools() -> None:
-    async def list_tool_names(command: str, args: list[str], cwd: str) -> set[str]:
+    async def list_tools(command: str, args: list[str], cwd: str):
         params = StdioServerParameters(command=command, args=args, cwd=cwd)
         async with stdio_client(params) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
@@ -48,14 +48,21 @@ def test_stdio_entrypoints_list_required_tools() -> None:
                 tools = await session.list_tools()
         assert init.serverInfo.name == "项目工具台"
         assert init.serverInfo.version == "1.0.0"
-        return {tool.name for tool in tools.tools}
+        return tools.tools
 
     declared = json.loads((REPO_ROOT / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["项目工具台"]
 
     async def run() -> None:
-        declared_names = await list_tool_names(declared["command"], declared["args"], declared["cwd"])
-        direct_names = await list_tool_names("python3.14", ["dev_toolkit/server.py"], str(REPO_ROOT))
+        declared_tools = await list_tools(declared["command"], declared["args"], declared["cwd"])
+        direct_tools = await list_tools("python3.14", ["dev_toolkit/server.py"], str(REPO_ROOT))
+        declared_names = {tool.name for tool in declared_tools}
+        direct_names = {tool.name for tool in direct_tools}
         assert REQUIRED_TOOLS.issubset(declared_names)
         assert REQUIRED_TOOLS.issubset(direct_names)
+
+        release_tool = next(tool for tool in direct_tools if tool.name == "release_gate")
+        properties = release_tool.inputSchema["properties"]
+        assert properties["mode"]["default"] == "preflight"
+        assert properties["mode"]["enum"] == ["preflight", "full"]
 
     anyio.run(run)

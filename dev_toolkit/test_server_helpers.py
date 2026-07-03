@@ -82,6 +82,71 @@ def test_release_gate_response_does_not_map_debt_to_clean_success() -> None:
     assert result["verdict"] == "PASS_WITH_DEBT"
 
 
+def test_release_gate_schema_exposes_mode() -> None:
+    release_tool = next(tool for tool in core_tools.tool_definitions() if tool.name == "release_gate")
+    properties = release_tool.inputSchema["properties"]
+
+    assert properties["mode"]["default"] == "preflight"
+    assert properties["mode"]["enum"] == ["preflight", "full"]
+
+
+def test_release_gate_rejects_invalid_mode() -> None:
+    result = json.loads(anyio.run(server._release_gate, False, "slow"))
+
+    assert result["success"] is False
+    assert result["release_safe"] is False
+    assert result["verdict"] == "INVALID_ARGUMENT"
+
+
+def test_release_gate_timeout_terminates_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeProc:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.terminated = False
+            self.killed = False
+
+        async def communicate(self):
+            await anyio.sleep(3600)
+            return b"", b""
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            self.returncode = -15
+            return self.returncode
+
+    proc = FakeProc()
+    wait_calls = 0
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return proc
+
+    async def fake_wait_for(awaitable, timeout: int):
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            if hasattr(awaitable, "close"):
+                awaitable.close()
+            raise server.asyncio.TimeoutError
+        return await awaitable
+
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(server.asyncio, "wait_for", fake_wait_for)
+
+    result = json.loads(anyio.run(server._release_gate, False, "preflight"))
+
+    assert result["success"] is False
+    assert result["verdict"] == "TIMEOUT"
+    assert result["timeout_seconds"] == 120
+    assert proc.terminated is True
+    assert proc.killed is False
+
+
 def test_normalize_pytest_targets_accepts_backend_prefixed_path() -> None:
     target = "backend/tests/test_agent_inline_tool_calls.py::TestFinalCleanContent"
     normalized = server._normalize_pytest_targets(target)

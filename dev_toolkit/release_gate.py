@@ -3,7 +3,7 @@
 Aggregates:
   1. /api/health
   2. /api/system/status
-  3. smoke_all(skip_ui=true)
+  3. smoke_all(default includes UI; --skip-ui marks backend coverage debt)
   4. Task queue audit (gate-run additions vs historical debt)
   5. Module sandbox matrix summary
 
@@ -14,7 +14,7 @@ Output levels:
   - SKIPPED_WITH_REASON  intentionally skipped (e.g. no sandbox test)
 
 Usage:
-    cd <repo> && backend/.venv/bin/python dev_toolkit/release_gate.py [--skip-ui]
+    cd <repo> && backend/.venv/bin/python dev_toolkit/release_gate.py [--skip-ui] [--preflight]
 """
 import argparse
 import asyncio
@@ -362,6 +362,17 @@ async def check_smoke(skip_ui: bool) -> None:
         add_result("Smoke test (backends)", "BLOCKER", str(e))
 
 
+def check_ui_coverage(skip_ui: bool) -> None:
+    if skip_ui:
+        add_result(
+            "UI coverage",
+            "DEBT",
+            "--skip-ui used; backend preflight only, not a clean release gate",
+        )
+        return
+    add_result("UI coverage", "PASS", "UI smoke coverage included")
+
+
 async def check_task_queue_audit(
     baseline_failed: int | None,
     baseline_semantic_failed_completed: int | None = None,
@@ -480,16 +491,26 @@ def get_final_verdict() -> str:
     return "PASS"
 
 
-def build_release_summary(verdict: str) -> dict[str, Any]:
+def build_release_summary(verdict: str, *, skip_ui: bool = False, preflight: bool = False) -> dict[str, Any]:
     levels: dict[str, int] = {}
     for result in results:
         level = result["level"]
         levels[level] = levels.get(level, 0) + 1
+    summary_verdict = "PASS_WITH_DEBT" if (skip_ui or preflight) and verdict == "PASS" else verdict
+    has_debt = (
+        skip_ui
+        or preflight
+        or levels.get("DEBT", 0) > 0
+        or levels.get("SKIPPED_WITH_REASON", 0) > 0
+    )
     return {
-        "verdict": verdict,
-        "clean_pass": verdict == "PASS",
-        "release_safe": verdict in {"PASS", "PASS_WITH_DEBT"},
-        "has_debt": verdict == "PASS_WITH_DEBT",
+        "verdict": summary_verdict,
+        "clean_pass": summary_verdict == "PASS" and not skip_ui and not preflight,
+        "release_safe": summary_verdict in {"PASS", "PASS_WITH_DEBT"},
+        "has_debt": has_debt,
+        "ui_skipped": skip_ui,
+        "preflight": preflight,
+        "gate_mode": "preflight" if preflight else ("backend_preflight" if skip_ui else "full_release"),
         "levels": levels,
         "results": results,
     }
@@ -499,6 +520,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Release gate validation")
     parser.add_argument("--skip-ui", action="store_true",
                         help="Skip Playwright UI tests in smoke_all")
+    parser.add_argument("--preflight", action="store_true",
+                        help="Run fast health/status/queue checks only; skip smoke and sandbox matrix")
     args = parser.parse_args()
 
     print("=" * 70)
@@ -529,19 +552,32 @@ async def main():
     except Exception as e:
         add_result("Queue: pre-smoke semantic baseline", "BLOCKER", str(e))
     print()
-    await check_smoke(skip_ui=args.skip_ui)
-    _token_cache.clear()
+    check_ui_coverage(skip_ui=args.skip_ui)
+    print()
+    if args.preflight:
+        add_result("Smoke test (backends)", "DEBT", "--preflight used; smoke_all not run")
+    else:
+        await check_smoke(skip_ui=args.skip_ui)
+        _token_cache.clear()
     print()
     await check_task_queue_audit(baseline_failed, baseline_semantic_failed_completed)
     print()
-    await check_sandbox_matrix()
+    if args.preflight:
+        add_result("Sandbox matrix", "DEBT", "--preflight used; sandbox matrix not run")
+    else:
+        await check_sandbox_matrix()
 
     print()
     print("=" * 70)
     verdict = get_final_verdict()
+    if args.preflight and verdict == "PASS":
+        verdict = "PASS_WITH_DEBT"
     print(f"  RELEASE GATE VERDICT: {verdict}")
     print("=" * 70)
-    print("RELEASE_GATE_JSON: " + json.dumps(build_release_summary(verdict), ensure_ascii=False))
+    print(
+        "RELEASE_GATE_JSON: "
+        + json.dumps(build_release_summary(verdict, skip_ui=args.skip_ui, preflight=args.preflight), ensure_ascii=False)
+    )
     print()
     print(f"{'Check':<40} {'Level':>20}  Detail")
     print("-" * 100)

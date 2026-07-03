@@ -29,19 +29,48 @@ def build_release_gate_response(
     duration_seconds: float,
 ) -> dict[str, Any]:
     summary = extract_prefixed_json(output, "RELEASE_GATE_JSON:")
-    verdict = summary.get("verdict") if summary else ("PASS" if returncode == 0 else "BLOCKER")
+    if summary is None:
+        return {
+            "success": False,
+            "clean_pass": False,
+            "release_safe": False,
+            "has_debt": False,
+            "verdict": "INVALID_GATE_OUTPUT",
+            "returncode": returncode,
+            "skip_ui": skip_ui,
+            "ui_skipped": skip_ui,
+            "gate_mode": "invalid_output",
+            "duration_seconds": round(duration_seconds, 3),
+            "summary": None,
+            "invalid_output": True,
+            "output": output,
+            "output_tail": tail_text(output, 20000),
+        }
+
+    verdict = summary.get("verdict")
     if not isinstance(verdict, str) or not verdict:
-        verdict = "PASS" if returncode == 0 else "BLOCKER"
-    clean_pass = returncode == 0 and verdict == "PASS"
+        verdict = "INVALID_GATE_OUTPUT"
+    summary_ui_skipped = bool(summary.get("ui_skipped"))
+    ui_skipped = skip_ui or summary_ui_skipped
+    if ui_skipped and returncode == 0 and verdict == "PASS":
+        verdict = "PASS_WITH_DEBT"
+    summary_has_debt = bool(summary.get("has_debt"))
+    clean_pass = returncode == 0 and verdict == "PASS" and not ui_skipped
     release_safe = returncode == 0 and verdict in {"PASS", "PASS_WITH_DEBT"}
+    has_debt = summary_has_debt or verdict == "PASS_WITH_DEBT" or ui_skipped
+    gate_mode = summary.get("gate_mode")
+    if not isinstance(gate_mode, str) or not gate_mode:
+        gate_mode = "backend_preflight" if ui_skipped else "full_release"
     return {
         "success": clean_pass,
         "clean_pass": clean_pass,
         "release_safe": release_safe,
-        "has_debt": verdict == "PASS_WITH_DEBT",
+        "has_debt": has_debt,
         "verdict": verdict,
         "returncode": returncode,
         "skip_ui": skip_ui,
+        "ui_skipped": ui_skipped,
+        "gate_mode": gate_mode,
         "duration_seconds": round(duration_seconds, 3),
         "summary": summary,
         "output": output,

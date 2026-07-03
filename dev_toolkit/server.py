@@ -838,14 +838,42 @@ def _build_release_gate_response(
     return build_release_gate_payload(output, returncode, skip_ui, duration_seconds)
 
 
-async def _release_gate(skip_ui: bool = False) -> str:
+async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is not None:
+        return
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+
+
+async def _release_gate(skip_ui: bool = False, mode: str = "preflight") -> str:
     """Run dev_toolkit/release_gate.py and return its verdict."""
+    if mode not in {"preflight", "full"}:
+        return json.dumps(
+            {
+                "success": False,
+                "clean_pass": False,
+                "release_safe": False,
+                "verdict": "INVALID_ARGUMENT",
+                "error": "mode must be 'preflight' or 'full'",
+                "mode": mode,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
     env = os.environ.copy()
     if skip_ui:
         env["RELEASE_GATE_SKIP_UI"] = "1"
     started = time.time()
+    proc: asyncio.subprocess.Process | None = None
+    timeout_seconds = 120 if mode == "preflight" else 600
     try:
         cmd = [_project_python(), str(REPO_ROOT / "dev_toolkit" / "release_gate.py")]
+        if mode == "preflight":
+            cmd.append("--preflight")
         if skip_ui:
             cmd.append("--skip-ui")
         proc = await asyncio.create_subprocess_exec(
@@ -855,11 +883,22 @@ async def _release_gate(skip_ui: bool = False) -> str:
             cwd=str(REPO_ROOT),
             env=env,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
         output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
     except asyncio.TimeoutError:
+        if proc is not None:
+            await _terminate_process(proc)
         return json.dumps(
-            {"success": False, "clean_pass": False, "release_safe": False, "verdict": "BLOCKER", "timeout": True, "timeout_seconds": 600},
+            {
+                "success": False,
+                "clean_pass": False,
+                "release_safe": False,
+                "verdict": "TIMEOUT",
+                "timeout": True,
+                "timeout_seconds": timeout_seconds,
+                "mode": mode,
+                "duration_seconds": round(time.time() - started, 3),
+            },
             ensure_ascii=False,
             indent=2,
         )

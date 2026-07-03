@@ -36,6 +36,8 @@ data/uploads/
 backend/db/*.sqlite3
 backend/_废弃/
 backend/脚本/
+# Local database/runtime backups; may contain sensitive data
+backend/backups/
 backend/data/uploads/
 backend/data/.chunked_uploads/
 backend/data/.tmp_downloads/

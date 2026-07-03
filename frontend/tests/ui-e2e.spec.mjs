@@ -149,6 +149,89 @@ async function uploadSample(request, token, name, mimeType, content, folderId = 
   return body.data
 }
 
+function fileIdFromUpload(data) {
+  return data?.id ?? data?.file_id
+}
+
+function responseItems(body) {
+  const items = body?.data?.items || body?.data || []
+  return Array.isArray(items) ? items : []
+}
+
+function fileItemMatches(item, fileId, fileName) {
+  const ids = [item?.id, item?.file_id, item?.original_file_id]
+    .filter(value => value !== undefined && value !== null)
+    .map(value => String(value))
+  const names = [item?.name, item?.file_name, item?.original_name]
+    .filter(Boolean)
+    .map(value => String(value))
+  return ids.includes(String(fileId)) || names.includes(fileName)
+}
+
+function recycleItemMatches(item, fileId, fileName) {
+  const ids = [item?.origin_id, item?.file_id, item?.original_file_id]
+    .filter(value => value !== undefined && value !== null)
+    .map(value => String(value))
+  const names = [item?.name, item?.file_name, item?.original_name]
+    .filter(Boolean)
+    .map(value => String(value))
+  return ids.includes(String(fileId)) || names.includes(fileName)
+}
+
+async function readActiveFileItems(request, token, fileName) {
+  const searchResp = await request.get(`${BASE_URL}/api/files/search?keyword=${encodeURIComponent(fileName)}&page=1&page_size=50`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const searchBody = await searchResp.json().catch(() => ({}))
+  const searchItems = responseItems(searchBody)
+  if (searchResp.ok() && searchBody?.success !== false && searchItems.length > 0) return searchItems
+
+  const listResp = await request.get(`${BASE_URL}/api/files/list?folder_id=0&page=1&page_size=200`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const listBody = await listResp.json().catch(() => ({}))
+  return listResp.ok() && listBody?.success !== false ? responseItems(listBody) : []
+}
+
+async function readRecycleItems(request, token) {
+  const recycleResp = await request.get(`${BASE_URL}/api/recycle/list?page=1&page_size=200`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const recycleBody = await recycleResp.json().catch(() => ({}))
+  return recycleResp.ok() && recycleBody?.success !== false ? responseItems(recycleBody) : []
+}
+
+async function waitForActiveFileState(request, token, fileId, fileName, expectedVisible) {
+  let visible = false
+  await expect.poll(async () => {
+    const activeItems = await readActiveFileItems(request, token, fileName)
+    visible = activeItems.some(item => fileItemMatches(item, fileId, fileName))
+    return visible
+  }, {
+    timeout: 10000,
+    intervals: [250, 500, 1000],
+  }).toBe(expectedVisible)
+  return visible
+}
+
+async function waitForDeletedAndRecycled(request, token, fileId, fileName) {
+  const state = { deleted: false, inRecycle: false, recycleItem: null }
+  await expect.poll(async () => {
+    const [activeItems, recycleItems] = await Promise.all([
+      readActiveFileItems(request, token, fileName),
+      readRecycleItems(request, token),
+    ])
+    state.deleted = !activeItems.some(item => fileItemMatches(item, fileId, fileName))
+    state.recycleItem = recycleItems.find(item => recycleItemMatches(item, fileId, fileName)) || null
+    state.inRecycle = Boolean(state.recycleItem)
+    return `${state.deleted}:${state.inRecycle}`
+  }, {
+    timeout: 10000,
+    intervals: [250, 500, 1000],
+  }).toBe('true:true')
+  return state
+}
+
 // Minimal PDF content
 function minimalPdf(text = 'Hello PDF') {
   return `%PDF-1.4
@@ -503,39 +586,64 @@ test.describe('Scene 5: Key Interaction Flows', () => {
     }
 
     // Upload a temporary file to delete using fresh token
-    const data = await uploadSample(request, pageToken, `e2e-${TS}-to-delete.txt`, 'text/plain', 'This file will be deleted by E2E test')
-    const fileId = data.id
+    const fileName = `e2e-${TS}-to-delete.txt`
+    const data = await uploadSample(request, pageToken, fileName, 'text/plain', 'This file will be deleted by E2E test')
+    const fileId = fileIdFromUpload(data)
+    let uploadVisible = false
+    let waitError = ''
+    if (fileId === undefined || fileId === null) {
+      waitError = `Upload response has no file id: ${JSON.stringify(data).slice(0, 200)}`
+    } else {
+      try {
+        uploadVisible = await waitForActiveFileState(request, pageToken, fileId, fileName, true)
+      } catch (e) {
+        waitError = `Uploaded file not visible before delete: ${e.message}`
+      }
+    }
 
     // Delete via API
     const delResp = await request.post(`${BASE_URL}/api/files/delete`, {
       headers: { Authorization: `Bearer ${pageToken}`, 'Content-Type': 'application/json' },
       data: { id: fileId, type: 'file' },
     })
-    const delBody = await delResp.json()
-
-    // Check recycle bin
-    const recycleResp = await request.get(`${BASE_URL}/api/recycle/list?page=1&page_size=20`, {
-      headers: { Authorization: `Bearer ${pageToken}` },
-    })
-    const recycleBody = await recycleResp.json()
-    const recycleItems = recycleBody?.data?.items || recycleBody?.data || []
-    const foundInRecycle = Array.isArray(recycleItems) && recycleItems.some(i => i.file_id === fileId || i.id === fileId)
+    const delBody = await delResp.json().catch(() => ({}))
+    const deletedByApi = delResp.ok() && delBody.success === true
+    let deleteState = { deleted: false, inRecycle: false, recycleItem: null }
+    if (deletedByApi && fileId !== undefined && fileId !== null) {
+      try {
+        deleteState = await waitForDeletedAndRecycled(request, pageToken, fileId, fileName)
+      } catch (e) {
+        waitError = waitError || `Delete/recycle state did not settle: ${e.message}`
+      }
+    }
 
     // Restore
-    if (foundInRecycle) {
-      await request.post(`${BASE_URL}/api/recycle/restore`, {
-        headers: { Authorization: `Bearer ${pageToken}`, 'Content-Type': 'application/json' },
-        data: { id: fileId, type: 'file' },
-      })
+    let restored = false
+    let restoreError = ''
+    if (deleteState.inRecycle) {
+      const recycleId = deleteState.recycleItem?.id
+      const itemType = deleteState.recycleItem?.item_type || 'file'
+      if (recycleId === undefined || recycleId === null) {
+        restoreError = `Recycle item has no id: ${JSON.stringify(deleteState.recycleItem).slice(0, 200)}`
+      } else {
+        const restoreResp = await request.post(`${BASE_URL}/api/recycle/restore`, {
+          headers: { Authorization: `Bearer ${pageToken}`, 'Content-Type': 'application/json' },
+          data: { id: recycleId, item_type: itemType },
+        })
+        const restoreBody = await restoreResp.json().catch(() => ({}))
+        restored = restoreResp.ok() && restoreBody.success === true
+        restoreError = restored ? '' : (restoreBody.error || `restore status ${restoreResp.status()}`)
+      }
     }
 
     const ss = screenshot(page, '5.2-recycle')
+    const passed = deletedByApi && deleteState.deleted && deleteState.inRecycle
     results.push({
       scenario: '5.2 File delete+recycle',
-      passed: delBody.success === true,
+      passed,
       screenshot: ss,
       consoleErrors: [...consoleCollector],
-      notes: `Deleted: ${delBody.success === true}, in recycle: ${foundInRecycle}, restored automatically`,
+      notes: `Upload visible: ${uploadVisible}, delete API: ${deletedByApi}, active gone: ${deleteState.deleted}, in recycle: ${deleteState.inRecycle}, restored: ${restored}, recycle_id: ${deleteState.recycleItem?.id || 'none'}, error: ${delBody.error || waitError || restoreError || 'none'}`,
     })
   })
 

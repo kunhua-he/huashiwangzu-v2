@@ -18,6 +18,10 @@
 - 平台层已无业务模块代码：`backend/app/services/agent/` 和 `backend/app/services/knowledge/` 已删除。
 - 模型网关保留为框架能力：`backend/app/gateway/`，HTTP 层在 `backend/app/routers/gateway.py`（6 端点：models/health/chat/chat-stream/embedding/rerank），含降级链和视觉描述。
 
+## 知识库视频分析专项规划
+
+知识库后续接入视频分析体系时，先按“视频资产 → 时间片段 → ASR/OCR/VLM 证据 → segment content_text → BGE-M3 检索 → 时间点引用”的路径落地，避免一开始把 GraphRAG、视觉向量和复杂对象分割做成前置依赖。详细参考方案见 `knowledge_video_analysis_system_plan.md`，包含参考源码清单、模型选型、表结构、pipeline 分期、检索设计和验收指标。
+
 ## 模块数据与交互契约（重要，接模块前必读）
 
 **心智模型**：框架 = 商场（提供水电、电梯、保安等公共设施），模块 = 店铺（自己卖货、自管账本）。公共能力共用框架接口（数量固定、稳定，不随模块增加而膨胀）；业务数据和逻辑全在模块自己里。这是兼容性的根——框架对外接口稳定，模块像装软件一样接入，不用回头改框架。

@@ -22,6 +22,9 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 try:
+    from dev_toolkit.agent_board_tools import handle_tool as agent_board_handle_tool
+    from dev_toolkit.agent_board_tools import handles_tool as agent_board_handles_tool
+    from dev_toolkit.agent_board_tools import tool_definitions as agent_board_tool_definitions
     from dev_toolkit.code_tools import handle_tool as code_handle_tool
     from dev_toolkit.code_tools import handles_tool as code_handles_tool
     from dev_toolkit.code_tools import lint as code_lint
@@ -64,6 +67,9 @@ try:
     from dev_toolkit.worktree_tools import handles_tool as worktree_handles_tool
     from dev_toolkit.worktree_tools import tool_definitions as worktree_tool_definitions
 except ModuleNotFoundError:
+    from agent_board_tools import handle_tool as agent_board_handle_tool
+    from agent_board_tools import handles_tool as agent_board_handles_tool
+    from agent_board_tools import tool_definitions as agent_board_tool_definitions
     from code_tools import handle_tool as code_handle_tool
     from code_tools import handles_tool as code_handles_tool
     from code_tools import lint as code_lint
@@ -1609,6 +1615,7 @@ async def list_tools() -> list[Tool]:
         *insight_tool_definitions(),
         *worktree_tool_definitions(),
         *tool_usage_tool_definitions(),
+        *agent_board_tool_definitions(),
     ]
 
 # ── 工具执行 ──────────────────────────────────────────────────────────
@@ -1644,6 +1651,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await worktree_handle_tool(_run_command_json, REPO_ROOT, name, arguments)
         elif tool_usage_handles_tool(name):
             result = await tool_usage_handle_tool(REPO_ROOT, TOOL_USAGE_PATH, name, arguments)
+        elif agent_board_handles_tool(name):
+            result = await agent_board_handle_tool(REPO_ROOT, name, arguments)
         else:
             result = json.dumps({"error": f"未知工具: {name}"})
             success = False

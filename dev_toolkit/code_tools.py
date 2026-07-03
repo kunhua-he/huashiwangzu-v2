@@ -59,7 +59,15 @@ def normalize_pytest_targets(repo_root: Path, target: str) -> list[str]:
             continue
         suffix_text = sep + suffix if sep else ""
         if path_part.startswith("backend/"):
-            normalized.append(path_part.removeprefix("backend/") + suffix_text)
+            backend_relative = path_part.removeprefix("backend/")
+            if (backend_dir / backend_relative).exists():
+                normalized.append(backend_relative + suffix_text)
+                continue
+            repo_relative = repo_root / backend_relative
+            if repo_relative.exists():
+                normalized.append(str(repo_relative) + suffix_text)
+                continue
+            normalized.append(backend_relative + suffix_text)
             continue
         try:
             repo_resolved = resolve_repo_path(repo_root, path_part)
@@ -88,6 +96,20 @@ def normalize_pytest_targets(repo_root: Path, target: str) -> list[str]:
                 continue
         normalized.append(raw_part)
     return normalized
+
+
+def pytest_targets_for_command(backend_dir: Path, normalized_targets: list[str]) -> list[str]:
+    if not any(Path(item.partition("::")[0]).is_absolute() for item in normalized_targets):
+        return normalized_targets
+    command_targets: list[str] = []
+    for item in normalized_targets:
+        path_part, sep, suffix = item.partition("::")
+        suffix_text = sep + suffix if sep else ""
+        if Path(path_part).is_absolute():
+            command_targets.append(item)
+        else:
+            command_targets.append(str(backend_dir / path_part) + suffix_text)
+    return command_targets
 
 
 async def code_explore(codegraph_cli: str, query: str) -> str:
@@ -159,9 +181,10 @@ async def lint(run_command_json, repo_root: Path, ruff_cli: str, path: str, diff
 async def run_test(run_command_json, repo_root: Path, target: str, timeout: int = 120) -> str:
     normalized_targets = normalize_pytest_targets(repo_root, target)
     backend_dir = repo_root / "backend"
-    cmd = [str(backend_dir / ".venv" / "bin" / "pytest"), *normalized_targets]
+    command_targets = pytest_targets_for_command(backend_dir, normalized_targets)
+    cmd = [str(backend_dir / ".venv" / "bin" / "pytest"), *command_targets]
     cwd = backend_dir
-    if any(Path(item.partition("::")[0]).is_absolute() for item in normalized_targets):
+    if any(Path(item.partition("::")[0]).is_absolute() for item in command_targets):
         cwd = repo_root
         pythonpath = str(repo_root)
         if os.environ.get("PYTHONPATH"):

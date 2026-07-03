@@ -434,7 +434,29 @@ async def run_pipeline(
         for req in stage_def.requires:
             if req not in completed_stages:
                 if req in failed_stages:
-                    steps[step_name] = {"error": f"dependency '{req}' failed", "status": "failed"}
+                    reason = f"dependency '{req}' failed"
+                    steps[step_name] = {"error": reason, "status": "failed"}
+                    await _record_stage_run(
+                        db,
+                        run,
+                        document_id=document_id,
+                        owner_id=owner_id,
+                        stage=step_name,
+                        status="failed",
+                        started_at=_now(),
+                        reason=reason,
+                        metrics=steps[step_name],
+                        error_message=reason,
+                        duration_ms=0,
+                    )
+                    await _finish_pipeline_run(
+                        db,
+                        run,
+                        "failed",
+                        reason=reason,
+                        diagnostics={"steps": steps},
+                    )
+                    await db.commit()
                     logger.error("Pipeline aborted at %s: dependency '%s' failed for doc_id=%d",
                                  step_name, req, document_id)
                     return {"document_id": document_id, "status": "failed", "steps": steps}

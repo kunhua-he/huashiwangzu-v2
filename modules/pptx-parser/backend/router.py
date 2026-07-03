@@ -2,6 +2,10 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
+from app.services.parser_resource_diagnostics import (
+    build_resource_diagnostic,
+    store_extracted_resources_with_diagnostics,
+)
 from app.services.uploaded_file_runner import run_uploaded_file_capability
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -14,9 +18,10 @@ class ParseRequest(BaseModel):
 
 
 async def _parse(params: dict, caller: str) -> dict:
+    import base64
+    import hashlib
+
     from pptx import Presentation
-    import base64, io, hashlib
-    from app.services.module_registry import call_capability
 
     allowed = {"pptx"}
 
@@ -24,8 +29,8 @@ async def _parse(params: dict, caller: str) -> dict:
         prs = Presentation(str(full_path))
         blocks = []
         resources = []
+        resource_diagnostics = []
         resource_counter = 0
-        resource_map: dict[int, dict] = {}
 
         for slide_idx, slide in enumerate(prs.slides):
             pno = slide_idx + 1
@@ -39,20 +44,41 @@ async def _parse(params: dict, caller: str) -> dict:
                         blocks.append({"type": block_type, "text": text, "page": pno, "resource_ref": None})
                 if shape.shape_type and "picture" in str(shape.shape_type).lower():
                     resource_counter += 1
+                    mime_type = "image/png"
+                    extract_diagnostic_recorded = False
                     try:
                         img = shape.image
                         img_bytes = img.blob
-                        resource_map[resource_counter] = img_bytes
-                    except Exception:
+                        mime_type = getattr(img, "content_type", None) or "image/png"
+                    except Exception as exc:
+                        extract_diagnostic_recorded = True
                         img_bytes = b""
+                        resource_diagnostics.append(build_resource_diagnostic(
+                            parser="pptx-parser",
+                            stage="extract",
+                            status="degraded",
+                            code="resource_extract_failed",
+                            message="Failed to extract PPTX embedded image bytes.",
+                            resource={
+                                "id": resource_counter,
+                                "type": "image",
+                                "page": pno,
+                                "mime_type": mime_type,
+                                "filename": f"slide{pno}_{hashlib.md5(str(shape.name).encode()).hexdigest()[:8]}.png",
+                                "description": f"Slide {pno} image ({shape.name})",
+                            },
+                            error=exc,
+                        ))
 
                     blocks.append({"type": "image", "text": "", "page": pno, "resource_ref": resource_counter})
                     resources.append({
                         "id": resource_counter,
                         "type": "image",
-                        "mime_type": shape.image.content_type if hasattr(shape, "image") and hasattr(shape.image, "content_type") else "image/png",
+                        "page": pno,
+                        "mime_type": mime_type,
                         "filename": f"slide{pno}_{hashlib.md5(str(shape.name).encode()).hexdigest()[:8]}.png",
                         "description": f"Slide {pno} image ({shape.name})",
+                        "_resource_diagnostic_recorded": extract_diagnostic_recorded,
                         "_bytes_b64": base64.b64encode(img_bytes).decode("ascii") if img_bytes else "",
                     })
 
@@ -61,30 +87,11 @@ async def _parse(params: dict, caller: str) -> dict:
             "format": "pptx",
             "blocks": blocks,
             "resources": resources,
+            "resource_diagnostics": resource_diagnostics,
         }
 
     result = await run_uploaded_file_capability(params, caller, allowed, parse_file)
-
-    # Store extracted resources via content:store_resource capability
-    for res in result.get("resources", []):
-        data_b64 = res.pop("_bytes_b64", "")
-        if data_b64:
-            try:
-                await call_capability(
-                    "content", "store_resource",
-                    {
-                        "data_b64": data_b64,
-                        "resource_type": "image",
-                        "mime_type": res.get("mime_type", "image/png"),
-                        "filename": res.get("filename", "resource.png"),
-                        "description": res.get("description", ""),
-                    },
-                    caller,
-                )
-            except Exception:
-                pass
-
-    return result
+    return await store_extracted_resources_with_diagnostics(result, caller=caller, parser="pptx-parser")
 
 
 @router.get("/health")

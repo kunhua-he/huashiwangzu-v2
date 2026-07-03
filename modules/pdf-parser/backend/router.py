@@ -2,6 +2,10 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
+from app.services.parser_resource_diagnostics import (
+    build_resource_diagnostic,
+    store_extracted_resources_with_diagnostics,
+)
 from app.services.uploaded_file_runner import run_uploaded_file_capability
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -15,14 +19,16 @@ class ParseRequest(BaseModel):
 
 async def _parse(params: dict, caller: str) -> dict:
     """Parse PDF file into unified content blocks. Called via cross-module capability."""
-    import pdfplumber
     import base64
+
+    import pdfplumber
 
     allowed = {"pdf"}
 
     def parse_file(file_id, _file, full_path, _ext):
         blocks = []
         resources = []
+        resource_diagnostics = []
         resource_counter = 0
 
         with pdfplumber.open(str(full_path)) as pdf:
@@ -55,6 +61,7 @@ async def _parse(params: dict, caller: str) -> dict:
                     blocks.append({"type": "image", "text": "", "page": pno, "resource_ref": resource_counter})
 
                     img_bytes = b""
+                    extract_diagnostic_recorded = False
                     try:
                         import fitz
                         pdf_doc = fitz.open(str(full_path))
@@ -63,15 +70,51 @@ async def _parse(params: dict, caller: str) -> dict:
                             img_bytes = pix.tobytes("png")
                         finally:
                             pdf_doc.close()
-                    except ImportError:
-                        pass
+                    except ImportError as exc:
+                        extract_diagnostic_recorded = True
+                        resource_diagnostics.append(build_resource_diagnostic(
+                            parser="pdf-parser",
+                            stage="extract",
+                            status="degraded",
+                            code="resource_extract_dependency_missing",
+                            message="PyMuPDF is unavailable; PDF embedded image bytes were not rendered.",
+                            resource={
+                                "id": resource_counter,
+                                "type": "image",
+                                "page": pno,
+                                "mime_type": "image/png",
+                                "filename": f"page{pno}_xref{xref}.png",
+                                "description": f"PDF page {pno} embedded image (xref={xref})",
+                            },
+                            error=exc,
+                        ))
+                    except Exception as exc:
+                        extract_diagnostic_recorded = True
+                        resource_diagnostics.append(build_resource_diagnostic(
+                            parser="pdf-parser",
+                            stage="extract",
+                            status="degraded",
+                            code="resource_extract_failed",
+                            message="Failed to render PDF embedded image bytes.",
+                            resource={
+                                "id": resource_counter,
+                                "type": "image",
+                                "page": pno,
+                                "mime_type": "image/png",
+                                "filename": f"page{pno}_xref{xref}.png",
+                                "description": f"PDF page {pno} embedded image (xref={xref})",
+                            },
+                            error=exc,
+                        ))
 
                     resources.append({
                         "id": resource_counter,
                         "type": "image",
+                        "page": pno,
                         "mime_type": "image/png",
                         "filename": f"page{pno}_xref{xref}.png",
                         "description": f"PDF page {pno} embedded image (xref={xref})",
+                        "_resource_diagnostic_recorded": extract_diagnostic_recorded,
                         "_bytes_b64": base64.b64encode(img_bytes).decode("ascii") if img_bytes else "",
                     })
 
@@ -80,30 +123,11 @@ async def _parse(params: dict, caller: str) -> dict:
             "format": "pdf",
             "blocks": blocks,
             "resources": resources,
+            "resource_diagnostics": resource_diagnostics,
         }
 
     result = await run_uploaded_file_capability(params, caller, allowed, parse_file)
-
-    from app.services.module_registry import call_capability
-    for res in result.get("resources", []):
-        data_b64 = res.pop("_bytes_b64", "")
-        if data_b64:
-            try:
-                await call_capability(
-                    "content", "store_resource",
-                    {
-                        "data_b64": data_b64,
-                        "resource_type": "image",
-                        "mime_type": res.get("mime_type", "image/png"),
-                        "filename": res.get("filename", "resource.png"),
-                        "description": res.get("description", ""),
-                    },
-                    caller,
-                )
-            except Exception:
-                pass
-
-    return result
+    return await store_extracted_resources_with_diagnostics(result, caller=caller, parser="pdf-parser")
 
 
 @router.get("/health")

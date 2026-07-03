@@ -79,6 +79,12 @@ class _DiagnosticDb(_FakeDb):
             self._next_id += 1
         self.added.append(item)
 
+    async def get(self, _model, item_id):
+        for item in self.added:
+            if getattr(item, "id", None) == item_id:
+                return item
+        return None
+
     async def flush(self):
         self.flushes += 1
 
@@ -203,10 +209,27 @@ async def test_orchestrator_failed_stage_returns_failed(monkeypatch):
     monkeypatch.setattr(pipeline_orchestrator, "detect_stale_stages", _always_stale)
     monkeypatch.setattr(pipeline_orchestrator, "record_artifact_hash", _noop)
 
-    result = await pipeline_orchestrator.run_pipeline(_FakeDb(), 123, 1, 456, 1)
+    main_db = _FakeDb()
+    diagnostics_db = _DiagnosticDb()
+    monkeypatch.setattr(pipeline_orchestrator, "AsyncSessionLocal", _SessionFactory(diagnostics_db))
 
+    result = await pipeline_orchestrator.run_pipeline(main_db, 123, 1, 456, 1)
+
+    run_rows = [
+        item for item in diagnostics_db.added
+        if getattr(item, "__tablename__", "") == "kb_pipeline_runs"
+    ]
+    stage_rows = [
+        item for item in diagnostics_db.added
+        if getattr(item, "__tablename__", "") == "kb_pipeline_stage_runs"
+    ]
+
+    assert run_rows[0].status == "failed"
+    assert run_rows[0].reason == "boom"
     assert result["status"] == "failed"
     assert result["steps"]["raw"]["stage_status"] == "failed"
+    assert stage_rows[-1].stage == "raw"
+    assert stage_rows[-1].status == "failed"
 
 
 @pytest.mark.asyncio

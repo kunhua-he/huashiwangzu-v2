@@ -106,23 +106,20 @@ class ContentPackageService:
         self, db: AsyncSession, file_id: int, owner_id: int, caller: str,
         origin_type: str = "uploaded",
     ) -> dict[str, Any]:
-        existing = await self._find_active_by_file(db, file_id)
-        if existing:
-            return self._package_to_dict(existing)
-
         file_record = await get_file_record(db, file_id)
         if not file_record:
             raise NotFound(f"File {file_id} not found")
-        if file_record.owner_id != owner_id:
-            access = await check_file_access(db, file_id, owner_id)
-            if not access.get("accessible"):
-                raise PermissionDenied("Access denied to source file")
+        await check_file_access(db, file_id, owner_id)
+
+        existing = await self._find_active_by_file(db, file_id)
+        if existing:
+            return self._package_to_dict(existing)
 
         ext = (file_record.extension or "").lower()
         pkg_type = _detect_package_type(ext)
 
         pkg = ContentPackage(
-            owner_id=owner_id,
+            owner_id=file_record.owner_id,
             source_file_id=file_id,
             package_type=pkg_type,
             source_extension=ext,
@@ -177,9 +174,11 @@ class ContentPackageService:
 
         raw_blocks = []
         raw_resources = []
+        resource_diagnostics = []
         if isinstance(result, dict):
             raw_blocks = result.get("blocks", [])
             raw_resources = result.get("resources", [])
+            resource_diagnostics = result.get("resource_diagnostics", [])
 
         raw_blocks = _ensure_block_ids(raw_blocks)
 
@@ -188,6 +187,10 @@ class ContentPackageService:
         local_to_real: dict[int, int] = {}
         for res in raw_resources:
             local_id = res.get("id") or res.get("resource_id")
+            stored_resource_id = res.get("stored_resource_id")
+            if local_id and stored_resource_id:
+                local_to_real[int(local_id)] = int(stored_resource_id)
+                continue
             data_b64 = res.get("_bytes_b64", "")
             if not local_id or not data_b64:
                 continue
@@ -226,6 +229,8 @@ class ContentPackageService:
             "manifest": manifest_dict,
             "blocks": raw_blocks,
         }
+        if isinstance(resource_diagnostics, list) and resource_diagnostics:
+            content_ir["resource_diagnostics"] = resource_diagnostics
 
         content_json_str = json.dumps(content_ir, ensure_ascii=False)
 
@@ -291,7 +296,10 @@ class ContentPackageService:
         if not pkg or pkg.deleted:
             raise NotFound("ContentPackage not found")
         if owner_id is not None and pkg.owner_id != owner_id:
-            raise PermissionDenied("Permission denied")
+            if pkg.source_file_id:
+                await check_file_access(db, pkg.source_file_id, owner_id)
+            else:
+                raise PermissionDenied("Permission denied")
         return self._package_to_dict(pkg)
 
     async def get_full_package(

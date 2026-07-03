@@ -3,18 +3,18 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.schemas.common import ApiResponse
 from app.middleware.auth import require_permission
 from app.models.user import User
+from app.schemas.common import ApiResponse
 from app.services.private_module_service import (
-    preview_private_module,
-    install_private_module,
     activate_private_module,
     deactivate_private_module,
-    uninstall_private_module,
-    rollback_private_module,
+    install_private_module,
     list_private_modules,
     list_workspace_private_modules,
+    preview_private_module,
+    rollback_private_module,
+    uninstall_private_module,
 )
 
 router = APIRouter(prefix="/api/private-modules", tags=["private-modules"])
@@ -62,6 +62,8 @@ async def api_activate_private_module(
     user: User = Depends(require_permission("admin")),
 ):
     result = await activate_private_module(db, user.id, module_key)
+    if result.get("status") == "failed":
+        return ApiResponse(success=False, data=result, error=result.get("error_message") or "Private module activation failed")
     return ApiResponse(data=result)
 
 

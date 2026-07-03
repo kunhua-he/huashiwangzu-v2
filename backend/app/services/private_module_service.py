@@ -4,19 +4,21 @@ import logging
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFound, ConflictError, ValidationError
+from app.core.exceptions import ConflictError, NotFound, PermissionDenied, ValidationError
+from app.middleware.auth import require_permission
 from app.models.private_module import PrivateModule
-from app.services.module_registry import unregister_capability
+from app.models.user import User
 from app.routers.registry import (
-    import_module_router,
+    _module_load_errors,
     _module_prefix_map,
     _module_router_paths,
-    _module_load_errors,
+    import_module_router,
 )
+from app.services.module_registry import unregister_capability
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,35 @@ def _install_dir(owner_id: int) -> Path:
 def _compute_checksum(manifest: dict) -> str:
     raw = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _safe_private_router_path(module_dir: Path, router_entry: str) -> Path:
+    entry_path = Path(router_entry)
+    if entry_path.is_absolute() or ".." in entry_path.parts:
+        raise ValidationError(f"Invalid private module router path: {router_entry}")
+    router_path = (module_dir / entry_path).resolve()
+    if not router_path.is_relative_to(module_dir.resolve()):
+        raise ValidationError(f"Private module router path escapes module directory: {router_entry}")
+    if not router_path.exists():
+        raise NotFound(f"Private module router not found: {router_entry}")
+    return router_path
+
+
+def _private_access_dependency(owner_id: int, private_key: str, prefix: str):
+    async def _require_private_access(user: User = Depends(require_permission("viewer"))) -> User:
+        if _module_prefix_map.get(prefix.rstrip("/")) != private_key:
+            raise NotFound("Private module is not active")
+        if user.id != owner_id and user.role != "admin":
+            raise PermissionDenied("Permission denied")
+        return user
+
+    return _require_private_access
+
+
+def _refresh_middleware_stack(app: FastAPI) -> None:
+    # Dynamic include/remove happens after the ASGI stack may already be built.
+    # Rebuild it so runtime routing matches the registry and DB lifecycle state.
+    app.middleware_stack = app.build_middleware_stack()
 
 
 async def preview_private_module(
@@ -158,28 +189,39 @@ async def activate_private_module(
     record.lkg_checksum = record.checksum
     record.lkg_version = record.version
 
+    registered_prefix = ""
+    private_key = f"__private__{owner_id}__{module_key}"
     try:
         backend_config = manifest.get("backend")
         if isinstance(backend_config, dict) and backend_config.get("router"):
             router_entry = backend_config["router"]
-            router_path = module_dir / router_entry
-            if router_path.exists():
-                router = import_module_router(f"__private__{owner_id}__{module_key}", router_path)
-                prefix = _normalize_private_prefix(owner_id, module_key, manifest)
-                router.prefix = prefix
-                _module_prefix_map[prefix.rstrip("/")] = f"__private__{owner_id}__{module_key}"
-                _module_router_paths[f"__private__{owner_id}__{module_key}"] = router_path
+            router_path = _safe_private_router_path(module_dir, router_entry)
+            router = import_module_router(private_key, router_path)
+            prefix = _normalize_private_prefix(owner_id, module_key, manifest)
+            registered_prefix = prefix
+            _module_prefix_map[prefix.rstrip("/")] = private_key
+            _module_router_paths[private_key] = router_path
+            record.router_prefix = prefix
 
-                get_app_instance().include_router(router)
-                logger.info("Registered private module router: %s at %s", module_key, prefix)
+            app = get_app_instance()
+            app.include_router(
+                router,
+                prefix=prefix,
+                dependencies=[Depends(_private_access_dependency(owner_id, private_key, prefix))],
+            )
+            _refresh_middleware_stack(app)
+            logger.info("Registered private module router: %s at %s", module_key, prefix)
 
         record.status = "active"
         record.error_message = None
     except Exception as exc:
+        if registered_prefix:
+            _unregister_private_module(owner_id, module_key, registered_prefix)
         record.status = "failed"
         record.error_message = str(exc)
         logger.error("Failed to activate private module '%s': %s", module_key, exc)
         await db.commit()
+        await db.refresh(record)
         return _record_to_dict(record)
 
     await db.commit()
@@ -196,7 +238,7 @@ async def deactivate_private_module(
     if record.status != "active":
         return _record_to_dict(record)
 
-    _unregister_private_module(owner_id, module_key)
+    _unregister_private_module(owner_id, module_key, record.router_prefix)
 
     record.status = "installed"
     await db.commit()
@@ -212,7 +254,7 @@ async def uninstall_private_module(
         raise NotFound(f"Private module '{module_key}' not found")
 
     if record.status == "active":
-        _unregister_private_module(owner_id, module_key)
+        _unregister_private_module(owner_id, module_key, record.router_prefix)
 
     module_dir = Path(record.installed_path)
     if module_dir.exists():
@@ -233,7 +275,7 @@ async def rollback_private_module(
         raise ValidationError("No last-known-good version to roll back to")
 
     if record.status == "active":
-        _unregister_private_module(owner_id, module_key)
+        _unregister_private_module(owner_id, module_key, record.router_prefix)
 
     record.checksum = record.lkg_checksum
     record.version = record.lkg_version or record.version
@@ -319,14 +361,30 @@ async def _get_active_or_installed(
     return record
 
 
-def _unregister_private_module(owner_id: int, module_key: str) -> None:
+def _unregister_private_module(owner_id: int, module_key: str, router_prefix: str | None = None) -> None:
     private_key = f"__private__{owner_id}__{module_key}"
-    _module_prefix_map.pop(
-        next((k for k, v in _module_prefix_map.items() if v == private_key), ""), None
-    )
+    prefix = router_prefix.rstrip("/") if router_prefix else ""
+    if not prefix:
+        prefix = next((k for k, v in _module_prefix_map.items() if v == private_key), "")
+    if prefix:
+        _module_prefix_map.pop(prefix, None)
+        try:
+            app = get_app_instance()
+            app.router.routes[:] = [
+                route for route in app.router.routes
+                if not _route_belongs_to_private_prefix(getattr(route, "path", ""), prefix)
+            ]
+            _refresh_middleware_stack(app)
+        except RuntimeError:
+            logger.warning("FastAPI app unavailable while unregistering private module %s", private_key)
     _module_router_paths.pop(private_key, None)
     _module_load_errors.pop(private_key, None)
     unregister_capability(private_key)
+
+
+def _route_belongs_to_private_prefix(path: str, prefix: str) -> bool:
+    normalized = prefix.rstrip("/")
+    return path == normalized or path.startswith(f"{normalized}/")
 
 
 def _normalize_private_prefix(owner_id: int, module_key: str, manifest: dict) -> str:

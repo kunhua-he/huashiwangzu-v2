@@ -84,6 +84,20 @@ def detect_tool_round_stuck(tool_calls: list[dict], session_key: str) -> dict:
     )
 
 
+def _slow_tool_args(tool: dict) -> dict:
+    args = tool.get("args") or {}
+    if tool.get("name") != "skill_use":
+        return args if isinstance(args, dict) else {}
+    inner_args = args.get("args", {}) if isinstance(args, dict) else {}
+    if isinstance(inner_args, str):
+        try:
+            parsed = json.loads(inner_args) if inner_args.strip() else {}
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return inner_args if isinstance(inner_args, dict) else {}
+
+
 class ToolLoopRuntime:
     """Asynchronous tool-call loop with stop-policy enforcement.
 
@@ -562,11 +576,12 @@ class ToolLoopRuntime:
                     if not tool["slow_name"]:
                         continue
                     has_slow = True
+                    skill_args = _slow_tool_args(tool)
                     task_id = await _submit_slow_tool_task(
                         conversation_id=self.conversation_id,
                         user_id=self.owner_id,
                         tool_name=tool["slow_name"],
-                        skill_args=tool["args"],
+                        skill_args=skill_args,
                         caller=f"user:{self.owner_id}",
                         caller_role=self.user_role,
                     )

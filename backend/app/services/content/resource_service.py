@@ -31,11 +31,16 @@ class ResourceService:
         description: str | None = None, ocr_text: str | None = None,
     ) -> dict[str, Any]:
         content_hash = hashlib.sha256(data).hexdigest()
-        existing = await self._find_by_hash(db, content_hash)
+        existing = await self._find_by_hash(db, content_hash, owner_id=owner_id)
         if existing:
             existing.ref_count += 1
             await db.commit()
             return self._to_dict(existing)
+
+        stored_hash = content_hash
+        global_existing = await self._find_by_hash(db, content_hash)
+        if global_existing and global_existing.owner_id != owner_id:
+            stored_hash = hashlib.sha256(f"{owner_id}:{content_hash}".encode()).hexdigest()
 
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
         storage_path = f"{self.STORAGE_PREFIX}/{content_hash[:2]}/{content_hash[2:4]}/{content_hash}.{ext}"
@@ -46,7 +51,7 @@ class ResourceService:
 
         resource = Resource(
             owner_id=owner_id,
-            hash=content_hash,
+            hash=stored_hash,
             hash_algorithm="sha256",
             resource_type=resource_type,
             mime_type=mime_type,
@@ -183,10 +188,20 @@ class ResourceService:
         refs = result.scalars().all()
         return [self._ref_to_dict(r) for r in refs]
 
-    async def _find_by_hash(self, db: AsyncSession, content_hash: str) -> Resource | None:
-        result = await db.execute(
-            select(Resource).where(Resource.hash == content_hash)
-        )
+    async def _find_by_hash(
+        self,
+        db: AsyncSession,
+        content_hash: str,
+        owner_id: int | None = None,
+    ) -> Resource | None:
+        query = select(Resource).where(Resource.hash == content_hash)
+        if owner_id is not None:
+            owner_hash = hashlib.sha256(f"{owner_id}:{content_hash}".encode()).hexdigest()
+            query = select(Resource).where(
+                Resource.owner_id == owner_id,
+                Resource.hash.in_([content_hash, owner_hash]),
+            )
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
     def _to_dict(self, r: Resource) -> dict:

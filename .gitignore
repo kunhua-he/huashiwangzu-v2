@@ -37,6 +37,8 @@ backend/_废弃/
 backend/脚本/
 backend/data/uploads/
 backend/data/.tmp_uploads/
+backend/data/.tmp_upload_sessions/
+backend/data/.upload_sessions/
 
 # Terminal tools workspace
 backend/data/workspaces/

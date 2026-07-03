@@ -99,6 +99,14 @@ def test_normalize_pytest_targets_accepts_dev_toolkit_repo_path() -> None:
     assert normalized == [str(server.REPO_ROOT / target)]
 
 
+def test_normalize_pytest_targets_accepts_backend_prefixed_dev_toolkit_path() -> None:
+    target = "backend/dev_toolkit/test_server_helpers.py::test_tail_text_keeps_short_output"
+    normalized = server._normalize_pytest_targets(target)
+    assert normalized == [
+        str(server.REPO_ROOT / "dev_toolkit/test_server_helpers.py") + "::test_tail_text_keeps_short_output"
+    ]
+
+
 def test_run_test_uses_repo_root_for_dev_toolkit_targets() -> None:
     calls = []
 
@@ -115,6 +123,28 @@ def test_run_test_uses_repo_root_for_dev_toolkit_targets() -> None:
     assert calls[0]["cwd"] == server.REPO_ROOT
     assert calls[0]["cmd"][0] == "env"
     assert str(server.REPO_ROOT) in calls[0]["cmd"][1]
+
+
+def test_run_test_uses_absolute_backend_target_when_mixed_with_repo_target() -> None:
+    calls = []
+
+    async def fake_run_command_json(cmd, *, cwd: Path, timeout: int = 120):
+        calls.append({"cmd": cmd, "cwd": cwd, "timeout": timeout})
+        return {"success": True, "returncode": 0, "stdout": "ok", "stderr": ""}
+
+    async def run() -> None:
+        await code_tools.run_test(
+            fake_run_command_json,
+            server.REPO_ROOT,
+            "backend/tests/test_agent_inline_tool_calls.py dev_toolkit/test_server_helpers.py",
+        )
+
+    anyio.run(run)
+
+    assert calls
+    assert calls[0]["cwd"] == server.REPO_ROOT
+    assert str(server.REPO_ROOT / "backend/tests/test_agent_inline_tool_calls.py") in calls[0]["cmd"]
+    assert str(server.REPO_ROOT / "dev_toolkit/test_server_helpers.py") in calls[0]["cmd"]
 
 
 def test_normalize_pytest_targets_accepts_module_repo_path() -> None:

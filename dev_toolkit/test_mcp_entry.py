@@ -13,7 +13,7 @@ pytest.importorskip("mcp")
 from mcp import ClientSession  # noqa: E402
 from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: E402
 
-REQUIRED_TOOLS = {"db_reverse_audit", "release_gate", "module_sandbox_matrix"}
+REQUIRED_TOOLS = {"agent_board_claim", "db_reverse_audit", "release_gate", "module_sandbox_matrix"}
 
 
 def test_mcp_json_declares_stable_stdio_entrypoint() -> None:

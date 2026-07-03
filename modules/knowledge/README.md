@@ -49,6 +49,12 @@ HTTP 前缀：`/api/knowledge`
 
 所有业务表使用 `kb_*` 前缀：catalogs、documents、chunks、page_fusions、entity_dictionary、entity_aliases、disambiguation、graph_nodes、graph_edges、chunk_entities、evidence、conclusion_evidence、entity_merge_log、governance_candidates。
 
+## 视频分析规划
+
+知识库视频分析体系建议按“先音频转写 + segment text RAG，再关键帧 OCR，再 VLM segment caption，最后视觉检索和 GraphRAG”的路线演进。详细方案已沉淀到 `开发文档/03_模块开发文档/knowledge_video_analysis_system_plan.md`。
+
+第一版最小闭环目标：上传视频 → 登记为 `kb_documents` → 建立 media asset → 固定 30 秒切 segment → FunASR 转写 → 生成 segment `content_text` → BGE-M3 向量化 → 搜索命中并能跳转到视频时间点。
+
 ## Parser 依赖
 
 knowledge 不直接解析文件格式，只通过框架能力调用。所有 parser 产出统一的 **DocumentIr** 中间表示（见 `ir_models.py`），knowledge 的分块、融合、导出只消费 DocumentIr。

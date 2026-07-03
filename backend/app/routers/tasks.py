@@ -13,7 +13,12 @@ from app.models.system import SystemTaskQueue
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.system import SystemTaskQueueResponse, WorkerStatusResponse
-from app.services.task_queue_audit_service import audit_task_queue, reconcile_orphan_running, reconcile_stale_pending
+from app.services.task_debt_governance_service import DEFAULT_DEBT_GOVERNANCE_LIMIT, govern_task_queue_debt
+from app.services.task_queue_audit_service import (
+    audit_task_queue,
+    reconcile_orphan_running,
+    reconcile_stale_pending,
+)
 
 router = APIRouter(prefix="/api/tasks", tags=["system-tasks"])
 
@@ -23,6 +28,13 @@ class TaskSubmitRequest(BaseModel):
     task_type: str
     parameters: dict | None = None
     priority: int = 0
+
+
+class TaskDebtGovernanceRequest(BaseModel):
+    dry_run: bool = True
+    limit: int = DEFAULT_DEBT_GOVERNANCE_LIMIT
+    sample_limit: int = 5
+    task_ids: list[int] | None = None
 
 
 def _ensure_task_owner_or_admin(task: SystemTaskQueue, user: User) -> None:
@@ -90,6 +102,22 @@ async def worker_reconcile(
         "orphans_reconciled": orphans,
         "stale_pending_reconciled": stale,
     })
+
+
+@router.post("/worker/governance")
+async def worker_debt_governance(
+    payload: TaskDebtGovernanceRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    result = await govern_task_queue_debt(
+        db,
+        dry_run=payload.dry_run,
+        limit=payload.limit,
+        sample_limit=payload.sample_limit,
+        task_ids=payload.task_ids,
+    )
+    return ApiResponse(data=result)
 
 
 @router.get("/{task_id}")

@@ -2,6 +2,10 @@ from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.module_registry import register_capability
+from app.services.parser_resource_diagnostics import (
+    build_resource_diagnostic,
+    store_extracted_resources_with_diagnostics,
+)
 from app.services.uploaded_file_runner import run_uploaded_file_capability
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -14,8 +18,9 @@ class ParseRequest(BaseModel):
 
 
 async def _parse(params: dict, caller: str) -> dict:
-    from docx import Document as DocxDocument
     import base64
+
+    from docx import Document as DocxDocument
 
     allowed = {"docx"}
 
@@ -23,6 +28,7 @@ async def _parse(params: dict, caller: str) -> dict:
         doc = DocxDocument(str(full_path))
         blocks = []
         resources = []
+        resource_diagnostics = []
         resource_counter = 0
 
         for para in doc.paragraphs:
@@ -46,17 +52,38 @@ async def _parse(params: dict, caller: str) -> dict:
             if "image" in str(rel.reltype or "").lower():
                 resource_counter += 1
                 img_bytes = b""
+                target_ref = str(getattr(rel, "target_ref", "") or "")
+                mime_type = "image/png"
+                extract_diagnostic_recorded = False
                 try:
-                    img_bytes = rel.target_part.blob
-                except Exception:
-                    pass
+                    target_part = rel.target_part
+                    img_bytes = target_part.blob
+                    mime_type = getattr(target_part, "content_type", None) or "image/png"
+                except Exception as exc:
+                    extract_diagnostic_recorded = True
+                    resource_diagnostics.append(build_resource_diagnostic(
+                        parser="docx-parser",
+                        stage="extract",
+                        status="degraded",
+                        code="resource_extract_failed",
+                        message="Failed to extract DOCX embedded image bytes.",
+                        resource={
+                            "id": resource_counter,
+                            "type": "image",
+                            "filename": target_ref.split("/")[-1] if "/" in target_ref else "image.png",
+                            "mime_type": mime_type,
+                            "description": f"DOCX embedded image ({target_ref})",
+                        },
+                        error=exc,
+                    ))
                 blocks.append({"type": "image", "text": "", "page": None, "resource_ref": resource_counter})
                 resources.append({
                     "id": resource_counter,
                     "type": "image",
-                    "mime_type": rel.target_part.content_type if hasattr(rel, "target_part") and hasattr(rel.target_part, "content_type") else "image/png",
-                    "filename": rel.target_ref.split("/")[-1] if "/" in (rel.target_ref or "") else "image.png",
-                    "description": f"DOCX embedded image ({rel.target_ref})",
+                    "mime_type": mime_type,
+                    "filename": target_ref.split("/")[-1] if "/" in target_ref else "image.png",
+                    "description": f"DOCX embedded image ({target_ref})",
+                    "_resource_diagnostic_recorded": extract_diagnostic_recorded,
                     "_bytes_b64": base64.b64encode(img_bytes).decode("ascii") if img_bytes else "",
                 })
 
@@ -65,30 +92,11 @@ async def _parse(params: dict, caller: str) -> dict:
             "format": "docx",
             "blocks": blocks,
             "resources": resources,
+            "resource_diagnostics": resource_diagnostics,
         }
 
     result = await run_uploaded_file_capability(params, caller, allowed, parse_file)
-
-    from app.services.module_registry import call_capability
-    for res in result.get("resources", []):
-        data_b64 = res.pop("_bytes_b64", "")
-        if data_b64:
-            try:
-                await call_capability(
-                    "content", "store_resource",
-                    {
-                        "data_b64": data_b64,
-                        "resource_type": "image",
-                        "mime_type": res.get("mime_type", "image/png"),
-                        "filename": res.get("filename", "resource.png"),
-                        "description": res.get("description", ""),
-                    },
-                    caller,
-                )
-            except Exception:
-                pass
-
-    return result
+    return await store_extracted_resources_with_diagnostics(result, caller=caller, parser="docx-parser")
 
 
 @router.get("/health")

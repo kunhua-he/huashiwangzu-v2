@@ -40,6 +40,7 @@ elif domain_handles_tool(name):
 | `memory_tools.py` | `memory_search`、`memory_write`、`memory_recent`、`mcp_feedback`、`mcp_feedback_summary` |
 | `worktree_tools.py` | `worktree_guard` |
 | `tool_usage_tools.py` | `tool_usage_stats` + 全局工具调用统计落盘 |
+| `agent_board_tools.py` | `agent_board_claim`、`agent_board_heartbeat`、`agent_board_complete`、`agent_board_block`、`agent_board_snapshot`（多子代理任务板，本地持久化进度） |
 | `code_tools.py` | `code_explore`、`code_node`、`code_impact`、`quick_fix_preview`、`quick_fix_patch`、`apply_patch`、`lint`、`run_test` |
 | `edit_tools.py` | `batch_quick_fix_preview`、`batch_quick_fix_apply`、`edit_recipe_catalog`、`edit_recipe_preview`、`edit_recipe_apply` |
 | `db_reverse_tools.py` | `db_reverse_audit` |
@@ -192,6 +193,7 @@ mailbox_check_delivery_bundle(task_name)
 | `web_read(url)` | 读网页，返回 markdown 正文 | 仅读不写 |
 | `start_frontend()` | 启动前端开发服务器 | 等价 `cd frontend && npm run dev`，服务已启动时不应重复调用 |
 | `tool_usage_stats(limit, reset, confirm)` | 查看项目工具台 MCP 工具调用热度 | 统计文件在 `backend/logs/tool_usage_stats.json`，可用于清理低价值工具和发现高频工作流 |
+| `agent_board_claim/heartbeat/complete/block/snapshot` | 多子代理任务板，记录任务 owner、心跳、节点日志和终态 | 状态文件在 `backend/logs/agent_board.json`；claim 会拒绝未 stale 的活跃 owner，complete/block 只允许当前 owner |
 | `mcp_feedback(agent, task_summary, rating, smoothness, tools_used, friction, missing_tools, upgrade_suggestions, remove_or_merge_suggestions)` | 收工工具体验反馈，写入结构化 Markdown 项目记忆 | 必填轻量反馈：本次是否顺畅、缺什么、建议升级/移除什么 |
 | `mcp_feedback_summary(limit)` | 汇总最近工具体验反馈 | 升级工具台前先看：平均评分、最新反馈、卡点和升级建议 |
 | `mailbox_write_letter(target, category, title, body, required_docs, delivery_mode, overwrite)` | 标准化写投递信到邮箱/投递箱 | 自动补系统指令、必读文档、交付要求和收件箱路径；服务端兼容旧别名 `写封信`，但标准 MCP 声明只公开 ASCII 工具名 |
@@ -251,6 +253,11 @@ mailbox_check_delivery_bundle(task_name)
 | `memory_write(type, title, body, tags, agent)` | 写入项目记忆, agent 字段用于归因 |
 | `memory_recent(n)` | 最近 N 条记忆 |
 | `tool_usage_stats(limit, reset, confirm)` | 工具调用热度统计：按调用次数排序，返回成功/失败次数、平均耗时、最近调用时间；`reset=true` 需 `confirm="RESET"` |
+| `agent_board_claim(agent, task_id, title, objective, labels, node_note)` | 创建或认领持久化任务；活跃 owner 未 stale 时拒绝，避免多个子代理抢同一节点 |
+| `agent_board_heartbeat(agent, task_id, node_note)` | 当前 owner 刷新任务心跳并追加节点进度 |
+| `agent_board_complete(agent, task_id, result_summary, node_note)` | 当前 owner 将任务标记 completed |
+| `agent_board_block(agent, task_id, reason, node_note)` | 当前 owner 将任务标记 blocked 并记录卡点 |
+| `agent_board_snapshot(status, agent, include_events, limit)` | 查看持久化任务板，可按状态/agent 过滤，含最近事件 |
 | `mcp_feedback(agent, task_summary, rating, smoothness, tools_used, friction, missing_tools, upgrade_suggestions, remove_or_merge_suggestions)` | 收工反馈本次 MCP 是否顺畅、有无缺失能力和升级/移除建议；生成 Markdown 反馈记录 |
 | `mcp_feedback_summary(limit)` | 汇总最近 MCP 反馈 Markdown，升级工具台前用它找高频卡点和建议 |
 | `mcp_self_check(include_tools)` | MCP 自检: 工具数、组件覆盖、重复工具名、长文件、延迟加载提示 |

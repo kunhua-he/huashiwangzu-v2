@@ -18,8 +18,20 @@ from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.schemas.file import UploadResponse
-from app.services import file_preview_service, file_service, file_share_service, file_upload_service
+from app.schemas.file import (
+    UploadResponse,
+    UploadSessionCompleteRequest,
+    UploadSessionCompleteResponse,
+    UploadSessionCreateRequest,
+    UploadSessionResponse,
+)
+from app.services import (
+    file_preview_service,
+    file_service,
+    file_share_service,
+    file_upload_service,
+    file_upload_session_service,
+)
 from app.services.module_registry import call_capability
 
 logger = logging.getLogger("v2.file_transfer")
@@ -29,6 +41,19 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB 上传上限，防 OOM
 TMP_DOWNLOAD_DIR = Path(get_settings().UPLOAD_DIR).resolve().parent / ".tmp_downloads"
 
 router = APIRouter(prefix="/api/files", tags=["files"])
+
+
+async def _emit_file_uploaded(file_id: int, user: User) -> None:
+    try:
+        from app.services.module_events import emit_module_event
+        await emit_module_event(
+            "file.uploaded",
+            {"file_id": file_id},
+            caller=f"user:{user.id}",
+            caller_role=user.role,
+        )
+    except Exception as exc:
+        logger.warning("File.uploaded event emission failed for file_id=%d: %s", file_id, exc)
 
 
 @router.post("/upload")
@@ -71,17 +96,84 @@ async def upload(file: UploadFile = FastAPIFile(...), folder_id: int = Form(0), 
     except Exception:
         pass
     # ── 上传完成，尽力而为通知各模块（不阻塞上传） ──
-    try:
-        from app.services.module_events import emit_module_event
-        await emit_module_event(
-            "file.uploaded",
-            {"file_id": result["id"]},
-            caller=f"user:{user.id}",
-            caller_role=user.role,
-        )
-    except Exception as exc:
-        logger.warning("File.uploaded event emission failed for file_id=%d: %s", result["id"], exc)
+    await _emit_file_uploaded(result["id"], user)
     return ApiResponse(data=UploadResponse(**result))
+
+
+@router.post("/upload-sessions")
+async def create_upload_session(
+    payload: UploadSessionCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("editor")),
+):
+    result = await file_upload_session_service.create_upload_session(
+        db,
+        filename=payload.filename,
+        total_chunks=payload.total_chunks,
+        owner_id=user.id,
+        md5_expected=payload.md5_expected,
+        expires_in_hours=payload.expires_in_hours,
+    )
+    return ApiResponse(data=UploadSessionResponse(**result))
+
+
+@router.post("/upload-sessions/cleanup-expired")
+async def cleanup_expired_upload_sessions(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    result = await file_upload_session_service.cleanup_expired_sessions(db)
+    return ApiResponse(data=result)
+
+
+@router.post("/upload-sessions/{session_id}/chunks")
+async def upload_session_chunk(
+    session_id: str,
+    chunk_index: int = Form(...),
+    chunk: UploadFile = FastAPIFile(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("editor")),
+):
+    result = await file_upload_session_service.store_upload_chunk(
+        db,
+        session_id=session_id,
+        owner_id=user.id,
+        chunk_index=chunk_index,
+        chunk_stream=chunk,
+    )
+    return ApiResponse(data=UploadSessionResponse(**result))
+
+
+@router.post("/upload-sessions/{session_id}/complete")
+async def complete_upload_session(
+    session_id: str,
+    payload: UploadSessionCompleteRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("editor")),
+):
+    result = await file_upload_session_service.complete_upload_session(
+        db,
+        session_id=session_id,
+        owner_id=user.id,
+        folder_id=payload.folder_id,
+        relative_path=payload.relative_path,
+    )
+    await _emit_file_uploaded(result["file"]["id"], user)
+    return ApiResponse(data=UploadSessionCompleteResponse(**result))
+
+
+@router.post("/upload-sessions/{session_id}/abort")
+async def abort_upload_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("editor")),
+):
+    result = await file_upload_session_service.abort_upload_session(
+        db,
+        session_id=session_id,
+        owner_id=user.id,
+    )
+    return ApiResponse(data=UploadSessionResponse(**result))
 
 
 def _cleanup_temp_file(path: str) -> None:

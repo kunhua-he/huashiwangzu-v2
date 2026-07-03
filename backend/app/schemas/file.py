@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class FolderResponse(BaseModel):
@@ -57,6 +58,32 @@ class UploadResponse(BaseModel):
     mime_type: Optional[str] = None
     exists: bool = False
     deduplicated: bool = False
+
+
+class UploadSessionCreateRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=512)
+    total_chunks: int = Field(..., ge=1, le=10000)
+    md5_expected: Optional[str] = Field(None, max_length=32)
+    expires_in_hours: int = Field(24, ge=1, le=168)
+
+
+class UploadSessionResponse(BaseModel):
+    session_id: str
+    filename: str
+    total_chunks: int
+    received_chunks: int
+    status: str
+    expires_at: datetime
+
+
+class UploadSessionCompleteRequest(BaseModel):
+    folder_id: Optional[int] = None
+    relative_path: str = ""
+
+
+class UploadSessionCompleteResponse(BaseModel):
+    session: UploadSessionResponse
+    file: UploadResponse
 
 
 class PreviewResponse(BaseModel):

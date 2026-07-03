@@ -37,9 +37,8 @@ _MAX_SEARCH_URL_CHARS = 2048
 _TEXT_CONTENT_MARKERS = ("text", "html", "json", "xml", "javascript", "x-www-form-urlencoded")
 _BINARY_CONTENT_MARKERS = ("application/octet-stream", "application/pdf", "image/", "audio/", "video/")
 
-# Proxy from env: WEB_TOOLS_PROXY=http://127.0.0.1:4780
-# Default to ClashX proxy on macOS (common local proxy)
-_PROXY_URL = os.environ.get("WEB_TOOLS_PROXY") or "http://127.0.0.1:4780"
+# Optional proxy from env: WEB_TOOLS_PROXY=http://127.0.0.1:4780
+_PROXY_URL = os.environ.get("WEB_TOOLS_PROXY") or None
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -107,6 +106,10 @@ def _decode_content(content: bytes, encoding: str | None) -> str:
     return content.decode("utf-8", errors="replace")
 
 
+def _proxy_candidates() -> list[str | None]:
+    return [_PROXY_URL, None] if _PROXY_URL else [None]
+
+
 async def _cap_search(params: dict, caller: str) -> dict:
     """Search the web via DuckDuckGo Search (no API key, uses ddgs)."""
     query = (params.get("query") or "").strip()
@@ -134,10 +137,8 @@ async def _cap_search(params: dict, caller: str) -> dict:
             )
             return list(rows)
 
-    # Try proxy first, then direct
-    proxies_to_try = [_PROXY_URL, None]
     last_error = None
-    for proxy in proxies_to_try:
+    for proxy in _proxy_candidates():
         try:
             rows = await asyncio.to_thread(_do_search, proxy)
         except Exception as exc:
@@ -155,6 +156,8 @@ async def _cap_search(params: dict, caller: str) -> dict:
                 "url": raw_url,
                 "snippet": _trim_text(r.get("body", ""), _MAX_SEARCH_SNIPPET_CHARS),
             })
+        if rows and not results:
+            return _err({"results": []}, "search returned no usable public results")
         return _ok({"results": results, "error": None})
 
     return _err({"results": []}, f"search failed: {last_error}")
@@ -183,13 +186,16 @@ async def _cap_fetch(params: dict, caller: str) -> dict:
     import httpx
     from lxml import html as lxml_html
 
-    client_kwargs = {
-        "timeout": _FETCH_TIMEOUT,
-        "follow_redirects": False,
-        "headers": _HEADERS,
-    }
-    if _PROXY_URL:
-        client_kwargs["proxy"] = httpx.Proxy(url=_PROXY_URL)
+    def _client_kwargs(proxy_url: str | None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "timeout": _FETCH_TIMEOUT,
+            "follow_redirects": False,
+            "headers": _HEADERS,
+            "trust_env": False,
+        }
+        if proxy_url:
+            kwargs["proxy"] = httpx.Proxy(url=proxy_url)
+        return kwargs
 
     async def _request_checked(
         client: httpx.AsyncClient,
@@ -216,49 +222,54 @@ async def _cap_fetch(params: dict, caller: str) -> dict:
             return resp, current_url
         raise ValidationError("too many redirects")
 
-    try:
-        async with httpx.AsyncClient(**client_kwargs) as client:
+    async def _fetch_with_proxy(proxy_url: str | None) -> tuple[str, bytes, str, str | None]:
+        async with httpx.AsyncClient(**_client_kwargs(proxy_url)) as client:
             # Head request first to check content type and size
             head_resp, _ = await _request_checked(client, "HEAD", url)
-            ct = (head_resp.headers.get("content-type") or "").lower()
-            cl = head_resp.headers.get("content-length")
-            if cl:
-                try:
-                    content_length = int(cl)
-                except ValueError:
-                    content_length = None
-                if content_length is not None and content_length > _MAX_CONTENT_LENGTH:
-                    return _err(
-                        {"url": url, "title": "", "text": "", "truncated": False},
-                        f"content too large ({content_length} bytes > 5MB)",
-                    )
-            if _is_binary_content_type(ct):
-                return _err(
-                    {"url": url, "title": "", "text": "", "truncated": False},
-                    f"blocked binary content type: {ct}",
-                )
+            try:
+                ct = (head_resp.headers.get("content-type") or "").lower()
+                cl = head_resp.headers.get("content-length")
+                if cl:
+                    try:
+                        content_length = int(cl)
+                    except ValueError:
+                        content_length = None
+                    if content_length is not None and content_length > _MAX_CONTENT_LENGTH:
+                        raise ValidationError(f"content too large ({content_length} bytes > 5MB)")
+                if _is_binary_content_type(ct):
+                    raise ValidationError(f"blocked binary content type: {ct}")
+            finally:
+                await head_resp.aclose()
 
             resp, fetched_url = await _request_checked(client, "GET", url, stream=True)
             try:
                 resp.raise_for_status()
                 get_ct = (resp.headers.get("content-type") or "").lower()
                 if _is_binary_content_type(get_ct):
-                    return _err(
-                        {"url": fetched_url, "title": "", "text": "", "truncated": False},
-                        f"blocked binary content type: {get_ct}",
-                    )
+                    raise ValidationError(f"blocked binary content type: {get_ct}")
 
                 chunks = bytearray()
                 async for chunk in resp.aiter_bytes():
                     if len(chunks) + len(chunk) > _MAX_CONTENT_LENGTH:
-                        return _err(
-                            {"url": fetched_url, "title": "", "text": "", "truncated": False},
-                            f"content too large (> {_MAX_CONTENT_LENGTH} bytes)",
-                        )
+                        raise ValidationError(f"content too large (> {_MAX_CONTENT_LENGTH} bytes)")
                     chunks.extend(chunk)
                 content = bytes(chunks)
+                return fetched_url, content, get_ct, resp.charset_encoding
             finally:
                 await resp.aclose()
+
+    last_error = None
+    try:
+        for proxy in _proxy_candidates():
+            try:
+                fetched_url, content, get_ct, encoding = await _fetch_with_proxy(proxy)
+                break
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                last_error = exc
+                logger.warning("web fetch attempt (proxy=%s) failed: %s", proxy, exc)
+                continue
+        else:
+            return _err({"url": url, "title": "", "text": "", "truncated": False}, f"fetch failed: {last_error}")
     except ValidationError as exc:
         return _err({"url": url, "title": "", "text": "", "truncated": False}, exc.message)
     except httpx.TimeoutException:
@@ -266,14 +277,15 @@ async def _cap_fetch(params: dict, caller: str) -> dict:
     except Exception as exc:
         return _err({"url": url, "title": "", "text": "", "truncated": False}, f"fetch failed: {exc}")
 
-    get_ct = (resp.headers.get("content-type") or "").lower()
     if get_ct and "html" not in get_ct and "xml" not in get_ct:
-        text = _decode_content(content, resp.charset_encoding)
+        text = _decode_content(content, encoding)
         text = _re.sub(r'\s+', ' ', text).strip()
         truncated = False
         if len(text) > max_chars:
             text = text[:max_chars]
             truncated = True
+        if not text:
+            return _err({"url": fetched_url, "title": "", "text": "", "truncated": truncated}, "response text is empty")
         return _ok({"url": fetched_url, "title": "", "text": text, "truncated": truncated, "error": None})
 
     # Parse HTML/XML-like content
@@ -309,6 +321,9 @@ async def _cap_fetch(params: dict, caller: str) -> dict:
     if len(text) > max_chars:
         text = text[:max_chars]
         truncated = True
+
+    if not text:
+        return _err({"url": fetched_url, "title": title, "text": "", "truncated": truncated}, "response text is empty")
 
     return _ok({"url": fetched_url, "title": title, "text": text, "truncated": truncated, "error": None})
 

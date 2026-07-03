@@ -32,6 +32,7 @@ Thumbs.db
 .opencode/
 
 # V2 specific
+data/uploads/
 backend/db/*.sqlite3
 backend/_废弃/
 backend/脚本/

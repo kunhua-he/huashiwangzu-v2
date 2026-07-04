@@ -58,6 +58,9 @@ interface TraceItem {
   durationMs?: number
   toolName?: string
   toolResult?: unknown
+  toolStatus?: string
+  toolError?: string
+  toolCallId?: string
   label?: string
   title?: string
   reason?: string

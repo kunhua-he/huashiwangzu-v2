@@ -32,10 +32,13 @@
           :format-size="state.formatSize"
           :sort-column="state.sortColumn.value"
           :sort-direction="state.sortDirection.value"
+          :load-status="state.loadState.value.status"
+          :load-error="state.loadState.value.error"
           @select="state.selectItem"
           @open="handleItemOpen"
           @context-menu="handleItemContextMenu"
           @sort="handleSort"
+          @retry="state.loadFiles"
         />
       </div>
     </div>

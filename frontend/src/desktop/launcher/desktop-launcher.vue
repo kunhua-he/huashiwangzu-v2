@@ -9,7 +9,10 @@
           <button v-for="item in searchResults" :key="item.id" class="desktop-launcher-result-item" type="button" @click="executeSearchResult(item)">
             <AppIcon :icon="item.icon || fallbackIcon(item.type)" :size="20" />
             <span class="desktop-launcher-result-text">
-              <span class="desktop-launcher-result-title">{{ item.title }}</span>
+              <span class="desktop-launcher-result-title-row">
+                <span class="desktop-launcher-result-title">{{ item.title }}</span>
+                <span class="desktop-launcher-result-kind">{{ resultKindLabel(item.type) }}</span>
+              </span>
               <span v-if="item.description" class="desktop-launcher-result-description">{{ item.description }}</span>
             </span>
           </button>
@@ -70,7 +73,16 @@ const username = computed(() => userStore.userInfo?.display_name || userStore.us
 function fallbackIcon(type: SearchResultItem['type']): string {
   if (type === 'app') return 'Grid'
   if (type === 'action') return 'Operation'
+  if (type === 'background-capability') return 'Connection'
+  if (type === 'file') return 'Document'
   return 'Search'
+}
+
+function resultKindLabel(type: SearchResultItem['type']): string {
+  if (type === 'app') return '应用'
+  if (type === 'file') return '文件/最近项'
+  if (type === 'background-capability') return '后台能力/不可直接打开'
+  return '命令/动作'
 }
 
 function executeSearchResult(item: SearchResultItem): void {
@@ -110,9 +122,12 @@ function executeSearchResult(item: SearchResultItem): void {
 }
 .desktop-launcher-result-item:hover { background: rgba(255,255,255,.08); }
 .desktop-launcher-result-text { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.desktop-launcher-result-title-row { max-width: 238px; display: flex; align-items: center; gap: 6px; }
 .desktop-launcher-result-title,
-.desktop-launcher-result-description { max-width: 238px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.desktop-launcher-result-title { font-size: 12px; color: #f8fafc; }
+.desktop-launcher-result-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-launcher-result-title { min-width: 0; font-size: 12px; color: #f8fafc; }
+.desktop-launcher-result-kind { flex-shrink: 0; font-size: 9px; line-height: 14px; padding: 0 4px; border-radius: 3px; background: rgba(148, 163, 184, 0.18); color: rgba(226, 232, 240, 0.72); }
+.desktop-launcher-result-description { max-width: 238px; }
 .desktop-launcher-result-description { font-size: 10px; color: rgba(226,232,240,.62); }
 .desktop-launcher-empty { color: rgba(226,232,240,.62); font-size: 12px; padding: 14px 6px; }
 .desktop-launcher-tool-item {

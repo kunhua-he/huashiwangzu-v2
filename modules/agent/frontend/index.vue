@@ -73,6 +73,13 @@ import './components/style-variables.css'
 interface ConvItem { id: number; title: string; status?: string }
 interface ModelProfile { key: string; name: string; provider: string; model: string }
 interface RefItem { type: string; title: string; source: string; excerpt: string; url?: string }
+interface ToolReference {
+  type: string
+  ref_key: string
+  ref_id: string
+  title?: string
+  source?: string
+}
 interface ApiBody<T> { success: boolean; data: T; error?: string | null }
 interface UsageData {
   prompt_tokens?: number
@@ -88,9 +95,13 @@ interface MsgItem {
   content: string
   created_at?: string | null
   eventType?: string
-  toolName?: string
-  toolResult?: unknown
-  thinking?: string
+	  toolName?: string
+	  toolResult?: unknown
+	  toolStatus?: string
+	  toolError?: string
+	  toolCallId?: string
+	  toolReferences?: ToolReference[]
+	  thinking?: string
   references?: RefItem[]
   tool_events?: unknown[]
   timeline?: unknown[]
@@ -294,9 +305,9 @@ function expandTimeline(msgs: MsgItem[]): MsgItem[] {
           reason: (e.reason as string) || '',
         } as MsgItem)
       } else if (entryType === 'tool_call') {
-        applyToolCallEvent((e.name as string) || 'unknown', items)
+        applyToolCallEvent((e.name as string) || 'unknown', items, e)
       } else if (entryType === 'tool_result') {
-        applyToolResultEvent((e.name as string) || 'unknown', e.result, items, e.duration_ms as number | undefined)
+        applyToolResultEvent((e.name as string) || 'unknown', e.result, items, e.duration_ms as number | undefined, e)
       } else if (entryType === 'text') {
         textBuf += (e.content as string) || ''
       }
@@ -391,20 +402,37 @@ function applyThinkingEvent(content: string, messages: MsgItem[], opts?: { isRes
 }
 
 /** 处理 tool_call 事件：新建工具调用卡片 */
-function applyToolCallEvent(name: string, messages: MsgItem[]) {
+function applyToolCallEvent(name: string, messages: MsgItem[], event?: Record<string, unknown>) {
   messages.push({
     id: 0, role: '', content: '',
     eventType: 'tool_call',
     toolName: name || 'unknown',
+    toolCallId: (event?.tool_call_id as string) || '',
+    toolStatus: 'running',
   } as MsgItem)
 }
 
 /** 处理 tool_result 事件：合并到同名 tool_call 卡片，找不到则独立 */
-function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[], durationMs?: number) {
+function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[], durationMs?: number, event?: Record<string, unknown>) {
   let merged = false
+  const toolCallId = (event?.tool_call_id as string) || ''
+  const toolStatus = (event?.status as string) || ''
+  const toolError = (event?.error_class as string) || (event?.failure_kind as string) || ''
+  const effectiveName = (event?.effective_tool_name as string) || name || 'unknown'
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].eventType === 'tool_call' && messages[i].toolName === name) {
-      messages[i] = { ...messages[i], eventType: 'tool_result', toolResult: result, durationMs: durationMs || 0 }
+    const sameCall = toolCallId && messages[i].toolCallId === toolCallId
+    const sameName = !toolCallId && messages[i].eventType === 'tool_call' && messages[i].toolName === name
+    if (messages[i].eventType === 'tool_call' && (sameCall || sameName)) {
+      messages[i] = {
+        ...messages[i],
+        eventType: 'tool_result',
+        toolName: effectiveName,
+        toolResult: result,
+        toolStatus,
+        toolError,
+        toolCallId,
+        durationMs: durationMs || 0,
+      }
       merged = true
       break
     }
@@ -413,8 +441,11 @@ function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[]
     messages.push({
       id: 0, role: '', content: '',
       eventType: 'tool_result',
-      toolName: name || 'unknown',
+      toolName: effectiveName,
       toolResult: result,
+      toolStatus,
+      toolError,
+      toolCallId,
       durationMs: durationMs || 0,
     } as MsgItem)
   }
@@ -896,12 +927,12 @@ function commitAssistantStream(segmentId: string) {
 				    } else if (etype === 'thinking') {
 				      ensureWorkGroup()
 				      applyThinkingEvent(evt.content as string || '', currentWorkGroup.value?.items ?? messages.value, { isRestore: false })
-				    } else if (etype === 'tool_call') {
-				      ensureWorkGroup()
-				      applyToolCallEvent(evt.name as string || 'unknown', currentWorkGroup.value?.items ?? messages.value)
-				    } else if (etype === 'tool_result') {
-				      ensureWorkGroup()
-				      applyToolResultEvent(evt.name as string || 'unknown', evt.result, currentWorkGroup.value?.items ?? messages.value, evt.duration_ms as number | undefined)
+					    } else if (etype === 'tool_call') {
+					      ensureWorkGroup()
+					      applyToolCallEvent(evt.name as string || 'unknown', currentWorkGroup.value?.items ?? messages.value, evt)
+					    } else if (etype === 'tool_result') {
+					      ensureWorkGroup()
+					      applyToolResultEvent(evt.name as string || 'unknown', evt.result, currentWorkGroup.value?.items ?? messages.value, evt.duration_ms as number | undefined, evt)
                     } else if (etype === 'token') {
                       if (activeAssistantStreamId.value) {
                         appendAssistantStream(activeAssistantStreamId.value, (evt.content as string) || '')

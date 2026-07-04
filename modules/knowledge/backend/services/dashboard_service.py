@@ -49,7 +49,8 @@ async def get_dashboard_stats(db: AsyncSession, user_id: int) -> dict:
     failed = (await db.execute(
         select(func.count(KbDocument.id)).where(
             KbDocument.deleted.is_(False), KbDocument.owner_id == user_id,
-            or_(KbDocument.raw_status == "failed", KbDocument.fusion_status == "failed", unavailable_source_clause),
+            live_source_clause,
+            or_(KbDocument.raw_status == "failed", KbDocument.fusion_status == "failed"),
         )
     )).scalar() or 0
 
@@ -127,7 +128,7 @@ async def get_dashboard_stats(db: AsyncSession, user_id: int) -> dict:
             "source_available": bool(source_available), "source_state": source_state,
         }
         doc_progresses.append(entry)
-        if d.raw_status == "failed" or d.fusion_status == "failed" or not source_available:
+        if source_available and (d.raw_status == "failed" or d.fusion_status == "failed"):
             stuck_docs.append(entry)
 
     recent = (await db.execute(

@@ -18,10 +18,12 @@ from app.schemas.content_package import (
 )
 from app.services.content.export_service import ContentExportService
 from app.services.content.package_lifecycle_service import (
+    archive_lifecycle_unavailable_packages,
     audit_content_package_lifecycle_debt,
     handle_file_deleted,
     handle_file_permanently_deleted,
     handle_file_restored,
+    repair_missing_current_versions,
 )
 from app.services.content.package_service import ContentPackageService, is_package_consumable_status
 from app.services.content.pipeline_service import ContentPipelineService
@@ -893,6 +895,28 @@ async def _cap_audit_lifecycle_debt(params: dict, caller: str) -> dict:
         return await audit_content_package_lifecycle_debt(db, limit=limit)
 
 
+async def _cap_archive_lifecycle_unavailable_packages(params: dict, caller: str) -> dict:
+    async with AsyncSessionLocal() as db:
+        return await archive_lifecycle_unavailable_packages(
+            db,
+            dry_run=bool(params.get("dry_run", True)),
+            limit=int(params.get("limit", 100) or 100),
+            reason=str(params.get("reason", "source_unavailable") or "source_unavailable"),
+            confirm=str(params.get("confirm", "") or ""),
+            audit_reason=str(params.get("audit_reason", "") or ""),
+        )
+
+
+async def _cap_repair_missing_current_versions(params: dict, caller: str) -> dict:
+    async with AsyncSessionLocal() as db:
+        return await repair_missing_current_versions(
+            db,
+            dry_run=bool(params.get("dry_run", True)),
+            limit=int(params.get("limit", 100) or 100),
+            confirm=str(params.get("confirm", "") or ""),
+        )
+
+
 async def _cap_store_analysis_resource(params: dict, caller: str) -> dict:
     """Store VLM/analysis result as a Resource (viewer-safe, requires file_id).
 
@@ -975,6 +999,23 @@ def register_content_capabilities():
             "vlm_metadata": "object (optional)", "file_id": "int (required)",
         },
         min_role="viewer",
+    )
+    register_capability(
+        "content", "archive_lifecycle_unavailable_packages", _cap_archive_lifecycle_unavailable_packages,
+        description="Dry-run or confirm archive ContentPackages whose source file is unavailable",
+        parameters={
+            "dry_run": "bool", "limit": "int",
+            "reason": "source_unavailable|source_file_deleted|source_file_missing",
+            "confirm": "ARCHIVE_LIFECYCLE_UNAVAILABLE_PACKAGES",
+            "audit_reason": "str",
+        },
+        min_role="admin",
+    )
+    register_capability(
+        "content", "repair_missing_current_versions", _cap_repair_missing_current_versions,
+        description="Dry-run or confirm repair ContentPackages missing current_version_id when historical versions exist",
+        parameters={"dry_run": "bool", "limit": "int", "confirm": "REPAIR_CONTENT_CURRENT_VERSION"},
+        min_role="admin",
     )
     # Write capabilities (editor)
     _register_editor_caps()

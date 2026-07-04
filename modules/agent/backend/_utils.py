@@ -119,6 +119,87 @@ def _extract_file_refs(name: str, result: dict) -> list[dict]:
     return []
 
 
+_ARTIFACT_REF_LABELS = {
+    "file_id": "文件",
+    "package_id": "内容包",
+    "artifact_id": "产物",
+    "document_id": "文档",
+    "chunk_id": "片段",
+    "page": "页码",
+    "source_file_id": "源文件",
+}
+
+
+def _artifact_ref_type(key: str) -> str:
+    if key.endswith("_id"):
+        return key[:-3].replace("_", "-")
+    return key.replace("_", "-")
+
+
+def artifact_refs_from_value(value: object, limit: int = 40) -> list[dict]:
+    """Extract lightweight artifact/reference ids from tool outputs.
+
+    The Agent module only preserves ids returned by tools. It does not read
+    Content/Knowledge tables here.
+    """
+    refs: list[dict] = []
+    seen: set[str] = set()
+
+    def add_ref(key: str, raw_value: object) -> None:
+        if len(refs) >= limit:
+            return
+        if raw_value is None or isinstance(raw_value, (dict, list, tuple, set)):
+            return
+        ref_id = str(raw_value).strip()
+        if not ref_id:
+            return
+        ref_type = _artifact_ref_type(key)
+        dedupe_key = f"{ref_type}:{key}:{ref_id}"
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        label = _ARTIFACT_REF_LABELS.get(key, key)
+        item = {
+            "type": ref_type,
+            "title": f"{label} {ref_id}",
+            "source": key,
+            "excerpt": "",
+            "ref_key": key,
+            "ref_id": ref_id,
+        }
+        item[key] = raw_value
+        refs.append(item)
+
+    def walk(node: object, depth: int = 0) -> None:
+        if depth > 5 or len(refs) >= limit:
+            return
+        if isinstance(node, dict):
+            for raw_key, child in node.items():
+                key = str(raw_key)
+                if key in _ARTIFACT_REF_LABELS:
+                    add_ref(key, child)
+                walk(child, depth + 1)
+        elif isinstance(node, (list, tuple, set)):
+            for child in list(node)[:50]:
+                walk(child, depth + 1)
+
+    walk(value)
+    return refs
+
+
+def _extend_unique_refs(target: list[dict], refs: list[dict]) -> None:
+    seen = {
+        ref.get("url") or f"{ref.get('type')}:{ref.get('ref_key') or ref.get('source')}:{ref.get('ref_id') or ref.get('title')}"
+        for ref in target
+    }
+    for ref in refs:
+        key = ref.get("url") or f"{ref.get('type')}:{ref.get('ref_key') or ref.get('source')}:{ref.get('ref_id') or ref.get('title')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        target.append(ref)
+
+
 def _unwrap_skill_result(name: str, result: dict) -> tuple[str, dict]:
     if name != "skill_use" or not isinstance(result, dict):
         return name, result
@@ -151,21 +232,22 @@ def references_from_tool_events(events: list[dict]) -> list[dict]:
         if extractor:
             extracted = extractor(result)
             if extracted:
-                refs.extend(extracted)
-                continue
+                _extend_unique_refs(refs, extracted)
 
         # File-reading tools (matched by prefix)
         if name in ("desktop-tools__read_file",) or name.startswith("docs-open__") or name.startswith("terminal-tools__read_file"):
             extracted = _extract_file_refs(name, result)
             if extracted:
-                refs.extend(extracted)
-                continue
+                _extend_unique_refs(refs, extracted)
 
         # Knowledge-related tools that return results in standard shape
         # (knowledge__get_block, knowledge__get_page_fusion, etc.)
         knowledge_refs = _extract_knowledge_refs(result)
         if knowledge_refs:
-            refs.extend(knowledge_refs)
-            continue
+            _extend_unique_refs(refs, knowledge_refs)
+
+        artifact_refs = artifact_refs_from_value(result)
+        if artifact_refs:
+            _extend_unique_refs(refs, artifact_refs)
 
     return refs

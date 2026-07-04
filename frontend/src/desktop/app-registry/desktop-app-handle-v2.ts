@@ -5,6 +5,7 @@ import { getApp } from '@/desktop/app-registry/app-registry'
 import { getAppByFileFormat } from '@/desktop/app-registry/file-association-registry'
 import emitter from '@/desktop/events'
 import { useUserStore } from '@/platform/stores/user'
+import { getOpenWindowFailureMessage } from './app-visibility'
 import { registerActionHandler, unregisterAppHandlers, routeRequest, getRegisteredAppIds, getRegisteredActions } from './action-registry'
 import { standardActionDef } from './types-app-handle-v2'
 import { generateRequestId, registerPendingRequest } from './request-response-channel'
@@ -39,7 +40,9 @@ export function useDesktopAppHandleV2() {
   function openApp(appId: appId, params?: Record<string, unknown>): windowId | null {
     const ok = checkPermission(appId)
     if (!ok) return null
-    return windowManager.openWindow(appId, params)
+    const windowId = windowManager.openWindow(appId, params)
+    if (!windowId) ElMessage.info(getOpenWindowFailureMessage(getApp(appId)))
+    return windowId
   }
 
   async function openFile(fileId: number, format?: string, options?: CommandOptions): Promise<WindowHandle | null> {
@@ -49,6 +52,7 @@ export function useDesktopAppHandleV2() {
       return null
     }
     const windowId = windowManager.openWindow(association.appKey, { fileId, format })
+    if (!windowId) ElMessage.info(getOpenWindowFailureMessage(getApp(association.appKey)))
     return windowId ? { windowId, appId: association.appKey } : null
   }
 

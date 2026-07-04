@@ -1,26 +1,32 @@
 <template>
   <div class="tool-row">
-    <button class="tool-toggle" @click="isOpen = !isOpen">
-      <span class="tool-dot" :class="{ calling: message.eventType === 'tool_call', done: message.eventType === 'tool_result' }"></span>
-      <template v-if="message.eventType === 'tool_call'">
-        <span>正在调用</span>
-        <span class="tool-name" :title="message.toolName">{{ displayToolName }}</span>
+	    <button class="tool-toggle" @click="isOpen = !isOpen">
+	      <span class="tool-dot" :class="toolState"></span>
+	      <template v-if="message.eventType === 'tool_call'">
+	        <span>正在调用</span>
+	        <span class="tool-name" :title="message.toolName">{{ displayToolName }}</span>
         <span class="tool-calling-dots">
           <span class="cdot"></span><span class="cdot"></span><span class="cdot"></span>
         </span>
-      </template>
-	      <template v-else>
-	        <span>工具记录</span>
-	        <span class="tool-name" :title="message.toolName">{{ displayToolName }}</span>
-	        <span v-if="durationText" class="tool-duration">{{ durationText }}</span>
+	      </template>
+		      <template v-else>
+		        <span>{{ statusText }}</span>
+		        <span class="tool-name" :title="message.toolName">{{ displayToolName }}</span>
+		        <span v-if="durationText" class="tool-duration">{{ durationText }}</span>
 	        <svg class="tool-chevron" :class="{ rotated: isOpen }" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" width="10" height="10">
           <path d="M4 3l4 3-4 3"/>
         </svg>
       </template>
-    </button>
-    <div v-show="isOpen && message.eventType === 'tool_result'" class="tool-body">
-      <template v-if="hasImage(message.toolResult)">
-        <div class="tool-images">
+	    </button>
+	    <div v-show="isOpen && message.eventType === 'tool_result'" class="tool-body">
+	      <div v-if="errorText" class="tool-error">{{ errorText }}</div>
+	      <div v-if="referenceList.length" class="tool-refs">
+	        <span v-for="ref in referenceList" :key="`${ref.ref_key}:${ref.ref_id}`" class="tool-ref-chip">
+	          {{ refLabel(ref) }}
+	        </span>
+	      </div>
+	      <template v-if="hasImage(message.toolResult)">
+	        <div class="tool-images">
           <img
             v-for="img in extractImages(message.toolResult)"
             :key="img.file_id"
@@ -41,12 +47,15 @@ import { ref, computed } from 'vue'
 
 const props = defineProps<{
   message: {
-    eventType?: string
-    toolName?: string
-    toolResult?: unknown
-    durationMs?: number
-  }
-}>()
+	    eventType?: string
+	    toolName?: string
+	    toolResult?: unknown
+	    toolStatus?: string
+	    toolError?: string
+	    toolReferences?: ToolReference[]
+	    durationMs?: number
+	  }
+	}>()
 
 const isOpen = ref(false)
 
@@ -86,6 +95,14 @@ interface ImageEntry {
   [key: string]: unknown
 }
 
+interface ToolReference {
+  type: string
+  ref_key: string
+  ref_id: string
+  title?: string
+  source?: string
+}
+
 function hasImage(r: unknown): boolean {
   if (!r || typeof r !== 'object') return false
   const obj = r as Record<string, unknown>
@@ -104,6 +121,93 @@ function extractImages(r: unknown): ImageEntry[] {
     return [obj as unknown as ImageEntry]
   }
   return []
+}
+
+const REF_LABELS: Record<string, string> = {
+  file_id: '文件',
+  package_id: '内容包',
+  artifact_id: '产物',
+  document_id: '文档',
+  chunk_id: '片段',
+  page: '页码',
+  source_file_id: '源文件',
+}
+
+const REF_KEYS = new Set(Object.keys(REF_LABELS))
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function resultPayload(result: unknown): unknown {
+  if (!isRecord(result)) return result
+  const data = result.data
+  return isRecord(data) ? data : result
+}
+
+function isFailureResult(result: unknown): boolean {
+  if (props.message.toolStatus === 'failed') return true
+  if (!isRecord(result)) return false
+  if (result.success === false || result.error || result.denied || result.policy_blocked) return true
+  const inner = resultPayload(result)
+  return isRecord(inner) && (inner.success === false || !!inner.error)
+}
+
+const toolState = computed(() => {
+  if (props.message.eventType === 'tool_call') return 'calling'
+  return isFailureResult(props.message.toolResult) ? 'failed' : 'done'
+})
+
+const statusText = computed(() => {
+  if (props.message.eventType === 'tool_call') return '正在调用'
+  return toolState.value === 'failed' ? '工具失败' : '工具完成'
+})
+
+const errorText = computed(() => {
+  if (toolState.value !== 'failed') return ''
+  if (props.message.toolError) return props.message.toolError
+  const result = props.message.toolResult
+  if (!isRecord(result)) return ''
+  const inner = resultPayload(result)
+  const message = result.error || result.message || (isRecord(inner) ? (inner.error || inner.message) : '')
+  return typeof message === 'string' ? message : ''
+})
+
+function collectReferences(value: unknown, refs: ToolReference[], seen: Set<string>, depth = 0) {
+  if (depth > 5 || refs.length >= 40) return
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 50)) collectReferences(item, refs, seen, depth + 1)
+    return
+  }
+  if (!isRecord(value)) return
+  for (const [key, child] of Object.entries(value)) {
+    if (REF_KEYS.has(key) && child !== null && typeof child !== 'object') {
+      const refId = String(child).trim()
+      const dedupeKey = `${key}:${refId}`
+      if (refId && !seen.has(dedupeKey)) {
+        seen.add(dedupeKey)
+        refs.push({
+          type: key.endsWith('_id') ? key.slice(0, -3).replace(/_/g, '-') : key.replace(/_/g, '-'),
+          ref_key: key,
+          ref_id: refId,
+          title: `${REF_LABELS[key] || key} ${refId}`,
+          source: key,
+        })
+      }
+    }
+    collectReferences(child, refs, seen, depth + 1)
+  }
+}
+
+const referenceList = computed<ToolReference[]>(() => {
+  if (props.message.toolReferences?.length) return props.message.toolReferences
+  const refs: ToolReference[] = []
+  collectReferences(props.message.toolResult, refs, new Set<string>())
+  return refs
+})
+
+function refLabel(ref: ToolReference): string {
+  return ref.title || `${REF_LABELS[ref.ref_key] || ref.type} ${ref.ref_id}`
 }
 
 function formatResult(r: unknown): string {
@@ -159,6 +263,9 @@ function openImage(fileId: number) {
 .tool-dot.done {
   background: var(--ag-success);
 }
+.tool-dot.failed {
+  background: var(--ag-error);
+}
 @keyframes toolPulse {
   0% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -193,10 +300,35 @@ function openImage(fileId: number) {
 .tool-chevron.rotated { transform: rotate(90deg); }
 
 .tool-body {
-  margin-top: var(--ag-space-xs);
-  padding: var(--ag-space-sm) var(--ag-space-md);
-  background: var(--ag-bg-page);
-  border-radius: var(--ag-radius-md);
+	  margin-top: var(--ag-space-xs);
+	  padding: var(--ag-space-sm) var(--ag-space-md);
+	  background: var(--ag-bg-page);
+	  border-radius: var(--ag-radius-md);
+	}
+.tool-error {
+  margin-bottom: var(--ag-space-xs);
+  color: var(--ag-error);
+  font-size: var(--ag-font-size-sm);
+  line-height: var(--ag-line-height-base);
+  word-break: break-word;
+}
+.tool-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: var(--ag-space-xs);
+}
+.tool-ref-chip {
+  max-width: 240px;
+  padding: 1px 6px;
+  border-radius: var(--ag-radius-sm);
+  border: 1px solid var(--ag-border-light);
+  background: var(--ag-bg-card);
+  color: var(--ag-text-secondary);
+  font-size: var(--ag-font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tool-body pre {
   white-space: pre-wrap;

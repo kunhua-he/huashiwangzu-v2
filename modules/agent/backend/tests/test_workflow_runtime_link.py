@@ -11,6 +11,7 @@ from app.models.system import SystemTaskQueue
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from modules.agent.backend._utils import references_from_tool_events
 from modules.agent.backend.handlers.tasks import _submit_slow_tool_task
 from modules.agent.backend.init_db import run_init
 from modules.agent.backend.models import AgentCheckpoint, ApprovalQueue
@@ -341,6 +342,84 @@ async def test_skill_use_subagent_result_records_workflow_outputs(
         and item.summary == "subagent inspected"
         for item in artifacts
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_result_reference_ids_are_preserved_in_message_refs_and_workflow_artifacts(
+    db: AsyncSession,
+    cleanup_runtime_records: dict[str, list],
+) -> None:
+    sink = await _linked_sink(db, cleanup_runtime_records, owner_id=8812)
+    call_id = await sink.workflow_record_tool_started(
+        db,
+        {
+            "name": "office-gen__write_ir",
+            "tool_call_id": "call_artifact_refs",
+            "args": {"title": "引用测试"},
+        },
+    )
+    result_event = {
+        "type": "tool_result",
+        "name": "office-gen__write_ir",
+        "tool_call_id": "call_artifact_refs",
+        "result": {
+            "success": True,
+            "data": {
+                "file_id": 71001,
+                "package_id": "pkg-71001",
+                "document_id": 81001,
+                "chunks": [{"chunk_id": "chunk-1", "page": 3}],
+                "source_file_id": 61001,
+            },
+        },
+    }
+
+    await sink.workflow_mark_tool_result(db, result_event)
+    call = await db.get(AgentToolCall, call_id)
+    assert call is not None
+    assert call.status == "completed"
+    assert any(ref["ref_key"] == "file_id" and ref["ref_id"] == "71001" for ref in call.result_ref["artifact_refs"])
+
+    artifacts = await svc.list_artifacts(db, sink.workflow_run_id)
+    tool_refs = [item for item in artifacts if item.artifact_type == "tool_reference"]
+    assert tool_refs
+    refs = tool_refs[-1].storage_ref["refs"]
+    assert {ref["ref_key"] for ref in refs} >= {"file_id", "package_id", "document_id", "chunk_id", "page", "source_file_id"}
+
+    message_refs = references_from_tool_events([result_event])
+    assert any(ref["ref_key"] == "package_id" and ref["ref_id"] == "pkg-71001" for ref in message_refs)
+
+
+@pytest.mark.asyncio
+async def test_runtime_failure_without_existing_workflow_creates_failed_ledger(
+    db: AsyncSession,
+    cleanup_runtime_records: dict[str, list],
+) -> None:
+    link = WorkflowRuntimeLink(
+        conversation_id=-(uuid4().int >> 66),
+        owner_id=8813,
+        user_input="触发模型错误",
+        profile_key="deepseek-v4-flash",
+        user_message_id=987,
+    )
+    sink = _sink(link)
+
+    await sink.workflow_record_runtime_failure(
+        db,
+        error_type="model_error",
+        error_message="provider returned error payload",
+    )
+    assert link.run_id is not None
+    cleanup_runtime_records["run_ids"].append(link.run_id)
+
+    run = await svc.get_workflow(db, link.run_id, user_id=8813)
+    assert run.status == "failed"
+    assert run.verification_status == "fail"
+
+    failures = await svc.list_failures(db, link.run_id)
+    assert any(item.failure_type == "tool_error" for item in failures)
+    verifications = await svc.list_verifications(db, link.run_id)
+    assert any(item.verification_type == "runtime_exception" and item.status == "fail" for item in verifications)
 
 
 @pytest.mark.asyncio

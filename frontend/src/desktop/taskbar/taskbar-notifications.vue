@@ -19,11 +19,14 @@
         :agent-workflow-summary="agentWorkflowSummary"
         :action-items="actionItems"
         :feedback-signal-count="feedbackSignalCount"
+        :load-issues="feedbackLoadIssues"
+        :is-loading="isFeedbackLoading"
         @mark-read="markRead"
         @mark-all-read="markAllRead"
         @action-primary="handleActionPrimary"
         @action-secondary="handleActionSecondary"
         @open-agent="emit('open-app', 'agent')"
+        @retry-load="retryFeedbackLoad"
       />
     </div>
   </div>
@@ -47,14 +50,21 @@ const {
   agentWorkflowSummary,
   actionItems,
   feedbackSignalCount,
+  feedbackLoadIssues,
+  hasFeedbackLoadError,
+  hasStaleFeedbackData,
+  isFeedbackLoading,
   showNotificationPanel,
   toggleNotificationPanel,
   markRead,
   markAllRead,
   dismissActionItem,
+  retryFeedbackLoad,
 } = useNotifications()
 
 const buttonTitle = computed(() => {
+  if (hasFeedbackLoadError.value) return '反馈中心加载失败'
+  if (hasStaleFeedbackData.value) return '反馈中心数据可能不是最新'
   const workflow = agentWorkflowSummary.value
   const tasks = taskDebtSummary.value
   if (workflow && workflow.needs_confirmation_count > 0) return '有事项需要确认'
@@ -66,6 +76,8 @@ const buttonTitle = computed(() => {
 })
 
 const buttonStatusClass = computed(() => {
+  if (hasFeedbackLoadError.value) return 'status-failed'
+  if (hasStaleFeedbackData.value) return 'status-partial'
   const workflow = agentWorkflowSummary.value
   const tasks = taskDebtSummary.value
   if ((workflow && workflow.failed_count > 0) || (tasks && tasks.summary.failed + tasks.recent_failed_count > 0)) {

@@ -40,6 +40,69 @@
   pointer-events: none;
   text-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
+.desktop-shell-file-stale {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  width: min(520px, calc(100% - 32px));
+  transform: translateX(-50%);
+  z-index: 20;
+  box-shadow: 0 10px 26px rgba(15,23,42,0.18);
+}
+.desktop-shell-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  color: #fff;
+  text-align: center;
+  background: rgba(15,23,42,0.56);
+  padding: 24px 32px;
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+}
+.desktop-shell-error p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.desktop-shell-error button {
+  background: #409eff;
+  color: #fff;
+  border: none;
+  padding: 8px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.desktop-shell-error button:hover {
+  background: #66b1ff;
+}
+.desktop-shell-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  color: rgba(255,255,255,0.6);
+  font-size: 14px;
+}
+.desktop-shell-drop-hint {
+  position: absolute;
+  inset: 18px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(255,255,255,.72);
+  border-radius: 16px;
+  background: rgba(15,23,42,.28);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  pointer-events: none;
+}
 .desktop-window {
   position: absolute;
   display: flex;

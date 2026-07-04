@@ -12,6 +12,7 @@ from .document_service import mark_document_source_unavailable
 
 LifecycleReason = Literal["source_file_deleted", "source_file_missing", "source_unavailable"]
 CONFIRM_ARCHIVE_SOURCE_UNAVAILABLE = "ARCHIVE_SOURCE_UNAVAILABLE"
+VALID_LIFECYCLE_REASONS = {"source_file_deleted", "source_file_missing", "source_unavailable"}
 
 
 def _classify_source(file: File | None) -> str:
@@ -28,13 +29,21 @@ def _reason_matches(reason: str, filter_reason: str | None) -> bool:
     return reason == filter_reason
 
 
+def _validate_reason(reason: str | None) -> str | None:
+    if not reason:
+        return None
+    if reason not in VALID_LIFECYCLE_REASONS:
+        raise ValidationError("reason must be source_file_deleted, source_file_missing, or source_unavailable")
+    return reason
+
+
 async def _source_unavailable_rows(
     db: AsyncSession,
     owner_id: int,
     *,
-    limit: int,
     reason: str | None = None,
 ) -> list[tuple[KbDocument, File | None, str]]:
+    reason = _validate_reason(reason)
     result = await db.execute(
         select(KbDocument, File)
         .outerjoin(File, File.id == KbDocument.file_id)
@@ -50,8 +59,6 @@ async def _source_unavailable_rows(
         if not _reason_matches(source_reason, reason):
             continue
         rows.append((doc, file, source_reason))
-        if len(rows) >= limit:
-            break
     return rows
 
 
@@ -85,12 +92,13 @@ async def audit_lifecycle_debt(
     reason: str | None = None,
 ) -> dict[str, Any]:
     limit = max(1, min(int(limit or 500), 5000))
-    rows = await _source_unavailable_rows(db, owner_id, limit=limit, reason=reason)
+    rows = await _source_unavailable_rows(db, owner_id, reason=reason)
     summary = {"source_file_deleted": 0, "source_file_missing": 0}
     items = []
     for doc, file, source_reason in rows:
         summary[source_reason] += 1
-        items.append(_item_payload(doc, file, source_reason))
+        if len(items) < limit:
+            items.append(_item_payload(doc, file, source_reason))
     return {
         "dry_run": True,
         "matched": sum(summary.values()),
@@ -116,12 +124,13 @@ async def archive_source_unavailable_documents(
     audit_reason: str = "",
 ) -> dict[str, Any]:
     limit = max(1, min(int(limit or 100), 5000))
-    rows = await _source_unavailable_rows(db, owner_id, limit=limit, reason=reason)
+    rows = await _source_unavailable_rows(db, owner_id, reason=reason)
     summary = {"source_file_deleted": 0, "source_file_missing": 0}
     selected = []
     for doc, file, source_reason in rows:
         summary[source_reason] += 1
-        selected.append((doc, file, source_reason))
+        if len(selected) < limit:
+            selected.append((doc, file, source_reason))
 
     items = [_item_payload(doc, file, source_reason) for doc, file, source_reason in selected]
     if dry_run:

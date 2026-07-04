@@ -1,4 +1,6 @@
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
+import { ElMessage } from 'element-plus'
+import { BACKGROUND_CAPABILITY_MESSAGE, isLauncherVisibleApp } from './app-visibility'
 
 export interface IDisposable {
   dispose(): void
@@ -10,6 +12,7 @@ export interface CommandMetadata {
   description?: string
   icon?: string
   category?: string
+  resultType?: SearchResultItem['type']
 }
 
 export interface CommandEntry {
@@ -18,13 +21,14 @@ export interface CommandEntry {
   description?: string
   icon?: string
   category?: string
+  resultType?: SearchResultItem['type']
   handler: (params?: Record<string, unknown>) => unknown | Promise<unknown>
   source?: string
 }
 
 export interface SearchResultItem {
   id: string
-  type: 'app' | 'command' | 'action' | 'file'
+  type: 'app' | 'command' | 'action' | 'file' | 'background-capability'
   title: string
   description?: string
   icon?: string
@@ -35,19 +39,26 @@ export interface SearchResultItem {
 
 type Listener = (id: string) => void
 
-let openAppFn: ((appKey: string) => void) | null = null
+let openAppFn: ((appKey: string) => unknown) | null = null
 let executeActionFn: ((appKey: string, action: string, params?: Record<string, unknown>) => unknown) | null = null
 
 const appOpener = {
-  setOpenApp(fn: (appKey: string) => void) { openAppFn = fn },
+  setOpenApp(fn: (appKey: string) => unknown) { openAppFn = fn },
   setExecuteAction(fn: (appKey: string, action: string, params?: Record<string, unknown>) => unknown) { executeActionFn = fn },
-  openApp(appKey: string) { openAppFn?.(appKey) },
+  openApp(appKey: string) { return openAppFn?.(appKey) },
   executeAction(appKey: string, action: string, params?: Record<string, unknown>) { return executeActionFn?.(appKey, action, params) },
 }
 
 function getSearchResultType(id: string): SearchResultItem['type'] {
   if (!id.startsWith('app:')) return 'command'
   return id.split(':').length > 2 ? 'action' : 'app'
+}
+
+function buildBackgroundDescription(description?: string): string {
+  const detail = description?.trim()
+  return detail
+    ? `后台能力/不可直接打开 · ${detail}`
+    : '后台能力/不可直接打开'
 }
 
 class CommandRegistry {
@@ -65,6 +76,7 @@ class CommandRegistry {
       description: meta.description,
       icon: meta.icon,
       category: meta.category,
+      resultType: meta.resultType,
       handler,
       source,
     }
@@ -118,7 +130,7 @@ class CommandRegistry {
           seen.add(entry.id)
           results.push({
             id: entry.id,
-            type: getSearchResultType(entry.id),
+            type: entry.resultType ?? getSearchResultType(entry.id),
             title: entry.title,
             description: entry.description,
             icon: entry.icon,
@@ -134,7 +146,7 @@ class CommandRegistry {
           seen.add(entry.id)
           results.push({
             id: entry.id,
-            type: getSearchResultType(entry.id),
+            type: entry.resultType ?? getSearchResultType(entry.id),
             title: entry.title,
             description: entry.description,
             icon: entry.icon,
@@ -173,11 +185,23 @@ class CommandRegistry {
   registerAppEntry(app: AppRegistryEntry): IDisposable[] {
     const disposables: IDisposable[] = []
 
+    const canOpenFromLauncher = isLauncherVisibleApp(app)
     const appDisp = this.register(
-      { id: `app:${app.appKey}`, title: app.appName, description: app.description, icon: app.icon, category: app.category || '应用' },
+      {
+        id: `app:${app.appKey}`,
+        title: app.appName,
+        description: canOpenFromLauncher ? app.description : buildBackgroundDescription(app.description),
+        icon: app.icon,
+        category: canOpenFromLauncher ? app.category || '应用' : '后台能力',
+        resultType: canOpenFromLauncher ? 'app' : 'background-capability',
+      },
       () => {
+        if (!canOpenFromLauncher) {
+          ElMessage.info(BACKGROUND_CAPABILITY_MESSAGE)
+          return null
+        }
         const { openApp } = getAppOpener()
-        openApp(app.appKey)
+        return openApp(app.appKey)
       },
       `app-registry:${app.appKey}`,
     )
@@ -187,8 +211,19 @@ class CommandRegistry {
       for (const action of app.publicActions) {
         const actionId = `app:${app.appKey}:${action.action}`
         const actionDisp = this.register(
-          { id: actionId, title: `${app.appName} - ${action.description}`, description: action.description, icon: app.icon, category: app.category || '应用' },
+          {
+            id: actionId,
+            title: `${app.appName} - ${action.description}`,
+            description: canOpenFromLauncher ? action.description : buildBackgroundDescription(action.description),
+            icon: app.icon,
+            category: canOpenFromLauncher ? app.category || '应用' : '后台能力',
+            resultType: canOpenFromLauncher ? 'action' : 'background-capability',
+          },
           (params) => {
+            if (!canOpenFromLauncher) {
+              ElMessage.info(BACKGROUND_CAPABILITY_MESSAGE)
+              return null
+            }
             const { executeAction } = getAppOpener()
             return executeAction(app.appKey, action.action, params)
           },

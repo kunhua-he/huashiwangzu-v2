@@ -6,6 +6,7 @@ import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
 import type { FileEntry } from '@/shared/api/types'
 import { formatFileDisplayName } from '@/shared/files/display-name'
 import type { DesktopFileManagerBreadcrumbItem, NavigationEntry } from './types'
+import { createLoadState, failLoading, finishLoading, startLoading } from '@/shared/composables/use-load-state'
 
 interface CreateFileManagerStateOptions {
   folderId: () => number | undefined
@@ -17,6 +18,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
 
   const currentFolderId = ref<number>(0)
   const items = ref<FileEntry[]>([])
+  const loadState = createLoadState<FileEntry[]>([])
   const loading = ref(false)
   const uploadInput = ref<HTMLInputElement | null>(null)
   const breadcrumb = ref<DesktopFileManagerBreadcrumbItem[]>([{ id: null, name: '桌面' }])
@@ -117,16 +119,20 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
 
   async function loadFiles() {
     loading.value = true
+    startLoading(loadState)
     try {
+      let nextItems: FileEntry[]
       if (isRecycleBin.value) {
         const data = await fetchRecycleBinList()
-        items.value = (data || []).map(mapRecycleToFileEntry)
+        nextItems = (data || []).map(mapRecycleToFileEntry)
       } else {
         const data = await fetchFileList(currentFolderId.value)
-        items.value = data?.items || []
+        nextItems = data?.items || []
       }
-    } catch {
-      items.value = []
+      items.value = nextItems
+      finishLoading(loadState, nextItems)
+    } catch (error: unknown) {
+      failLoading(loadState, error, '文件列表加载失败')
     } finally {
       loading.value = false
     }
@@ -238,6 +244,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   return {
     currentFolderId,
     items,
+    loadState,
     loading,
     uploadInput,
     breadcrumb,

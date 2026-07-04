@@ -5,6 +5,10 @@ import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
 import { openFileByRecord } from '@/desktop/app-registry/app-opener'
 import { windowManager } from '@/desktop/window-manager/window-manager'
 import { formatFileDisplayName } from '@/shared/files/display-name'
+import { createLoadState, failLoading, finishLoading, startLoading } from '@/shared/composables/use-load-state'
+import { ElMessage } from 'element-plus'
+import { getApp } from '@/desktop/app-registry/app-registry'
+import { getOpenWindowFailureMessage } from '@/desktop/app-registry/app-visibility'
 
 function displayName(file: FileEntry) {
   return file.is_folder ? String(file.file_name || '') : formatFileDisplayName(file.file_name, file.format)
@@ -12,14 +16,18 @@ function displayName(file: FileEntry) {
 
 export function useDesktopRootFiles() {
   const desktopFileList = ref<FileEntry[]>([])
+  const desktopFileLoadState = createLoadState<FileEntry[]>([])
   const { on, off } = useDesktopEventBus()
 
   async function loadDesktopFiles() {
+    startLoading(desktopFileLoadState)
     try {
       const data = await fetchFileList(0)
-      desktopFileList.value = data?.items || []
-    } catch {
-      desktopFileList.value = []
+      const items = data?.items || []
+      desktopFileList.value = items
+      finishLoading(desktopFileLoadState, items)
+    } catch (error: unknown) {
+      failLoading(desktopFileLoadState, error, '桌面文件加载失败')
     }
   }
 
@@ -31,10 +39,11 @@ export function useDesktopRootFiles() {
 
   function openDesktopEntry(file: FileEntry) {
     if (file.is_folder || !file.format) {
-      windowManager.openWindow('desktop', {
+      const windowId = windowManager.openWindow('desktop', {
         folderId: file.id,
         folderName: displayName(file),
       })
+      if (!windowId) ElMessage.info(getOpenWindowFailureMessage(getApp('desktop')))
       return
     }
     openFileByRecord({ fileId: file.id, fileName: displayName(file), format: file.format })
@@ -52,5 +61,5 @@ export function useDesktopRootFiles() {
     off('file:created', onFileRefresh)
   })
 
-  return { desktopFileList, openDesktopEntry }
+  return { desktopFileList, desktopFileLoadState, loadDesktopFiles, openDesktopEntry }
 }

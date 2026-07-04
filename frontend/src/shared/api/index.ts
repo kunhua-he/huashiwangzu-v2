@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { ApiResponse } from './types'
-import { getErrorInfo } from './response-transform'
+import { getErrorInfo, toApiErrorInfo } from './response-transform'
 
 const TOKEN_KEY = 'v2_auth_token'
 
@@ -69,10 +69,12 @@ api.interceptors.response.use(
     }
 
     if (responseData?.success === false) {
-      const errMsg = responseData.error || '请求失败'
-      const errInfo = { success: false as const, data: null, error: errMsg, http_status: response.status }
-      ElMessage.error(errMsg)
-      logErrorWithThrottle(response.config?.url || '未知', response.status, errMsg)
+      const errInfo = toApiErrorInfo({
+        config: response.config,
+        response: { status: response.status, data: responseData },
+      })
+      ElMessage.error(errInfo.userMessage)
+      logErrorWithThrottle(response.config?.url || '未知', response.status, errInfo.backendMessage || errInfo.userMessage)
       return Promise.reject(errInfo)
     }
 

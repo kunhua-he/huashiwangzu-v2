@@ -16,7 +16,17 @@ except ModuleNotFoundError:
     from sql_guard import readonly_psql_env
 
 TOOL_NAMES = {"test_data_pollution_audit", "test_data_pollution_cleanup"}
-TEST_MARKERS = ("smoke-", "e2e-", "recycle-", "test-", "pytest-")
+TEST_MARKERS = (
+    "smoke-",
+    "e2e-",
+    "recycle-",
+    "pytest-",
+    "test-upload-",
+    "test-file-",
+    "test-pollution-",
+    "lifecycle-source-",
+    "permanent-source-",
+)
 CONFIRM_CLEAN_TEST_DATA = "CLEAN_TEST_DATA"
 
 
@@ -26,7 +36,7 @@ def tool_definitions() -> list[Any]:
     return [
         Tool(
             name="test_data_pollution_audit",
-            description="只读审计 smoke/e2e/recycle/test/pytest 标记测试数据对文件、回收站、Knowledge、ContentPackage 的污染。",
+            description="只读审计 smoke/e2e/recycle/pytest 和强 test-* 标记测试数据对文件、回收站、Knowledge、ContentPackage 的污染。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -106,6 +116,10 @@ def cleanup_test_data_pollution(
             "confirm_token": CONFIRM_CLEAN_TEST_DATA,
         }
     result = _run_json_sql(repo_root, _cleanup_sql(limit), readonly=False)
+    physical_result = _delete_upload_paths(
+        repo_root,
+        [str(path) for path in result.pop("candidate_storage_paths", []) if path],
+    )
     return {
         "success": True,
         "action": "test_data_pollution_cleanup",
@@ -113,6 +127,7 @@ def cleanup_test_data_pollution(
         "limit": limit,
         "reason": reason,
         **result,
+        **physical_result,
     }
 
 
@@ -146,6 +161,61 @@ def _run_json_sql(repo_root: Path, sql: str, *, readonly: bool) -> dict[str, Any
 def _marker_predicate(column: str) -> str:
     parts = [f"lower(coalesce({column}, '')) like '%{marker}%'" for marker in TEST_MARKERS]
     return "(" + " or ".join(parts) + ")"
+
+
+def _upload_root(repo_root: Path) -> Path:
+    env_upload_dir = os.environ.get("UPLOAD_DIR")
+    if env_upload_dir:
+        upload_dir = Path(env_upload_dir)
+        return (upload_dir if upload_dir.is_absolute() else repo_root / "backend" / upload_dir).resolve()
+
+    env_file = repo_root / "backend" / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "UPLOAD_DIR" and value.strip():
+                upload_dir = Path(value.strip().strip("\"'"))
+                return (upload_dir if upload_dir.is_absolute() else repo_root / "backend" / upload_dir).resolve()
+
+    backend_default = (repo_root / "backend" / "data" / "uploads").resolve()
+    if backend_default.exists():
+        return backend_default
+    return (repo_root / "data" / "uploads").resolve()
+
+
+def _delete_upload_paths(repo_root: Path, storage_paths: list[str]) -> dict[str, Any]:
+    upload_root = _upload_root(repo_root)
+    deleted = 0
+    skipped = 0
+    errors: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for storage_path in storage_paths:
+        if not storage_path or storage_path in seen:
+            continue
+        seen.add(storage_path)
+        full_path = (upload_root / storage_path).resolve()
+        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
+            skipped += 1
+            errors.append({"storage_path": storage_path, "error": "outside_upload_root"})
+            continue
+        if not full_path.exists():
+            skipped += 1
+            continue
+        if not full_path.is_file():
+            skipped += 1
+            errors.append({"storage_path": storage_path, "error": "not_a_file"})
+            continue
+        try:
+            full_path.unlink()
+            deleted += 1
+        except OSError as exc:
+            skipped += 1
+            errors.append({"storage_path": storage_path, "error": str(exc)})
+    return {
+        "physical_deleted_files": deleted,
+        "physical_skipped_files": skipped,
+        "physical_delete_errors": errors[:20],
+    }
 
 
 def _audit_sql(limit: int) -> str:
@@ -192,24 +262,47 @@ select json_build_object(
 def _cleanup_sql(limit: int) -> str:
     file_marker = _marker_predicate("f.name")
     storage_marker = _marker_predicate("f.storage_path")
+    doc_marker = _marker_predicate("d.filename")
     limit = max(1, min(limit, 5000))
     return f"""
 with candidate_files as (
-  select f.id
+  select f.id, f.storage_path, f.md5_hash
   from framework_file_items f
   where {file_marker} or {storage_marker}
   order by f.id desc
   limit {limit}
 ),
+candidate_docs as (
+  select d.id
+  from kb_documents d
+  left join candidate_files cf on cf.id = d.file_id
+  where d.deleted = false
+    and (cf.id is not null or {doc_marker})
+  order by d.id desc
+  limit {limit}
+),
 archived_docs as (
   update kb_documents
   set deleted = true, parse_error = coalesce(parse_error, 'archived_by_test_data_cleanup')
-  where file_id in (select id from candidate_files) and deleted = false
+  where id in (select id from candidate_docs) and deleted = false
   returning id
 ),
 archived_packages as (
   update framework_content_packages
-  set status = 'archived', parse_error = 'archived_by_test_data_cleanup'
+  set status = 'archived',
+      parse_error = 'archived_by_test_data_cleanup',
+      manifest_json = jsonb_set(
+        coalesce(nullif(manifest_json, '')::jsonb, '{{}}'::jsonb),
+        '{{lifecycle}}',
+        coalesce((coalesce(nullif(manifest_json, '')::jsonb, '{{}}'::jsonb)->'lifecycle'), '{{}}'::jsonb)
+          || jsonb_build_object(
+            'archived_by_lifecycle', true,
+            'source_available', false,
+            'source_lifecycle_state', 'source_permanently_deleted',
+            'reason', 'archived_by_test_data_cleanup'
+          ),
+        true
+      )::text
   where source_file_id in (select id from candidate_files) and deleted = false
   returning id
 ),
@@ -225,6 +318,26 @@ deleted_files as (
 )
 select json_build_object(
   'selected_files', (select count(*) from candidate_files),
+  'candidate_storage_paths', coalesce((
+    select json_agg(cf.storage_path)
+    from candidate_files cf
+    where cf.storage_path is not null
+      and cf.storage_path <> ''
+      and not exists (
+        select 1
+        from framework_file_items f
+        where f.id not in (select id from candidate_files)
+          and f.storage_path = cf.storage_path
+      )
+      and not exists (
+        select 1
+        from framework_file_items f
+        where f.id not in (select id from candidate_files)
+          and cf.md5_hash is not null
+          and cf.md5_hash <> ''
+          and f.md5_hash = cf.md5_hash
+      )
+  ), '[]'::json),
   'archived_documents', (select count(*) from archived_docs),
   'archived_packages', (select count(*) from archived_packages),
   'deleted_recycle_rows', (select count(*) from deleted_recycle),

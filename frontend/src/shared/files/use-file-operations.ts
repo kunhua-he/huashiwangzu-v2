@@ -15,11 +15,92 @@ export interface ClipboardLike {
   name: string
 }
 
+export interface BatchOperationError {
+  id?: number | string
+  name?: string
+  message: string
+}
+
+export interface BatchOperationResult {
+  successCount: number
+  failCount: number
+  errors: BatchOperationError[]
+}
+
 /** 统一文件全名：文件夹用原名，文件用显示名（含扩展名） */
 export function fullFileName(file: FileEntry): string {
   return file.is_folder
     ? String(file.file_name || '')
     : formatFileDisplayName(file.file_name, file.format)
+}
+
+function createBatchOperationResult(): BatchOperationResult {
+  return { successCount: 0, failCount: 0, errors: [] }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function stringField(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key]
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (!isRecord(error)) return '操作失败'
+
+  const direct = stringField(error, 'error') || stringField(error, 'message')
+  if (direct) return direct
+
+  const data = error.data
+  if (isRecord(data)) {
+    const dataMessage = stringField(data, 'error') || stringField(data, 'message')
+    if (dataMessage) return dataMessage
+  }
+
+  const response = error.response
+  if (isRecord(response) && isRecord(response.data)) {
+    const responseMessage = stringField(response.data, 'error') || stringField(response.data, 'message')
+    if (responseMessage) return responseMessage
+  }
+
+  return '操作失败'
+}
+
+function formatBatchError(error: BatchOperationError): string {
+  const label = error.name || (error.id !== undefined ? `#${String(error.id)}` : '未知项目')
+  return `${label}: ${error.message}`
+}
+
+function showBatchOperationResult(actionLabel: string, successText: string, result: BatchOperationResult) {
+  const totalCount = result.successCount + result.failCount
+  if (totalCount === 0) return
+
+  if (result.failCount === 0) {
+    ElMessage.success(totalCount > 1 ? `全部成功：完成 ${totalCount} 个` : `全部成功：${successText}`)
+    return
+  }
+
+  const detail = result.errors.slice(0, 3).map(formatBatchError).join('；')
+  const suffix = detail ? `：${detail}${result.errors.length > 3 ? ' 等' : ''}` : ''
+  console.warn(`[FileOperations] ${actionLabel} failed items`, result.errors)
+
+  if (result.successCount > 0) {
+    ElMessage.warning({
+      message: `部分成功：完成 ${result.successCount} 个，失败 ${result.failCount} 个${suffix}`,
+      duration: 6000,
+      showClose: true,
+    })
+    return
+  }
+
+  ElMessage.error({
+    message: `全部失败：${result.failCount} 个项目未完成${suffix}`,
+    duration: 6000,
+    showClose: true,
+  })
 }
 
 export interface FileOperationsOptions {
@@ -99,30 +180,44 @@ export function useFileOperations(options: FileOperationsOptions) {
     } catch { /* cancelled */ }
   }
 
-  async function deleteEntry(file: FileEntry): Promise<void> {
+  async function deleteEntry(file: FileEntry): Promise<BatchOperationResult | null> {
     try {
       await ElMessageBox.confirm(`确定删除 "${file.file_name}"？`, '确认删除', { type: 'warning' })
     } catch {
-      return
+      return null
     }
+    const result = createBatchOperationResult()
     try {
       await moveToRecycleBinRequest(file.is_folder ? 'folder' : 'file', file.id)
-      ElMessage.success('已移至回收站')
+      result.successCount += 1
+      showBatchOperationResult('删除', '已移至回收站', result)
       await refresh()
-    } catch {
-      ElMessage.warning('删除失败')
+    } catch (error: unknown) {
+      result.failCount += 1
+      result.errors.push({ id: file.id, name: fullFileName(file), message: errorMessage(error) })
+      showBatchOperationResult('删除', '已移至回收站', result)
     }
+    return result
   }
 
-  async function pasteToFolder(folderId: number | null, items: ClipboardLike[], isCut: boolean): Promise<void> {
+  async function pasteToFolder(folderId: number | null, items: ClipboardLike[], isCut: boolean): Promise<BatchOperationResult> {
+    const result = createBatchOperationResult()
     for (const item of items) {
       try {
         if (isCut) await moveEntryRequest(item.type, item.id, folderId)
         else await copyEntryRequest(item.type, item.id, folderId)
-      } catch { /* skip failed item */ }
+        result.successCount += 1
+      } catch (error: unknown) {
+        result.failCount += 1
+        result.errors.push({ id: item.id, name: item.name, message: errorMessage(error) })
+      }
     }
-    ElMessage.success(isCut ? '已移动' : '已粘贴')
-    await refresh()
+
+    showBatchOperationResult(isCut ? '移动' : '粘贴', isCut ? '已移动' : '已粘贴', result)
+    if (result.successCount > 0) {
+      await refresh()
+    }
+    return result
   }
 
   return {

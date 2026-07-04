@@ -35,6 +35,7 @@ def build_release_gate_response(
             "clean_pass": False,
             "clean_release_ready": False,
             "release_safe": False,
+            "deploy_allowed": False,
             "has_debt": False,
             "verdict": "INVALID_GATE_OUTPUT",
             "returncode": returncode,
@@ -58,6 +59,7 @@ def build_release_gate_response(
     summary_has_debt = bool(summary.get("has_debt"))
     clean_pass = returncode == 0 and verdict == "PASS" and not ui_skipped
     release_safe = returncode == 0 and verdict in {"PASS", "PASS_WITH_DEBT"}
+    deploy_allowed = release_safe
     has_debt = summary_has_debt or verdict == "PASS_WITH_DEBT" or ui_skipped
     clean_release_ready = clean_pass and not has_debt and bool(summary.get("clean_release_ready", clean_pass))
     gate_mode = summary.get("gate_mode")
@@ -68,6 +70,7 @@ def build_release_gate_response(
         "clean_pass": clean_pass,
         "clean_release_ready": clean_release_ready,
         "release_safe": release_safe,
+        "deploy_allowed": deploy_allowed,
         "has_debt": has_debt,
         "verdict": verdict,
         "returncode": returncode,

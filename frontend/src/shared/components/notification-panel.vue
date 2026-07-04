@@ -2,9 +2,36 @@
   <div v-if="show" class="notification-panel">
     <div class="notification-panel-header">
       <span class="notification-panel-title">反馈中心</span>
-      <el-tag :type="feedbackSignalCount === 0 ? 'success' : 'warning'" size="small">
-        {{ feedbackSignalCount === 0 ? '一切正常' : `${feedbackSignalCount} 项` }}
+      <el-tag :type="panelTagType" size="small">
+        {{ panelStatusText }}
       </el-tag>
+    </div>
+
+    <div v-if="loadIssues.length" class="feedback-load-section">
+      <div
+        v-for="issue in loadIssues"
+        :key="issue.source"
+        class="feedback-load-row"
+        :class="{ 'feedback-load-row-stale': issue.status === 'stale' }"
+      >
+        <div class="feedback-load-copy">
+          <span class="feedback-load-title">
+            {{ issue.label }}{{ issue.status === 'stale' ? '可能不是最新' : '加载失败' }}
+          </span>
+          <span class="feedback-load-message">{{ issue.message }}</span>
+          <span v-if="issue.backendMessage && issue.backendMessage !== issue.message" class="feedback-load-detail">
+            {{ issue.backendMessage }}
+          </span>
+        </div>
+        <button class="feedback-load-retry" type="button" @click="emit('retry-load', issue.source)">
+          <el-icon :size="14"><Refresh /></el-icon>
+          <span>重试</span>
+        </button>
+      </div>
+      <button v-if="loadIssues.length > 1" class="feedback-load-retry all" type="button" @click="emit('retry-load')">
+        <el-icon :size="14"><Refresh /></el-icon>
+        <span>全部重试</span>
+      </button>
     </div>
 
     <div v-if="actionItems.length" class="feedback-section">
@@ -109,9 +136,12 @@ import type { NotificationItem } from '@/shared/api/types'
 import type {
   ActionItem,
   AgentWorkflowSummary,
+  NotificationLoadIssue,
+  NotificationLoadSource,
   TaskDebtSummary,
 } from '@/shared/composables/use-notifications'
 import { computed } from 'vue'
+import { Refresh } from '@element-plus/icons-vue'
 
 const props = defineProps<{
  show: boolean
@@ -120,6 +150,8 @@ const props = defineProps<{
   agentWorkflowSummary?: AgentWorkflowSummary | null
   actionItems?: ActionItem[]
   feedbackSignalCount?: number
+  loadIssues?: NotificationLoadIssue[]
+  isLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -128,6 +160,7 @@ const emit = defineEmits<{
   'action-primary': [item: ActionItem]
   'action-secondary': [item: ActionItem, actionId: string]
   'open-agent': []
+  'retry-load': [source?: NotificationLoadSource]
 }>()
 
 function tagType(type: string) {
@@ -171,12 +204,26 @@ const taskProblemTotal = computed(() => {
     + summary.classification.completed_semantic_failure_count
 })
 const actionItems = computed(() => props.actionItems ?? [])
+const loadIssues = computed(() => props.loadIssues ?? [])
+const hasLoadIssue = computed(() => loadIssues.value.length > 0)
 const isEmpty = computed(() => (
   props.items.length === 0
   && taskSignalTotal.value === 0
   && (props.agentWorkflowSummary?.total ?? 0) === 0
   && actionItems.value.length === 0
+  && !hasLoadIssue.value
+  && !props.isLoading
 ))
+const panelStatusText = computed(() => {
+  if (hasLoadIssue.value) return '需重试'
+  if (props.isLoading) return '加载中'
+  return feedbackSignalCount.value === 0 ? '一切正常' : `${feedbackSignalCount.value} 项`
+})
+const panelTagType = computed(() => {
+  if (hasLoadIssue.value) return 'danger'
+  if (props.isLoading) return 'info'
+  return feedbackSignalCount.value === 0 ? 'success' : 'warning'
+})
 const taskStatusText = computed(() => {
   if (taskProblemTotal.value > 0) return '部分完成'
   if ((props.taskDebtSummary?.summary.running ?? 0) > 0) return '处理中'
@@ -246,6 +293,71 @@ function handleMarkAllRead() {
   font-weight: 700;
   color: #46586b;
   margin-bottom: 8px;
+}
+
+.feedback-load-section {
+  margin: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.feedback-load-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.feedback-load-row-stale {
+  border-color: #f2d18b;
+  background: #fff8e6;
+  color: #8a4f00;
+}
+
+.feedback-load-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.feedback-load-title {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.feedback-load-message,
+.feedback-load-detail {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.feedback-load-detail {
+  color: #6b7280;
+}
+
+.feedback-load-retry {
+  flex: none;
+  height: 28px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.feedback-load-retry.all {
+  justify-self: end;
 }
 
 .notification-list-title {

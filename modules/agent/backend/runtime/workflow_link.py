@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .._utils import artifact_refs_from_value
 from ..services import workflow_service as workflow_svc
 from ..services.action_policy import _sanitize_tool_arg_value, classify_side_effect_level
 from ..services.tool_discovery import parse_tool_name
@@ -21,10 +22,14 @@ def _truncate(value: str, limit: int = 240) -> str:
 
 
 def _safe_ref(value: object) -> dict:
-    return {
+    ref = {
         "storage": "sanitized_summary",
         "summary": _sanitize_tool_arg_value(value if value is not None else {}),
     }
+    artifact_refs = artifact_refs_from_value(value)
+    if artifact_refs:
+        ref["artifact_refs"] = artifact_refs
+    return ref
 
 
 def _tool_args(tool: dict) -> dict:
@@ -91,6 +96,25 @@ def _error_signature(result_event: dict) -> str | None:
     if not message and isinstance(inner, dict):
         message = inner.get("error") or inner.get("message")
     return _truncate(str(message), 256) if message else None
+
+
+def _artifact_refs_from_tool_events(tool_events: list[dict]) -> list[dict]:
+    refs: list[dict] = []
+    seen: set[str] = set()
+    for event in tool_events:
+        if event.get("type") != "tool_result":
+            continue
+        for ref in artifact_refs_from_value(event.get("result", {})):
+            key = f"{ref.get('type')}:{ref.get('ref_key')}:{ref.get('ref_id')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            refs.append({
+                **ref,
+                "tool_name": event.get("effective_tool_name") or event.get("name") or "",
+                "tool_call_id": event.get("tool_call_id") or "",
+            })
+    return refs
 
 
 def should_open_workflow_from_preflight(preflight: dict | None) -> bool:
@@ -286,6 +310,24 @@ class WorkflowRuntimeLink:
                 next_action="retry" if not result_event.get("hard_failure") else "manual",
                 evidence_ref=_safe_ref(result_event),
             )
+        artifact_refs = artifact_refs_from_value(result_event.get("result", {}))
+        if artifact_refs and self.run_id:
+            await workflow_svc.create_artifact(
+                db,
+                run_id=self.run_id,
+                step_id=self.step_id,
+                artifact_type="tool_reference",
+                storage_kind="inline_json",
+                storage_ref={
+                    "tool_call_id": call_id,
+                    "llm_tool_call_id": llm_tool_call_id,
+                    "tool_name": result_event.get("effective_tool_name") or result_event.get("name") or "",
+                    "refs": artifact_refs,
+                },
+                visibility="user",
+                lifecycle="candidate",
+                summary=f"{len(artifact_refs)} reference id(s) from tool result",
+            )
         result_tool_name = str(
             result_event.get("effective_tool_name")
             or result_event.get("name")
@@ -391,11 +433,26 @@ class WorkflowRuntimeLink:
                 lifecycle="candidate",
                 summary=f"{len(completion_evidence)} completion evidence item(s)",
             )
+        artifact_refs = _artifact_refs_from_tool_events(tool_events)
+        if artifact_refs:
+            await workflow_svc.create_artifact(
+                db,
+                run_id=self.run_id,
+                step_id=self.step_id,
+                artifact_type="tool_references",
+                storage_kind="inline_json",
+                storage_ref={"items": artifact_refs},
+                visibility="user",
+                lifecycle="candidate",
+                summary=f"{len(artifact_refs)} tool result reference id(s)",
+            )
         run = await workflow_svc.get_workflow(db, self.run_id, user_id=self.owner_id)
         if run.status == "needs_confirmation":
             return
         if tool_events:
-            failed = any(event.get("type") == "tool_result" and _status_for_result(event) == "failed" for event in tool_events)
+            tool_results = [event for event in tool_events if event.get("type") == "tool_result"]
+            failed_results = [event for event in tool_results if _status_for_result(event) == "failed"]
+            failed = bool(failed_results)
             await workflow_svc.record_verification(
                 db,
                 run_id=self.run_id,
@@ -404,7 +461,14 @@ class WorkflowRuntimeLink:
                 status="fail" if failed else "pass",
                 summary="Tool execution failed" if failed else "Tool execution completed",
                 is_required_for_completion=True,
-                evidence_ref={"tool_event_count": len(tool_events)},
+                evidence_ref={
+                    "source": "tool_result",
+                    "result": "fail" if failed else "pass",
+                    "tool_event_count": len(tool_events),
+                    "tool_result_count": len(tool_results),
+                    "failed_count": len(failed_results),
+                    "artifact_refs": artifact_refs,
+                },
             )
         else:
             await workflow_svc.record_verification(
@@ -415,6 +479,7 @@ class WorkflowRuntimeLink:
                 status="pass",
                 summary="No tool side effects were produced",
                 is_required_for_completion=True,
+                evidence_ref={"source": "runtime", "result": "pass"},
             )
         if self.step_id:
             await workflow_svc.update_step_status(
@@ -434,8 +499,7 @@ class WorkflowRuntimeLink:
         error_type: str,
         error_message: str,
     ) -> None:
-        if self.run_id is None:
-            return
+        await self.ensure_started(db, reason="runtime_failure")
         signature = _truncate(f"{error_type}: {error_message}", 256)
         await workflow_svc.record_failure(
             db,

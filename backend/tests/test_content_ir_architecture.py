@@ -753,6 +753,8 @@ class TestWriteIR:
     async def test_version_conflict_detected(self):
         """expected_version_id mismatch should raise ConflictError."""
         from app.database import AsyncSessionLocal
+        from app.models.content import ContentPackage
+        from sqlalchemy import select
 
         owner_id = 9996
         async with AsyncSessionLocal() as db:
@@ -775,6 +777,14 @@ class TestWriteIR:
             except Exception:
                 await db.rollback()
                 raise
+            finally:
+                leftovers = await db.execute(
+                    select(ContentPackage.id).where(
+                        ContentPackage.owner_id == owner_id,
+                        ContentPackage.source_file_id.is_(None),
+                    )
+                )
+                await _delete_content_packages(db, list(leftovers.scalars().all()))
 
 
 # ====================================================================

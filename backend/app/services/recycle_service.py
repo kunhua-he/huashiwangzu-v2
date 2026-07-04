@@ -164,123 +164,105 @@ async def _recursive_restore_folder(db: AsyncSession, folder_id: int):
         await _recursive_restore_folder(db, sf.id)
 
 
-async def delete_permanently(db: AsyncSession, item_type: str, item_id: int, owner_id: int):
+async def _delete_file_row_permanently(db: AsyncSession, file: File) -> int:
+    file_id = int(file.id)
+    shares = await db.execute(
+        select(FileShare).where(FileShare.file_id == file.id)
+    )
+    for share in shares.scalars():
+        await db.delete(share)
+    other_refs = await db.execute(
+        select(File).where(
+            File.md5_hash == file.md5_hash,
+            File.deleted.is_(False),
+            File.id != file.id,
+        ).with_for_update()
+    )
+    if not other_refs.scalars().all():
+        path = _resolve_storage_path(file)
+        if path and path.exists():
+            try:
+                path.unlink()
+            except Exception as exc:
+                logger.warning("Failed to unlink storage file %s: %s", path, exc)
+    await db.delete(file)
+    return file_id
+
+
+async def delete_permanently(db: AsyncSession, item_type: str, item_id: int, owner_id: int) -> dict:
     recycle = await db.get(RecycleItem, item_id)
     if not recycle or recycle.owner_id != owner_id or recycle.item_type != item_type:
         raise NotFound("Recycle item not found")
 
+    permanently_deleted_file_ids: list[int] = []
     if recycle.item_type == "file":
         file = await db.get(File, recycle.origin_id)
-        if file:
-            # Clean up share records for this file
-            shares = await db.execute(
-                select(FileShare).where(FileShare.file_id == file.id)
-            )
-            for share in shares.scalars():
-                await db.delete(share)
-            # Handle ref_count and disk cleanup
-            other_refs = await db.execute(
-                select(File).where(
-                    File.md5_hash == file.md5_hash,
-                    File.deleted.is_(False),
-                    File.id != file.id,
-                ).with_for_update()
-            )
-            other_ref_list = other_refs.scalars().all()
-            if not other_ref_list:
-                # Last reference — delete disk file
-                path = _resolve_storage_path(file)
-                if path and path.exists():
-                    try:
-                        path.unlink()
-                    except Exception as exc:
-                        logger.warning("Failed to unlink storage file %s: %s", path, exc)
-            await db.delete(file)
+        if file and file.owner_id == owner_id:
+            permanently_deleted_file_ids.append(await _delete_file_row_permanently(db, file))
     elif recycle.item_type == "folder":
         folder = await db.get(Folder, recycle.origin_id)
-        if folder:
-            await _recursive_permanent_delete_folder(db, folder.id, owner_id)
+        if folder and folder.owner_id == owner_id:
+            permanently_deleted_file_ids.extend(await _recursive_permanent_delete_folder(db, folder.id, owner_id))
             if folder.deleted:
                 await db.delete(folder)
 
     await db.delete(recycle)
     await db.commit()
+    return {
+        "success": True,
+        "item_type": recycle.item_type,
+        "origin_id": recycle.origin_id,
+        "permanently_deleted_file_ids": permanently_deleted_file_ids,
+    }
 
 
-async def _recursive_permanent_delete_folder(db: AsyncSession, folder_id: int, owner_id: int = 0):
+async def _recursive_permanent_delete_folder(db: AsyncSession, folder_id: int, owner_id: int = 0) -> list[int]:
+    permanently_deleted_file_ids: list[int] = []
     files = await db.execute(
-        select(File).where(File.folder_id == folder_id, File.deleted.is_(True))
+        select(File).where(
+            File.folder_id == folder_id,
+            File.owner_id == owner_id,
+            File.deleted.is_(True),
+        )
     )
     for f in files.scalars():
-        # Clean up shares for each file
-        shares = await db.execute(
-            select(FileShare).where(FileShare.file_id == f.id)
-        )
-        for share in shares.scalars():
-            await db.delete(share)
-        # Check ref_count before deleting disk
-        other_refs = await db.execute(
-            select(File).where(
-                File.md5_hash == f.md5_hash,
-                File.deleted.is_(False),
-                File.id != f.id,
-            ).with_for_update()
-        )
-        if not other_refs.scalars().all():
-            path = _resolve_storage_path(f)
-            if path and path.exists():
-                try:
-                    path.unlink()
-                except Exception as exc:
-                    logger.warning("Failed to unlink storage file %s: %s", path, exc)
-        await db.delete(f)
+        permanently_deleted_file_ids.append(await _delete_file_row_permanently(db, f))
 
     subfolders = await db.execute(
-        select(Folder).where(Folder.parent_id == folder_id, Folder.deleted.is_(True))
+        select(Folder).where(
+            Folder.parent_id == folder_id,
+            Folder.owner_id == owner_id,
+            Folder.deleted.is_(True),
+        )
     )
     for sf in subfolders.scalars():
-        await _recursive_permanent_delete_folder(db, sf.id, owner_id)
+        permanently_deleted_file_ids.extend(await _recursive_permanent_delete_folder(db, sf.id, owner_id))
         await db.delete(sf)
+    return permanently_deleted_file_ids
 
 
-async def empty_trash(db: AsyncSession, owner_id: int):
+async def empty_trash(db: AsyncSession, owner_id: int) -> dict:
     items = await db.execute(
         select(RecycleItem).where(RecycleItem.owner_id == owner_id)
     )
+    permanently_deleted_file_ids: list[int] = []
     for item in items.scalars():
         if item.item_type == "file":
             file = await db.get(File, item.origin_id)
-            if file:
-                # Clean up shares
-                shares = await db.execute(
-                    select(FileShare).where(FileShare.file_id == file.id)
-                )
-                for share in shares.scalars():
-                    await db.delete(share)
-                # Check ref_count
-                other_refs = await db.execute(
-                    select(File).where(
-                        File.md5_hash == file.md5_hash,
-                        File.deleted.is_(False),
-                        File.id != file.id,
-                    ).with_for_update()
-                )
-                if not other_refs.scalars().all():
-                    path = _resolve_storage_path(file)
-                    if path and path.exists():
-                        try:
-                            path.unlink()
-                        except Exception as exc:
-                            logger.warning("Failed to unlink storage file %s: %s", path, exc)
-                await db.delete(file)
+            if file and file.owner_id == owner_id:
+                permanently_deleted_file_ids.append(await _delete_file_row_permanently(db, file))
         elif item.item_type == "folder":
             folder = await db.get(Folder, item.origin_id)
-            if folder:
-                await _recursive_permanent_delete_folder(db, folder.id, owner_id)
+            if folder and folder.owner_id == owner_id:
+                permanently_deleted_file_ids.extend(await _recursive_permanent_delete_folder(db, folder.id, owner_id))
                 if folder.deleted:
                     await db.delete(folder)
         await db.delete(item)
     await db.commit()
+    return {
+        "success": True,
+        "permanently_deleted_file_ids": permanently_deleted_file_ids,
+    }
 
 
 def _resolve_storage_path(file: File):

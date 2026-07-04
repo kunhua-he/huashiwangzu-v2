@@ -7,6 +7,7 @@ import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import { useUserStore } from '@/platform/stores/user'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import type { Ref } from 'vue'
+import { isLauncherVisibleApp } from '@/desktop/app-registry/app-visibility'
 
 export function useDesktopAppLoading(currentRole: Ref<string>) {
   const windowMgr = useWindowManager()
@@ -41,7 +42,7 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
       const allApps = await loadAppRegistry(currentRole.value)
       allAppList.value = allApps
       desktopAppList.value = allApps.filter(a => a.showOnDesktop)
-      launcherAppList.value = allApps.filter(a => a.showInLauncher)
+      launcherAppList.value = allApps.filter(isLauncherVisibleApp)
       sidebarAppList.value = allApps.filter(a => a.showInSidebar)
       trayAppList.value = allApps.filter(a => a.showInTray)
 

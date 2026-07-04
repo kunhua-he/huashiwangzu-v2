@@ -117,6 +117,25 @@ def test_sandbox_matrix_skips_are_debt_not_clean_pass() -> None:
     assert "skip" in detail
 
 
+def test_asset_marker_predicate_includes_required_test_marker() -> None:
+    predicate = release_gate._asset_marker_predicate("f", "name")
+
+    assert "%test-%" not in predicate
+    assert "%test-upload-%" in predicate
+    assert "%test-file-%" in predicate
+    assert "%test-pollution-%" in predicate
+    assert "%smoke-%" in predicate
+    assert "%pytest-%" in predicate
+
+
+def test_content_lifecycle_sql_counts_test_cleanup_archive_reason() -> None:
+    import inspect
+
+    source = inspect.getsource(release_gate.audit_content_package_lifecycle_debt)
+
+    assert "archived_by_test_data_cleanup" in source
+
+
 def test_project_python_prefers_backend_venv_then_current_interpreter(tmp_path, monkeypatch) -> None:
     backend_python = tmp_path / "backend-python"
     backend_python.write_text("", encoding="utf-8")
@@ -324,6 +343,7 @@ def test_release_summary_keeps_result_data_and_clean_release_ready() -> None:
         assert summary["clean_pass"] is False
         assert summary["clean_release_ready"] is False
         assert summary["release_safe"] is True
+        assert summary["deploy_allowed"] is True
         assert summary["results"][0]["data"] == {"source_unavailable": 1}
     finally:
         release_gate.results[:] = original
@@ -343,7 +363,12 @@ def test_asset_lifecycle_gate_classification(monkeypatch) -> None:
         monkeypatch.setattr(
             release_gate,
             "audit_content_package_lifecycle_debt",
-            lambda: {"source_unavailable": 3, "archived_by_lifecycle": 1, "missing_current_version": 0},
+            lambda: {
+                "source_unavailable": 3,
+                "archived_by_lifecycle": 1,
+                "unarchived_source_unavailable": 2,
+                "missing_current_version": 0,
+            },
         )
         monkeypatch.setattr(
             release_gate,
@@ -363,6 +388,48 @@ def test_asset_lifecycle_gate_classification(monkeypatch) -> None:
         assert checks["ContentPackage lifecycle debt"]["level"] == "DEBT"
         assert checks["Test data pollution"]["level"] == "DEBT"
         assert release_gate.runtime_context["knowledge_lifecycle_debt"]["source_unavailable"] == 2
+    finally:
+        release_gate.results[:] = original_results
+        release_gate.runtime_context.clear()
+        release_gate.runtime_context.update(original_context)
+
+
+def test_asset_lifecycle_gate_all_archived_content_is_not_debt(monkeypatch) -> None:
+    original_results = list(release_gate.results)
+    original_context = dict(release_gate.runtime_context)
+    try:
+        release_gate.results[:] = []
+        release_gate.runtime_context.clear()
+        monkeypatch.setattr(
+            release_gate,
+            "audit_knowledge_lifecycle_debt",
+            lambda: {"source_unavailable": 0, "source_recycled": 0, "source_missing": 0},
+        )
+        monkeypatch.setattr(
+            release_gate,
+            "audit_content_package_lifecycle_debt",
+            lambda: {
+                "source_unavailable": 3,
+                "archived_by_lifecycle": 3,
+                "unarchived_source_unavailable": 0,
+                "missing_current_version": 0,
+            },
+        )
+        monkeypatch.setattr(
+            release_gate,
+            "audit_test_data_pollution",
+            lambda: {
+                "active_test_files": 0,
+                "recycled_test_files": 0,
+                "knowledge_documents_from_test_files": 0,
+                "content_packages_from_test_files": 0,
+            },
+        )
+
+        release_gate.check_asset_lifecycle_debt()
+        checks = {item["check"]: item for item in release_gate.results}
+
+        assert checks["ContentPackage lifecycle debt"]["level"] == "PASS"
     finally:
         release_gate.results[:] = original_results
         release_gate.runtime_context.clear()

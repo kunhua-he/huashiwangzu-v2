@@ -8,6 +8,7 @@
  */
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import { getAppRegistry, getApp as getAppFromState } from '@/desktop/app-registry/desktop-app-state'
+import { isLauncherVisibleApp } from './app-visibility'
 
 /** Filter app list by role; returns all if no role provided */
 export function getAllowedApps(role?: string): AppRegistryEntry[] {
@@ -37,7 +38,7 @@ export function getTrayApps(role?: string): AppRegistryEntry[] {
 
 /** getLauncherApps, optionally filtered by role */
 export function getLauncherApps(role?: string): AppRegistryEntry[] {
-  return getAllowedApps(role).filter(a => a.showInLauncher)
+  return getAllowedApps(role).filter(isLauncherVisibleApp)
 }
 
 /** getSidebarApps, optionally filtered by role */

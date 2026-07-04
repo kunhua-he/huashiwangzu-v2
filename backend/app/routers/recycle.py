@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import require_permission
-from app.models.recycle import RecycleItem
+from app.models.file import File, Folder
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.recycle import RecycleItemResponse, RestoreRequest
@@ -30,6 +30,27 @@ async def _emit_file_event(event_name: str, file_id: int, user: User) -> None:
         logger.warning("%s event emission failed for file_id=%d: %s", event_name, file_id, exc)
 
 
+async def _collect_folder_file_ids(db: AsyncSession, folder_id: int, owner_id: int) -> list[int]:
+    file_rows = await db.execute(
+        select(File.id).where(
+            File.folder_id == folder_id,
+            File.owner_id == owner_id,
+            File.deleted.is_(True),
+        )
+    )
+    file_ids = [int(file_id) for file_id in file_rows.scalars().all()]
+    folder_rows = await db.execute(
+        select(Folder.id).where(
+            Folder.parent_id == folder_id,
+            Folder.owner_id == owner_id,
+            Folder.deleted.is_(True),
+        )
+    )
+    for child_folder_id in folder_rows.scalars().all():
+        file_ids.extend(await _collect_folder_file_ids(db, int(child_folder_id), owner_id))
+    return file_ids
+
+
 @router.get("/list")
 async def list_recycle(
     db: AsyncSession = Depends(get_db),
@@ -50,9 +71,19 @@ async def restore(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("editor")),
 ):
+    folder_file_ids: list[int] = []
+    if body.item_type == "folder":
+        from app.models.recycle import RecycleItem
+
+        recycle_item = await db.get(RecycleItem, body.id)
+        if recycle_item and recycle_item.owner_id == user.id and recycle_item.item_type == "folder":
+            folder_file_ids = await _collect_folder_file_ids(db, int(recycle_item.origin_id), user.id)
     result = await recycle_service.restore_item(db, body.item_type, body.id, user.id)
     if result.get("item_type") == "file" and result.get("origin_id"):
         await _emit_file_event("file.restored", int(result["origin_id"]), user)
+    elif result.get("item_type") == "folder":
+        for file_id in folder_file_ids:
+            await _emit_file_event("file.restored", file_id, user)
     return ApiResponse(data={"message": "Restored", **result})
 
 
@@ -62,15 +93,10 @@ async def delete_permanently(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("editor")),
 ):
-    file_id: int | None = None
-    if body.item_type == "file":
-        recycle = await db.get(RecycleItem, body.id)
-        if recycle and recycle.owner_id == user.id and recycle.item_type == "file":
-            file_id = int(recycle.origin_id)
-    await recycle_service.delete_permanently(db, body.item_type, body.id, user.id)
-    if file_id:
+    result = await recycle_service.delete_permanently(db, body.item_type, body.id, user.id)
+    for file_id in result.get("permanently_deleted_file_ids", []):
         await _emit_file_event("file.permanent_deleted", file_id, user)
-    return ApiResponse(data={"message": "Deleted"})
+    return ApiResponse(data={"message": "Deleted", **result})
 
 
 @router.post("/empty")
@@ -78,14 +104,7 @@ async def empty_trash(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
-    rows = await db.execute(
-        select(RecycleItem.origin_id).where(
-            RecycleItem.owner_id == user.id,
-            RecycleItem.item_type == "file",
-        )
-    )
-    file_ids = [int(file_id) for file_id in rows.scalars().all()]
-    await recycle_service.empty_trash(db, user.id)
-    for file_id in file_ids:
+    result = await recycle_service.empty_trash(db, user.id)
+    for file_id in result.get("permanently_deleted_file_ids", []):
         await _emit_file_event("file.permanent_deleted", file_id, user)
-    return ApiResponse(data={"message": "Trash emptied"})
+    return ApiResponse(data={"message": "Trash emptied", **result})

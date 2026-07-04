@@ -308,7 +308,17 @@ def _run_psql_json(sql: str) -> dict[str, Any]:
 
 
 def _asset_marker_predicate(alias: str, column: str) -> str:
-    markers = ("smoke-", "e2e-", "recycle-", "test-", "pytest-")
+    markers = (
+        "smoke-",
+        "e2e-",
+        "recycle-",
+        "pytest-",
+        "test-upload-",
+        "test-file-",
+        "test-pollution-",
+        "lifecycle-source-",
+        "permanent-source-",
+    )
     field = f"lower(coalesce({alias}.{column}, ''))"
     return "(" + " or ".join(f"{field} like '%{marker}%'" for marker in markers) + ")"
 
@@ -352,9 +362,32 @@ select json_build_object(
   'source_unavailable', count(*) filter (where p.source_file_id is not null and (fi.id is null or fi.deleted=true)),
   'archived_by_lifecycle', count(*) filter (
     where p.status='archived'
-      and p.parse_error in ('source_file_deleted', 'source_file_missing', 'source_file_permanently_deleted')
+      and p.parse_error in (
+        'source_file_deleted',
+        'source_file_missing',
+        'source_file_permanently_deleted',
+        'archived_by_test_data_cleanup'
+      )
   ),
-  'missing_current_version', count(*) filter (where p.current_version_id is null),
+  'unarchived_source_unavailable', count(*) filter (
+    where p.source_file_id is not null
+      and (fi.id is null or fi.deleted=true)
+      and not (
+        p.status='archived'
+        and p.parse_error in (
+          'source_file_deleted',
+          'source_file_missing',
+          'source_file_permanently_deleted',
+          'archived_by_test_data_cleanup'
+        )
+      )
+  ),
+  'missing_current_version_total', count(*) filter (where p.current_version_id is null),
+  'missing_current_version', count(*) filter (
+    where p.current_version_id is null
+      and p.source_file_id is not null
+      and p.status in ('parsed', 'degraded', 'partial')
+  ),
   'sample_package_ids', coalesce((
     select json_agg(id) from (
       select p2.id
@@ -401,7 +434,10 @@ select json_build_object(
   'knowledge_documents_from_test_files', (select count(*) from marker_docs where deleted=false),
   'content_packages_from_test_files', (select count(*) from marker_packages where deleted=false),
   'uploads_test_artifacts', (select count(*) from marker_files),
-  'markers', json_build_array('smoke-', 'e2e-', 'recycle-', 'test-', 'pytest-')
+  'markers', json_build_array(
+    'smoke-', 'e2e-', 'recycle-', 'pytest-', 'test-upload-', 'test-file-',
+    'test-pollution-', 'lifecycle-source-', 'permanent-source-'
+  )
 )::text;
 """
     )
@@ -685,16 +721,17 @@ def check_asset_lifecycle_debt() -> None:
     try:
         content = audit_content_package_lifecycle_debt()
         unavailable = int(content.get("source_unavailable") or 0)
+        unarchived = int(content.get("unarchived_source_unavailable") or 0)
         missing_current = int(content.get("missing_current_version") or 0)
         if missing_current > 0:
             level = "BLOCKER"
-        elif unavailable > 0:
+        elif unarchived > 0:
             level = "DEBT"
         else:
             level = "PASS"
         detail = (
             f"source_unavailable={unavailable}, archived={content.get('archived_by_lifecycle', 0)}, "
-            f"missing_current_version={missing_current}"
+            f"unarchived={unarchived}, missing_current_version={missing_current}"
         )
         runtime_context["content_package_lifecycle_debt"] = content
         add_result("ContentPackage lifecycle debt", level, detail, content)
@@ -806,6 +843,7 @@ def build_release_summary(verdict: str, *, skip_ui: bool = False, preflight: boo
         "clean_pass": summary_verdict == "PASS" and not skip_ui and not preflight,
         "clean_release_ready": summary_verdict == "PASS" and not skip_ui and not preflight and not has_debt,
         "release_safe": summary_verdict in {"PASS", "PASS_WITH_DEBT"},
+        "deploy_allowed": summary_verdict in {"PASS", "PASS_WITH_DEBT"},
         "has_debt": has_debt,
         "ui_skipped": skip_ui,
         "preflight": preflight,

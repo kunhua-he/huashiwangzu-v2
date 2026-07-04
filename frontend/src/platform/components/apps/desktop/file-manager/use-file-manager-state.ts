@@ -29,6 +29,7 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
   return {
     currentFolderId: state.currentFolderId,
     items: state.items,
+    loadState: state.loadState,
     loading: state.loading,
     uploadInput: state.uploadInput,
     breadcrumb: state.breadcrumb,

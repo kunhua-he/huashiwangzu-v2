@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import require_permission
+from app.models.file import File, Folder
 from app.models.recycle import RecycleItem
 from app.models.user import User
 from app.schemas.common import ApiResponse
@@ -37,6 +39,35 @@ async def _emit_file_event(event_name: str, file_id: int, user: User) -> None:
         )
     except Exception as exc:
         logger.warning("%s event emission failed for file_id=%d: %s", event_name, file_id, exc)
+
+
+async def _collect_folder_file_ids(
+    db: AsyncSession,
+    folder_id: int,
+    owner_id: int,
+    *,
+    deleted: bool,
+) -> list[int]:
+    file_rows = await db.execute(
+        select(File.id).where(
+            File.folder_id == folder_id,
+            File.owner_id == owner_id,
+            File.deleted.is_(deleted),
+        )
+    )
+    file_ids = [int(file_id) for file_id in file_rows.scalars().all()]
+    folder_rows = await db.execute(
+        select(Folder.id).where(
+            Folder.parent_id == folder_id,
+            Folder.owner_id == owner_id,
+            Folder.deleted.is_(deleted),
+        )
+    )
+    for child_folder_id in folder_rows.scalars().all():
+        file_ids.extend(
+            await _collect_folder_file_ids(db, int(child_folder_id), owner_id, deleted=deleted)
+        )
+    return file_ids
 
 
 @router.get("/tree")
@@ -87,12 +118,15 @@ async def copy(body: MoveRequest, db: AsyncSession = Depends(get_db), user: User
 
 @router.post("/delete")
 async def delete_item(body: DeleteRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+    file_ids_to_emit = [body.id] if body.type == "file" else await _collect_folder_file_ids(
+        db, body.id, user.id, deleted=False
+    )
     item = await file_service.delete_to_trash(db, body.type, body.id, user.id)
     recycle_item = RecycleItem(origin_id=body.id, item_type=body.type, name=item.name, owner_id=user.id, deleted_at=datetime.now(timezone.utc))
     db.add(recycle_item)
     await db.commit()
-    if body.type == "file":
-        await _emit_file_event("file.deleted", body.id, user)
+    for file_id in file_ids_to_emit:
+        await _emit_file_event("file.deleted", file_id, user)
     return ApiResponse(data={"message": "Deleted"})
 
 
@@ -122,12 +156,15 @@ async def batch_delete(body: BatchRequest, db: AsyncSession = Depends(get_db), u
     failed_count = 0
     for item in body.items:
         try:
+            file_ids_to_emit = [item.id] if item.item_type == "file" else await _collect_folder_file_ids(
+                db, item.id, user.id, deleted=False
+            )
             deleted = await file_service.delete_to_trash(db, item.item_type, item.id, user.id)
             recycle_item = RecycleItem(origin_id=item.id, item_type=item.item_type, name=deleted.name, owner_id=user.id, deleted_at=datetime.now(timezone.utc))
             db.add(recycle_item)
             await db.commit()
-            if item.item_type == "file":
-                await _emit_file_event("file.deleted", item.id, user)
+            for file_id in file_ids_to_emit:
+                await _emit_file_event("file.deleted", file_id, user)
             results.append({"id": item.id, "type": item.item_type, "success": True, "error": None})
             success_count += 1
             await create_log(db, "info", "file_system", "delete_to_trash", f"Batch deleted {item.item_type} {item.id}", user_id=user.id)

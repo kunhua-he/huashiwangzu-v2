@@ -17,8 +17,26 @@
       </button>
     </div>
 
+    <LoadStateBanner
+      v-if="loadStatus === 'stale'"
+      class="fm-load-banner"
+      :status="loadStatus"
+      :error="loadError"
+      stale-text="文件列表可能不是最新"
+      @retry="emit('retry')"
+    />
+
     <!-- Loading state -->
-    <div v-if="loading" class="fm-state">加载中...</div>
+    <div v-if="loading && items.length === 0" class="fm-state">加载中...</div>
+
+    <div v-else-if="loadStatus === 'error'" class="fm-state fm-state-error">
+      <LoadStateBanner
+        :status="loadStatus"
+        :error="loadError"
+        error-text="文件列表加载失败"
+        @retry="emit('retry')"
+      />
+    </div>
 
     <!-- Empty state -->
     <div v-else-if="items.length === 0" class="fm-state">这个文件夹是空的</div>
@@ -75,6 +93,9 @@
 import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
 import type { FileEntry } from '@/shared/api/types'
 import { startDrag } from '@/desktop/drag-drop/drag-state'
+import LoadStateBanner from '@/shared/components/load-state-banner.vue'
+import type { ApiErrorInfo } from '@/shared/api/response-transform'
+import type { LoadStatus } from '@/shared/composables/use-load-state'
 
 let suppressNextClick = false
 let pendingDrag: { key: string; startX: number; startY: number } | null = null
@@ -88,6 +109,8 @@ const props = defineProps<{
   formatSize: (size: number) => string
   sortColumn: 'name' | 'date' | 'type' | 'size'
   sortDirection: 'asc' | 'desc'
+  loadStatus: LoadStatus
+  loadError: ApiErrorInfo | null
 }>()
 
 function handleEntryMouseDown(item: FileEntry, e: MouseEvent) {
@@ -142,6 +165,7 @@ const emit = defineEmits<{
   (e: 'open', item: FileEntry): void
   (e: 'context-menu', item: FileEntry, event: MouseEvent): void
   (e: 'sort', column: string): void
+  (e: 'retry'): void
 }>()
 </script>
 
@@ -281,5 +305,13 @@ const emit = defineEmits<{
   color: #64748b;
   font-size: 13px;
   padding: 40px;
+}
+
+.fm-state-error {
+  align-content: center;
+}
+
+.fm-load-banner {
+  margin: 10px;
 }
 </style>

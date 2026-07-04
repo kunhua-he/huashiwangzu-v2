@@ -4,7 +4,7 @@ import { getApp } from '@/desktop/app-registry/desktop-app-state'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 
 export function useCommandRegistry(
-  openAppFn: (appKey: string) => void,
+  openAppFn: (appKey: string) => unknown,
   executeCommandFn: (command: string) => void,
 ) {
   const builtinDisposables: IDisposable[] = []

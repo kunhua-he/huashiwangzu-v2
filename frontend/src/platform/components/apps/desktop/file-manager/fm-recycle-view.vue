@@ -15,10 +15,13 @@
       :format-size="formatSize"
       :sort-column="sortColumn"
       :sort-direction="sortDirection"
+      :load-status="loadState.status"
+      :load-error="loadState.error"
       @select="handleSelect"
       @open="handleOpen"
       @context-menu="handleItemContextMenu"
       @sort="handleSort"
+      @retry="loadList"
     />
 
     <FmStatusBar
@@ -45,6 +48,7 @@ import type { RecycleBinEntry } from '@/shared/api/types'
 import type { FileEntry } from '@/shared/api/types'
 import { usePermission } from '@/shared/composables/use-permission'
 import { formatFileDisplayName } from '@/shared/files/display-name'
+import { createLoadState, failLoading, finishLoading, startLoading } from '@/shared/composables/use-load-state'
 import FmFileList from './fm-file-list.vue'
 import FmStatusBar from './fm-status-bar.vue'
 import emitter from '@/desktop/events'
@@ -57,6 +61,7 @@ const emit = defineEmits<{
 const { isEditorOrAbove } = usePermission()
 const canWrite = ref(false)
 const items = ref<RecycleBinEntry[]>([])
+const loadState = createLoadState<RecycleBinEntry[]>([])
 const loading = ref(false)
 const selectedId = ref<number | null>(null)
 const viewMode = ref<'grid' | 'list'>('grid')
@@ -125,8 +130,14 @@ function formatSize(bytes: number): string {
 
 async function loadList() {
   loading.value = true
-  try { items.value = await fetchRecycleBinList() || [] }
-  catch { items.value = [] }
+  startLoading(loadState)
+  try {
+    const nextItems = await fetchRecycleBinList() || []
+    items.value = nextItems
+    finishLoading(loadState, nextItems)
+  } catch (error: unknown) {
+    failLoading(loadState, error, '回收站加载失败')
+  }
   finally { loading.value = false; selectedId.value = null }
 }
 

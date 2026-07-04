@@ -5,7 +5,9 @@ All queries are owner-isolated. No Agent should handle base64 or physical paths.
 """
 import io
 import json
+import logging
 import os
+from datetime import datetime, timezone
 
 from app.core.exceptions import AppException, NotFound, ValidationError
 from app.database import AsyncSessionLocal
@@ -52,6 +54,7 @@ _normalize_file_name = file_contract.normalize_file_name
 _truncate_text = file_contract.truncate_text
 
 router = APIRouter(prefix="/api/desktop-tools", tags=["desktop-tools"])
+logger = logging.getLogger("v2.desktop-tools.router")
 
 
 # ── Framework model imports (used inside handler functions) ──────────
@@ -450,11 +453,32 @@ async def _replace_file(params: dict, caller: str) -> dict:
 # =====================================================================
 async def _delete_file(params: dict, caller: str) -> dict:
     """Soft-delete a file. Supports restore."""
+    from app.models.recycle import RecycleItem
+    from app.services.module_events import emit_module_event
+
     owner_id = resolve_caller_user_id(caller)
     file_id = _coerce_positive_int(params.get("file_id", 0), "file_id")
 
     async with AsyncSessionLocal() as db:
-        await delete_to_trash(db, "file", file_id, owner_id)
+        item = await delete_to_trash(db, "file", file_id, owner_id)
+        db.add(RecycleItem(
+            origin_id=file_id,
+            item_type="file",
+            name=item.name,
+            owner_id=owner_id,
+            deleted_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+
+    try:
+        await emit_module_event(
+            "file.deleted",
+            {"file_id": file_id, "owner_id": owner_id},
+            caller=caller,
+            caller_role="editor",
+        )
+    except Exception as exc:
+        logger.warning("file.deleted event emission failed for file_id=%d: %s", file_id, exc)
 
     return {"file_id": file_id, "deleted": True}
 

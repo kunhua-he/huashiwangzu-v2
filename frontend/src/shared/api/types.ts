@@ -5,6 +5,8 @@ export interface ApiResponse<T = unknown> {
   errors?: { field: string; message: string }[] | null
 }
 
+export type { ApiErrorInfo } from './response-transform'
+
 export interface LoginParams {
   username: string
   password: string

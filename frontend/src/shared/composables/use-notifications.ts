@@ -1,6 +1,8 @@
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted, type Ref } from 'vue'
 import api from '@/shared/api'
 import type { NotificationItem } from '@/shared/api/types'
+import { displayApiError } from '@/shared/api/response-transform'
+import { createLoadState, failLoading, finishLoading, startLoading, type LoadState } from '@/shared/composables/use-load-state'
 
 export interface TaskAuditSummary {
   pending: number
@@ -103,6 +105,22 @@ interface KnowledgePendingCount {
   pending_count: number
 }
 
+export type NotificationLoadSource =
+  | 'unreadCount'
+  | 'notifications'
+  | 'taskDebt'
+  | 'agentWorkflows'
+  | 'knowledgeStats'
+  | 'knowledgeGovernance'
+
+export interface NotificationLoadIssue {
+  source: NotificationLoadSource
+  label: string
+  status: 'error' | 'stale'
+  message: string
+  backendMessage?: string
+}
+
 export function useNotifications(containerSelector = '.taskbar-notifications-wrapper') {
   const unreadCount = ref(0)
   const notificationList = ref<NotificationItem[]>([])
@@ -112,6 +130,41 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
   const knowledgePendingCount = ref(0)
   const dismissedActionItemIds = ref<Set<string>>(new Set())
   const showNotificationPanel = ref(false)
+
+  const unreadCountLoadState = createLoadState(0)
+  const notificationListLoadState = createLoadState<NotificationItem[]>([])
+  const taskDebtLoadState = createLoadState<TaskDebtSummary | null>(null)
+  const agentWorkflowLoadState = createLoadState<AgentWorkflowSummary | null>(null)
+  const knowledgeStatsLoadState = createLoadState<KnowledgeDashboardStats | null>(null)
+  const knowledgePendingLoadState = createLoadState(0)
+
+  const loadStateLabels: Record<NotificationLoadSource, string> = {
+    unreadCount: '未读通知',
+    notifications: '通知列表',
+    taskDebt: '后台任务',
+    agentWorkflows: 'Agent 工作',
+    knowledgeStats: '知识库状态',
+    knowledgeGovernance: '知识治理',
+  }
+
+  const feedbackLoadIssues = computed<NotificationLoadIssue[]>(() => [
+    issueFromState('unreadCount', unreadCountLoadState.value),
+    issueFromState('notifications', notificationListLoadState.value),
+    issueFromState('taskDebt', taskDebtLoadState.value),
+    issueFromState('agentWorkflows', agentWorkflowLoadState.value),
+    issueFromState('knowledgeStats', knowledgeStatsLoadState.value),
+    issueFromState('knowledgeGovernance', knowledgePendingLoadState.value),
+  ].filter((issue): issue is NotificationLoadIssue => issue !== null))
+  const hasFeedbackLoadError = computed(() => feedbackLoadIssues.value.some((issue) => issue.status === 'error'))
+  const hasStaleFeedbackData = computed(() => feedbackLoadIssues.value.some((issue) => issue.status === 'stale'))
+  const isFeedbackLoading = computed(() => [
+    unreadCountLoadState.value,
+    notificationListLoadState.value,
+    taskDebtLoadState.value,
+    agentWorkflowLoadState.value,
+    knowledgeStatsLoadState.value,
+    knowledgePendingLoadState.value,
+  ].some((state) => state.status === 'loading'))
 
   const taskSignalCount = computed(() => {
     const summary = taskDebtSummary.value
@@ -296,33 +349,27 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
   })
 
   async function loadUnreadCount() {
-    try {
+    await loadWithState(unreadCountLoadState, async () => {
       const data = await api.get<unknown, { unread_count: number }>('/notifications/unread-count')
-      unreadCount.value = data.unread_count
-    } catch {
-      unreadCount.value = 0
-    }
+      return data.unread_count
+    }, (count) => { unreadCount.value = count }, '未读通知加载失败')
   }
 
   async function loadNotificationList() {
-    try {
+    await loadWithState(notificationListLoadState, async () => {
       const data = await api.get<unknown, { list: NotificationItem[] }>('/notifications')
-      notificationList.value = data.list
-    } catch {
-      notificationList.value = []
-    }
+      return data.list
+    }, (items) => { notificationList.value = items }, '通知列表加载失败')
   }
 
   async function loadTaskDebtSummary() {
-    try {
-      taskDebtSummary.value = await api.get<unknown, TaskDebtSummary>('/tasks/worker/audit')
-    } catch {
-      taskDebtSummary.value = null
-    }
+    await loadWithState(taskDebtLoadState, async () => (
+      await api.get<unknown, TaskDebtSummary>('/tasks/worker/audit')
+    ), (summary) => { taskDebtSummary.value = summary }, '后台任务状态加载失败')
   }
 
   async function loadAgentWorkflowSummary() {
-    try {
+    await loadWithState(agentWorkflowLoadState, async () => {
       const data = await api.post<unknown, AgentWorkflowListResponse>('/modules/call', {
         target_module: 'agent',
         action: 'list_workflows',
@@ -331,7 +378,7 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
       const items = data.items ?? []
       const needsConfirmationStatuses = new Set(['needs_confirmation', 'manual_required', 'waiting_approval'])
       const activeStatuses = new Set(['pending', 'running', 'in_progress', 'queued'])
-      agentWorkflowSummary.value = {
+      return {
         items,
         total: data.total ?? items.length,
         active_count: items.filter((item) => activeStatuses.has(item.status)).length,
@@ -339,23 +386,17 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
         failed_count: items.filter((item) => item.status === 'failed').length,
         partial_count: items.filter((item) => item.status === 'partial' || item.status === 'partial_completed').length,
       }
-    } catch {
-      agentWorkflowSummary.value = null
-    }
+    }, (summary) => { agentWorkflowSummary.value = summary }, 'Agent 工作状态加载失败')
   }
 
   async function loadKnowledgeSignals() {
-    try {
-      knowledgeStats.value = await api.get<unknown, KnowledgeDashboardStats>('/knowledge/dashboard/stats')
-    } catch {
-      knowledgeStats.value = null
-    }
-    try {
+    await loadWithState(knowledgeStatsLoadState, async () => (
+      await api.get<unknown, KnowledgeDashboardStats>('/knowledge/dashboard/stats')
+    ), (stats) => { knowledgeStats.value = stats }, '知识库状态加载失败')
+    await loadWithState(knowledgePendingLoadState, async () => {
       const pending = await api.get<unknown, KnowledgePendingCount>('/knowledge/governance/pending-count')
-      knowledgePendingCount.value = pending.pending_count
-    } catch {
-      knowledgePendingCount.value = 0
-    }
+      return pending.pending_count
+    }, (count) => { knowledgePendingCount.value = count }, '知识治理待办加载失败')
   }
 
   async function markRead(id: number) {
@@ -364,8 +405,8 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
       const item = notificationList.value.find((n) => n.id === id)
       if (item) item.is_read = true
       unreadCount.value = Math.max(0, unreadCount.value - 1)
-    } catch {
-      console.warn('[Notifications] Failed to mark notification as read.')
+    } catch (error: unknown) {
+      displayApiError(error, '通知标记失败')
     }
   }
 
@@ -374,9 +415,27 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
       await api.post('/notifications/read-all')
       notificationList.value.forEach((n) => { n.is_read = true })
       unreadCount.value = 0
-    } catch {
-      console.warn('[Notifications] Failed to mark all notifications as read.')
+    } catch (error: unknown) {
+      displayApiError(error, '全部已读失败')
     }
+  }
+
+  async function retryFeedbackLoad(source?: NotificationLoadSource) {
+    if (!source) {
+      await Promise.all([
+        loadUnreadCount(),
+        loadNotificationList(),
+        loadTaskDebtSummary(),
+        loadAgentWorkflowSummary(),
+        loadKnowledgeSignals(),
+      ])
+      return
+    }
+    if (source === 'unreadCount') await loadUnreadCount()
+    else if (source === 'notifications') await loadNotificationList()
+    else if (source === 'taskDebt') await loadTaskDebtSummary()
+    else if (source === 'agentWorkflows') await loadAgentWorkflowSummary()
+    else if (source === 'knowledgeStats' || source === 'knowledgeGovernance') await loadKnowledgeSignals()
   }
 
   function toggleNotificationPanel() {
@@ -412,6 +471,18 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
     document.removeEventListener('click', handleClickOutside)
   })
 
+  function issueFromState<T>(source: NotificationLoadSource, state: LoadState<T>): NotificationLoadIssue | null {
+    if (state.status !== 'error' && state.status !== 'stale') return null
+    if (!state.error) return null
+    return {
+      source,
+      label: loadStateLabels[source],
+      status: state.status,
+      message: state.error.userMessage,
+      backendMessage: state.error.backendMessage,
+    }
+  }
+
   return {
     unreadCount,
     notificationList,
@@ -423,6 +494,10 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
     taskSignalCount,
     agentSignalCount,
     knowledgeSignalCount,
+    feedbackLoadIssues,
+    hasFeedbackLoadError,
+    hasStaleFeedbackData,
+    isFeedbackLoading,
     actionItems,
     showNotificationPanel,
     toggleNotificationPanel,
@@ -430,9 +505,26 @@ export function useNotifications(containerSelector = '.taskbar-notifications-wra
     loadTaskDebtSummary,
     loadAgentWorkflowSummary,
     loadKnowledgeSignals,
+    retryFeedbackLoad,
     markRead,
     markAllRead,
     dismissActionItem,
+  }
+}
+
+async function loadWithState<T>(
+  state: Ref<LoadState<T>>,
+  loader: () => Promise<T>,
+  apply: (data: T) => void,
+  fallbackMessage: string,
+): Promise<void> {
+  startLoading(state)
+  try {
+    const data = await loader()
+    apply(data)
+    finishLoading(state, data)
+  } catch (error: unknown) {
+    failLoading(state, error, fallbackMessage)
   }
 }
 

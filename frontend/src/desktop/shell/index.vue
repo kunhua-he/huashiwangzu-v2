@@ -29,7 +29,7 @@
       @update-position="windowManager.updateWindowPosition"
       @update-geometry="windowManager.updateWindowGeometry"
     />
-    <component :is="desktopTaskbar" :items="unref(windowManager.taskbarItems)" :launcher-open="showLauncher" :tray-apps="trayAppList" @switchWindow="handleSwitchWindow" @openLauncher="showLauncher = !showLauncher" @openTrayApp="windowManager.openWindow" />
+    <component :is="desktopTaskbar" :items="unref(windowManager.taskbarItems)" :launcher-open="showLauncher" :tray-apps="trayAppList" @switchWindow="handleSwitchWindow" @openLauncher="showLauncher = !showLauncher" @openTrayApp="handleOpenApp" />
     <component :is="desktopLauncher" v-if="showLauncher" :show="showLauncher" :app-list="launcherAppList" @openApp="handleLauncherOpen" @execute-command="handleLauncherCommand" @close="showLauncher = false" />
     <component :is="desktopRightSidebar" :show="showRightSidebar" :current-path="rightSidebarPath" :current-app-key="rightSidebarAppKey" :app-list="sidebarAppList" @close="showRightSidebar = false" @switch="openSidebar" @open-window="handleOpenApp" />
     <ContextMenu
@@ -44,9 +44,21 @@
       :keep-submenu-open="contextMenu.keepSubmenuOpen"
       @select="handleContextMenuSelect"
     />
+    <LoadStateBanner
+      v-if="desktopFileLoadState.status === 'stale'"
+      class="desktop-shell-file-stale"
+      :status="desktopFileLoadState.status"
+      :error="desktopFileLoadState.error"
+      stale-text="桌面文件可能不是最新"
+      @retry="loadDesktopFiles"
+    />
     <div v-if="registryError" class="desktop-shell-error">
        <p>{{ registryError }}</p>
        <button @click="retryLoadRegistry">重试</button>
+     </div>
+     <div v-else-if="desktopFileLoadState.status === 'error'" class="desktop-shell-error">
+       <p>{{ desktopFileLoadState.error?.userMessage || '桌面文件加载失败' }}</p>
+       <button @click="loadDesktopFiles">重试</button>
      </div>
      <div v-else-if="!windowManager.openedWindowCount" class="desktop-shell-hint">
        双击图标打开应用 · 右键管理文件与回收站
@@ -86,6 +98,8 @@ import {
 import type { FileEntry } from '@/shared/api/types'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { useFileOperations } from '@/shared/files/use-file-operations'
+import LoadStateBanner from '@/shared/components/load-state-banner.vue'
+import { getOpenWindowFailureMessage } from '@/desktop/app-registry/app-visibility'
 
 const desktopIconGrid = defineAsyncComponent(() => import('@/desktop/shell/desktop-icon-grid.vue'))
 const desktopWindowFrame = defineAsyncComponent(() => import('@/desktop/window-manager/desktop-window-frame.vue'))
@@ -102,7 +116,7 @@ const contextMenu = useContextMenu()
 const userStore = useUserStore()
 const { emit, on } = useDesktopEventBus()
 const { isDragActive, onDragEnter, onDragLeave, onDrop } = useDesktopShellDropUpload()
-const { desktopFileList, openDesktopEntry } = useDesktopRootFiles()
+const { desktopFileList, desktopFileLoadState, loadDesktopFiles, openDesktopEntry } = useDesktopRootFiles()
 const { creatableFormats } = useCreatableFormats()
 const { allAppList, desktopAppList, launcherAppList, sidebarAppList, trayAppList, registryError, loading, desktopContainerRef, retryLoadRegistry, updateContainerSize } = useDesktopAppLoading(currentRole)
 const { handleDesktopMouseDown } = useDesktopPointer()
@@ -162,7 +176,13 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
   }
 })
 
-function handleOpenApp(appKey: string) { windowManager.openWindow(appKey) }
+function handleOpenApp(appKey: string): string | null {
+  const windowId = windowManager.openWindow(appKey)
+  if (!windowId) {
+    ElMessage.info(getOpenWindowFailureMessage(getApp(appKey)))
+  }
+  return windowId
+}
 function openSidebar(appKey = 'desktop') { rightSidebarAppKey.value = appKey; showRightSidebar.value = true }
 function handleLauncherOpen(appKey: string) {
   showLauncher.value = false
@@ -274,9 +294,9 @@ async function handleContextMenuSelect(menuKey: string) {
 
   // Global / Desktop actions
   if (menuKey === 'refresh-desktop' || menuKey === 'refresh') { refreshDesktop(); return }
-  if (menuKey === 'open-desktop-file-manager') { windowManager.openWindow('desktop'); return }
-  if (menuKey === 'open-recycle-bin') { windowManager.openWindow('recycle'); return }
-  if (menuKey === 'open-app' && appKey) { windowManager.openWindow(appKey); return }
+  if (menuKey === 'open-desktop-file-manager') { handleOpenApp('desktop'); return }
+  if (menuKey === 'open-recycle-bin') { handleOpenApp('recycle'); return }
+  if (menuKey === 'open-app' && appKey) { handleOpenApp(appKey); return }
 
   // Desktop blank: upload, create folder, paste
   if (menuKey === 'upload-file') { triggerUpload(null); return }

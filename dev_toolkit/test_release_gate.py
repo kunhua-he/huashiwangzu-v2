@@ -521,6 +521,48 @@ def test_capability_drift_manifest_source_gap_is_debt(tmp_path: Path) -> None:
     assert data["manifest_not_source"] == [("agent", "chat")]
 
 
+def test_capability_drift_undeclared_live_is_blocker(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "modules" / "agent"
+    manifest_dir.mkdir(parents=True)
+    manifests = [{
+        "key": "agent",
+        "path": manifest_dir / "manifest.json",
+        "module_dir": manifest_dir,
+        "data": {"key": "agent", "public_actions": []},
+    }]
+
+    level, detail, data = release_gate.classify_capability_drift(
+        [{"module": "agent", "action": "chat"}],
+        manifests=manifests,
+        source_registered=set(),
+    )
+
+    assert level == "BLOCKER"
+    assert "undeclared_live=1" in detail
+    assert data["undeclared_live"] == [("agent", "chat")]
+
+
+def test_capability_drift_source_not_live_is_blocker(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "modules" / "agent"
+    manifest_dir.mkdir(parents=True)
+    manifests = [{
+        "key": "agent",
+        "path": manifest_dir / "manifest.json",
+        "module_dir": manifest_dir,
+        "data": {"key": "agent", "public_actions": []},
+    }]
+
+    level, detail, data = release_gate.classify_capability_drift(
+        [],
+        manifests=manifests,
+        source_registered={("agent", "chat")},
+    )
+
+    assert level == "BLOCKER"
+    assert "source_not_live=1" in detail
+    assert data["source_not_live"] == [("agent", "chat")]
+
+
 def test_readme_acceptance_matrix_changed_module_missing_is_blocker(tmp_path: Path) -> None:
     module_dir = tmp_path / "modules" / "new-module"
     module_dir.mkdir(parents=True)
@@ -586,6 +628,26 @@ def test_component_key_contracts_enforce_window_type_rules(tmp_path: Path) -> No
     assert level == "BLOCKER"
     assert "issues=2" in detail
     assert {issue["module"] for issue in data["issues"]} == {"normal-app", "service-app"}
+
+
+def test_component_key_contracts_blocks_missing_component_file(tmp_path: Path) -> None:
+    module_dir = tmp_path / "normal"
+    module_dir.mkdir()
+    manifests = [{
+        "key": "normal-app",
+        "path": module_dir / "manifest.json",
+        "module_dir": module_dir,
+        "data": {"key": "normal-app", "window_type": "normal", "component_key": "index.vue"},
+    }]
+
+    level, detail, data = release_gate.classify_component_key_contracts(manifests)
+
+    assert level == "BLOCKER"
+    assert "issues=1" in detail
+    assert data["issues"] == [{
+        "module": "normal-app",
+        "issue": "component_key target missing: index.vue",
+    }]
 
 
 def test_asset_lifecycle_gate_classification(monkeypatch) -> None:

@@ -98,6 +98,15 @@
     - `backend/.venv/bin/ruff check backend/app/routers/content.py backend/app/services/content`：通过。
     - `set -a; source backend/.env; set +a; backend/.venv/bin/python -m pytest backend/tests/test_content_ir_architecture.py`：55 passed，1 个既有 FastAPI `on_event` deprecation warning。
     - `set -a; source backend/.env; set +a; backend/.venv/bin/python -m pytest backend/tests/test_content_artifact_publish.py`：7 passed。
+- 本轮主会话续验与权限负例补强：
+  - 补入 `test_content_publish_non_owner_does_not_create_artifact_or_file`，钉住非 package owner 调 `content:publish` 必须失败，且 `framework_artifacts/framework_file_items` 计数不变。
+  - `backend/.venv/bin/ruff check backend/app/routers/content.py backend/app/services/content backend/app/schemas/content_package.py backend/tests/test_content_artifact_publish.py`：通过。
+  - `set -a; source backend/.env; set +a; backend/.venv/bin/python -m pytest backend/tests/test_content_artifact_publish.py`：8 passed。
+  - `set -a; source backend/.env; set +a; backend/.venv/bin/python -m pytest backend/tests/test_content_ir_architecture.py`：55 passed，1 个既有 FastAPI `on_event` deprecation warning。
+  - 活栈能力链路：`content:write_ir` 生成 `package_id=890` / `version_id=798`；`content:publish` 返回 `artifact_id=223` / `file_id=1051` / `published_version_id=378` / `download_url=/api/files/download/1051` / `open_url=/api/files/preview/1051` / `desktop_visible=true` / `status=published` / `publish_status=published_artifact/file`。
+  - `GET /api/content/packages/890` 返回 `publish_status=published_artifact/file`、`published_artifact_id=223`、`published_file_id=1051`、`published_version_id=378`、`download_url/open_url/desktop_visible`。
+  - `GET /api/files/detail/1051` 可查到未删除、owner 可见文件；`GET /api/files/download/1051` 返回发布文本。
+  - 本轮探针已清理，`package_id=890`、`artifact_id=223`、`file_id=1051` 与物理 storage 均确认残留为 0；计数回到基线：content artifact `0`、可见文件 `2`、未删 package `216`。
 
 ## 注意
 

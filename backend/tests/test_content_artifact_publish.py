@@ -95,6 +95,39 @@ def _unique_bytes(label: str) -> bytes:
 
 
 @pytest.mark.asyncio
+async def test_content_publish_non_owner_does_not_create_artifact_or_file():
+    owner_id = 4
+    other_user_id = 5
+    package_id: int | None = None
+
+    async with AsyncSessionLocal() as db:
+        package_id = await _write_text_package(
+            db,
+            owner_id,
+            f"Publish Permission {uuid.uuid4().hex}",
+        )
+        before_files = await db.scalar(select(func.count()).select_from(File))
+        before_artifacts = await db.scalar(select(func.count()).select_from(Artifact))
+
+    try:
+        envelope = await _cap_publish({"package_id": package_id}, f"user:{other_user_id}")
+
+        assert envelope["success"] is False
+        assert "permission" in envelope["error"].lower()
+
+        async with AsyncSessionLocal() as db:
+            after_files = await db.scalar(select(func.count()).select_from(File))
+            after_artifacts = await db.scalar(select(func.count()).select_from(Artifact))
+
+        assert after_files == before_files
+        assert after_artifacts == before_artifacts
+    finally:
+        async with AsyncSessionLocal() as db:
+            if package_id is not None:
+                await _delete_content_packages(db, [package_id])
+
+
+@pytest.mark.asyncio
 async def test_publish_without_target_returns_artifact_file_contract():
     owner_id = 4
     package_id: int | None = None

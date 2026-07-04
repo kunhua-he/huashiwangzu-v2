@@ -122,6 +122,10 @@ class _CaptureExecuteDb:
 
 
 def test_pipeline_debt_error_family_covers_recent_unmatched_markers():
+    assert (
+        pipeline_debt_service._classify_error_family("Invalid or unsupported image content")
+        == "invalid_or_unsupported_image_content"
+    )
     assert pipeline_debt_service._classify_error_family("Task result status=failed") == "task_result_failed"
     assert (
         pipeline_debt_service._classify_error_family(
@@ -159,13 +163,27 @@ def test_pipeline_debt_lifecycle_state_takes_precedence_over_error_marker():
     category, action, parse_error, family = pipeline_debt_service._classify_task(
         _Doc(),
         _DeletedFile(),
-        "Task result status=failed",
+        "Invalid or unsupported image content",
     )
 
     assert category == "source_file_deleted"
     assert action == "archive_lifecycle_skip"
     assert parse_error == "source_file_deleted"
-    assert family == "task_result_failed"
+    assert family == "invalid_or_unsupported_image_content"
+
+
+def test_pipeline_debt_live_invalid_image_content_is_not_archiveable():
+    category, action, parse_error, family = pipeline_debt_service._classify_task(
+        _Doc(),
+        _File(),
+        "Invalid or unsupported image content",
+    )
+
+    assert category == "file_row_live"
+    assert action == "retry_or_parser_investigation"
+    assert parse_error is None
+    assert family == "invalid_or_unsupported_image_content"
+    assert pipeline_debt_service._is_archiveable(category) is False
 
 
 def test_pipeline_debt_orphan_running_run_classification_is_diagnostic_only():
@@ -276,21 +294,21 @@ async def test_archive_obsolete_only_archives_guarded_lifecycle_categories(monke
         dry_run=False,
     )
 
-    assert result["changed"] == 3
-    assert result["skipped"] == 4
+    assert result["changed"] == 4
+    assert result["skipped"] == 3
     assert result["changed_by_category"] == {
         "doc_missing": 1,
+        "doc_deleted": 1,
         "source_file_missing": 1,
         "source_file_deleted": 1,
     }
     assert result["skipped_by_category"] == {
-        "doc_deleted": 1,
         "parser_no_content_blocks": 1,
         "async_context_error": 1,
         "file_row_live": 1,
     }
-    assert [task.status for task in tasks[:3]] == ["completed", "completed", "completed"]
-    assert [task.status for task in tasks[3:]] == ["failed", "failed", "failed", "failed"]
+    assert [task.status for task in tasks[:4]] == ["completed", "completed", "completed", "completed"]
+    assert [task.status for task in tasks[4:]] == ["failed", "failed", "failed"]
     assert docs[1].parse_error == "source_file_missing"
     assert docs[2].parse_error == "source_file_deleted"
     assert docs[3].parse_error == "previous-doc-error"

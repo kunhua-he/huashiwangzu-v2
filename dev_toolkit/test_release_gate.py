@@ -321,6 +321,44 @@ def test_audit_failed_count_fails_closed_on_missing_summary() -> None:
     raise AssertionError("missing summary.failed should not default to zero")
 
 
+def test_task_queue_audit_reports_deleted_source_obsolete_separately(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+
+        async def fake_fetch_task_queue_audit() -> dict:
+            return {
+                "summary": {"failed": 2, "pending": 0, "completed": 268},
+                "classification": {
+                    "recent_failed_count": 0,
+                    "recent_failed_total_count": 2,
+                    "deleted_source_obsolete_failed_count": 2,
+                    "historical_failed_debt_count": 0,
+                    "stale_pending_debt_count": 0,
+                    "orphan_running_debt_count": 0,
+                },
+                "recent_failed_count": 0,
+                "recent_failed_total_count": 2,
+                "historical_debt_total": 0,
+                "metadata": {"recent_failure_window_hours": 1},
+            }
+
+        monkeypatch.setattr(release_gate, "fetch_task_queue_audit", fake_fetch_task_queue_audit)
+        monkeypatch.setattr(release_gate, "find_semantic_failed_completed_tasks", lambda *_args, **_kwargs: (0, []))
+
+        anyio.run(release_gate.check_task_queue_audit, 2, 0)
+
+        checks = {item["check"]: item for item in release_gate.results}
+        assert checks["Queue: total"]["level"] == "DEBT"
+        assert checks["Queue: gate-run failed delta"]["level"] == "PASS"
+        assert checks["Queue: recent failed window"]["level"] == "PASS"
+        assert checks["Queue: deleted-source obsolete failures"]["level"] == "DEBT"
+        assert "2 of 2" in checks["Queue: deleted-source obsolete failures"]["detail"]
+        assert release_gate.runtime_context["task_debt_summary"]["deleted_source_obsolete_failed_count"] == 2
+    finally:
+        release_gate.results[:] = original
+
+
 def test_fetch_task_queue_audit_rejects_success_false_with_fake_summary(monkeypatch) -> None:
     async def fake_probe(method: str, path: str, body: dict | None = None) -> dict:
         return {

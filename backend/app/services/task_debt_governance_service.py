@@ -15,6 +15,7 @@ logger = logging.getLogger("v2.task_debt_governance")
 
 DEBT_GOVERNANCE_MAX_LIMIT = 5000
 DEFAULT_DEBT_GOVERNANCE_LIMIT = 1000
+KB_DELETED_SOURCE_OBSOLETE_CATEGORY = "kb_deleted_source_obsolete"
 
 _DOCUMENT_NOT_FOUND_RE = re.compile(r"Document\s+(\d+)\s+not found")
 
@@ -238,12 +239,36 @@ async def _load_kb_document_state(db: AsyncSession, document_id: int | None) -> 
     }
 
 
+def _is_kb_deleted_source_obsolete_state(doc_state: dict) -> bool:
+    return doc_state.get("doc_state") in {"doc_deleted", "doc_missing"} and doc_state.get("file_state") in {
+        "no_file_row",
+        "file_row_deleted",
+        "unknown",
+    }
+
+
+def _kb_deleted_source_obsolete_classification(task: SystemTaskQueue, sample: dict) -> dict:
+    return {
+        "task": task,
+        "action": "mark_obsolete",
+        "category": KB_DELETED_SOURCE_OBSOLETE_CATEGORY,
+        "reason": (
+            "Knowledge pipeline task references a deleted/missing knowledge document whose source file row "
+            "is unavailable; the failed task is obsolete and should not be retried."
+        ),
+        "sample": sample,
+    }
+
+
 async def _classify_kb_pipeline_debt(db: AsyncSession, task: SystemTaskQueue, params: dict) -> dict:
     error = task.error_message or ""
     document_id = _document_id_from_task(task, params)
     doc_state = await _load_kb_document_state(db, document_id)
     sample = _task_sample(task, params=params)
     sample.update(doc_state)
+
+    if _is_kb_deleted_source_obsolete_state(doc_state):
+        return _kb_deleted_source_obsolete_classification(task, sample)
 
     if error == "File not found":
         if doc_state["doc_state"] == "doc_live" and doc_state["file_state"] in {"no_file_row", "file_row_deleted"}:
@@ -258,13 +283,7 @@ async def _classify_kb_pipeline_debt(db: AsyncSession, task: SystemTaskQueue, pa
                 "sample": sample,
             }
         if doc_state["doc_state"] in {"doc_deleted", "doc_missing"}:
-            return {
-                "task": task,
-                "action": "mark_obsolete",
-                "category": "kb_document_obsolete",
-                "reason": "Knowledge document was deleted or no longer exists; the old failed task is obsolete and should not be retried.",
-                "sample": sample,
-            }
+            return _kb_deleted_source_obsolete_classification(task, sample)
         if doc_state["file_state"] == "file_row_live":
             return {
                 "task": task,
@@ -275,13 +294,7 @@ async def _classify_kb_pipeline_debt(db: AsyncSession, task: SystemTaskQueue, pa
             }
 
     if _DOCUMENT_NOT_FOUND_RE.search(error):
-        return {
-            "task": task,
-            "action": "mark_obsolete",
-            "category": "kb_document_obsolete",
-            "reason": "Handler failed because the knowledge document no longer exists.",
-            "sample": sample,
-        }
+        return _kb_deleted_source_obsolete_classification(task, sample)
 
     if "Parser returned no content blocks" in error:
         return {
@@ -308,6 +321,11 @@ async def _classify_kb_pipeline_debt(db: AsyncSession, task: SystemTaskQueue, pa
         "reason": "Knowledge pipeline failure is not in an allowlisted bulk-governance class.",
         "sample": sample,
     }
+
+
+async def classify_failed_task_debt(db: AsyncSession, task: SystemTaskQueue) -> dict:
+    """Classify one failed task using the same rules as governance dry-run/apply."""
+    return await _classify_failed_task(db, task, set())
 
 
 def _profile_dedupe_key(params: dict) -> tuple[str, str] | None:
@@ -433,6 +451,7 @@ def _result_payload(task: SystemTaskQueue, classification: dict, status: str) ->
         "category": classification["category"],
         "reason": classification["reason"],
         "previous_error": task.error_message,
+        "previous_parameters": _parse_task_parameters(task.parameters),
         "governed_at": datetime.now(timezone.utc).isoformat(),
     }, ensure_ascii=False)
 

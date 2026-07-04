@@ -16,6 +16,7 @@ from .document_service import mark_document_source_unavailable
 
 FILE_NOT_FOUND_MARKER = "File not found"
 DOC_NOT_FOUND_PATTERN = "Document % not found"
+INVALID_IMAGE_CONTENT_MARKER = "Invalid or unsupported image content"
 PARSER_EMPTY_MARKER = "Parser returned no content blocks"
 TASK_RESULT_FAILED_MARKER = "Task result status=failed"
 GREENLET_SPAWN_MARKER = "greenlet_spawn"
@@ -23,6 +24,7 @@ DOCUMENT_ALREADY_PARSING_MARKER = "Document is already parsing"
 DOCUMENT_IR_ATTR_MARKER = "'DocumentIr' object has no attribute 'get'"
 LIFECYCLE_ARCHIVE_CATEGORIES = {
     "doc_missing",
+    "doc_deleted",
     "source_file_missing",
     "source_file_deleted",
 }
@@ -75,6 +77,8 @@ def _classify_error_family(error_message: str | None) -> str:
         return "file_not_found"
     if lowered.startswith("document ") and " not found" in lowered:
         return "document_not_found"
+    if INVALID_IMAGE_CONTENT_MARKER.lower() in lowered:
+        return "invalid_or_unsupported_image_content"
     if PARSER_EMPTY_MARKER.lower() in lowered:
         return "parser_no_content_blocks"
     if TASK_RESULT_FAILED_MARKER.lower() in lowered:
@@ -118,6 +122,7 @@ def _build_error_filter(error_marker: str | None):
     return or_(
         SystemTaskQueue.error_message.ilike(f"%{FILE_NOT_FOUND_MARKER}%"),
         SystemTaskQueue.error_message.ilike(DOC_NOT_FOUND_PATTERN),
+        SystemTaskQueue.error_message.ilike(f"%{INVALID_IMAGE_CONTENT_MARKER}%"),
         SystemTaskQueue.error_message.ilike(f"%{PARSER_EMPTY_MARKER}%"),
         SystemTaskQueue.error_message.ilike(f"%{TASK_RESULT_FAILED_MARKER}%"),
         SystemTaskQueue.error_message.ilike(f"%{GREENLET_SPAWN_MARKER}%"),
@@ -307,7 +312,11 @@ async def _classify_orphan_running_runs(db: AsyncSession) -> dict:
         )
         .order_by(KbPipelineRun.id.asc())
     )
-    runs = list(result.scalars().all())
+    runs = [
+        run
+        for run in result.scalars().all()
+        if hasattr(run, "task_id") and hasattr(run, "document_id") and hasattr(run, "file_id")
+    ]
     if not runs:
         return {
             "dry_run": True,
@@ -373,7 +382,10 @@ async def _audit_document_status_machine(db: AsyncSession, *, sample_limit: int 
     items: list[dict[str, Any]] = []
     seen_samples: Counter[str] = Counter()
 
-    for doc, file in result.all():
+    for row in result.all():
+        if not isinstance(row, tuple | list) or len(row) != 2:
+            continue
+        doc, file = row
         stage_statuses = {
             "parse": doc.parse_status or "pending",
             "vector": doc.vector_status or "pending",

@@ -1028,6 +1028,11 @@ async def check_task_queue_audit(
             "summary": summary,
             "classification": classification,
             "recent_failed_count": d.get("recent_failed_count", classification.get("recent_failed_count", 0)),
+            "recent_failed_total_count": d.get(
+                "recent_failed_total_count",
+                classification.get("recent_failed_total_count", d.get("recent_failed_count", 0)),
+            ),
+            "deleted_source_obsolete_failed_count": classification.get("deleted_source_obsolete_failed_count", 0),
             "historical_debt_total": d.get("historical_debt_total", 0),
             "stalest_pending": stalest,
             "metadata": d.get("metadata", {}),
@@ -1036,6 +1041,8 @@ async def check_task_queue_audit(
         failed = summary.get("failed", 0)
         pending = summary.get("pending", 0)
         recent_failed = d.get("recent_failed_count", classification.get("recent_failed_count", 0))
+        recent_failed_total = d.get("recent_failed_total_count", classification.get("recent_failed_total_count", recent_failed))
+        obsolete_failed = classification.get("deleted_source_obsolete_failed_count", 0)
         gate_failed_delta = None if baseline_failed is None else max(0, int(failed or 0) - baseline_failed)
         historical_debt = d.get("historical_debt_total", 0)
         stale_pending = classification.get("stale_pending_debt_count", 0)
@@ -1067,6 +1074,15 @@ async def check_task_queue_audit(
         else:
             add_result("Queue: recent failed window", "PASS",
                        "no failed tasks in recent audit window")
+
+        if obsolete_failed > 0:
+            add_result(
+                "Queue: deleted-source obsolete failures",
+                "DEBT",
+                f"{obsolete_failed} of {recent_failed_total} recent failed task(s) are deleted-source obsolete debt",
+            )
+        else:
+            add_result("Queue: deleted-source obsolete failures", "PASS", "no deleted-source obsolete failed tasks")
 
         if stale_pending > 0:
             info = f"{stale_pending} stale pending (not new)"

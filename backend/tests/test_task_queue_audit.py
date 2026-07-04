@@ -8,7 +8,10 @@ from app.database import AsyncSessionLocal
 from app.models.system import SystemTaskQueue
 from app.routers.tasks import worker_status
 from app.services import task_queue_audit_service as audit
-from app.services.task_debt_governance_service import govern_task_queue_debt
+from app.services.task_debt_governance_service import (
+    KB_DELETED_SOURCE_OBSOLETE_CATEGORY,
+    govern_task_queue_debt,
+)
 from app.services.task_queue_audit_service import reconcile_orphan_running, reconcile_stale_pending
 from sqlalchemy import delete, text
 
@@ -378,7 +381,7 @@ async def test_debt_governance_dry_run_classifies_kb_source_without_mutating() -
         assert plan["dry_run"] is True
         assert plan["processed"] == 0
         assert plan["summary_by_category"]["kb_source_unavailable_retry_once"] >= 1
-        assert plan["summary_by_category"]["kb_document_obsolete"] >= 1
+        assert plan["summary_by_category"][KB_DELETED_SOURCE_OBSOLETE_CATEGORY] >= 1
 
         async with AsyncSessionLocal() as db:
             statuses = await db.execute(
@@ -399,6 +402,104 @@ async def test_debt_governance_dry_run_classifies_kb_source_without_mutating() -
     finally:
         await _cleanup(marker)
         await _cleanup(f"{marker}_deleted")
+
+
+@pytest.mark.asyncio
+async def test_deleted_source_invalid_image_failure_is_obsolete_not_active_recent() -> None:
+    marker = uuid4().hex
+    await _cleanup(marker)
+    try:
+        now = datetime.now(timezone.utc)
+        async with AsyncSessionLocal() as db:
+            baseline = await audit.audit_task_queue(db)
+        baseline_active = baseline["classification"]["recent_failed_count"]
+        baseline_obsolete = baseline["classification"].get("deleted_source_obsolete_failed_count", 0)
+
+        obsolete_doc_id = await _create_file_and_document(
+            f"{marker}_obsolete",
+            document_deleted=True,
+            missing_file_row=True,
+        )
+        live_doc_id = await _create_file_and_document(f"{marker}_live")
+        obsolete_task_id = await _create_task(
+            "kb_pipeline",
+            "failed",
+            module="knowledge",
+            completed_at=now - timedelta(minutes=5),
+            error_message="Invalid or unsupported image content",
+            retry_count=3,
+            max_retries=3,
+            parameters={"marker": marker, "document_id": obsolete_doc_id, "user_id": 1},
+        )
+        live_task_id = await _create_task(
+            "kb_pipeline",
+            "failed",
+            module="knowledge",
+            completed_at=now - timedelta(minutes=5),
+            error_message="Invalid or unsupported image content",
+            retry_count=3,
+            max_retries=3,
+            parameters={"marker": marker, "document_id": live_doc_id, "user_id": 1},
+        )
+
+        async with AsyncSessionLocal() as db:
+            dry_plan = await govern_task_queue_debt(
+                db,
+                dry_run=True,
+                task_ids=[obsolete_task_id, live_task_id],
+                sample_limit=10,
+            )
+
+        assert dry_plan["processed"] == 0
+        assert dry_plan["summary_by_category"][KB_DELETED_SOURCE_OBSOLETE_CATEGORY] == 1
+        assert dry_plan["summary_by_category"]["kb_unknown_manual_review"] == 1
+
+        async with AsyncSessionLocal() as db:
+            before_apply = await audit.audit_task_queue(db)
+
+        assert before_apply["classification"]["recent_failed_count"] >= baseline_active + 1
+        assert before_apply["classification"]["deleted_source_obsolete_failed_count"] >= baseline_obsolete + 1
+
+        async with AsyncSessionLocal() as db:
+            apply_plan = await govern_task_queue_debt(
+                db,
+                dry_run=False,
+                task_ids=[obsolete_task_id],
+                sample_limit=10,
+            )
+
+        assert apply_plan["processed"] == 1
+        assert apply_plan["summary_by_category"][KB_DELETED_SOURCE_OBSOLETE_CATEGORY] == 1
+
+        async with AsyncSessionLocal() as db:
+            after_apply = await audit.audit_task_queue(db)
+            rows = await db.execute(
+                text(
+                    """
+                    SELECT id, status, error_message, result
+                    FROM framework_system_task_queues
+                    WHERE id IN (:obsolete_task_id, :live_task_id)
+                    """
+                ),
+                {"obsolete_task_id": obsolete_task_id, "live_task_id": live_task_id},
+            )
+
+        assert after_apply["classification"]["recent_failed_count"] >= baseline_active + 1
+        assert after_apply["classification"]["deleted_source_obsolete_failed_count"] >= baseline_obsolete
+        by_id = {row[0]: row for row in rows.all()}
+        obsolete_result = json.loads(by_id[obsolete_task_id][3])
+        assert by_id[obsolete_task_id][1] == "completed"
+        assert by_id[obsolete_task_id][2] is None
+        assert obsolete_result["status"] == "obsolete"
+        assert obsolete_result["category"] == KB_DELETED_SOURCE_OBSOLETE_CATEGORY
+        assert obsolete_result["previous_error"] == "Invalid or unsupported image content"
+        assert obsolete_result["previous_parameters"]["document_id"] == obsolete_doc_id
+        assert by_id[live_task_id][1] == "failed"
+        assert by_id[live_task_id][2] == "Invalid or unsupported image content"
+    finally:
+        await _cleanup(marker)
+        await _cleanup(f"{marker}_obsolete")
+        await _cleanup(f"{marker}_live")
 
 
 @pytest.mark.asyncio

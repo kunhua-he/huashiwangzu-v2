@@ -14,6 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.system import SystemTaskQueue
 from app.services.module_registry import semantic_failure_reason
+from app.services.task_debt_governance_service import (
+    KB_DELETED_SOURCE_OBSOLETE_CATEGORY,
+    classify_failed_task_debt,
+)
 
 logger = logging.getLogger("v2.task_queue_audit")
 
@@ -51,6 +55,46 @@ def _semantic_failure_sample(task: SystemTaskQueue, reason: str) -> dict:
     }
 
 
+def _failed_task_sample(task: SystemTaskQueue, classification: dict | None = None) -> dict:
+    sample = {
+        "id": task.id,
+        "task_type": task.task_type,
+        "module": task.module,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "error_message": task.error_message,
+    }
+    if classification:
+        sample["classification"] = classification.get("category")
+        sample["action"] = classification.get("action")
+        state_sample = classification.get("sample")
+        if isinstance(state_sample, dict):
+            for key in ("document_id", "doc_state", "file_state", "file_id", "physical_exists"):
+                if key in state_sample:
+                    sample[key] = state_sample[key]
+    return sample
+
+
+async def _split_recent_failed_tasks(
+    db: AsyncSession,
+    recent_failed_list: list[SystemTaskQueue],
+) -> tuple[list[SystemTaskQueue], list[dict]]:
+    active_recent: list[SystemTaskQueue] = []
+    obsolete_recent: list[dict] = []
+    for task in recent_failed_list:
+        classification: dict | None = None
+        if task.task_type == "kb_pipeline":
+            classification = await classify_failed_task_debt(db, task)
+        if (
+            classification
+            and classification.get("category") == KB_DELETED_SOURCE_OBSOLETE_CATEGORY
+            and classification.get("action") == "mark_obsolete"
+        ):
+            obsolete_recent.append(_failed_task_sample(task, classification))
+            continue
+        active_recent.append(task)
+    return active_recent, obsolete_recent
+
+
 async def audit_task_queue(db: AsyncSession) -> dict:
     """Aggregate task queue into classified buckets.
 
@@ -85,6 +129,10 @@ async def audit_task_queue(db: AsyncSession) -> dict:
         .limit(200)
     )
     recent_failed_list = list(recent_failed.scalars().all())
+    active_recent_failed_list, obsolete_recent_failed_samples = await _split_recent_failed_tasks(
+        db,
+        recent_failed_list,
+    )
 
     historical_failed_filter = and_(
         SystemTaskQueue.status == "failed",
@@ -239,7 +287,9 @@ async def audit_task_queue(db: AsyncSession) -> dict:
             "failed": counts["failed"],
         },
         "classification": {
-            "recent_failed_count": len(recent_failed_list),
+            "recent_failed_count": len(active_recent_failed_list),
+            "recent_failed_total_count": len(recent_failed_list),
+            "deleted_source_obsolete_failed_count": len(obsolete_recent_failed_samples),
             "historical_failed_debt_count": historical_failed_debt_count,
             "actionable_pending_count": len(actionable_pending),
             "stale_pending_debt_count": len(stale_pending),
@@ -249,7 +299,19 @@ async def audit_task_queue(db: AsyncSession) -> dict:
             "completed_semantic_failure_count": completed_semantic_failure_count,
             "completed_semantic_failure_manual_review_count": completed_semantic_failure_count,
         },
-        "recent_failed_count": len(recent_failed_list),
+        "recent_failed_count": len(active_recent_failed_list),
+        "recent_failed_total_count": len(recent_failed_list),
+        "deleted_source_obsolete_failures": {
+            "count": len(obsolete_recent_failed_samples),
+            "action": "mark_obsolete",
+            "category": KB_DELETED_SOURCE_OBSOLETE_CATEGORY,
+            "mutates_rows": False,
+            "reason": (
+                "Recent failed kb_pipeline rows whose knowledge document/source is already deleted are "
+                "tracked as obsolete debt, not active parser/worker failures."
+            ),
+            "samples": obsolete_recent_failed_samples[:20],
+        },
         "historical_debt_total": historical_failed_debt_count,
         "completed_semantic_failures": {
             "count": completed_semantic_failure_count,

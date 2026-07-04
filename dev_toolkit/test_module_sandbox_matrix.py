@@ -180,6 +180,28 @@ def test_check_records_frontend_chunk_warnings(monkeypatch) -> None:
     assert entries[0]["chunk_warnings"]
 
 
+def test_check_records_frontend_chunk_warnings_from_stderr(monkeypatch) -> None:
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="",
+            stderr="(!) Some chunks are larger than 500 kB after minification.",
+        )
+
+    monkeypatch.setattr(module_sandbox_matrix.subprocess, "run", fake_run)
+    entries = [{
+        "module": "front-only",
+        "check": "pass",
+        "backend_test_cmd": None,
+        "frontend_build_cmd": "cd modules/front-only/sandbox && npm run build",
+    }]
+
+    assert module_sandbox_matrix.check_sandbox_matrix(entries, quiet=True)
+    assert entries[0]["check"] == "pass"
+    assert entries[0]["chunk_warnings"]
+
+
 def test_frontend_install_needed_when_vite_bin_missing(tmp_path: Path) -> None:
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()

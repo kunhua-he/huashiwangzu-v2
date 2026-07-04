@@ -103,7 +103,7 @@ def test_final_verdict_distinguishes_clean_pass_from_debt() -> None:
         assert release_gate.get_final_verdict() == "PASS_WITH_DEBT"
 
         release_gate.results[:] = [{"check": "blocker", "level": "BLOCKER", "detail": "bad"}]
-        assert release_gate.get_final_verdict() == "BLOCKER"
+        assert release_gate.get_final_verdict() == "BLOCKED"
     finally:
         release_gate.results[:] = original
 
@@ -122,6 +122,28 @@ def test_sandbox_matrix_chunk_warnings_are_debt() -> None:
         [
             {"module": "agent", "check": "pass"},
             {"module": "viewer", "check": "pass", "chunk_warnings": ["large chunk"]},
+        ],
+        elapsed=1.2,
+    )
+
+    assert level == "DEBT"
+    assert "chunk warnings" in detail
+    assert "viewer" in detail
+
+
+def test_sandbox_matrix_nested_chunk_warnings_are_debt() -> None:
+    level, detail = release_gate.classify_sandbox_matrix(
+        [
+            {"module": "agent", "check": "pass"},
+            {
+                "module": "viewer",
+                "check": "pass",
+                "command_results": [{
+                    "name": "frontend",
+                    "exit_code": 0,
+                    "chunk_warnings": ["Some chunks are larger than 500 kB after minification."],
+                }],
+            },
         ],
         elapsed=1.2,
     )
@@ -503,6 +525,31 @@ def test_ui_and_model_fallback_summary_classification() -> None:
         release_gate.runtime_context.update(original_context)
 
 
+def test_model_fallback_unknown_status_blocks_release() -> None:
+    original_results = list(release_gate.results)
+    original_context = dict(release_gate.runtime_context)
+    try:
+        release_gate.results[:] = []
+        release_gate.runtime_context.clear()
+
+        release_gate.check_model_fallback_summary({
+            "model_fallback": {
+                "status": "UNKNOWN",
+                "fallback_used_count": 0,
+                "blocker_count": 0,
+                "observations": [],
+            },
+        })
+
+        assert release_gate.results[-1]["check"] == "Model fallback"
+        assert release_gate.results[-1]["level"] == "BLOCKER"
+        assert release_gate.runtime_context["model_fallback"]["status"] == "BLOCKER"
+    finally:
+        release_gate.results[:] = original_results
+        release_gate.runtime_context.clear()
+        release_gate.runtime_context.update(original_context)
+
+
 def test_task_result_semantic_failure_contract() -> None:
     assert release_gate._task_result_is_semantic_failure({"success": False, "error": "bad"}) == (
         True,
@@ -559,8 +606,9 @@ def test_release_summary_keeps_result_data_and_clean_release_ready() -> None:
 
         assert summary["clean_pass"] is False
         assert summary["clean_release_ready"] is False
-        assert summary["release_safe"] is True
-        assert summary["deploy_allowed"] is True
+        assert summary["verdict"] == "BLOCKED"
+        assert summary["release_safe"] is False
+        assert summary["deploy_allowed"] is False
         assert summary["results"][0]["data"] == {"source_unavailable": 1}
         assert summary["blockers"][0]["check"] == "Contract drift"
         assert summary["debts"][0]["check"] == "Knowledge lifecycle debt"
@@ -839,6 +887,22 @@ def test_test_data_pollution_any_domain_blocks_release(monkeypatch, pollution_ke
         release_gate.results[:] = original_results
         release_gate.runtime_context.clear()
         release_gate.runtime_context.update(original_context)
+
+
+def test_release_summary_fails_closed_when_verdict_and_results_disagree() -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = [{"check": "real blocker", "level": "BLOCKER", "detail": "bad"}]
+
+        summary = release_gate.build_release_summary("PASS_WITH_DEBT")
+
+        assert summary["verdict"] == "BLOCKED"
+        assert summary["clean_pass"] is False
+        assert summary["clean_release_ready"] is False
+        assert summary["release_safe"] is False
+        assert summary["deploy_allowed"] is False
+    finally:
+        release_gate.results[:] = original
 
 
 def test_asset_lifecycle_gate_all_archived_content_is_not_debt(monkeypatch) -> None:

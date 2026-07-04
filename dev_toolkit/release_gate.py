@@ -998,6 +998,13 @@ def check_model_fallback_summary(smoke_summary: dict[str, Any]) -> None:
         return
 
     status = str(model_summary.get("status") or "PASS")
+    if status not in {"PASS", "DEBT", "BLOCKER"}:
+        runtime_context["model_fallback"] = {
+            "status": "BLOCKER",
+            "reason": f"unknown model fallback status={status!r}",
+        }
+        add_result("Model fallback", "BLOCKER", f"unknown model fallback status={status!r}")
+        return
     observations = model_summary.get("observations") if isinstance(model_summary.get("observations"), list) else []
     runtime_context["model_fallback"] = {
         "status": status,
@@ -1263,7 +1270,7 @@ def get_final_verdict() -> str:
     blockers = [r for r in results if r["level"] == "BLOCKER"]
     debts = [r for r in results if r["level"] in {"DEBT", "SKIPPED_WITH_REASON"}]
     if blockers:
-        return "BLOCKER"
+        return "BLOCKED"
     if debts:
         return "PASS_WITH_DEBT"
     return "PASS"
@@ -1286,19 +1293,25 @@ def build_release_summary(verdict: str, *, skip_ui: bool = False, preflight: boo
     for result in results:
         level = result["level"]
         levels[level] = levels.get(level, 0) + 1
-    summary_verdict = "PASS_WITH_DEBT" if (skip_ui or preflight) and verdict == "PASS" else verdict
+    blockers = _compact_items({"BLOCKER"})
+    debts = _compact_items({"DEBT", "SKIPPED_WITH_REASON"})
+    has_blockers = bool(blockers) or verdict in {"BLOCKED", "BLOCKER"}
+    if has_blockers:
+        summary_verdict = "BLOCKED"
+    elif (skip_ui or preflight) and verdict == "PASS":
+        summary_verdict = "PASS_WITH_DEBT"
+    else:
+        summary_verdict = verdict
     has_debt = (
         skip_ui
         or preflight
         or levels.get("DEBT", 0) > 0
         or levels.get("SKIPPED_WITH_REASON", 0) > 0
     )
-    clean_pass = summary_verdict == "PASS" and not skip_ui and not preflight
+    clean_pass = summary_verdict == "PASS" and not skip_ui and not preflight and not has_debt and not has_blockers
     clean_release_ready = clean_pass and not has_debt
-    release_safe = summary_verdict in {"PASS", "PASS_WITH_DEBT"}
+    release_safe = summary_verdict in {"PASS", "PASS_WITH_DEBT"} and not has_blockers
     deploy_allowed = release_safe
-    blockers = _compact_items({"BLOCKER"})
-    debts = _compact_items({"DEBT", "SKIPPED_WITH_REASON"})
     ui_coverage_status = runtime_context.get("ui_coverage", {})
     model_fallback_status = runtime_context.get("model_fallback", {})
     compact_summary = {
@@ -1445,7 +1458,7 @@ async def main():
         print(f"{r['check']:<40} {r['level']:>20}  {r['detail'][:120]}")
 
     print()
-    if verdict == "BLOCKER":
+    if verdict == "BLOCKED":
         blockers = [r for r in results if r["level"] == "BLOCKER"]
         print(f"🔴 BLOCKERS ({len(blockers)}):")
         for b in blockers:

@@ -11,6 +11,9 @@ from PIL import Image
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = MODULE_ROOT.parents[1]
+BACKEND_ROOT = REPO_ROOT / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 SAMPLE = Path(__file__).resolve().parent / "samples" / "sample.png"
 ANALYZER_PATH = MODULE_ROOT / "backend" / "image_analysis.py"
 NORMALIZER_PATH = REPO_ROOT / "backend" / "app" / "services" / "content" / "ir_normalizer.py"

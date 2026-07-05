@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 from unittest import mock
 
@@ -109,6 +110,25 @@ async def _delete_files(db, file_ids: list[int]) -> None:
         return
     await db.execute(delete(File).where(File.id.in_(file_ids)))
     await db.commit()
+
+
+async def _ensure_test_users(db, user_ids: Iterable[int]) -> None:
+    from app.models.user import User
+    from app.services.auth import hash_password
+
+    for user_id in sorted(set(user_ids)):
+        if await db.get(User, user_id):
+            continue
+        db.add(User(
+            id=user_id,
+            username=f"content-ir-test-user-{user_id}",
+            password_hash=hash_password("content-ir-test-password"),
+            display_name=f"Content IR Test User {user_id}",
+            email=None,
+            role="editor",
+            enabled=True,
+        ))
+    await db.flush()
 
 
 async def _delete_artifacts(db, artifact_ids: list[int]) -> None:
@@ -580,6 +600,7 @@ class TestWriteIR:
         file_id = None
         package_ids: list[int] = []
         async with AsyncSessionLocal() as db:
+            await _ensure_test_users(db, [owner_id, intruder_id])
             file_rec = File(
                 name=f"content-ir-security-{uuid.uuid4().hex}",
                 extension="txt",
@@ -633,6 +654,7 @@ class TestWriteIR:
         file_id = None
         package_ids: list[int] = []
         async with AsyncSessionLocal() as db:
+            await _ensure_test_users(db, [owner_id, shared_user_id])
             file_rec = File(
                 name=f"content-ir-edit-share-{uuid.uuid4().hex}",
                 extension="txt",
@@ -899,6 +921,7 @@ class TestWriteIR:
         data_b64 = base64.b64encode(raw_resource).decode("ascii")
 
         async with AsyncSessionLocal() as db:
+            await _ensure_test_users(db, [owner_id, intruder_id])
             file_rec = File(
                 name=f"content-ir-resource-denied-{uuid.uuid4().hex}",
                 extension="txt",

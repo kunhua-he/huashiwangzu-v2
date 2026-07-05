@@ -34,6 +34,31 @@ const retriedRequests = new Set<string>()
 const errorThrottle = new Map<string, number>()
 const throttleInterval = 30000
 
+function getAuthorizationHeader(headers: unknown): string {
+  if (!headers || typeof headers !== 'object') return ''
+  const headerGetter = (headers as { get?: (name: string) => unknown }).get
+  if (typeof headerGetter === 'function') {
+    const value = headerGetter.call(headers, 'Authorization') ?? headerGetter.call(headers, 'authorization')
+    return typeof value === 'string' ? value : ''
+  }
+  const record = headers as Record<string, unknown>
+  const value = record.Authorization ?? record.authorization
+  return typeof value === 'string' ? value : ''
+}
+
+function setAuthorizationHeader(config: { headers?: unknown }, token: string): void {
+  const value = `Bearer ${token}`
+  const headers = config.headers
+  if (headers && typeof headers === 'object') {
+    const headerSetter = (headers as { set?: (name: string, value: string) => void }).set
+    if (typeof headerSetter === 'function') {
+      headerSetter.call(headers, 'Authorization', value)
+      return
+    }
+  }
+  config.headers = { ...((headers as Record<string, unknown> | undefined) || {}), Authorization: value }
+}
+
 function reportFrontendError(url: string, statusCode: number | undefined, errorMessage: string) {
   if (url.includes('/logs/frontend-error')) return
   void axios.post(`${API_BASE_URL}/logs/frontend-error`, {
@@ -88,6 +113,18 @@ api.interceptors.response.use(
     const alreadyOnLoginPage = currentPath === '/' || currentPath === '/login'
 
     if (statusCode === 401 && !isLoginRequest && !alreadyOnLoginPage) {
+      const currentToken = localStorage.getItem(TOKEN_KEY)
+      const requestAuth = getAuthorizationHeader(error.config?.headers)
+      const requestToken = requestAuth.startsWith('Bearer ') ? requestAuth.slice(7) : ''
+      if (currentToken && requestToken && currentToken !== requestToken && error.config) {
+        setAuthorizationHeader(error.config, currentToken)
+        api.defaults.headers.common['Authorization'] = `Bearer ${currentToken}`
+        try {
+          return await api.request(error.config)
+        } catch {
+          // Fall through to the normal expired-session path if the fresh token also fails.
+        }
+      }
       localStorage.removeItem(TOKEN_KEY)
       delete api.defaults.headers.common['Authorization']
       if (!retriedRequests.has(requestUrl)) {

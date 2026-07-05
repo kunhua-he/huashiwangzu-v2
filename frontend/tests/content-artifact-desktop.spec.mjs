@@ -63,6 +63,17 @@ function listItems(body) {
 }
 
 async function cleanupPublishedArtifact(request, token, state) {
+  if (state.fileId && state.title) {
+    const encodedTitle = encodeURIComponent(state.title)
+    const documentsBody = await apiJson(request, token, 'get', `/api/knowledge/documents?keyword=${encodedTitle}&page=1&page_size=100`).catch(() => null)
+    for (const doc of listItems(documentsBody)) {
+      if (Number(doc?.file_id) !== Number(state.fileId)) continue
+      await requestWithAdminAuthRetry(token, (activeToken) => request.delete(`${BASE_URL}/api/knowledge/documents/${doc.id}`, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+      })).catch(() => {})
+    }
+  }
+
   if (state.artifactId) {
     await requestWithAdminAuthRetry(token, (activeToken) => request.delete(`${BASE_URL}/api/artifacts/${state.artifactId}`, {
       headers: { Authorization: `Bearer ${activeToken}` },
@@ -113,7 +124,7 @@ test('content publish artifact is visible, openable, and downloadable from deskt
   const token = await refreshAdminToken()
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   const title = `Artifact Desktop ${suffix}`
-  const state = { packageId: null, artifactId: null, fileId: null }
+  const state = { packageId: null, artifactId: null, fileId: null, title }
 
   try {
     await page.addInitScript((freshToken) => {

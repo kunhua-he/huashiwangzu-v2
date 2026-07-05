@@ -1,6 +1,5 @@
 """Clipboard operations - 1:1 from old 表格/剪贴板.php"""
-from typing import Any
-from ..state.manager import cell_get_text, cell_set_text, cell_get_style_ref
+from ..state.manager import cell_get_text, cell_set_text
 from ..tool.address import parse_address, rc_to_address
 
 

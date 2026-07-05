@@ -6,8 +6,8 @@ Uses ast.parse with strict whitelist instead of eval.
 import ast
 import operator
 import re
-from .address import parse_address, rc_to_address
 
+from .address import parse_address, rc_to_address
 
 _ALLOWED_OPS = {
     ast.Add: operator.add,

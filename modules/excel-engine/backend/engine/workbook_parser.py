@@ -1,7 +1,6 @@
 """Workbook parser - 1:1 from old 解析_工作簿.php"""
-import zipfile
 import xml.etree.ElementTree as ET
-from typing import Any
+import zipfile
 
 SPREAD_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -23,7 +22,6 @@ def read_workbook_list(zf: zipfile.ZipFile) -> tuple[list[str], dict[str, str], 
     try:
         rels_content = zf.read('xl/_rels/workbook.xml.rels')
         rels_root = ET.fromstring(rels_content)
-        rel_ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
         for rel in rels_root:
             rid = rel.get('Id', '')
             target = rel.get('Target', '')

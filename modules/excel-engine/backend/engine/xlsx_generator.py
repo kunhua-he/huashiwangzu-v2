@@ -3,10 +3,10 @@
 Generates XLSX files from state data using openpyxl.
 """
 import re
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from typing import Any
+
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 
 def _decode_ascii_escape(val: str) -> str:
@@ -77,8 +77,6 @@ def generate_xlsx(output_path: str, all_sheet_data: dict[str, Any], filename: st
         merges = data.get('merges', {})
         col_widths = data.get('col_widths', {})
         row_heights = data.get('row_heights', {})
-        total_rows = data.get('total_rows', 40)
-        total_cols = data.get('total_cols', 10)
 
         # Write cells
         for addr, val in cells.items():

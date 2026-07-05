@@ -217,6 +217,77 @@ def test_capability_bad_parameters_fail_before_io() -> None:
     asyncio.run(run_checks())
 
 
+def test_generate_to_artifact_reports_package_state() -> None:
+    async def run_check() -> None:
+        original_save_to_artifact = router._save_to_artifact
+        original_ensure_content_package = router._ensure_content_package
+
+        async def fake_save_to_artifact(
+            content: bytes,
+            filename: str,
+            extension: str,
+            owner_id: int,
+            folder_id: int | None = None,
+        ) -> dict:
+            assert len(content) > 100
+            assert filename == "sandbox_artifact"
+            assert extension == "xlsx"
+            assert owner_id == 1
+            assert folder_id is None
+            return {
+                "id": 77,
+                "file_id": 88,
+                "name": filename,
+                "extension": extension,
+                "size": len(content),
+            }
+
+        async def fake_ensure_content_package(
+            file_id: int,
+            owner_id: int,
+            caller: str,
+            *,
+            origin_type: str = "generated",
+            db=None,
+        ) -> dict:
+            assert file_id == 88
+            assert owner_id == 1
+            assert caller == "user:1"
+            assert origin_type == "generated"
+            return {
+                "content_package_id": 99,
+                "content_package_status": "parsed",
+                "content_package_error": None,
+            }
+
+        router._save_to_artifact = fake_save_to_artifact
+        router._ensure_content_package = fake_ensure_content_package
+        try:
+            result = await router._cap_generate_to_artifact(
+                {
+                    "format": "xlsx",
+                    "filename": "sandbox_artifact",
+                    "sheets": [{
+                        "name": "Sheet1",
+                        "columns": ["item"],
+                        "rows": [["Alpha"]],
+                    }],
+                },
+                "user:1",
+            )
+            assert result["artifact_id"] == 77
+            assert result["file_id"] == 88
+            assert result["content_package_id"] == 99
+            assert result["content_package_status"] == "parsed"
+            assert result["content_package_error"] is None
+            assert result["status"] == "created"
+        finally:
+            router._save_to_artifact = original_save_to_artifact
+            router._ensure_content_package = original_ensure_content_package
+
+    asyncio.run(run_check())
+
+
 def main() -> None:
     tests = [
         test_docx_generation_accepts_content_ir_blocks,
@@ -227,6 +298,7 @@ def main() -> None:
         test_router_http_models_accept_content_ir_aliases,
         test_router_helpers_reject_bad_parameters,
         test_capability_bad_parameters_fail_before_io,
+        test_generate_to_artifact_reports_package_state,
     ]
     print("=" * 60)
     print("office-gen sandbox test")

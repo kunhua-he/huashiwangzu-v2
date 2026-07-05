@@ -11,16 +11,32 @@ export interface GeneratedFile {
   deduplicated?: boolean
 }
 
+export interface GeneratedArtifact {
+  artifact_id: number
+  file_id: number
+  content_package_id: number | null
+  content_package_status: string
+  content_package_error: string | null
+  format: OfficeFormat
+  name: string
+  extension: string
+  size: number
+  status: string
+}
+
+interface ModuleCallPayload {
+  target_module: string
+  action: string
+  parameters: Record<string, unknown>
+}
+
 export async function checkHealth(): Promise<{ libreoffice: boolean }> {
   return apiGet('/office-gen/health')
 }
 
-export async function generateSample(format: OfficeFormat): Promise<GeneratedFile> {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const filename = `office-gen-sample-${format}-${stamp}`
-
+function buildSamplePayload(format: OfficeFormat, filename: string): Record<string, unknown> {
   if (format === 'xlsx') {
-    return apiPost<GeneratedFile>('/office-gen/xlsx', {
+    return {
       filename,
       sheets: [{
         name: 'Summary',
@@ -30,17 +46,17 @@ export async function generateSample(format: OfficeFormat): Promise<GeneratedFil
           ['Beta', 2],
         ],
       }],
-    })
+    }
   }
 
   if (format === 'pptx') {
-    return apiPost<GeneratedFile>('/office-gen/pptx', {
+    return {
       filename,
       slides: [{
         title: 'Office Gen Sample',
         bullets: ['Generated through the module HTTP endpoint', 'Saved by the framework file service'],
       }],
-    })
+    }
   }
 
   const content = [
@@ -48,5 +64,30 @@ export async function generateSample(format: OfficeFormat): Promise<GeneratedFil
     { type: 'paragraph', text: 'Generated through the module HTTP endpoint.' },
     { type: 'table', header: ['item', 'count'], rows: [['Alpha', 1], ['Beta', 2]] },
   ]
-  return apiPost<GeneratedFile>(`/office-gen/${format}`, { filename, content })
+  return { filename, content }
+}
+
+function sampleFilename(format: OfficeFormat, prefix: string): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const cleanPrefix = prefix.trim()
+  if (!cleanPrefix) throw new Error('Filename prefix is required')
+  return `${cleanPrefix}-${format}-${stamp}`
+}
+
+export async function generateSample(format: OfficeFormat, prefix = 'office-gen-sample'): Promise<GeneratedFile> {
+  const filename = sampleFilename(format, prefix)
+  return apiPost<GeneratedFile>(`/office-gen/${format}`, buildSamplePayload(format, filename))
+}
+
+export async function generateArtifactSample(format: OfficeFormat, prefix = 'office-gen-artifact'): Promise<GeneratedArtifact> {
+  const filename = sampleFilename(format, prefix)
+  const payload = buildSamplePayload(format, filename)
+  return apiPost<GeneratedArtifact>('/modules/call', {
+    target_module: 'office-gen',
+    action: 'generate_to_artifact',
+    parameters: {
+      format,
+      ...payload,
+    },
+  } satisfies ModuleCallPayload)
 }

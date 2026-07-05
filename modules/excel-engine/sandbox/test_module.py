@@ -281,6 +281,24 @@ async def _async_test_xlsx_capability_temp_cleanup_on_failures():
             assert not os.path.exists(tmp_path)
 
     try:
+        async def successful_upload_file(db, file_obj, filename: str, user_id: int, folder_id=None) -> dict:
+            return {"id": 11, "name": filename, "extension": "xlsx", "size": 20}
+
+        async def successful_create_artifact(*args, **kwargs) -> dict:
+            return {"id": 22}
+
+        excel_router.upload_file = successful_upload_file
+        excel_router.create_artifact = successful_create_artifact
+        exported = await excel_router._export_xlsx_capability({"state_key": "cleanup_export_success"}, "user:1")
+        assert exported["file_id"] == 11
+        assert exported["artifact_id"] == 22
+        assert exported["extension"] == "xlsx"
+        assert exported["state_key"] == "cleanup_export_success"
+        published = await excel_router._publish_to_desktop_capability({"state_key": "cleanup_publish_success"}, "user:1")
+        assert published["file_id"] == 11
+        assert published["artifact_id"] == 22
+        assert published["published"] is True
+
         async def raising_upload_file(db, file_obj, filename: str, user_id: int, folder_id=None) -> dict:
             raise RuntimeError("upload failed")
 
@@ -289,9 +307,6 @@ async def _async_test_xlsx_capability_temp_cleanup_on_failures():
             lambda: excel_router._export_xlsx_capability({"state_key": "cleanup_export_upload"}, "user:1"),
             "upload failed",
         )
-
-        async def successful_upload_file(db, file_obj, filename: str, user_id: int, folder_id=None) -> dict:
-            return {"id": 11, "name": filename, "extension": "xlsx", "size": 20}
 
         async def raising_create_artifact(*args, **kwargs) -> dict:
             raise RuntimeError("artifact failed")

@@ -73,6 +73,20 @@ call_capability("excel-engine", "parse", {"file_id": 123}, caller="user:1")
 - 文件读取和导出必须经框架文件权限/文件服务。
 - 模块对外只声明 `parse` 能力；编辑 API 是模块自身 HTTP 表面。
 
+## 产品闭环矩阵
+
+| 链路 | 状态 | 说明 |
+|---|---|---|
+| parse/open/import | PASS | `parse`、`open`、`import_file_to_workbook` 都先经 `check_file_access` 或 `check_file_write_access` 校验文件权限。 |
+| edit/append/table/style | PASS | 写操作前记录快照，成功后持久化 cells/styles/merges/宽高/尺寸并清空 redo。 |
+| undo/redo/history | PASS | `undo` 写入 redo，`redo` 恢复并返回状态 payload；`list_history` 走 owner/state_key 隔离。 |
+| versions | PASS | `save_version/list_versions/restore_version` 绑定 file_id + owner，跨文件 version_id 会拒绝。 |
+| export | PASS | `export_xlsx` 生成 XLSX，上传框架文件并创建 artifact，临时文件在成功/失败后清理。 |
+| compile | PASS | `compile_xlsx` 只返回临时文件，不产生文件记录；缺 workbook/非法路径/非法文件名返回语义失败，HTTP 模块调用层会翻成外层错误。 |
+| publish | PASS | `publish_to_desktop` 可新建框架文件或替换目标文件，并创建 artifact 记录。 |
+| 前端状态 | PASS | 编辑器显示加载/错误/操作成功状态；保存、导出、发布、撤销/恢复都会给明确反馈。 |
+| 测试污染 | PASS | sandbox 对 DB/file/version/compile 产物使用带前缀测试数据并在 finally 清理。 |
+
 ## 验证
 
 ```bash
@@ -87,8 +101,8 @@ cd frontend && npm run build
 | Manifest contract | PASS | `manifest.json` key `excel-engine`, window `normal`, formats: xlsx, xls, csv. |
 | Backend capability | PASS | 13 public action(s) declared in manifest and checked by capability drift gate. |
 | Frontend entry | PASS | Desktop entry component `index.vue` exists. |
-| File access | SKIP | Module does not directly consume framework file_id content. |
-| Sandbox | PASS | `PYTHONPATH=backend backend/.venv/bin/python modules/excel-engine/sandbox/test_module.py` |
+| File access | PASS | `parse/open/import` use framework file permission checks before resolving storage paths. |
+| Sandbox | PASS | `PYTHONPATH=backend backend/.venv/bin/python modules/excel-engine/sandbox/test_module.py` covers parse/edit/undo/redo/history/version/export/publish shapes and cleanup. |
 | Smoke | PASS | Use `call_capability` for `excel-engine:<action>` and release smoke/capability drift gates. |
 | Known debt | PASS | None tracked in this matrix. |
 

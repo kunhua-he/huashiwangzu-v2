@@ -52,9 +52,20 @@ export interface EditResult {
   cells?: Record<string, string>
   styles?: Record<string, Record<string, unknown>>
   merges?: Record<string, { topLeft: string; rows: number; cols: number }>
+  col_widths?: Record<string, number>
+  row_heights?: Record<string, number>
   history?: HistoryItem[]
+  version?: VersionResult
   total_rows?: number
   total_cols?: number
+}
+
+export interface VersionResult {
+  id: number
+  version_name: string
+  file_size: number
+  operation_steps: number
+  created_at: string
 }
 
 export interface HistoryItem {
@@ -72,6 +83,16 @@ export interface ClipboardRequest {
   address_list: string[]
   method: string
   params: Record<string, unknown>
+}
+
+export interface WorkbookPublishResult {
+  file_id: number
+  artifact_id: number
+  name: string
+  extension?: string
+  size: number
+  state_key: string
+  published?: boolean
 }
 
 export async function openFile(fileId: number): Promise<OpenResult> {
@@ -121,4 +142,20 @@ export async function dispatch(req: {
 
 export function getDownloadUrl(stateKey: string): string {
   return getApiUrl(`/excel-engine/download/${stateKey}`)
+}
+
+export async function exportWorkbook(req: { state_key: string; sheet: string }): Promise<WorkbookPublishResult> {
+  return post<WorkbookPublishResult>('/modules/call', {
+    target_module: 'excel-engine',
+    action: 'export_xlsx',
+    parameters: req,
+  })
+}
+
+export async function publishWorkbook(req: { state_key: string; sheet: string }): Promise<WorkbookPublishResult> {
+  return post<WorkbookPublishResult>('/modules/call', {
+    target_module: 'excel-engine',
+    action: 'publish_to_desktop',
+    parameters: req,
+  })
 }

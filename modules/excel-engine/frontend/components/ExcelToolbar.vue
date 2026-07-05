@@ -5,6 +5,8 @@
     <span class="tb-sep"></span>
     <button class="tb-btn" @click="$emit('action', 'save')" title="保存">💾</button>
     <button class="tb-btn" @click="$emit('action', 'export')" title="导出 XLSX">📥</button>
+    <button class="tb-btn" @click="$emit('action', 'publish')" title="发布到桌面">↥</button>
+    <button class="tb-btn" @click="$emit('action', 'history')" title="历史记录">◷</button>
     <span class="tb-sep"></span>
     <button class="tb-btn" :class="{ active: activeStyles.bold }" @click="$emit('action', 'bold')" title="加粗 (Ctrl+B)"><b>B</b></button>
     <button class="tb-btn" :class="{ active: activeStyles.italic }" @click="$emit('action', 'italic')" title="倾斜 (Ctrl+I)"><i>I</i></button>

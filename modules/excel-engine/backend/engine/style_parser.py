@@ -1,6 +1,6 @@
 """Style parsing - 1:1 from old 解析_样式表.php"""
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from typing import Any
 
 from .color_parser import parse_color_node

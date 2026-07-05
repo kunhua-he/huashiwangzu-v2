@@ -95,6 +95,20 @@ call_capability("office-gen", "docx", {"filename":"...", "content":[...]}, role=
 
 Generated live-stack test files must be cleaned up by the creator after verification.
 
+## Product Closure Matrix
+
+| Flow | Status | Notes |
+|---|---|---|
+| Generate docx/xlsx/pptx/pdf | PASS | HTTP endpoints and capabilities validate non-empty renderable payloads before file writes. |
+| Template / parameter validation | PASS | `generation_contract.py` rejects empty content, unsupported formats, invalid ids, and zero-render generator output. |
+| Failure state | PASS | Generator/converter dependency, empty payload, bad format, and bad file id errors are raised as structured framework errors. |
+| File publish | PASS | `docx/xlsx/pptx/pdf` write framework files through `upload_file`; response includes `file_id`, extension, size, and dedupe state. |
+| Artifact publish | PASS | `generate_to_artifact` creates an artifact and reports `content_package_status` plus `content_package_error` explicitly. |
+| Existing file replacement | PASS | `replace_existing` uses framework `replace_file_content` and reports refreshed ContentPackage status. |
+| Existing file export | PASS | `export_to_artifact` checks file access before reading bytes and creates an artifact version record. |
+| Frontend state | PASS | Main UI can generate either a file or artifact and displays file, artifact, and ContentPackage status instead of silent success. |
+| Sandbox coverage | PASS | Covers all four generators, invalid parameters, empty outputs, and artifact status response shape. |
+
 ## Known Follow-Up Outside This Module
 
 - Framework Content IR export currently decides fallback behavior in `backend/app/services/content/export_service.py`. If product policy requires Content Package parsing failure to fail the whole artifact operation instead of returning an explicit `content_package_status="failed"`, that should be handled as a separate framework task.
@@ -107,7 +121,7 @@ Generated live-stack test files must be cleaned up by the creator after verifica
 | Backend capability | PASS | 8 public action(s) declared in manifest and checked by capability drift gate. |
 | Frontend entry | PASS | Desktop entry component `index.vue` exists. |
 | File access | PASS | Uses framework file APIs or capability bridge; file_id paths must preserve check_file_access. |
-| Sandbox | PASS | `PYTHONPATH=backend backend/.venv/bin/python modules/office-gen/sandbox/test_module.py` |
+| Sandbox | PASS | `PYTHONPATH=backend backend/.venv/bin/python modules/office-gen/sandbox/test_module.py` covers generators, validation, and artifact status shape. |
 | Smoke | PASS | Use `call_capability` for `office-gen:<action>` and release smoke/capability drift gates. |
 | Known debt | PASS | None tracked in this matrix. |
 

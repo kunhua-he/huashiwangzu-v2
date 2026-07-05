@@ -1,6 +1,6 @@
 """Shared strings parser - 1:1 from old 解析_共享字符串.php"""
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 
 SPREAD_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 

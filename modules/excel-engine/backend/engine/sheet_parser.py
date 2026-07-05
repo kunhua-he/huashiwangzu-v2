@@ -1,10 +1,8 @@
 """Sheet data parser - 1:1 from old 解析_子表.php"""
-import zipfile
-import xml.etree.ElementTree as ET
 import re
+import xml.etree.ElementTree as ET
+import zipfile
 from typing import Any
-
-from .color_parser import parse_color_node
 
 SPREAD_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 
@@ -74,7 +72,6 @@ def parse_sheet_data(
             if not m:
                 continue
             col_str = m.group(1)
-            row_num = int(m.group(2))
             ci = 0
             for ch in col_str:
                 ci = ci * 26 + (ord(ch) - 64)

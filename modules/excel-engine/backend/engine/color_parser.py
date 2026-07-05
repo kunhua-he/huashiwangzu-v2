@@ -1,7 +1,6 @@
 """Color parsing - 1:1 from old 解析_颜色.php"""
 import xml.etree.ElementTree as ET
 import zipfile
-from typing import Any
 
 CLR_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 SPREAD_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'

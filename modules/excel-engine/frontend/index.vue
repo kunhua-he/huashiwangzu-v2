@@ -23,6 +23,9 @@
       <div v-if="operationError" class="operation-error">
         {{ operationError }}
       </div>
+      <div v-if="operationSuccess" class="operation-success">
+        {{ operationSuccess }}
+      </div>
 
       <!-- Sheet tabs -->
       <div class="sheet-bar">
@@ -83,7 +86,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { getApiUrl } from '../runtime'
 import { colLetter, parseCellAddr } from './components/address-util'
 import ExcelGrid from './components/ExcelGrid.vue'
 import ExcelToolbar from './components/ExcelToolbar.vue'
@@ -110,6 +112,7 @@ const loading = ref(true)
 const errorMsg = ref('')
 const retryable = ref(false)
 const operationError = ref('')
+const operationSuccess = ref('')
 const stateKey = ref('')
 const cells = ref<Record<string, string>>({})
 const cellStyles = ref<Record<string, Record<string, unknown>>>({})
@@ -163,7 +166,13 @@ function errorText(e: unknown, fallback: string): string {
 function showOperationError(e: unknown, fallback: string) {
   const message = errorText(e, fallback)
   operationError.value = message
+  operationSuccess.value = ''
   console.error(message, e)
+}
+
+function showOperationSuccess(message: string) {
+  operationError.value = ''
+  operationSuccess.value = message
 }
 
 // ── Initialization ──
@@ -182,6 +191,7 @@ async function init() {
   loading.value = true
   errorMsg.value = ''
   operationError.value = ''
+  operationSuccess.value = ''
   retryable.value = false
 
   try {
@@ -278,6 +288,16 @@ function applyParseResult(data: EditResult & { sheet_set?: Record<string, SheetD
     totalRows.value = data.total_rows || 40
     totalCols.value = data.total_cols || 10
   }
+}
+
+function applyPartialState(data: EditResult) {
+  if (data.cells) cells.value = data.cells
+  if (data.styles) cellStyles.value = data.styles
+  if (data.merges) merges.value = data.merges
+  if (data.col_widths) colWidths.value = data.col_widths
+  if (data.row_heights) rowHeights.value = data.row_heights
+  if (data.total_rows) totalRows.value = data.total_rows
+  if (data.total_cols) totalCols.value = data.total_cols
 }
 
 // ── Sheet switching ──
@@ -382,6 +402,12 @@ async function onToolbarAction(action: string) {
     case 'export':
       await exportXlsx()
       break
+    case 'publish':
+      await publishWorkbook()
+      break
+    case 'history':
+      toggleHistory()
+      break
     case 'bold':
     case 'italic':
     case 'underline':
@@ -406,7 +432,9 @@ async function sendEdit(method: string, addr: string, value: string) {
   if (!stateKey.value) return
   try {
     operationError.value = ''
-    await api.editCell({ state_key: stateKey.value, sheet: currentSheetName.value, address: addr, method, value })
+    operationSuccess.value = ''
+    const data = await api.editCell({ state_key: stateKey.value, sheet: currentSheetName.value, address: addr, method, value })
+    applyPartialState(data)
   } catch (e: unknown) {
     showOperationError(e, '单元格保存失败')
   }
@@ -416,7 +444,9 @@ async function sendStyleAction(method: string) {
   if (!stateKey.value || selectedRange.value.length === 0) return
   try {
     operationError.value = ''
-    await api.editStyle({ state_key: stateKey.value, sheet: currentSheetName.value, address_list: selectedRange.value, method, params: {} })
+    operationSuccess.value = ''
+    const data = await api.editStyle({ state_key: stateKey.value, sheet: currentSheetName.value, address_list: selectedRange.value, method, params: {} })
+    applyPartialState(data)
   } catch (e: unknown) {
     showOperationError(e, '样式保存失败')
   }
@@ -426,9 +456,10 @@ async function sendStateOp(method: string) {
   if (!stateKey.value) return
   try {
     operationError.value = ''
+    operationSuccess.value = ''
     const data = await api.stateOp({ module: 'state', method, params: {}, state_key: stateKey.value, sheet: currentSheetName.value })
-    if (data.cells) cells.value = data.cells
-    if (data.styles) cellStyles.value = data.styles
+    applyPartialState(data)
+    showOperationSuccess(method === 'undo' ? '已撤销上一项操作' : '已恢复上一项操作')
   } catch (e: unknown) {
     showOperationError(e, '状态操作失败')
   }
@@ -438,13 +469,16 @@ async function sendSave() {
   if (!stateKey.value) return
   try {
     operationError.value = ''
-    await api.dispatch({
+    operationSuccess.value = ''
+    const data = await api.dispatch({
       module: 'export',
       method: 'save_version',
       params: { version_name: `manual-${new Date().toISOString()}` },
       state_key: stateKey.value,
       sheet: currentSheetName.value,
     })
+    const versionId = data.version?.id
+    showOperationSuccess(versionId ? `已保存版本 #${versionId}` : '已保存版本')
   } catch (e: unknown) {
     showOperationError(e, '版本保存失败')
   }
@@ -452,7 +486,26 @@ async function sendSave() {
 
 async function exportXlsx() {
   if (!stateKey.value) return
-  window.open(getApiUrl(`/excel-engine/download/${stateKey.value}`), '_blank')
+  try {
+    operationError.value = ''
+    operationSuccess.value = ''
+    const result = await api.exportWorkbook({ state_key: stateKey.value, sheet: currentSheetName.value })
+    showOperationSuccess(`已导出 ${result.name}，文件 #${result.file_id}，制品 #${result.artifact_id}`)
+  } catch (e: unknown) {
+    showOperationError(e, '导出 XLSX 失败')
+  }
+}
+
+async function publishWorkbook() {
+  if (!stateKey.value) return
+  try {
+    operationError.value = ''
+    operationSuccess.value = ''
+    const result = await api.publishWorkbook({ state_key: stateKey.value, sheet: currentSheetName.value })
+    showOperationSuccess(`已发布 ${result.name}，文件 #${result.file_id}，制品 #${result.artifact_id}`)
+  } catch (e: unknown) {
+    showOperationError(e, '发布到桌面失败')
+  }
 }
 
 // ── Context menu ──
@@ -588,6 +641,7 @@ async function loadHistory() {
   if (!stateKey.value) return
   try {
     operationError.value = ''
+    operationSuccess.value = ''
     const data = await api.stateOp({ module: 'state', method: 'history_list', params: {}, state_key: stateKey.value, sheet: currentSheetName.value })
     historyList.value = data.history || []
   } catch (e: unknown) {
@@ -599,12 +653,9 @@ async function previewHistory(historyId: number) {
   if (!stateKey.value) return
   try {
     operationError.value = ''
+    operationSuccess.value = ''
     const data = await api.stateOp({ module: 'state', method: 'history_preview', params: { history_id: historyId }, state_key: stateKey.value, sheet: currentSheetName.value })
-    if (data.cells) cells.value = data.cells
-    if (data.styles) cellStyles.value = data.styles
-    if (data.merges) merges.value = data.merges
-    if (data.total_rows) totalRows.value = data.total_rows
-    if (data.total_cols) totalCols.value = data.total_cols
+    applyPartialState(data)
   } catch (e: unknown) {
     showOperationError(e, '历史版本预览失败')
   }
@@ -711,6 +762,16 @@ watch(() => getGlobalOpenPayload(), (payload) => {
   border-bottom: 1px solid #fbc4c4;
   background: #fef0f0;
   color: #c45656;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.operation-success {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid #b7eb8f;
+  background: #f6ffed;
+  color: #237804;
   font-size: 13px;
   line-height: 1.4;
 }

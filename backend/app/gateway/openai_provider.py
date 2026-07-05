@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -30,12 +31,14 @@ class OpenAIProvider(BaseProvider):
         provider_name: str = "opencode",
         extra_headers: dict[str, str] | None = None,
         session_affinity: dict | None = None,
+        auth_recovery: dict | None = None,
     ):
         self.api_url = api_url
         self.api_key = api_key
         self.provider_name = provider_name
         self.extra_headers = extra_headers or {}
         self.session_affinity = session_affinity or {}
+        self.auth_recovery = auth_recovery or {}
 
     def _headers(self, payload: dict | None = None, model: str = "") -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -73,17 +76,41 @@ class OpenAIProvider(BaseProvider):
         max_tokens: int = 4096, tools: list[dict] | None = None,
     ) -> dict:
         payload = self._build_payload(messages, model, temperature, max_tokens, False, tools)
+        recovery = _auth_recovery_settings(self.auth_recovery)
         async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
-            resp = await client.post(self.api_url, json=payload, headers=self._headers(payload, model))
-            if resp.status_code >= 400:
+            for attempt in range(1, recovery["max_attempts"] + 1):
+                resp = await client.post(self.api_url, json=payload, headers=self._headers(payload, model))
+                if resp.status_code < 400:
+                    return resp.json()
+
                 body_text = await _read_error_body(resp)
                 payload_preview = _payload_preview(payload)
+                should_recover = (
+                    recovery["strategy"] == "rotate_session"
+                    and resp.status_code in recovery["status_codes"]
+                    and attempt < recovery["max_attempts"]
+                    and bool(str(self.session_affinity.get("header") or "").strip())
+                )
+                if should_recover:
+                    logger.warning(
+                        "AI provider %s returned %s; rotating session header %s (%d/%d)",
+                        self.provider_name,
+                        resp.status_code,
+                        self.session_affinity.get("header"),
+                        attempt,
+                        recovery["max_attempts"],
+                    )
+                    delay = recovery["delay_seconds"]
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    continue
+
                 logger.error(
                     "AI provider %s returned %s\n请求体: %s\n响应体: %s",
                     self.provider_name, resp.status_code, payload_preview, body_text,
                 )
                 resp.raise_for_status()
-            return resp.json()
+        raise RuntimeError("OpenAI-compatible provider recovery exhausted without response")
 
     async def chat_stream(
         self, messages: list[dict], model: str, temperature: float = 0.7,
@@ -156,6 +183,26 @@ async def _read_error_body(resp: httpx.Response) -> str:
         return body[:500] if len(body) > 500 else body
     except Exception:
         return "(无法读取响应体)"
+
+
+def _auth_recovery_settings(config: dict) -> dict:
+    strategy = str(config.get("strategy") or "").strip().lower()
+    raw_status_codes = config.get("status_codes") or []
+    status_codes = {
+        int(code)
+        for code in raw_status_codes
+        if str(code).strip().isdigit()
+    }
+    max_attempts = int(config.get("max_attempts") or 1)
+    delay_seconds = float(config.get("delay_seconds") or 0)
+    if strategy != "rotate_session" or not status_codes:
+        max_attempts = 1
+    return {
+        "strategy": strategy,
+        "status_codes": status_codes,
+        "max_attempts": max(1, max_attempts),
+        "delay_seconds": max(0.0, delay_seconds),
+    }
 
 
 class OpenCodeProvider(OpenAIProvider):

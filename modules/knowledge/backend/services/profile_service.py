@@ -6,6 +6,7 @@
 """
 import json
 import logging
+from time import perf_counter
 
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
@@ -33,6 +34,7 @@ async def generate_document_profile(
 
     从 kb_page_fusions 聚合所有页的融合正文 → LLM 提炼文件画像 → 写入 kb_document_profiles。
     """
+    stage_started = perf_counter()
     # 1. 读取所有页融合内容（过滤空文本，与 fusion_service / entity_service 一致）
     r = await db.execute(
         select(KbPageFusion)
@@ -63,8 +65,12 @@ async def generate_document_profile(
     resolved_profile_key = resolve_knowledge_profile("profile", profile_key)
     model_degraded = False
     model_diagnostics: dict = {}
+    llm_duration_ms = 0
+    embedding_duration_ms = 0
+    db_write_duration_ms = 0
     system_prompt = await load_prompt(db, TPROFILE)
     try:
+        llm_started = perf_counter()
         result = await timed_llm_chat(
             logger=logger,
             stage="profile",
@@ -77,6 +83,7 @@ async def generate_document_profile(
             document_id=document_id,
             extra={"pages": len(fusions)},
         )
+        llm_duration_ms = round((perf_counter() - llm_started) * 1000)
         model_degraded = bool(result.get("model_degraded"))
         model_diagnostics = result.get("model_diagnostics") or {}
         content = (result.get("content") or "").strip()
@@ -87,6 +94,8 @@ async def generate_document_profile(
                 content = content[:-3].strip()
         profile_data = json.loads(content)
     except Exception as e:
+        if llm_duration_ms == 0:
+            llm_duration_ms = round((perf_counter() - llm_started) * 1000) if "llm_started" in locals() else 0
         logger.warning("LLM profiling failed for document_id=%d, using heuristic: %s", document_id, e)
         profile_data = _heuristic_profile(fusions)
 
@@ -94,11 +103,16 @@ async def generate_document_profile(
     profile_text_for_embed = f"{profile_data.get('subject', '')} {profile_data.get('doc_summary', '')}"
     profile_embedding = None
     try:
+        embedding_started = perf_counter()
         profile_embedding = await get_embedding(profile_text_for_embed[:2000])
+        embedding_duration_ms = round((perf_counter() - embedding_started) * 1000)
     except Exception as e:
+        if embedding_duration_ms == 0:
+            embedding_duration_ms = round((perf_counter() - embedding_started) * 1000) if "embedding_started" in locals() else 0
         logger.warning("Profile embedding failed for document_id=%d: %s", document_id, e)
 
     # 4. 写入 kb_document_profiles
+    db_write_started = perf_counter()
     await db.execute(
         sa_delete(KbDocumentProfile).where(KbDocumentProfile.document_id == document_id)
     )
@@ -128,6 +142,7 @@ async def generate_document_profile(
         doc.summary = profile_data.get("doc_summary", "")[:500]
         doc.profile_status = "done"
     await db.commit()
+    db_write_duration_ms = round((perf_counter() - db_write_started) * 1000)
 
     return {
         "document_id": document_id,
@@ -139,6 +154,14 @@ async def generate_document_profile(
         "confidence": profile.confidence,
         "model_degraded": model_degraded,
         "model_diagnostics": model_diagnostics,
+        "timing": {
+            "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+            "llm_ms": llm_duration_ms,
+            "embedding_ms": embedding_duration_ms,
+            "db_write_ms": db_write_duration_ms,
+            "pages": len(fusions),
+            "input_chars": len(all_text),
+        },
     }
 
 

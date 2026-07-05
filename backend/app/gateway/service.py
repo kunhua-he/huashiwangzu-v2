@@ -70,6 +70,7 @@ def get_model_provider(provider_name: str) -> BaseProvider:
             provider_name=cfg.get("provider_name", provider_name),
             extra_headers=cfg.get("headers") or {},
             session_affinity=cfg.get("session_affinity") or {},
+            auth_recovery=cfg.get("auth_recovery") or {},
         )
     if ptype == "local":
         return LocalProvider(allow_echo=bool(cfg.get("allow_echo", False)))

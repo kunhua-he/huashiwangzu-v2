@@ -27,6 +27,12 @@
         "prefix": "knowledge-gptstore",
         "scope": "request"
       },
+      "auth_recovery": {
+        "strategy": "rotate_session",
+        "status_codes": [401],
+        "max_attempts": 3,
+        "delay_seconds": 0.2
+      },
       "description": "Local GPTStore relay for enterprise knowledge text analysis"
     },
     "llama": {

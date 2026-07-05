@@ -4,6 +4,7 @@
 """
 import json
 import logging
+from time import perf_counter
 
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
@@ -367,9 +368,11 @@ async def process_document_entities_from_fusions(
         KbPageFusion,
     )
 
+    stage_started = perf_counter()
     stats = {"entities_found": 0, "relationships_found": 0, "errors": []}
 
     # ── 幂等：捕获旧实体ID后再清数据 ──
+    cleanup_started = perf_counter()
     # 先查出本文档旧证据引用的 entity_id（在删之前捕获，用于后续删 graph node/edge）
     old_evidence_entity_r = await db.execute(
         select(KbEvidence.entity_id).where(KbEvidence.document_id == document_id)
@@ -411,6 +414,7 @@ async def process_document_entities_from_fusions(
             )
 
     logger.info("Cleared old entity/graph data for document_id=%d (uncommitted, safe on crash)", document_id)
+    cleanup_duration_ms = round((perf_counter() - cleanup_started) * 1000)
 
     # 读取所有页融合正文
     r = await db.execute(
@@ -432,13 +436,17 @@ async def process_document_entities_from_fusions(
     all_relationships: list[dict] = []
     entity_page: list[int] = []  # tracks which page each raw entity came from (parallel to all_entities)
     processed_pages = 0
+    extraction_started = perf_counter()
+    page_durations: dict[int, int] = {}
 
     for pf in fusions:
         text = pf.fused_text
         if len(text) < 20:
             continue
 
+        page_started = perf_counter()
         result = await extract_entities_from_text(text, db=db)
+        page_durations[int(pf.page)] = round((perf_counter() - page_started) * 1000)
         page_ents = result.get("entities", [])
         all_entities.extend(page_ents)
         entity_page.extend([pf.page] * len(page_ents))
@@ -452,8 +460,10 @@ async def process_document_entities_from_fusions(
         if processed_pages % 3 == 0 and len(fusions) > 3:
             import asyncio
             await asyncio.sleep(0.5)
+    extraction_duration_ms = round((perf_counter() - extraction_started) * 1000)
 
     # 去重 + 写入（复用同逻辑）
+    write_started = perf_counter()
     seen_entities: dict[str, dict] = {}
     for ent in all_entities:
         name = (ent.get("name") or "").strip()
@@ -627,6 +637,16 @@ async def process_document_entities_from_fusions(
         stats["status"] = "degraded"
         stats["reason"] = "entity_extraction_failed"
     await db.commit()
+    write_duration_ms = round((perf_counter() - write_started) * 1000)
+    stats["timing"] = {
+        "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+        "cleanup_ms": cleanup_duration_ms,
+        "llm_extract_ms": extraction_duration_ms,
+        "graph_write_ms": write_duration_ms,
+        "processed_pages": processed_pages,
+        "page_durations_ms": dict(sorted(page_durations.items())),
+        "execution_mode": "sequential_pages",
+    }
     logger.info("Fusion-entity extraction doc_id=%d: %d entities, %d relationships", document_id, stats["entities_found"], stats["relationships_found"])
     return stats
 

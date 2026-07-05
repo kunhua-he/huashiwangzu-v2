@@ -159,6 +159,8 @@ async def _exec_round_1_text(
             content = ""
             error_message = str(e)
 
+        duration_ms = round((perf_counter() - started) * 1000)
+        status = "done" if content else ("failed" if error_message else "degraded")
         record = KbRawData(
             document_id=doc_id,
             file_id=file_id,
@@ -170,14 +172,21 @@ async def _exec_round_1_text(
             model_used="parser",
             confidence=0.95 if content else 0.0,
             content_hash=_hash_content(content),
-            status="done" if content else ("failed" if error_message else "degraded"),
+            status=status,
             error_message=error_message or None,
-            duration_ms=round((perf_counter() - started) * 1000),
+            duration_ms=duration_ms,
         )
         task_db.add(record)
         await task_db.commit()
         logger.info("Raw collection round=1 page=%d done (%d chars)", page, len(content))
-        return {"round": 1, "page": page, "chars": len(content)}
+        return {
+            "round": 1,
+            "page": page,
+            "chars": len(content),
+            "status": status,
+            "duration_ms": duration_ms,
+            "processor": "local_parser",
+        }
 
 
 async def _exec_round_2_ocr(
@@ -232,6 +241,8 @@ async def _exec_round_2_ocr(
             metadata = _vision_model_metadata("vlm_ocr", profile_key)
             error_message = str(e)
 
+        duration_ms = round((perf_counter() - started) * 1000)
+        status = "done" if content else ("failed" if error_message else "degraded")
         record = KbRawData(
             document_id=doc_id,
             file_id=file_id,
@@ -244,9 +255,9 @@ async def _exec_round_2_ocr(
             confidence=0.85 if content else 0.0,
             content_hash=_hash_content(content),
             metadata_json=metadata,
-            status="done" if content else ("failed" if error_message else "degraded"),
+            status=status,
             error_message=error_message or None,
-            duration_ms=round((perf_counter() - started) * 1000),
+            duration_ms=duration_ms,
         )
         task_db.add(record)
         await task_db.commit()
@@ -257,6 +268,9 @@ async def _exec_round_2_ocr(
             "round": 2,
             "page": page,
             "chars": len(content),
+            "status": status,
+            "duration_ms": duration_ms,
+            "processor": metadata.get("provider") or "vlm",
             "model_degraded": bool(metadata.get("model_degraded")),
             "model_diagnostics": metadata.get("model_diagnostics") or {},
         }
@@ -292,6 +306,8 @@ async def _exec_round_3_vision(
             content = ""
             error_message = str(e)
 
+        duration_ms = round((perf_counter() - started) * 1000)
+        status = "done" if content else ("failed" if error_message else "degraded")
         record = KbRawData(
             document_id=doc_id,
             file_id=file_id,
@@ -304,9 +320,9 @@ async def _exec_round_3_vision(
             confidence=0.80 if content else 0.0,
             content_hash=_hash_content(content),
             metadata_json=metadata,
-            status="done" if content else ("failed" if error_message else "degraded"),
+            status=status,
             error_message=error_message or None,
-            duration_ms=round((perf_counter() - started) * 1000),
+            duration_ms=duration_ms,
         )
         task_db.add(record)
         await task_db.commit()
@@ -315,6 +331,9 @@ async def _exec_round_3_vision(
             "round": 3,
             "page": page,
             "chars": len(content),
+            "status": status,
+            "duration_ms": duration_ms,
+            "processor": metadata.get("provider") or "vlm",
             "model_degraded": bool(metadata.get("model_degraded")),
             "model_diagnostics": metadata.get("model_diagnostics") or {},
         }
@@ -341,6 +360,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
     返回: {"document_id": int, "total_pages": int, "rounds": [...每个任务的结果...], "status": "done"}
     """
     caller = f"user:{user_id}"
+    stage_started = perf_counter()
 
     # 确定页数
     df = await db.execute(select(KbDocument).where(KbDocument.id == doc_id))
@@ -393,6 +413,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
 
     # 预渲染页面图片（只一次，OCR 与视觉共用）
     page_images: dict[int, bytes] = {}
+    pre_render_started = perf_counter()
     if is_pdf and (2 in rounds_for_type or 3 in rounds_for_type):
         page_images = await _pre_render_pages(file_id, user_id, total_pages)
     elif is_image and (2 in rounds_for_type or 3 in rounds_for_type):
@@ -410,6 +431,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
                 page_images[page] = img_bytes
         except Exception as e:
             logger.warning("Cannot read image bytes for file_id=%d: %s", file_id, e)
+    pre_render_duration_ms = round((perf_counter() - pre_render_started) * 1000)
 
     # 5 并发门池 + 摊平任务列表
     sem = asyncio.Semaphore(RAW_COLLECT_CONCURRENCY)
@@ -433,6 +455,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
         for r in rounds_for_type:
             tasks.append(_task_wrapper(r, page))
 
+    task_wall_started = perf_counter()
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for r in results:
@@ -440,6 +463,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
                 logger.warning("Round task failed: %s", r)
             else:
                 all_results.append(r)
+    task_wall_duration_ms = round((perf_counter() - task_wall_started) * 1000)
 
     failed_count = 0
     if tasks:
@@ -450,15 +474,51 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
         )
 
     raw_rows = await db.execute(
-        select(KbRawData.page, KbRawData.content, KbRawData.status).where(KbRawData.document_id == doc_id)
+        select(
+            KbRawData.page,
+            KbRawData.round,
+            KbRawData.source_type,
+            KbRawData.content,
+            KbRawData.status,
+            KbRawData.duration_ms,
+            KbRawData.metadata_json,
+        ).where(KbRawData.document_id == doc_id)
     )
     raw_result_rows = raw_rows.all()
-    raw_contents = [content or "" for (_page, content, _status) in raw_result_rows]
+    raw_contents = [content or "" for (_page, _round, _source, content, _status, _duration, _metadata) in raw_result_rows]
     total_rounds = total_pages * expected_rounds
     valid_rounds = sum(1 for content in raw_contents if content.strip())
     empty_rounds = max(total_rounds - valid_rounds, 0)
-    valid_pages = len({page for (page, content, _status) in raw_result_rows if (content or "").strip()})
-    failed_row_count = sum(1 for (_page, _content, status) in raw_result_rows if status == "failed")
+    valid_pages = len({page for (page, _round, _source, content, _status, _duration, _metadata) in raw_result_rows if (content or "").strip()})
+    failed_row_count = sum(1 for (_page, _round, _source, _content, status, _duration, _metadata) in raw_result_rows if status == "failed")
+    failed_pages = sorted({
+        page
+        for (page, _round, _source, _content, status, _duration, _metadata) in raw_result_rows
+        if status == "failed"
+    })
+    page_durations: dict[int, int] = {}
+    round_durations: list[dict] = []
+    model_call_duration_ms = 0
+    local_processing_duration_ms = 0
+    for page, round_num, source_type, content, status, duration, metadata in raw_result_rows:
+        duration_value = int(duration or 0)
+        page_durations[page] = page_durations.get(page, 0) + duration_value
+        metadata = metadata or {}
+        provider = str(metadata.get("provider") or "")
+        is_model_round = source_type == "vision" or (source_type == "ocr" and provider not in {"", "tesseract"})
+        if is_model_round:
+            model_call_duration_ms += duration_value
+        else:
+            local_processing_duration_ms += duration_value
+        round_durations.append({
+            "page": page,
+            "round": round_num,
+            "source_type": source_type,
+            "status": status,
+            "chars": len(content or ""),
+            "duration_ms": duration_value,
+            "processor": provider or ("local_parser" if source_type == "text" else source_type),
+        })
 
     await db.refresh(doc)
     doc.raw_status = classify_raw_collection_status(
@@ -494,6 +554,18 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
         "empty_pages": max(total_pages - valid_pages, 0),
         "failed_rounds": failed_count + failed_row_count,
         "rounds": all_results,
+        "timing": {
+            "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+            "pre_render_ms": pre_render_duration_ms,
+            "task_wall_ms": task_wall_duration_ms,
+            "raw_collect_concurrency": RAW_COLLECT_CONCURRENCY,
+            "local_processing_ms": local_processing_duration_ms,
+            "model_call_ms": model_call_duration_ms,
+            "page_durations_ms": dict(sorted(page_durations.items())),
+            "round_durations": round_durations,
+            "failed_pages": failed_pages,
+            "skipped_pages": sorted(done_pages),
+        },
         "status": doc.raw_status,
         "model_degraded": bool(model_diagnostics),
         "model_diagnostics": model_diagnostics,

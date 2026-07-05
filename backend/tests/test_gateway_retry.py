@@ -1,11 +1,14 @@
 from io import BytesIO
 
+import httpx
 import pytest
+from app.gateway import openai_provider as openai_provider_module
 from app.gateway import router as gateway_router_module
 from app.gateway.config import get_model_type_config, get_models_config
 from app.gateway.contract import ModelRequest, ModelResponse
 from app.gateway.error_classifier import ErrorClassification
 from app.gateway.local import LocalProvider
+from app.gateway.openai_provider import OpenAIProvider, _payload_preview
 from app.gateway.router import (
     ModelGatewayRouter,
     RetryBudget,
@@ -15,7 +18,6 @@ from app.gateway.router import (
     _retry_budget_from_profile,
     _retry_delay,
 )
-from app.gateway.openai_provider import OpenAIProvider, _payload_preview
 from app.services.model_watchdog import launcher as watchdog_launcher
 from app.services.model_watchdog.registry import ModelRecord
 
@@ -260,6 +262,165 @@ def test_openai_provider_payload_preview_redacts_image_data_urls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_provider_auth_recovery_rotates_session_on_configured_401(monkeypatch) -> None:
+    seen_sessions: list[str] = []
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url, json, headers):
+            seen_sessions.append(headers["X-Session-ID"])
+            request = httpx.Request("POST", url)
+            if len(seen_sessions) == 1:
+                return httpx.Response(
+                    401,
+                    json={"error": {"message": "bad relay account"}},
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+                request=request,
+            )
+
+    monkeypatch.setattr(openai_provider_module.httpx, "AsyncClient", FakeAsyncClient)
+    provider = OpenAIProvider(
+        api_url="http://127.0.0.1:61462/v1/chat/completions",
+        api_key="test-key",
+        provider_name="gptstore-text",
+        session_affinity={
+            "header": "X-Session-ID",
+            "prefix": "knowledge-gptstore",
+            "scope": "request",
+        },
+        auth_recovery={
+            "strategy": "rotate_session",
+            "status_codes": [401],
+            "max_attempts": 2,
+            "delay_seconds": 0,
+        },
+    )
+
+    result = await provider.chat(
+        messages=[{"role": "user", "content": "hello"}],
+        model="gpt-5.5",
+        temperature=0.2,
+        max_tokens=128,
+    )
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(seen_sessions) == 2
+    assert seen_sessions[0].startswith("knowledge-gptstore:")
+    assert seen_sessions[1].startswith("knowledge-gptstore:")
+    assert seen_sessions[0] != seen_sessions[1]
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_auth_recovery_exhaustion_raises_final_401(monkeypatch) -> None:
+    seen_sessions: list[str] = []
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url, json, headers):
+            seen_sessions.append(headers["X-Session-ID"])
+            return httpx.Response(
+                401,
+                json={"error": {"message": "all relay accounts failed"}},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(openai_provider_module.httpx, "AsyncClient", FakeAsyncClient)
+    provider = OpenAIProvider(
+        api_url="http://127.0.0.1:61462/v1/chat/completions",
+        api_key="test-key",
+        provider_name="gptstore-text",
+        session_affinity={
+            "header": "X-Session-ID",
+            "prefix": "knowledge-gptstore",
+            "scope": "request",
+        },
+        auth_recovery={
+            "strategy": "rotate_session",
+            "status_codes": [401],
+            "max_attempts": 2,
+            "delay_seconds": 0,
+        },
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="gpt-5.5",
+            temperature=0.2,
+            max_tokens=128,
+        )
+
+    assert len(seen_sessions) == 2
+    assert seen_sessions[0] != seen_sessions[1]
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_auth_recovery_is_opt_in(monkeypatch) -> None:
+    calls = 0
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url, json, headers):
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                401,
+                json={"error": {"message": "invalid api key"}},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(openai_provider_module.httpx, "AsyncClient", FakeAsyncClient)
+    provider = OpenAIProvider(
+        api_url="http://127.0.0.1:61462/v1/chat/completions",
+        api_key="test-key",
+        provider_name="gptstore-text",
+        session_affinity={
+            "header": "X-Session-ID",
+            "prefix": "knowledge-gptstore",
+            "scope": "request",
+        },
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="gpt-5.5",
+            temperature=0.2,
+            max_tokens=128,
+        )
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_profile_retry_budget_uses_fixed_delay(monkeypatch) -> None:
     profiles = {
         "gpt-5.5-knowledge": {
@@ -478,6 +639,12 @@ async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profi
     assert knowledge_routing["fallback_profile"] == "deepseek-v4-flash"
     assert knowledge_routing["stages"]["raw_vision"] == "gpt-5.5-vision"
     assert get_models_config()["providers"]["gptstore-text"]["session_affinity"]["scope"] == "request"
+    assert get_models_config()["providers"]["gptstore-text"]["auth_recovery"] == {
+        "strategy": "rotate_session",
+        "status_codes": [401],
+        "max_attempts": 3,
+        "delay_seconds": 0.2,
+    }
 
 
 @pytest.mark.asyncio

@@ -378,6 +378,7 @@ class ModelGatewayRouter:
                     provider_name=cfg.get("provider_name", name),
                     extra_headers=cfg.get("headers") or {},
                     session_affinity=cfg.get("session_affinity") or {},
+                    auth_recovery=cfg.get("auth_recovery") or {},
                 )
             elif ptype == "local":
                 self._providers[name] = LocalProvider(allow_echo=bool(cfg.get("allow_echo", False)))

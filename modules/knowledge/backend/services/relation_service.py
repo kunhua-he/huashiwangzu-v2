@@ -5,6 +5,7 @@
 逐边 commit，幂等可重入（已有边跳过，中断只丢当前边）。
 """
 import logging
+from time import perf_counter
 
 from app.database import AsyncSessionLocal
 from app.services.task_worker import register_task_handler
@@ -55,6 +56,7 @@ async def compute_file_relations(
     基于：文件画像向量余弦相似度(0.6权重) + 实体共现 Jaccard(0.4权重)。
     已有边（同 source/target）跳过，中断只丢当前边。
     """
+    stage_started = perf_counter()
     # 获取新文件画像
     r = await db.execute(
         select(KbDocumentProfile).where(KbDocumentProfile.document_id == document_id)
@@ -62,7 +64,16 @@ async def compute_file_relations(
     new_profile = r.scalar_one_or_none()
     if not new_profile or not new_profile.profile_embedding:
         logger.warning("No profile/embedding for document_id=%d, skipping relations", document_id)
-        return {"document_id": document_id, "relations_created": 0}
+        return {
+            "document_id": document_id,
+            "relations_created": 0,
+            "timing": {
+                "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+                "candidate_documents": 0,
+                "relations_created": 0,
+                "reason": "missing_profile_embedding",
+            },
+        }
 
     # 获取新文件的实体集合
     new_entities = await _get_document_entity_ids(db, document_id)
@@ -87,6 +98,10 @@ async def compute_file_relations(
     existing_profiles = r.scalars().all()
 
     relations_created = 0
+    scored_documents = 0
+    skipped_existing_edges = 0
+    below_threshold = 0
+    db_commit_duration_ms = 0
     for existing in existing_profiles:
         if not existing.profile_embedding:
             continue
@@ -95,6 +110,7 @@ async def compute_file_relations(
         fwd_edge = (document_id, existing.document_id)
         rev_edge = (existing.document_id, document_id)
         if fwd_edge in existing_edges or rev_edge in existing_edges:
+            skipped_existing_edges += 1
             continue
 
         # 向量相似度
@@ -106,9 +122,11 @@ async def compute_file_relations(
 
         # 综合分数（向量 0.6 + 实体 0.4）
         combined_score = round(vec_sim * 0.6 + entity_sim * 0.4, 4)
+        scored_documents += 1
 
         # 阈值：综合 >0.15 才建边
         if combined_score < 0.15:
+            below_threshold += 1
             continue
 
         # 确定关系类型
@@ -148,13 +166,27 @@ async def compute_file_relations(
 
         # 逐对 commit：中断只丢当前边
         try:
+            commit_started = perf_counter()
             await db.commit()
+            db_commit_duration_ms += round((perf_counter() - commit_started) * 1000)
         except Exception:
             await db.rollback()
             raise
 
     logger.info("Created %d file relations for document_id=%d", relations_created, document_id)
-    return {"document_id": document_id, "relations_created": relations_created}
+    return {
+        "document_id": document_id,
+        "relations_created": relations_created,
+        "timing": {
+            "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+            "candidate_documents": len(existing_profiles),
+            "scored_documents": scored_documents,
+            "skipped_existing_edges": skipped_existing_edges,
+            "below_threshold": below_threshold,
+            "relations_created": relations_created,
+            "db_commit_ms": db_commit_duration_ms,
+        },
+    }
 
 
 async def get_file_relations(

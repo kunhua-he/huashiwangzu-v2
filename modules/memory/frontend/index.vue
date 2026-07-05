@@ -5,14 +5,17 @@
         <path d="M24 6c-7 0-12 4-12 10 0 3 1 5 3 7-1 2-2 4-2 6 0 4 4 7 11 7s11-3 11-7c0-2-1-4-2-6 2-2 3-4 3-7 0-6-5-10-11-10z"/>
         <path d="M18 20h12M18 26h8"/>
       </svg>
-      <h3>记忆</h3>
-      <p>通过 Agent 对话记事和回忆</p>
-      <span class="stub-hint">打开 Agent，说「记住…」或「我之前说过…」即可使用</span>
+      <h3>{{ copy.title }}</h3>
+      <p>{{ copy.description }}</p>
+      <span class="stub-hint">{{ copy.hint }}</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useMemoryOverview } from './composables/useMemoryOverview'
+
+const { copy } = useMemoryOverview()
 </script>
 
 <style scoped>

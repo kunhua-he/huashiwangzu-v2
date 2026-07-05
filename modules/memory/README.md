@@ -60,6 +60,19 @@ All `agent_*` prefix (shared with agent's `agent_*` convention):
 ## How to query/use
 Agent engine calls memory capabilities during conversations: `save` for facts, `recall`/`match_experience` for retrieval, `fuse` for summarization, `dream` for periodic optimization. All calls go through framework `call_capability("memory", "...", {...})`.
 
+## Frontend Structure
+
+Memory 前端当前仍是轻量入口，不强行扩展业务 UI。结构先按可增长形态铺好：
+
+| 路径 | 作用 |
+|---|---|
+| `frontend/index.vue` | 桌面入口，保留现有 stub 视觉 |
+| `frontend/composables/useMemoryOverview.ts` | stub 文案和后续概览状态入口 |
+| `frontend/api/index.ts` | `listMemories` / `recallMemories` 轻量 API 包装 |
+| `frontend/types/index.ts` | 记忆记录与概览文案类型 |
+
+本次拆分不改变 Memory 的前端功能形态；后续若补列表或治理 UI，可直接复用 `api/` 与 composable 结构。
+
 ## Verification
 
 ```bash

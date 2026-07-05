@@ -147,6 +147,20 @@ HTTP 前缀：`/api/agent`
 
 Agent 对外能力通过 manifest 暴露（20+ 公共能力），子 Agent 使用 `agent:spawn_subagent`（V2 增强版）。
 
+## Frontend Structure
+
+Agent 前端入口按“入口布局 + 状态组合 + API/types”拆分：
+
+| 路径 | 作用 |
+|---|---|
+| `frontend/index.vue` | 桌面入口，只保留布局、组件接线和入口样式 |
+| `frontend/composables/useAgentChat.ts` | 对话列表、消息加载、编辑重发、SSE 流式事件和工作轨迹状态组合 |
+| `frontend/utils/messageSanitizer.ts` | assistant 内容清洗、来源引用提取、引用去重和桌面刷新通知 |
+| `frontend/types/index.ts` | 入口 props、会话、消息、引用和流式 usage 类型 |
+| `frontend/api/index.ts` / `frontend/api/conversations.ts` | API facade 与会话 API 包装；既有 `frontend/api.ts` 保持兼容 |
+
+本次拆分不改后端接口、不改视觉行为；入口文件维持在 600 行以内，复杂流式状态留在 composable 中保持强内聚。
+
 ## 引擎文件
 
 | 文件 | 作用 |

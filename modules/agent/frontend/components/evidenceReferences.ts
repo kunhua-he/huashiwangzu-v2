@@ -35,6 +35,7 @@ export const EVIDENCE_REF_LABELS: Record<string, string> = {
   artifact_id: '产物',
   document_id: '文档',
   chunk_id: '片段',
+  memory_id: '记忆',
   page: '页码',
   section: '章节',
 }
@@ -76,16 +77,17 @@ function directReferenceFromRecord(record: Record<string, unknown>, context: Evi
   if (!refKey) return null
   const refId = scalarToString(record.ref_id) || scalarToString(record.refId) || scalarToString(record[refKey])
   if (!refId) return null
+  const sourceModule = stringField(record, 'source_module') || stringField(record, 'sourceModule') || sourceModuleFromRefKey(refKey)
   return withContext({
     type: stringField(record, 'type') || context.fallbackType || refTypeFromKey(refKey),
     ref_key: refKey,
     ref_id: refId,
-    title: stringField(record, 'title'),
+    title: stringField(record, 'title') || memoryTitleFromRecord(refKey, refId, record),
     source: stringField(record, 'source'),
-    source_module: stringField(record, 'source_module') || stringField(record, 'sourceModule'),
+    source_module: sourceModule,
     source_tool: stringField(record, 'source_tool') || stringField(record, 'sourceTool'),
     status: stringField(record, 'status'),
-    excerpt: stringField(record, 'excerpt') || stringField(record, 'snippet'),
+    excerpt: stringField(record, 'excerpt') || stringField(record, 'snippet') || memoryExcerptFromRecord(refKey, record),
     file_id: record.file_id as EvidenceReference['file_id'],
     document_id: record.document_id as EvidenceReference['document_id'],
     chunk_id: record.chunk_id as EvidenceReference['chunk_id'],
@@ -144,7 +146,7 @@ export function collectEvidenceReferences(
           ref_id: refId,
           title: `${EVIDENCE_REF_LABELS[key]} ${refId}`,
           source: key,
-          source_module: stringField(value, 'source_module') || stringField(value, 'sourceModule'),
+          source_module: stringField(value, 'source_module') || stringField(value, 'sourceModule') || sourceModuleFromRefKey(key),
           file_id: value.file_id as EvidenceReference['file_id'],
           document_id: value.document_id as EvidenceReference['document_id'],
           chunk_id: value.chunk_id as EvidenceReference['chunk_id'],
@@ -196,6 +198,9 @@ export function evidenceReferenceOpenReason(ref: EvidenceReference): string {
   if (ref.ref_key === 'package_id' || ref.ref_key === 'artifact_id') {
     return '可查看 metadata；若未发布为文件则没有下载链接'
   }
+  if (ref.ref_key === 'memory_id') {
+    return '记忆引用来自 Memory 模块；当前在工作流内显示摘要，不直接读 Memory 表'
+  }
   return '当前没有直接打开入口'
 }
 
@@ -217,4 +222,18 @@ export function evidenceReferenceCitation(ref: EvidenceReference): string {
     ref.section ? `section=${ref.section}` : '',
   ].filter(Boolean)
   return parts.join(' | ')
+}
+
+function sourceModuleFromRefKey(refKey: string): string | undefined {
+  return refKey === 'memory_id' ? 'memory' : undefined
+}
+
+function memoryTitleFromRecord(refKey: string, refId: string, record: Record<string, unknown>): string | undefined {
+  if (refKey !== 'memory_id') return undefined
+  return stringField(record, 'summary') || stringField(record, 'title') || `记忆 ${refId}`
+}
+
+function memoryExcerptFromRecord(refKey: string, record: Record<string, unknown>): string | undefined {
+  if (refKey !== 'memory_id') return undefined
+  return stringField(record, 'summary') || stringField(record, 'text') || stringField(record, 'content')
 }

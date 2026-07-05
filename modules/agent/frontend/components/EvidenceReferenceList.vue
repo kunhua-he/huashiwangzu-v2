@@ -11,6 +11,7 @@
           <span class="evidence-card__type">{{ evidenceReferenceLabel(ref) }}</span>
           <span v-if="ref.status" class="evidence-card__status">{{ ref.status }}</span>
         </div>
+        <div v-if="ref.title" class="evidence-card__title">{{ ref.title }}</div>
         <div class="evidence-card__id" :title="ref.ref_id">{{ ref.ref_key }}: {{ ref.ref_id }}</div>
         <div v-if="referenceSource(ref)" class="evidence-card__source">
           来源 {{ referenceSource(ref) }}
@@ -294,6 +295,7 @@ async function loadMetadata(ref: EvidenceReference) {
   white-space: nowrap;
 }
 .evidence-card__id,
+.evidence-card__title,
 .evidence-card__source,
 .evidence-card__reason {
   color: var(--ag-text-secondary);
@@ -303,6 +305,14 @@ async function loadMetadata(ref: EvidenceReference) {
 }
 .evidence-card__id {
   font-family: var(--ag-font-mono);
+}
+.evidence-card__title {
+  color: var(--ag-text-primary);
+  font-weight: 600;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .evidence-card__source {
   color: var(--ag-text-tertiary);

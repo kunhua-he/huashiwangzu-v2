@@ -62,16 +62,16 @@ Agent engine calls memory capabilities during conversations: `save` for facts, `
 
 ## Frontend Structure
 
-Memory 前端当前仍是轻量入口，不强行扩展业务 UI。结构先按可增长形态铺好：
+Memory 前端已具备最小产品化管理面，用于查看、检索和清理当前用户自己的记忆：
 
 | 路径 | 作用 |
 |---|---|
-| `frontend/index.vue` | 桌面入口，保留现有 stub 视觉 |
-| `frontend/composables/useMemoryOverview.ts` | stub 文案和后续概览状态入口 |
-| `frontend/api/index.ts` | `listMemories` / `recallMemories` 轻量 API 包装 |
-| `frontend/types/index.ts` | 记忆记录与概览文案类型 |
+| `frontend/index.vue` | 桌面入口，两栏布局：列表/搜索 + 详情面板 |
+| `frontend/composables/useMemoryOverview.ts` | 列表加载、语义/关键词检索、选择、删除和空态状态组合 |
+| `frontend/api/index.ts` | `listMemories` / `recallMemories` / `deleteMemory` API 包装 |
+| `frontend/types/index.ts` | 记忆记录、列表响应、删除响应和检索模式类型 |
 
-本次拆分不改变 Memory 的前端功能形态；后续若补列表或治理 UI，可直接复用 `api/` 与 composable 结构。
+UI 展示字段包括 memory id、类型、来源、创建时间、可信度、新近度、标签、关键词、会话关联、访问次数和语义相似度。空态明确提示“暂无记忆；需要先在 Agent 中产生记忆”。删除通过 Memory 自有 `/api/memory/delete` 能力执行，不读写其他模块数据。
 
 ## Verification
 

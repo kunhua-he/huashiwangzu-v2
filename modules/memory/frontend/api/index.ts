@@ -1,17 +1,17 @@
 import { apiGet, apiPost } from '../../runtime'
-import type { MemoryRecord } from '../types'
-
-export interface MemoryListResponse {
-  items?: MemoryRecord[]
-  total?: number
-}
-
-export type MemoryListResult = MemoryRecord[] | MemoryListResponse
+import type { MemoryDeleteResult, MemoryListResult, MemoryRecord } from '../types'
 
 export function listMemories(limit = 20, offset = 0): Promise<MemoryListResult> {
-  return apiGet<MemoryListResult>(`/memory/list?limit=${limit}&offset=${offset}`)
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  return apiGet<MemoryListResult>(`/memory/list?${params.toString()}`)
 }
 
-export function recallMemories(query: string, limit = 5): Promise<MemoryRecord[]> {
-  return apiPost<MemoryRecord[]>('/memory/recall', { query, limit })
+export function recallMemories(query: string, limit = 10): Promise<MemoryRecord[]> {
+  return apiPost<MemoryRecord[]>('/memory/recall', { query, limit, expand_chain: true })
+}
+
+export function deleteMemory(id: number): Promise<MemoryDeleteResult> {
+  return apiPost<MemoryDeleteResult>('/memory/delete', { id })
 }

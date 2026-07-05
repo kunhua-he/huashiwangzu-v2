@@ -61,14 +61,14 @@
                 <dd>{{ item.failure_reason || '无失败原因' }}</dd>
               </div>
               <div>
-                <dt>引用/产物 ID</dt>
+                <dt>Evidence / Memory 引用</dt>
                 <dd>
                   <EvidenceReferenceList
                     v-if="multiAgentEvidenceReferences(item).length"
                     :references="multiAgentEvidenceReferences(item)"
                     dense
                   />
-                  <template v-else>暂无引用或产物</template>
+                  <template v-else>暂无 evidence/reference；若步骤返回 memory_id、artifact_id 或文件引用，会在这里显示来源模块、ID 和摘要。</template>
                 </dd>
               </div>
               <div>
@@ -78,7 +78,7 @@
             </dl>
           </article>
         </div>
-        <p v-else class="workflow-muted">还没有子代理或步骤摘要；任务开始分派后会在这里显示。</p>
+        <p v-else class="workflow-muted">还没有子代理或步骤摘要，也暂无 memory/evidence 引用；任务开始分派并返回引用后会在这里显示。</p>
       </div>
 
       <div v-if="workflowNeedsConfirmation" class="confirmation-strip">

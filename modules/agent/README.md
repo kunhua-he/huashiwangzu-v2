@@ -261,14 +261,15 @@ Agent 只保存轻量证据引用，不复制 Knowledge chunk 正文、ContentPa
 
 ```text
 source_module, file_id?, document_id?, chunk_id?, package_id?, artifact_id?,
-page?, section?, score?, title?, snippet?
+memory_id?, page?, section?, score?, title?, snippet?
 ```
 
 规则：
 
 - Knowledge 来源必须来自 `knowledge:*` capability 结果；Agent 不读 `kb_*` 表。
+- Memory 来源必须来自 `memory:*` capability 结果；workflow/detail 前端只展示 `memory_id`、来源模块和摘要，不读 `memory_*` 表。
 - ContentPackage / Artifact 来源只记录 `package_id`、`artifact_id`、`file_id/source_file_id`、`download_url/open_url` 等回源字段；权威详情仍由框架 `/api/content/*`、`/api/artifacts/*` 和文件接口校验权限后返回。
-- `agent_message_meta.references`、workflow `result_ref/evidence_ref/storage_ref` 均只保存 ID + 摘要；前端 evidence card 负责用同一语义展示文件、文档、chunk、package、artifact，并在无法打开时显示原因。
+- `agent_message_meta.references`、workflow `result_ref/evidence_ref/storage_ref` 均只保存 ID + 摘要；前端 evidence card 负责用同一语义展示文件、文档、chunk、package、artifact、memory，并在无法打开时显示原因。
 - Artifact 产物 metadata 的权威字段是 `artifact_id`、`package_id`、`source_file_id`、`origin_module`、`download_url/open_url`。Agent workflow artifact 只表示“本 workflow 产出了/引用了什么”，不成为内容权威源。
 
 ## 上下文压缩口径

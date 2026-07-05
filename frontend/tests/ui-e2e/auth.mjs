@@ -8,7 +8,41 @@ export const ADMIN_PASS = '123rgE123'
 let adminTokenOverride = null
 let adminRefreshPromise = null
 
+async function isAdminTokenValid(token) {
+  if (!token) return false
+  const resp = await fetch(`${BASE_URL}/api/current-user`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => null)
+  return Boolean(resp?.ok)
+}
+
+function writeAdminStorageState(token) {
+  const storageState = {
+    cookies: [],
+    origins: [{
+      origin: new URL(BASE_URL).origin,
+      localStorage: [{ name: 'v2_auth_token', value: token }],
+    }],
+  }
+  fs.writeFileSync(ADMIN_STORAGE_FILE, JSON.stringify(storageState, null, 2), 'utf-8')
+}
+
+function readAdminStorageToken() {
+  const storage = JSON.parse(fs.readFileSync(ADMIN_STORAGE_FILE, 'utf-8'))
+  const origin = new URL(BASE_URL).origin
+  const state = storage.origins?.find(item => item.origin === origin) || storage.origins?.[0]
+  return state?.localStorage?.find(item => item.name === 'v2_auth_token')?.value || ''
+}
+
 export async function refreshAdminStorageState() {
+  if (adminTokenOverride && await isAdminTokenValid(adminTokenOverride)) return adminTokenOverride
+
+  const storedToken = readAdminStorageToken()
+  if (await isAdminTokenValid(storedToken)) {
+    adminTokenOverride = storedToken
+    return storedToken
+  }
+
   const resp = await fetch(`${BASE_URL}/api/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -20,14 +54,7 @@ export async function refreshAdminStorageState() {
     throw new Error(`Admin API login failed: ${JSON.stringify(body).slice(0, 300)}`)
   }
   adminTokenOverride = token
-  const storageState = {
-    cookies: [],
-    origins: [{
-      origin: new URL(BASE_URL).origin,
-      localStorage: [{ name: 'v2_auth_token', value: token }],
-    }],
-  }
-  fs.writeFileSync(ADMIN_STORAGE_FILE, JSON.stringify(storageState, null, 2), 'utf-8')
+  writeAdminStorageState(token)
   return token
 }
 
@@ -42,10 +69,7 @@ export async function refreshAdminToken() {
 
 export async function getAuthToken() {
   if (adminTokenOverride) return adminTokenOverride
-  const storage = JSON.parse(fs.readFileSync(ADMIN_STORAGE_FILE, 'utf-8'))
-  const origin = new URL(BASE_URL).origin
-  const state = storage.origins?.find(item => item.origin === origin) || storage.origins?.[0]
-  const token = state?.localStorage?.find(item => item.name === 'v2_auth_token')?.value
+  const token = readAdminStorageToken()
   if (!token) throw new Error('Admin storageState has no v2_auth_token')
   return token
 }

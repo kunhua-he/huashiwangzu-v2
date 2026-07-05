@@ -488,7 +488,10 @@ def suggest_profile(
         "candidate": None,
         "reason": _suggest_reason(score_detail, should_record),
     }
-    if not should_record or not auto_record:
+    if not should_record:
+        return _tool_response(payload)
+    if not auto_record:
+        payload["reason"] = "candidate scored as record-worthy, but auto_record=false so nothing was written"
         return _tool_response(payload)
 
     with locked_profile(path) as profile:

@@ -34,6 +34,28 @@ def test_user_profile_suggest_records_candidate(tmp_path: Path) -> None:
     assert profile["preferences"] == []
 
 
+def test_user_profile_suggest_auto_record_false_does_not_write(tmp_path: Path) -> None:
+    profile_path = tmp_path / "profile.json"
+
+    result = _load(suggest_profile(
+        tmp_path,
+        profile_path,
+        observation="用户长期偏好：检查新功能时要给明确结论。",
+        user="default",
+        source="test",
+        agent="pytest",
+        evidence_count=2,
+        explicit=True,
+        auto_record=False,
+    ))
+
+    assert result["success"] is True
+    assert result["should_record"] is True
+    assert result["candidate"] is None
+    assert "nothing was written" in result["reason"]
+    assert not profile_path.exists()
+
+
 def test_user_profile_confirm_candidate_requires_confirm(tmp_path: Path) -> None:
     profile_path = tmp_path / "profile.json"
     suggested = _load(suggest_profile(

@@ -160,6 +160,38 @@ def test_chunk_shape() -> None:
     print("  [CHUNK] Shape valid")
 
 
+def test_spreadsheet_ir_keeps_sheet_children() -> None:
+    """Spreadsheet parser sheet nodes must not break knowledge IR normalization."""
+    from modules.knowledge.backend.ir_models import from_legacy_blocks, to_legacy_dict
+
+    ir = from_legacy_blocks(
+        file_id=42,
+        fmt="xlsx",
+        blocks=[{
+            "type": "sheet",
+            "text": "Sales",
+            "page": 1,
+            "source_ref": {"sheet": "Sales", "range": "A1:B2"},
+            "data": {"sheet_name": "Sales"},
+            "children": [{
+                "type": "table",
+                "text": "Name | Amount\nA | 10",
+                "page": 1,
+                "source_ref": {"sheet": "Sales", "range": "A1:B2"},
+                "data": {"headers": ["Name", "Amount"], "rows": [["A", "10"]]},
+            }],
+        }],
+    )
+
+    assert ir.blocks[0].type == "sheet"
+    assert ir.blocks[0].children[0].type == "table"
+    assert ir.blocks[0].children[0].metadata["headers"] == ["Name", "Amount"]
+    legacy = to_legacy_dict(ir)
+    assert [block["type"] for block in legacy["blocks"]] == ["标题", "表格"]
+    assert any("Name | Amount" in block["text"] for block in legacy["blocks"])
+    print("  [SPREADSHEET-IR] Sheet children normalization valid")
+
+
 def test_entity_shape() -> None:
     """Entity dictionary entry shape contract."""
     entity = {
@@ -326,6 +358,7 @@ def main() -> None:
     test_document_lifecycle_filters_unavailable_sources()
     test_pipeline_lifecycle_skips_before_parse_or_index()
     test_chunk_shape()
+    test_spreadsheet_ir_keeps_sheet_children()
     test_entity_shape()
     test_page_fusion_shape()
     test_governance_candidate_shape()

@@ -354,7 +354,7 @@ class TestParserOutputNormalization:
         }
         ir = normalize_parser_output(legacy, module="pdf-parser", filename="sample.pdf")
 
-        assert ir["schema_version"] == "1.0"
+        assert ir["schema_version"] == "content-ir/v1"
         assert ir["source_module"] == "pdf-parser"
         assert ir["parser"] == "pdf-parser:parse"
         assert ir["source"] == {

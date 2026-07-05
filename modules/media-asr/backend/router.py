@@ -29,6 +29,8 @@ router = APIRouter(prefix="/api/media-asr", tags=["media-asr"])
 
 VIDEO_EXTS = {"mp4", "mov", "m4v", "webm", "mkv", "avi"}
 AUDIO_EXTS = {"wav", "mp3", "m4a", "aac", "flac", "ogg"}
+SCHEMA_VERSION = "content-ir/v1"
+SOURCE_MODULE = "media-asr"
 
 
 # ── Request Schemas ────────────────────────────────────────────────
@@ -117,7 +119,7 @@ async def _transcribe_audio(params: dict, caller: str) -> dict:
         result = await transcribe_audio_file(full_path, model, language)
         text = result["text"]
         segments = result["segments"]
-        blocks = build_segment_blocks(segments)
+        blocks = build_segment_blocks(segments, file_id=file_id, media_type="audio", file_format=ext)
 
         text_file_id = None
         if save_text:
@@ -133,6 +135,20 @@ async def _transcribe_audio(params: dict, caller: str) -> dict:
                 )
 
         return {
+            "schema_version": SCHEMA_VERSION,
+            "content_type": "text",
+            "title": f"{Path(file.name).stem if file.name else f'audio_{file_id}'} transcript",
+            "source_file_id": file_id,
+            "source_module": SOURCE_MODULE,
+            "parser": "media-asr.transcribe_audio",
+            "source": {
+                "module": SOURCE_MODULE,
+                "file_id": file_id,
+                "filename": f"{file.name}.{ext}" if getattr(file, "name", None) else None,
+                "mime_type": f"audio/{ext}",
+                "format": ext,
+                "media_type": "audio",
+            },
             "file_id": file_id,
             "format": ext,
             "model": model,
@@ -144,7 +160,11 @@ async def _transcribe_audio(params: dict, caller: str) -> dict:
                 "segment_count": len(segments),
                 "text_file_id": text_file_id,
                 "duration_seconds": result.get("duration_seconds"),
+                "model": model,
+                "language": language,
             },
+            "warnings": [],
+            "quality": {},
         }
 
     return await run_uploaded_file_capability(checked_params, caller, AUDIO_EXTS, handler)
@@ -190,7 +210,7 @@ async def _transcribe_video(params: dict, caller: str) -> dict:
             )
             text = transcribe_result["text"]
             segments = transcribe_result["segments"]
-            blocks = build_segment_blocks(segments)
+            blocks = build_segment_blocks(segments, file_id=file_id, media_type="video", file_format=ext)
 
             if save_text:
                 source_stem = Path(file.name).stem if file.name else f"video_{file_id}"
@@ -202,7 +222,22 @@ async def _transcribe_video(params: dict, caller: str) -> dict:
                 )
 
         return {
+            "schema_version": SCHEMA_VERSION,
+            "content_type": "text",
+            "title": f"{Path(file.name).stem if file.name else f'video_{file_id}'} transcript",
             "source_file_id": file_id,
+            "source_module": SOURCE_MODULE,
+            "parser": "media-asr.transcribe_video",
+            "source": {
+                "module": SOURCE_MODULE,
+                "file_id": file_id,
+                "filename": f"{file.name}.{ext}" if getattr(file, "name", None) else None,
+                "mime_type": f"video/{ext}",
+                "format": ext,
+                "media_type": "video",
+            },
+            "file_id": file_id,
+            "format": ext,
             "audio_file_id": audio_file_id,
             "text_file_id": text_file_id,
             "model": model,
@@ -214,7 +249,11 @@ async def _transcribe_video(params: dict, caller: str) -> dict:
                 "segment_count": len(segments),
                 "sample_rate": sample_rate,
                 "duration_seconds": transcribe_result.get("duration_seconds"),
+                "model": model,
+                "language": language,
             },
+            "warnings": [],
+            "quality": {},
         }
 
     return await run_uploaded_file_capability(checked_params, caller, VIDEO_EXTS, handler)

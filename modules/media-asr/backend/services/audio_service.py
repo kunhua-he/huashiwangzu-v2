@@ -270,16 +270,36 @@ def format_timestamp(seconds: float) -> str:
     return f"{secs:04.1f}"
 
 
-def build_segment_blocks(segments: list[dict]) -> list[dict]:
+def build_segment_blocks(
+    segments: list[dict],
+    *,
+    file_id: int | None = None,
+    media_type: str = "audio",
+    file_format: str | None = None,
+) -> list[dict]:
     blocks = []
     for seg in segments:
         start_str = format_timestamp(seg["start"])
         end_str = format_timestamp(seg["end"])
         block_text = f"[{start_str} - {end_str}] {seg['text']}"
+        source_ref = {
+            "file_id": file_id,
+            "media_type": media_type,
+            "format": file_format,
+            "segment": len(blocks) + 1,
+            "time_start": float(seg["start"]),
+            "time_end": float(seg["end"]),
+            "timecode": {
+                "start": start_str,
+                "end": end_str,
+            },
+        }
         blocks.append({
             "type": "paragraph",
             "text": block_text,
             "page": None,
             "resource_ref": None,
+            "source_ref": source_ref,
+            "data": {"source_ref": source_ref, "role": "transcript"},
         })
     return blocks

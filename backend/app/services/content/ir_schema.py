@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+CONTENT_IR_SCHEMA_VERSION = "content-ir/v1"
+
 ContentType = Literal[
     "document", "presentation", "spreadsheet",
     "text", "image", "mixed", "memory",
@@ -57,7 +59,7 @@ class ContentResource(BaseModel):
 
 
 class ContentIR(BaseModel):
-    schema_version: str = "1.0"
+    schema_version: str = CONTENT_IR_SCHEMA_VERSION
     content_type: str = "document"
     title: str = ""
     source_file_id: int | None = None

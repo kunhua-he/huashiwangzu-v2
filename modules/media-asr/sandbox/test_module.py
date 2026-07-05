@@ -206,12 +206,30 @@ def test_extract_audio_uses_framework_file_runner_and_returns_contract() -> None
     assert result["resources"] == [{"id": 1, "type": "video", "file_storage_id": 42}]
 
 
+def test_segment_blocks_include_content_ir_timecode() -> None:
+    service = load_audio_service()
+    blocks = service.build_segment_blocks(
+        [{"start": 1.25, "end": 3.5, "text": "hello"}],
+        file_id=77,
+        media_type="audio",
+        file_format="wav",
+    )
+
+    assert blocks[0]["type"] == "paragraph"
+    assert blocks[0]["source_ref"]["file_id"] == 77
+    assert blocks[0]["source_ref"]["time_start"] == 1.25
+    assert blocks[0]["source_ref"]["time_end"] == 3.5
+    assert blocks[0]["source_ref"]["timecode"]["start"] == "01.2"
+    assert blocks[0]["data"]["role"] == "transcript"
+
+
 def main() -> None:
     tests = [
         test_manifest_public_actions_match_registered_capabilities,
         test_production_validators_reject_bad_inputs,
         test_bad_capability_params_fail_before_file_runner,
         test_extract_audio_uses_framework_file_runner_and_returns_contract,
+        test_segment_blocks_include_content_ir_timecode,
     ]
     for test in tests:
         test()

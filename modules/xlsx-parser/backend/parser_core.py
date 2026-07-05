@@ -16,7 +16,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 MAX_ROWS_PER_SHEET = 5000
 SUPPORTED_EXTS = {"xlsx", "csv"}
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "content-ir/v1"
 SOURCE_MODULE = "xlsx-parser"
 PARSER_NAME = "xlsx-parser:parse"
 
@@ -54,6 +54,13 @@ def _row_to_text(values: Iterable[object], formulas: Iterable[object] = ()) -> s
     return " | ".join(cells).rstrip()
 
 
+def _row_to_cells(values: Iterable[object], formulas: Iterable[object] = ()) -> list[str]:
+    return [
+        _format_cell(value, formula)
+        for value, formula in zip_longest(values, formulas, fillvalue=None)
+    ]
+
+
 def _source(file_id: int, ext: str) -> dict[str, object]:
     mime_type = "text/csv" if ext == "csv" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return {
@@ -85,6 +92,23 @@ def _block(
     }
 
 
+def _sheet_block(
+    sheet_name: str,
+    source_ref: dict[str, object],
+    children: list[dict[str, object]],
+    page: int | None = None,
+) -> dict[str, object]:
+    return {
+        "type": "sheet",
+        "text": sheet_name,
+        "page": page,
+        "resource_ref": None,
+        "source_ref": source_ref,
+        "children": children,
+        "data": {"source_ref": source_ref, "sheet_name": sheet_name},
+    }
+
+
 def _base_result(
     file_id: int,
     ext: str,
@@ -94,7 +118,7 @@ def _base_result(
 ) -> dict[str, object]:
     return {
         "schema_version": SCHEMA_VERSION,
-        "content_type": "document",
+        "content_type": "spreadsheet",
         "title": f"{ext.upper()} spreadsheet",
         "source_file_id": file_id if file_id > 0 else None,
         "source_module": SOURCE_MODULE,
@@ -122,7 +146,13 @@ def _empty_result(file_id: int, ext: str, warnings: list[str], metadata: dict) -
         "row_count": 0,
         "kind": "empty_file",
     }
-    block = _block("paragraph", f"Empty {ext.upper()} file", source_ref)
+    table = _block(
+        "table",
+        f"Empty {ext.upper()} file",
+        source_ref,
+        metadata={"headers": [], "rows": [], "start_cell": "A1", "range": None},
+    )
+    block = _sheet_block(ext, source_ref, [table])
     return _base_result(file_id, ext, [block], warnings, metadata)
 
 
@@ -130,7 +160,7 @@ def parse_csv_file(file_id: int, path: Path, ext: str = "csv") -> dict:
     raw = path.read_bytes()
     content = _decode_text_bytes(raw)
     reader = csv.reader(io.StringIO(content))
-    rows: list[str] = []
+    rows: list[list[str]] = []
     warnings: list[str] = []
     truncated = False
     first_line: int | None = None
@@ -138,16 +168,16 @@ def parse_csv_file(file_id: int, path: Path, ext: str = "csv") -> dict:
     max_columns = 0
 
     for row_index, row in enumerate(reader, start=1):
-        row_text = " | ".join(cell.strip() for cell in row).rstrip()
-        if row_text.strip():
-            rows.append(row_text)
+        cells = [cell.strip() for cell in row]
+        if any(cell.strip() for cell in cells):
+            rows.append(cells)
             if first_line is None:
                 first_line = row_index
             last_line = row_index
             max_columns = max(max_columns, len(row))
         if len(rows) >= MAX_ROWS_PER_SHEET:
             truncated = True
-            rows.append(f"[... truncated at {MAX_ROWS_PER_SHEET} rows]")
+            rows.append([f"[... truncated at {MAX_ROWS_PER_SHEET} rows]"])
             break
 
     metadata = {
@@ -169,7 +199,20 @@ def parse_csv_file(file_id: int, path: Path, ext: str = "csv") -> dict:
         "row_end": last_line,
         "range": _range_for_rows(first_line, last_line, max_columns),
     }
-    blocks = [_block("table", "\n".join(rows), source_ref)]
+    headers = rows[0] if rows else []
+    body_rows = [_normalize_row_length(row, len(headers)) for row in rows[1:]]
+    table = _block(
+        "table",
+        "\n".join(" | ".join(row) for row in rows),
+        source_ref,
+        metadata={
+            "headers": headers,
+            "rows": body_rows,
+            "start_cell": "A1",
+            "range": source_ref["range"],
+        },
+    )
+    blocks = [_sheet_block(ext, source_ref, [table])]
     return _base_result(file_id, ext, blocks, warnings, metadata)
 
 
@@ -187,7 +230,7 @@ def parse_xlsx_file(file_id: int, path: Path) -> dict:
         for sheet_index, sheet_name in enumerate(value_workbook.sheetnames, start=1):
             value_sheet = value_workbook[sheet_name]
             formula_sheet = formula_workbook[sheet_name]
-            rows: list[str] = []
+            rows: list[list[str]] = []
             truncated = False
             first_row: int | None = None
             last_row: int | None = None
@@ -199,16 +242,16 @@ def parse_xlsx_file(file_id: int, path: Path) -> dict:
                 fillvalue=(),
             )
             for row_index, (value_row, formula_row) in enumerate(paired_rows, start=1):
-                row_text = _row_to_text(value_row or (), formula_row or ())
-                if row_text.strip():
-                    rows.append(row_text)
+                row_cells = _row_to_cells(value_row or (), formula_row or ())
+                if any(cell.strip() for cell in row_cells):
+                    rows.append(row_cells)
                     if first_row is None:
                         first_row = row_index
                     last_row = row_index
                     max_columns = max(max_columns, len(value_row or ()), len(formula_row or ()))
                 if len(rows) >= MAX_ROWS_PER_SHEET:
                     truncated = True
-                    rows.append(f"[... truncated at {MAX_ROWS_PER_SHEET} rows]")
+                    rows.append([f"[... truncated at {MAX_ROWS_PER_SHEET} rows]"])
                     break
 
             source_ref = {
@@ -230,20 +273,33 @@ def parse_xlsx_file(file_id: int, path: Path) -> dict:
             if truncated:
                 warnings.append(f"row_limit_reached:{sheet_name}")
             if rows:
-                block_text = f"[Sheet: {sheet_name}]\n" + "\n".join(rows)
-                blocks.append(_block("table", block_text, source_ref, page=sheet_index))
+                headers = rows[0]
+                body_rows = [_normalize_row_length(row, len(headers)) for row in rows[1:]]
+                block_text = f"[Sheet: {sheet_name}]\n" + "\n".join(" | ".join(row) for row in rows)
+                table = _block(
+                    "table",
+                    block_text,
+                    source_ref,
+                    page=sheet_index,
+                    metadata={
+                        "headers": headers,
+                        "rows": body_rows,
+                        "start_cell": "A1",
+                        "range": source_ref["range"],
+                    },
+                )
+                blocks.append(_sheet_block(sheet_name, source_ref, [table], page=sheet_index))
                 data_block_count += 1
             else:
                 warnings.append(f"empty_sheet:{sheet_name}")
-                blocks.append(
-                    _block(
-                        "paragraph",
-                        f"[Sheet: {sheet_name}]\nEmpty sheet",
-                        source_ref,
-                        page=sheet_index,
-                        metadata={"empty": True},
-                    )
+                table = _block(
+                    "table",
+                    f"[Sheet: {sheet_name}]\nEmpty sheet",
+                    source_ref,
+                    page=sheet_index,
+                    metadata={"empty": True, "headers": [], "rows": [], "start_cell": "A1", "range": None},
                 )
+                blocks.append(_sheet_block(sheet_name, source_ref, [table], page=sheet_index))
     except (BadZipFile, InvalidFileException, OSError, KeyError, ValueError) as exc:
         raise SpreadsheetParseError(f"Failed to parse XLSX file: {exc}") from exc
     finally:
@@ -265,7 +321,13 @@ def parse_xlsx_file(file_id: int, path: Path) -> dict:
             "row_end": None,
             "range": None,
         }
-        blocks.append(_block("paragraph", "Empty XLSX workbook", source_ref))
+        table = _block(
+            "table",
+            "Empty XLSX workbook",
+            source_ref,
+            metadata={"headers": [], "rows": [], "start_cell": "A1", "range": None},
+        )
+        blocks.append(_sheet_block("xlsx", source_ref, [table]))
 
     return _base_result(
         file_id,
@@ -296,3 +358,9 @@ def _range_for_rows(first_row: int | None, last_row: int | None, max_columns: in
         return None
     end_column = get_column_letter(max(max_columns, 1))
     return f"A{first_row}:{end_column}{last_row}"
+
+
+def _normalize_row_length(row: list[str], column_count: int) -> list[str]:
+    if len(row) < column_count:
+        return [*row, *([""] * (column_count - len(row)))]
+    return row[:column_count]

@@ -19,7 +19,7 @@ MAX_EMITTED_DATA_ROWS = 1000
 DATA_BLOCK_BATCH_SIZE = 50
 MAX_CELL_CHARS = 500
 SNIFFER_SAMPLE_CHARS = 8192
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "content-ir/v1"
 SOURCE_MODULE = "csv-parser"
 PARSER_NAME = "csv-parser:parse"
 
@@ -101,6 +101,22 @@ def _block(
     }
 
 
+def _sheet_block(
+    sheet_name: str,
+    source_ref: dict[str, object],
+    children: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "type": "sheet",
+        "text": sheet_name,
+        "page": None,
+        "resource_ref": None,
+        "source_ref": source_ref,
+        "children": children,
+        "data": {"source_ref": source_ref, "sheet_name": sheet_name},
+    }
+
+
 def _base_result(
     file_id: int,
     ext: str,
@@ -110,7 +126,7 @@ def _base_result(
 ) -> dict[str, object]:
     return {
         "schema_version": SCHEMA_VERSION,
-        "content_type": "document",
+        "content_type": "spreadsheet",
         "title": f"{ext.upper()} table",
         "source_file_id": file_id if file_id > 0 else None,
         "source_module": SOURCE_MODULE,
@@ -141,6 +157,28 @@ def _format_row(line_num: int, row: list[str]) -> str:
     return f"行{line_num}：" + " | ".join(_trim_cell(cell) for cell in row)
 
 
+def _column_label(index: int) -> str:
+    label = ""
+    current = max(index, 1)
+    while current:
+        current, remainder = divmod(current - 1, 26)
+        label = chr(ord("A") + remainder) + label
+    return label
+
+
+def _range_for_table(row_count: int, column_count: int) -> str | None:
+    if row_count <= 0 or column_count <= 0:
+        return None
+    return f"A1:{_column_label(column_count)}{row_count}"
+
+
+def _normalize_row_length(row: list[str], column_count: int) -> list[str]:
+    trimmed = [_trim_cell(cell) for cell in row]
+    if len(trimmed) < column_count:
+        return [*trimmed, *([""] * (column_count - len(trimmed)))]
+    return trimmed[:column_count]
+
+
 def parse_csv_content(content: str, file_id: int, ext: str) -> dict[str, object]:
     content = content.lstrip("\ufeff")
     if not content.strip():
@@ -151,10 +189,16 @@ def parse_csv_content(content: str, file_id: int, ext: str) -> dict[str, object]
             "row_count": 0,
             "kind": "empty_file",
         }
+        table = _block(
+            "table",
+            "空CSV/TSV文件：0列 x 0行数据",
+            source_ref,
+            {"headers": [], "rows": [], "start_cell": "A1", "range": None},
+        )
         return _base_result(
             file_id,
             ext,
-            [_block("paragraph", "空CSV/TSV文件：0列 x 0行数据", source_ref)],
+            [_sheet_block(ext, source_ref, [table])],
             warnings=[{"code": "empty_file", "message": "CSV/TSV file is empty"}],
             metadata={"row_count": 0, "header_count": 0, "truncated": False},
         )
@@ -165,17 +209,14 @@ def parse_csv_content(content: str, file_id: int, ext: str) -> dict[str, object]
     headers: list[str] = []
     data_row_count = 0
     emitted_row_count = 0
-    row_texts: list[str] = []
-    batch_start_line: int | None = None
-    batch_end_line: int | None = None
-    data_blocks: list[dict[str, object]] = []
+    emitted_rows: list[list[str]] = []
     last_physical_line = 0
 
     try:
         for physical_line, row in enumerate(reader, start=1):
             last_physical_line = physical_line
             if physical_line == 1:
-                headers = row
+                headers = [_trim_cell(cell) for cell in row]
                 continue
 
             data_row_count += 1
@@ -183,36 +224,9 @@ def parse_csv_content(content: str, file_id: int, ext: str) -> dict[str, object]
                 continue
 
             emitted_row_count += 1
-            row_texts.append(_format_row(physical_line, row))
-            if batch_start_line is None:
-                batch_start_line = physical_line
-            batch_end_line = physical_line
-            if len(row_texts) >= DATA_BLOCK_BATCH_SIZE:
-                source_ref = {
-                    "format": ext,
-                    "line_start": batch_start_line,
-                    "line_end": batch_end_line,
-                    "row_start": batch_start_line,
-                    "row_end": batch_end_line,
-                    "kind": "data_rows",
-                }
-                data_blocks.append(_block("table", "\n".join(row_texts), source_ref))
-                row_texts = []
-                batch_start_line = None
-                batch_end_line = None
+            emitted_rows.append([_trim_cell(cell) for cell in row])
     except csv.Error as exc:
         raise ValidationError(f"Invalid CSV content: {exc}")
-
-    if row_texts:
-        source_ref = {
-            "format": ext,
-            "line_start": batch_start_line,
-            "line_end": batch_end_line,
-            "row_start": batch_start_line,
-            "row_end": batch_end_line,
-            "kind": "data_rows",
-        }
-        data_blocks.append(_block("table", "\n".join(row_texts), source_ref))
 
     summary = f"表格：{len(headers)}列 x {data_row_count}行数据"
     summary += f"\n分隔符：{_delimiter_label(delimiter)}"
@@ -235,22 +249,34 @@ def parse_csv_content(content: str, file_id: int, ext: str) -> dict[str, object]
         "line_start": 1,
         "line_end": last_physical_line or 1,
         "row_count": data_row_count,
-        "kind": "summary",
+        "row_start": 1,
+        "row_end": last_physical_line or 1,
+        "range": _range_for_table(1 + emitted_row_count if headers else emitted_row_count, len(headers)),
+        "kind": "table",
     }
-    blocks = [_block("paragraph", summary, summary_ref)]
-    if headers:
-        header_ref = {
-            "format": ext,
-            "line_start": 1,
-            "line_end": 1,
-            "row_start": 1,
-            "row_end": 1,
-            "kind": "header",
-        }
-        blocks.append(
-            _block("table", " | ".join(_trim_cell(header) for header in headers), header_ref)
-        )
-    blocks.extend(data_blocks)
+    column_count = len(headers) or max((len(row) for row in emitted_rows), default=0)
+    normalized_headers = headers or [f"column_{index}" for index in range(1, column_count + 1)]
+    normalized_rows = [_normalize_row_length(row, column_count) for row in emitted_rows]
+    text_lines = [summary]
+    if normalized_headers:
+        text_lines.append("表头：" + " | ".join(normalized_headers))
+    text_lines.extend(
+        _format_row(index + 2, row)
+        for index, row in enumerate(normalized_rows)
+    )
+    table = _block(
+        "table",
+        "\n".join(text_lines),
+        summary_ref,
+        {
+            "headers": normalized_headers,
+            "rows": normalized_rows,
+            "start_cell": "A1",
+            "range": summary_ref["range"],
+            "delimiter": delimiter,
+        },
+    )
+    blocks = [_sheet_block(ext, summary_ref, [table])]
 
     return _base_result(
         file_id,

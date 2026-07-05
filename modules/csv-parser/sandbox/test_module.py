@@ -37,8 +37,8 @@ csv_router = _load_router_module()
 
 
 def _validate_shape(result: dict[str, object]) -> list[dict[str, object]]:
-    assert result["schema_version"] == "1.0"
-    assert result["content_type"] == "document"
+    assert result["schema_version"] == "content-ir/v1"
+    assert result["content_type"] == "spreadsheet"
     assert result["source_module"] == "csv-parser"
     assert result["parser"] == "csv-parser:parse"
     assert isinstance(result["source"], dict)
@@ -47,15 +47,22 @@ def _validate_shape(result: dict[str, object]) -> list[dict[str, object]]:
     blocks = result["blocks"]
     assert isinstance(blocks, list)
     assert blocks, "CSV parser must emit content or an explicit empty block"
-    for block in blocks:
-        assert isinstance(block, dict)
-        assert set(("type", "text", "page", "resource_ref", "source_ref", "data")).issubset(block)
-        source_ref = block["source_ref"]
-        assert isinstance(source_ref, dict)
-        assert source_ref
-        data = block["data"]
-        assert isinstance(data, dict)
-        assert data.get("source_ref") == source_ref
+    for sheet in blocks:
+        assert isinstance(sheet, dict)
+        assert sheet["type"] == "sheet"
+        assert isinstance(sheet.get("children"), list)
+        for block in sheet["children"]:
+            assert isinstance(block, dict)
+            assert set(("type", "text", "page", "resource_ref", "source_ref", "data")).issubset(block)
+            source_ref = block["source_ref"]
+            assert isinstance(source_ref, dict)
+            assert source_ref
+            data = block["data"]
+            assert isinstance(data, dict)
+            assert data.get("source_ref") == source_ref
+            if block["type"] == "table":
+                assert isinstance(data.get("headers"), list)
+                assert isinstance(data.get("rows"), list)
     validation = validate_ir_sync(result)
     assert validation.valid, [error.model_dump() for error in validation.errors]
     return blocks
@@ -63,7 +70,11 @@ def _validate_shape(result: dict[str, object]) -> list[dict[str, object]]:
 
 def _block_text(result: dict[str, object]) -> str:
     blocks = _validate_shape(result)
-    return "\n".join(str(block["text"]) for block in blocks)
+    parts = []
+    for sheet in blocks:
+        parts.append(str(sheet["text"]))
+        parts.extend(str(block["text"]) for block in sheet.get("children", []))
+    return "\n".join(parts)
 
 
 def test_real_sample_csv_parses_with_unified_blocks() -> None:
@@ -71,14 +82,20 @@ def test_real_sample_csv_parses_with_unified_blocks() -> None:
     text = _block_text(result)
 
     assert result["format"] == "csv"
-    assert {str(block["type"]) for block in _validate_shape(result)} <= {"paragraph", "table"}
+    assert {str(block["type"]) for sheet in _validate_shape(result) for block in sheet["children"]} == {"table"}
     assert "表格：2列 x 2行数据" in text
     assert "表头：name | score" in text
     assert "行2：alpha | 1" in text
     assert "行3：beta | 2" in text
-    row_blocks = [block for block in _validate_shape(result) if block["source_ref"].get("kind") == "data_rows"]
-    assert row_blocks[0]["source_ref"]["line_start"] == 2
+    row_blocks = [
+        block
+        for sheet in _validate_shape(result)
+        for block in sheet["children"]
+        if block["source_ref"].get("kind") == "table"
+    ]
+    assert row_blocks[0]["source_ref"]["line_start"] == 1
     assert row_blocks[0]["source_ref"]["line_end"] == 3
+    assert row_blocks[0]["data"]["range"] == "A1:B3"
 
 
 def test_real_sample_tsv_uses_tab_delimiter() -> None:
@@ -110,8 +127,8 @@ def test_empty_file_returns_explicit_empty_table(tmp_path: Path) -> None:
     blocks = _validate_shape(result)
 
     assert len(blocks) == 1
-    assert "空CSV/TSV文件：0列 x 0行数据" in str(blocks[0]["text"])
-    assert blocks[0]["source_ref"]["kind"] == "empty_file"
+    assert "空CSV/TSV文件：0列 x 0行数据" in str(blocks[0]["children"][0]["text"])
+    assert blocks[0]["children"][0]["source_ref"]["kind"] == "empty_file"
 
 
 def test_large_file_output_is_bounded(tmp_path: Path) -> None:
@@ -125,7 +142,7 @@ def test_large_file_output_is_bounded(tmp_path: Path) -> None:
 
     assert "表格：2列 x 1005行数据" in text
     assert "仅输出前 1000 行，剩余 5 行已省略。" in text
-    assert len(blocks) == 22
+    assert len(blocks) == 1
     assert "row1000 | 1000" in text
     assert "row1001 | 1001" not in text
 

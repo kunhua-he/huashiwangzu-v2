@@ -12,7 +12,7 @@ IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "ico"}
 VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "webm", "mkv", "avi"}
 MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 SCHEMA_VERSION = "media-intelligence.analysis.v1"
-CONTENT_IR_SCHEMA_VERSION = "1.0"
+CONTENT_IR_SCHEMA_VERSION = "content-ir/v1"
 
 
 async def analyze_image_path(
@@ -207,6 +207,7 @@ def _attach_content_ir(result: dict[str, Any], context: MediaContext) -> None:
     metadata = _metadata_from_result(result)
     source_ref = _base_source_ref(result, context, metadata)
     blocks = _build_blocks(result, context, source_ref)
+    adapters = _adapter_statuses(result)
     source = {
         "module": "media-intelligence",
         "file_id": context.file_id,
@@ -249,6 +250,7 @@ def _attach_content_ir(result: dict[str, Any], context: MediaContext) -> None:
             "artifacts": result.get("artifacts", {}),
             "tags": result.get("tags", []),
             "stages": result.get("stages", []),
+            "adapters": adapters,
             "degraded": result.get("degraded", []),
             "model_fallback": result.get("model_fallback"),
         },
@@ -338,6 +340,38 @@ def _metadata_from_result(result: dict[str, Any]) -> dict[str, Any]:
         return {}
     metadata = signals.get("metadata")
     return metadata if isinstance(metadata, dict) else {}
+
+
+def _adapter_statuses(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    adapters: dict[str, dict[str, Any]] = {}
+    for stage in result.get("stages", []):
+        if not isinstance(stage, dict):
+            continue
+        stage_name = str(stage.get("stage") or "unknown")
+        data = stage.get("data") if isinstance(stage.get("data"), dict) else {}
+        adapters[stage_name] = {
+            "provider": stage.get("provider"),
+            "status": stage.get("status"),
+            "confidence": stage.get("confidence", 0.0),
+            "model": data.get("model"),
+            "warnings": stage.get("warnings", []),
+            "degraded": data.get("degraded", []),
+        }
+    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+    ocr = artifacts.get("ocr") if isinstance(artifacts, dict) else None
+    if isinstance(ocr, dict):
+        adapters["ocr"] = {
+            "provider": ocr.get("engine"),
+            "status": ocr.get("status", "ok" if ocr.get("text") else "degraded"),
+            "language": ocr.get("language"),
+        }
+    objects = artifacts.get("objects") if isinstance(artifacts, dict) else None
+    adapters["object_detection"] = {
+        "provider": "local_algorithms",
+        "status": "ok" if isinstance(objects, list) and objects else "degraded",
+        "count": len(objects) if isinstance(objects, list) else 0,
+    }
+    return adapters
 
 
 def _base_source_ref(result: dict[str, Any], context: MediaContext, metadata: dict[str, Any]) -> dict[str, Any]:

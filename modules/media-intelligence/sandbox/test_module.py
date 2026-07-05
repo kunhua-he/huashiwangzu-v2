@@ -75,7 +75,7 @@ def test_analyze_image_contract() -> None:
 
     normalized_ir = asyncio.run(normalizer.normalize_ir(result))
 
-    assert result["schema_version"] == "1.0"
+    assert result["schema_version"] == "content-ir/v1"
     assert result["module_schema_version"] == "media-intelligence.analysis.v1"
     assert result["content_type"] == "image"
     assert result["media_type"] == "image"
@@ -94,6 +94,8 @@ def test_analyze_image_contract() -> None:
     assert image_ref["image"]["height"] == 3
     assert result["artifacts"]["embedding"]["algorithm"] == "average_intensity_hash"
     assert result["artifacts"]["embedding"]["dimensions"] == 64
+    assert result["metadata"]["adapters"]["local_algorithms"]["status"] == "degraded"
+    assert result["metadata"]["adapters"]["small_model"]["model"] == "not_configured"
     assert [stage["stage"] for stage in result["stages"]] == [
         "local_algorithms",
         "small_model",
@@ -117,7 +119,7 @@ def test_missing_ffprobe_returns_structured_degraded(monkeypatch: pytest.MonkeyP
         )
 
     assert result["media_type"] == "video"
-    assert result["schema_version"] == "1.0"
+    assert result["schema_version"] == "content-ir/v1"
     assert result["content_type"] == "mixed"
     assert result["blocks"]
     assert result["blocks"][0]["data"]["source_ref"]["video"]
@@ -145,7 +147,7 @@ def test_vlm_refine_existing_analysis_contract() -> None:
     }
     result = asyncio.run(pipeline.refine_analysis_result(analysis, "focus on product labels"))
     normalized_ir = asyncio.run(normalizer.normalize_ir(result))
-    assert result["schema_version"] == "1.0"
+    assert result["schema_version"] == "content-ir/v1"
     assert result["module_schema_version"] == "media-intelligence.analysis.v1"
     assert normalized_ir["blocks"]
     assert normalized_ir["blocks"][0]["data"]["source_ref"]["image"]
@@ -199,7 +201,7 @@ def test_summarize_existing_analysis_returns_content_ir() -> None:
     )
     normalized_ir = asyncio.run(normalizer.normalize_ir(result))
 
-    assert result["schema_version"] == "1.0"
+    assert result["schema_version"] == "content-ir/v1"
     assert result["module_schema_version"] == "media-intelligence.summary.v1"
     assert normalized_ir["blocks"]
     assert normalized_ir["blocks"][0]["type"] == "paragraph"

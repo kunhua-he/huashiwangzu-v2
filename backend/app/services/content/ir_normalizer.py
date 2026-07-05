@@ -9,6 +9,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.content.ir_schema import CONTENT_IR_SCHEMA_VERSION
+
 logger = logging.getLogger("v2.content").getChild("ir_normalizer")
 
 
@@ -43,7 +45,7 @@ def normalize_parser_output(
         or f"{module} parse result"
     )
     ir = {
-        "schema_version": parser_output.get("schema_version") or "1.0",
+        "schema_version": _normalize_schema_version(parser_output.get("schema_version")),
         "content_type": content_type,
         "title": title,
         "source_file_id": source.get("file_id"),
@@ -63,7 +65,7 @@ def normalize_parser_output(
 async def normalize_ir(content_ir: dict[str, Any]) -> dict[str, Any]:
     """Normalize a validated Content IR in-place and return it.
 
-    - Ensure schema_version defaults to '1.0'
+    - Ensure schema_version defaults to 'content-ir/v1'
     - Ensure locale defaults to 'zh-CN'
     - Ensure metadata is a dict
     - Auto-generate block ids for blocks without id
@@ -72,7 +74,7 @@ async def normalize_ir(content_ir: dict[str, Any]) -> dict[str, Any]:
     """
     ir = dict(content_ir)
 
-    ir.setdefault("schema_version", "1.0")
+    ir.setdefault("schema_version", CONTENT_IR_SCHEMA_VERSION)
     ir.setdefault("locale", "zh-CN")
     ir.setdefault("metadata", {})
     ir.setdefault("warnings", [])
@@ -80,6 +82,8 @@ async def normalize_ir(content_ir: dict[str, Any]) -> dict[str, Any]:
     if "resources" not in ir and isinstance(ir.get("assets"), list):
         ir["resources"] = list(ir["assets"])
     ir.setdefault("resources", [])
+
+    ir["schema_version"] = _normalize_schema_version(ir.get("schema_version"))
 
     # Normalize blocks recursively
     blocks = ir.get("blocks", [])
@@ -115,6 +119,12 @@ def _normalize_blocks(blocks: list[dict]) -> None:
         children = block.get("children")
         if isinstance(children, list):
             _normalize_blocks(children)
+
+
+def _normalize_schema_version(value: Any) -> str:
+    if value in (None, "", "1.0"):
+        return CONTENT_IR_SCHEMA_VERSION
+    return str(value)
 
 
 def _build_source(

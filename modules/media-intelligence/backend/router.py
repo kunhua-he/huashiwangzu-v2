@@ -211,7 +211,7 @@ async def _summarize_media(params: dict[str, Any], caller: str) -> dict[str, Any
             "transcript": {"source": "existing_analysis_summary"},
         }
         return {
-            "schema_version": "1.0",
+            "schema_version": "content-ir/v1",
             "module_schema_version": "media-intelligence.summary.v1",
             "content_type": "text",
             "title": str(source_ref.get("filename") or "media-summary"),

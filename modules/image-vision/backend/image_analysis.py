@@ -9,7 +9,7 @@ from PIL import Image, ImageStat, UnidentifiedImageError
 LOCAL_ANALYZER_VERSION = "pillow-local-v1"
 MAX_ANALYSIS_SIDE = 128
 EDGE_THRESHOLD = 18
-CONTENT_IR_SCHEMA_VERSION = "1.0"
+CONTENT_IR_SCHEMA_VERSION = "content-ir/v1"
 
 
 def analyze_image_bytes(raw: bytes, filename: str, ext: str) -> dict[str, object]:

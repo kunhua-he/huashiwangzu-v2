@@ -44,21 +44,29 @@ def validate(result: dict[str, object], label: str) -> None:
         "blocks",
         "resources",
     ))
-    assert result["schema_version"] == "1.0"
-    assert result["content_type"] == "document"
+    assert result["schema_version"] == "content-ir/v1"
+    assert result["content_type"] == "spreadsheet"
     assert result["source_module"] == "xlsx-parser"
     assert result["parser"] == "xlsx-parser:parse"
     assert isinstance(result["blocks"], list)
     assert result["blocks"], f"{label} must emit content or an explicit empty block"
-    for block in result["blocks"]:
-        assert isinstance(block, dict)
-        assert all(k in block for k in ("type", "text", "page", "resource_ref", "source_ref", "data"))
-        source_ref = block["source_ref"]
+    for sheet in result["blocks"]:
+        assert isinstance(sheet, dict)
+        assert sheet["type"] == "sheet"
+        assert all(k in sheet for k in ("type", "text", "page", "resource_ref", "source_ref", "data", "children"))
+        source_ref = sheet["source_ref"]
         assert isinstance(source_ref, dict)
         assert source_ref
-        data = block["data"]
-        assert isinstance(data, dict)
-        assert data.get("source_ref") == source_ref
+        assert isinstance(sheet["children"], list)
+        for block in sheet["children"]:
+            assert isinstance(block, dict)
+            assert all(k in block for k in ("type", "text", "page", "resource_ref", "source_ref", "data"))
+            data = block["data"]
+            assert isinstance(data, dict)
+            assert data.get("source_ref") == block["source_ref"]
+            if block["type"] == "table":
+                assert isinstance(data.get("headers"), list)
+                assert isinstance(data.get("rows"), list)
     validation = validate_ir_sync(result)
     assert validation.valid, [error.model_dump() for error in validation.errors]
     print("  [%s] Validation PASS (%d blocks)" % (label, len(result["blocks"])))
@@ -98,7 +106,11 @@ def _assert_formula_boundary() -> None:
         path = Path(temp_dir) / "formula.xlsx"
         _write_formula_workbook(path)
         result = parse_spreadsheet_file(0, path, "xlsx")
-    text = "\n".join(block["text"] for block in result["blocks"])
+    text = "\n".join(
+        block["text"]
+        for sheet in result["blocks"]
+        for block in sheet["children"]
+    )
     assert "=A2+B2" in text, "Formula text should be preserved when no cached value exists"
     validate(result, "formula.xlsx")
 
@@ -111,7 +123,7 @@ def _assert_empty_boundary() -> None:
     assert result["blocks"]
     assert result["blocks"][0]["source_ref"]["sheet"] == "Empty"
     assert result["blocks"][0]["source_ref"]["range"] is None
-    assert "Empty sheet" in result["blocks"][0]["text"]
+    assert "Empty sheet" in result["blocks"][0]["children"][0]["text"]
     assert "empty_workbook" in result.get("warnings", [])
     validate(result, "empty.xlsx")
 
@@ -121,7 +133,11 @@ def _assert_large_boundary() -> None:
         path = Path(temp_dir) / "large.xlsx"
         _write_large_workbook(path)
         result = parse_spreadsheet_file(0, path, "xlsx")
-    text = "\n".join(block["text"] for block in result["blocks"])
+    text = "\n".join(
+        block["text"]
+        for sheet in result["blocks"]
+        for block in sheet["children"]
+    )
     assert f"[... truncated at {MAX_ROWS_PER_SHEET} rows]" in text
     assert any(str(item).startswith("row_limit_reached") for item in result.get("warnings", []))
     validate(result, "large.xlsx")
@@ -145,8 +161,9 @@ def main() -> None:
     print("=" * 60)
     for fn in ("sample.xlsx", "sample.csv"):
         result = _parse_sample(fn)
-        for block in result["blocks"]:
-            print("  [%s] %s" % (fn, block["text"][:80]))
+        for sheet in result["blocks"]:
+            for block in sheet["children"]:
+                print("  [%s] %s" % (fn, block["text"][:80]))
         validate(result, fn)
 
     sample_xlsx = _parse_sample("sample.xlsx")
@@ -156,6 +173,7 @@ def main() -> None:
     assert sample_xlsx["blocks"][0]["source_ref"]["sheet_index"] == 1
     assert sample_xlsx["blocks"][0]["source_ref"]["sheet"]
     assert sample_xlsx["blocks"][0]["source_ref"]["range"]
+    assert sample_xlsx["blocks"][0]["children"][0]["data"]["range"]
 
     _assert_formula_boundary()
     _assert_empty_boundary()

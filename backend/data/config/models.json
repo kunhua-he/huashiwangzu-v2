@@ -179,7 +179,7 @@
       }
     },
     "vision": {
-      "primary": "mimo",
+      "primary": "gpt-5.5-vision",
       "fallback_on_explicit_profile": true,
       "fallback_chain": ["mimo", "qwen3-vl"],
       "profiles": {

@@ -638,6 +638,7 @@ async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profi
     assert knowledge_routing["default_profile"] == "gpt-5.5-knowledge"
     assert knowledge_routing["fallback_profile"] == "deepseek-v4-flash"
     assert knowledge_routing["stages"]["raw_vision"] == "gpt-5.5-vision"
+    assert get_model_type_config("vision")["primary"] == "gpt-5.5-vision"
     assert get_models_config()["providers"]["gptstore-text"]["session_affinity"]["scope"] == "request"
     assert get_models_config()["providers"]["gptstore-text"]["auth_recovery"] == {
         "strategy": "rotate_session",

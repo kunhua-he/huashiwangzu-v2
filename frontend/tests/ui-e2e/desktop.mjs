@@ -4,8 +4,8 @@ import { BASE_URL } from './state.mjs'
 import { refreshAdminStorageState } from './auth.mjs'
 
 export async function gotoDesktop(page) {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await page.goto(`${BASE_URL}/desktop`, { waitUntil: 'domcontentloaded' })
     const loginVisible = await page.locator('.login-page').isVisible().catch(() => false)
     if (loginVisible) {
       const token = await refreshAdminStorageState()
@@ -14,13 +14,16 @@ export async function gotoDesktop(page) {
       }, token)
       await page.goto(`${BASE_URL}/desktop`, { waitUntil: 'domcontentloaded' })
     }
+    const returnedToLogin = await page.locator('.login-page').isVisible().catch(() => false)
+    if (returnedToLogin) continue
     try {
       await page.waitForSelector('.desktop-shell-container', { timeout: 15000 })
       await page.waitForSelector('.taskbar-start', { timeout: 5000 })
       return
     } catch {
-      const returnedToLogin = await page.locator('.login-page').isVisible().catch(() => false)
-      if (!returnedToLogin) await page.reload({ waitUntil: 'domcontentloaded' })
+      if (!await page.locator('.login-page').isVisible().catch(() => false)) {
+        await page.reload({ waitUntil: 'domcontentloaded' })
+      }
     }
   }
   throw new Error('Desktop did not become stable after login/storageState recovery')

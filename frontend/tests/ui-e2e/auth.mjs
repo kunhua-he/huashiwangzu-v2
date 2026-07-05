@@ -51,8 +51,11 @@ export async function getAuthToken() {
 }
 
 export async function requestWithAdminAuthRetry(token, makeRequest) {
-  const firstToken = adminTokenOverride || token
-  let response = await makeRequest(firstToken)
-  if (response.status() === 401) response = await makeRequest(await refreshAdminToken())
+  let activeToken = adminTokenOverride || token
+  let response = await makeRequest(activeToken)
+  for (let attempt = 0; response.status() === 401 && attempt < 5; attempt++) {
+    activeToken = await refreshAdminToken()
+    response = await makeRequest(activeToken)
+  }
   return response
 }

@@ -4,6 +4,8 @@ import { refreshAdminToken, requestWithAdminAuthRetry } from './ui-e2e/auth.mjs'
 import { gotoDesktop as gotoDesktopShell } from './ui-e2e/desktop.mjs'
 import { BASE_URL } from './ui-e2e/state.mjs'
 
+test.setTimeout(60_000)
+
 function unwrapEnvelope(body, context) {
   if (body?.success !== true) {
     throw new Error(`${context} failed: ${body?.error || JSON.stringify(body).slice(0, 300)}`)

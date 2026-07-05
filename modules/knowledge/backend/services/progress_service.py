@@ -15,6 +15,7 @@ from ..models import (
     KbFileRelation,
     KbGovernanceCandidate,
     KbPageFusion,
+    KbPipelineRun,
     KbRawData,
 )
 from .source_file_state import get_source_file_availability
@@ -95,6 +96,14 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
         )
     )).scalar() or 0
 
+    latest_run = (await db.execute(
+        select(KbPipelineRun)
+        .where(KbPipelineRun.document_id == document_id, KbPipelineRun.owner_id == owner_id)
+        .order_by(KbPipelineRun.id.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    paused = latest_run is not None and latest_run.status == "paused"
+
     tp = total_pages
     stages = [
         _stage("text", "提取文字", round_done.get(1, 0), tp),
@@ -111,6 +120,8 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
     fusion_status = doc.fusion_status or "pending"
     if not source.available:
         overall_status = "source_unavailable"
+    elif paused:
+        overall_status = "paused"
     elif raw_status == "failed" or fusion_status == "failed":
         overall_status = "failed"
     elif raw_status == "degraded" or fusion_status == "degraded":
@@ -124,6 +135,8 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
 
     # 当前正在跑的阶段(第一个非 done 的页级阶段)
     current = "源文件不可用" if not source.available else next((s["label"] for s in stages if s["status"] != "done"), "已完成")
+    if paused:
+        current = "模型降级后已暂停"
 
     # 整体百分比:页级阶段(前4个)平均
     page_stages = [s for s in stages if s["key"] in ("text", "ocr", "vision", "fusion")]
@@ -136,7 +149,7 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
         "filename": doc.filename,
         "total_pages": total_pages,
         "overall_status": overall_status,
-        "quality_status": "degraded" if overall_status == "degraded" else ("unavailable" if overall_status == "source_unavailable" else "ok"),
+        "quality_status": "degraded" if overall_status in {"degraded", "paused"} else ("unavailable" if overall_status == "source_unavailable" else "ok"),
         "overall_percent": overall_percent,
         "current_stage": current,
         "source_available": source.available,

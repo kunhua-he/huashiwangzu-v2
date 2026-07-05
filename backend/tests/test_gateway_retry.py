@@ -1,9 +1,21 @@
+from io import BytesIO
+
 import pytest
 from app.gateway import router as gateway_router_module
-from app.gateway.config import get_model_type_config
+from app.gateway.config import get_model_type_config, get_models_config
 from app.gateway.contract import ModelRequest, ModelResponse
+from app.gateway.error_classifier import ErrorClassification
 from app.gateway.local import LocalProvider
-from app.gateway.router import ModelGatewayRouter, RetryBudget, _call_with_unified_retry
+from app.gateway.router import (
+    ModelGatewayRouter,
+    RetryBudget,
+    _call_with_unified_retry,
+    _format_exception_detail,
+    _prepare_vision_image_for_model,
+    _retry_budget_from_profile,
+    _retry_delay,
+)
+from app.gateway.openai_provider import OpenAIProvider, _payload_preview
 from app.services.model_watchdog import launcher as watchdog_launcher
 from app.services.model_watchdog.registry import ModelRecord
 
@@ -124,6 +136,189 @@ async def test_protocol_error_is_not_retried() -> None:
     assert provider.calls == 1
 
 
+def test_profile_retry_budget_respects_zero_delay() -> None:
+    budget = _retry_budget_from_profile({"retry_delay_seconds": 0}, None)
+
+    assert budget is not None
+    assert budget.base_delay_seconds == 0
+    assert _retry_delay(ErrorClassification("server", True), 0, budget) == 0.1
+
+
+def test_invalid_api_key_body_is_classified_as_auth_before_protocol() -> None:
+    classification = gateway_router_module.classify_error(
+        status_code=401,
+        body='{"error":{"code":"invalid_api_key","message":"missing or invalid API key","type":"invalid_request_error"}}',
+    )
+
+    assert classification.category == "auth"
+    assert classification.retryable is False
+
+
+def test_format_exception_detail_keeps_blank_exception_actionable() -> None:
+    assert _format_exception_detail(TimeoutError()) == "TimeoutError"
+
+
+def test_prepare_vision_image_resizes_large_images_before_multimodal_send() -> None:
+    image_mod = pytest.importorskip("PIL.Image")
+    image = image_mod.new("RGB", (4200, 2600), "white")
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+
+    prepared, mime_type, metadata = _prepare_vision_image_for_model(
+        buf.getvalue(),
+        "image/png",
+    )
+
+    assert mime_type == "image/jpeg"
+    assert len(prepared) <= 1800 * 1024
+    assert metadata["resized"] is True
+    assert metadata["reencoded"] is True
+    assert max(metadata["prepared_size"]) == 1920
+
+
+def test_openai_provider_session_affinity_header_is_payload_scoped() -> None:
+    provider = OpenAIProvider(
+        api_url="http://127.0.0.1:61462/v1/chat/completions",
+        api_key="test-key",
+        provider_name="gptstore-text",
+        session_affinity={"header": "X-Session-ID", "prefix": "knowledge-gptstore"},
+    )
+    payload_a = provider._build_payload(
+        [{"role": "user", "content": "doc 1 page 1"}],
+        "gpt-5.5",
+        0.2,
+        128,
+        False,
+        None,
+    )
+    payload_b = provider._build_payload(
+        [{"role": "user", "content": "doc 1 page 2"}],
+        "gpt-5.5",
+        0.2,
+        128,
+        False,
+        None,
+    )
+
+    headers_a1 = provider._headers(payload_a, "gpt-5.5")
+    headers_a2 = provider._headers(payload_a, "gpt-5.5")
+    headers_b = provider._headers(payload_b, "gpt-5.5")
+
+    assert headers_a1["Authorization"] == "Bearer test-key"
+    assert headers_a1["X-Session-ID"].startswith("knowledge-gptstore:")
+    assert headers_a1["X-Session-ID"] == headers_a2["X-Session-ID"]
+    assert headers_a1["X-Session-ID"] != headers_b["X-Session-ID"]
+
+
+def test_openai_provider_session_affinity_can_be_request_scoped() -> None:
+    provider = OpenAIProvider(
+        api_url="http://127.0.0.1:61462/v1/chat/completions",
+        api_key="test-key",
+        provider_name="gptstore-text",
+        session_affinity={
+            "header": "X-Session-ID",
+            "prefix": "knowledge-gptstore",
+            "scope": "request",
+        },
+    )
+    payload = provider._build_payload(
+        [{"role": "user", "content": "same payload"}],
+        "gpt-5.5",
+        0.2,
+        128,
+        False,
+        None,
+    )
+
+    headers_a = provider._headers(payload, "gpt-5.5")
+    headers_b = provider._headers(payload, "gpt-5.5")
+
+    assert headers_a["X-Session-ID"].startswith("knowledge-gptstore:")
+    assert headers_b["X-Session-ID"].startswith("knowledge-gptstore:")
+    assert headers_a["X-Session-ID"] != headers_b["X-Session-ID"]
+
+
+def test_openai_provider_payload_preview_redacts_image_data_urls() -> None:
+    preview = _payload_preview({
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,VERY_LONG_IMAGE_BYTES"},
+                    },
+                    {"type": "text", "text": "保留业务文本用于定位错误"},
+                ],
+            }
+        ]
+    })
+
+    assert "VERY_LONG_IMAGE_BYTES" not in preview
+    assert "<image data url redacted>" in preview
+    assert "保留业务文本用于定位错误" in preview
+
+
+@pytest.mark.asyncio
+async def test_profile_retry_budget_uses_fixed_delay(monkeypatch) -> None:
+    profiles = {
+        "gpt-5.5-knowledge": {
+            "provider": "gptstore-text",
+            "model": "gpt-5.5",
+            "temperature": 0.2,
+            "max_tokens": 128,
+            "retry_max_attempts": 3,
+            "retry_delay_seconds": 30,
+            "retry_strategy": "fixed",
+        },
+        "deepseek-v4-flash": {
+            "provider": "opencode",
+            "model": "deepseek-v4-flash",
+            "temperature": 0.7,
+            "max_tokens": 128,
+        },
+    }
+    gpt55 = AlwaysFailProvider("bad gateway", status_code=502)
+    deepseek = OpenAICompatSuccessProvider("deepseek fallback ok")
+    waits: list[float] = []
+
+    def capture_sleep(seconds: float):
+        waits.append(seconds)
+
+        async def _noop() -> None:
+            return None
+
+        return _noop()
+
+    monkeypatch.setattr(gateway_router_module, "MODEL_PROFILES", profiles)
+    monkeypatch.setattr(gateway_router_module.asyncio, "sleep", capture_sleep)
+    monkeypatch.setattr(
+        gateway_router_module,
+        "get_model_type_config",
+        lambda model_type: {
+            "primary": "gpt-5.5-knowledge",
+            "fallback_on_explicit_profile": True,
+            "fallback_chain": ["deepseek-v4-flash"],
+            "profiles": profiles,
+        } if model_type == "llm" else {},
+    )
+
+    router = ModelGatewayRouter.__new__(ModelGatewayRouter)
+    router._providers = {"gptstore-text": gpt55, "opencode": deepseek}
+
+    result = await router.chat(
+        messages=[{"role": "user", "content": "hello"}],
+        profile_key="gpt-5.5-knowledge",
+    )
+
+    assert result["content"] == "deepseek fallback ok"
+    assert gpt55.calls == 3
+    assert deepseek.calls == 1
+    assert waits == [30, 30]
+    assert result["diagnostics"]["fallback_used"] is True
+    assert result["diagnostics"]["selected_profile"] == "deepseek-v4-flash"
+
+
 @pytest.mark.asyncio
 async def test_chat_falls_back_from_explicit_cloud_profile(monkeypatch) -> None:
     profiles = {
@@ -170,6 +365,54 @@ async def test_chat_falls_back_from_explicit_cloud_profile(monkeypatch) -> None:
     assert local.calls == 1
     assert result["diagnostics"]["fallback_used"] is True
     assert result["diagnostics"]["selected_profile"] == "local-fallback"
+
+
+@pytest.mark.asyncio
+async def test_chat_falls_back_on_auth_body_with_invalid_request_type(monkeypatch) -> None:
+    profiles = {
+        "gpt-5.5-knowledge": {
+            "provider": "gptstore-text",
+            "model": "gpt-5.5",
+            "temperature": 0.2,
+            "max_tokens": 128,
+        },
+        "deepseek-v4-flash": {
+            "provider": "opencode",
+            "model": "deepseek-v4-flash",
+            "temperature": 0.7,
+            "max_tokens": 128,
+        },
+    }
+    gpt55 = AlwaysFailProvider(
+        '{"error":{"code":"invalid_api_key","message":"missing or invalid API key","type":"invalid_request_error"}}',
+        status_code=401,
+    )
+    deepseek = OpenAICompatSuccessProvider("deepseek auth fallback ok")
+
+    monkeypatch.setattr(gateway_router_module, "MODEL_PROFILES", profiles)
+    monkeypatch.setattr(
+        gateway_router_module,
+        "get_model_type_config",
+        lambda model_type: {
+            "primary": "gpt-5.5-knowledge",
+            "fallback_on_explicit_profile": True,
+            "fallback_chain": ["deepseek-v4-flash"],
+            "profiles": profiles,
+        } if model_type == "llm" else {},
+    )
+
+    router = ModelGatewayRouter.__new__(ModelGatewayRouter)
+    router._providers = {"gptstore-text": gpt55, "opencode": deepseek}
+
+    result = await router.chat(
+        messages=[{"role": "user", "content": "hello"}],
+        profile_key="gpt-5.5-knowledge",
+        budget=RetryBudget(max_attempts=1),
+    )
+
+    assert result["content"] == "deepseek auth fallback ok"
+    assert result["diagnostics"]["fallback_used"] is True
+    assert result["diagnostics"]["selected_profile"] == "deepseek-v4-flash"
 
 
 @pytest.mark.asyncio
@@ -220,15 +463,21 @@ async def test_chat_stops_fallback_on_protocol_error(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_configured_llm_chain_prefers_llama_cpp_then_ollama() -> None:
+async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profile() -> None:
     llm_cfg = get_model_type_config("llm")
     profiles = llm_cfg["profiles"]
+    knowledge_routing = get_models_config()["module_routing"]["knowledge"]
 
     assert llm_cfg["primary"] == "deepseek-v4-flash"
     assert llm_cfg["fallback_chain"][:2] == ["gemma-4", "ollama-local"]
-    assert profiles["gemma-4"]["provider"] == "llama"
-    assert profiles["gemma-4"]["watchdog"] == "gemma-4"
-    assert profiles["ollama-local"]["provider"] == "ollama"
+    assert profiles["deepseek-v4-flash"]["provider"] == "opencode"
+    assert profiles["gpt-5.5-knowledge"]["provider"] == "gptstore-text"
+    assert profiles["gpt-5.5-knowledge"]["retry_strategy"] == "fixed"
+    assert profiles["gpt-5.5-knowledge"]["retry_delay_seconds"] == 30
+    assert knowledge_routing["default_profile"] == "gpt-5.5-knowledge"
+    assert knowledge_routing["fallback_profile"] == "deepseek-v4-flash"
+    assert knowledge_routing["stages"]["raw_vision"] == "gpt-5.5-vision"
+    assert get_models_config()["providers"]["gptstore-text"]["session_affinity"]["scope"] == "request"
 
 
 @pytest.mark.asyncio

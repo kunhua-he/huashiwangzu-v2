@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import time
 from dataclasses import dataclass
@@ -33,10 +34,109 @@ from .usage_tracker import UsageRecord, log_usage, log_usage_event
 logger = logging.getLogger("v2.gateway.router")
 
 
+def _prepare_vision_image_for_model(
+    image_bytes: bytes,
+    mime_type: str,
+    *,
+    max_dimension: int = 1920,
+    max_bytes: int = 1800 * 1024,
+) -> tuple[bytes, str, dict]:
+    """Resize/compress images before embedding them in multimodal requests."""
+    metadata = {
+        "original_bytes": len(image_bytes),
+        "prepared_bytes": len(image_bytes),
+        "original_mime_type": mime_type,
+        "prepared_mime_type": mime_type,
+        "resized": False,
+        "reencoded": False,
+    }
+    try:
+        from PIL import Image
+    except Exception as exc:
+        metadata["skipped_reason"] = f"pillow_unavailable:{exc}"
+        return image_bytes, mime_type, metadata
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            original_size = tuple(img.size)
+            metadata["original_size"] = list(original_size)
+            working = img.copy()
+    except Exception as exc:
+        metadata["skipped_reason"] = f"unreadable_image:{exc}"
+        return image_bytes, mime_type, metadata
+
+    width, height = working.size
+    longest = max(width, height)
+    if longest > max_dimension:
+        scale = max_dimension / longest
+        new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        working = working.resize(new_size, Image.Resampling.LANCZOS)
+        metadata["resized"] = True
+        metadata["prepared_size"] = list(new_size)
+    else:
+        metadata["prepared_size"] = [width, height]
+
+    original_can_pass = (
+        not metadata["resized"]
+        and len(image_bytes) <= max_bytes
+        and mime_type.lower() in {"image/jpeg", "image/jpg"}
+    )
+    if original_can_pass:
+        return image_bytes, mime_type, metadata
+
+    if working.mode in {"RGBA", "LA"} or (working.mode == "P" and "transparency" in working.info):
+        background = Image.new("RGB", working.size, (255, 255, 255))
+        alpha = working.convert("RGBA").getchannel("A")
+        background.paste(working.convert("RGBA"), mask=alpha)
+        working = background
+    elif working.mode != "RGB":
+        working = working.convert("RGB")
+
+    prepared = image_bytes
+    for quality in (90, 84, 78, 72):
+        out = io.BytesIO()
+        working.save(out, format="JPEG", quality=quality, optimize=True)
+        candidate = out.getvalue()
+        prepared = candidate
+        metadata["jpeg_quality"] = quality
+        if len(candidate) <= max_bytes:
+            break
+
+    metadata["prepared_bytes"] = len(prepared)
+    metadata["prepared_mime_type"] = "image/jpeg"
+    metadata["reencoded"] = True
+    return prepared, "image/jpeg", metadata
+
+
 @dataclass
 class RetryBudget:
     max_attempts: int = 3
     base_delay_seconds: float = 1.0
+    strategy: str = "exponential"
+    max_delay_seconds: float = 60.0
+
+
+def _retry_budget_from_profile(profile: dict, override: RetryBudget | None) -> RetryBudget | None:
+    if override is not None:
+        return override
+    if not any(key in profile for key in ("retry_max_attempts", "retry_delay_seconds", "retry_strategy")):
+        return None
+    return RetryBudget(
+        max_attempts=int(profile.get("retry_max_attempts", 3)),
+        base_delay_seconds=float(profile.get("retry_delay_seconds", 1.0)),
+        strategy=str(profile.get("retry_strategy", "exponential")),
+    )
+
+
+def _retry_delay(classification, attempt_index: int, budget: RetryBudget) -> float:
+    if budget.strategy == "fixed" and classification.retry_after is None:
+        return max(0.1, min(budget.base_delay_seconds, budget.max_delay_seconds))
+    return compute_delay(
+        classification,
+        attempt_index,
+        budget.base_delay_seconds,
+        max_delay=budget.max_delay_seconds,
+    )
 
 
 class _RetryableGatewayError(Exception):
@@ -167,12 +267,16 @@ async def _call_with_unified_retry(
                             finish_reason="error",
                         )
 
-                    delay = compute_delay(classification, attempt_index, b.base_delay_seconds)
+                    delay = _retry_delay(classification, attempt_index, b)
                     logger.warning(
-                        "AI gateway call attempt %d/%d failed (category=%s), retrying in %.1fs",
+                        "AI gateway call attempt %d/%d failed (profile=%s provider=%s model=%s category=%s strategy=%s), retrying in %.1fs",
                         attempt_index + 1,
                         b.max_attempts,
+                        profile_key,
+                        provider_name,
+                        model,
                         classification.category,
+                        b.strategy,
                         delay,
                     )
                     raise _RetryableGatewayError(exc, attempt_index, delay)
@@ -246,7 +350,7 @@ async def _call_with_unified_retry(
 
 
 def _format_exception_detail(exc: Exception) -> str:
-    detail = str(exc)
+    detail = str(exc).strip() or exc.__class__.__name__
     if hasattr(exc, "response"):
         try:
             body = exc.response.text
@@ -272,6 +376,8 @@ class ModelGatewayRouter:
                     api_url=cfg.get("api_url", ""),
                     api_key=_resolve_api_key(cfg),
                     provider_name=cfg.get("provider_name", name),
+                    extra_headers=cfg.get("headers") or {},
+                    session_affinity=cfg.get("session_affinity") or {},
                 )
             elif ptype == "local":
                 self._providers[name] = LocalProvider(allow_echo=bool(cfg.get("allow_echo", False)))
@@ -349,6 +455,7 @@ class ModelGatewayRouter:
                 "max_tokens": profile["max_tokens"],
             })
 
+            effective_budget = _retry_budget_from_profile(profile, budget)
             result = await _call_with_unified_retry(
                 provider=self.get_provider(profile["provider"]),
                 req=req,
@@ -356,7 +463,7 @@ class ModelGatewayRouter:
                 caller_module="gateway.chat",
                 profile_key=key,
                 provider_name=profile.get("provider", ""),
-                budget=budget,
+                budget=effective_budget,
             )
             diagnostics["attempts"].append({
                 "profile": key,
@@ -377,7 +484,8 @@ class ModelGatewayRouter:
 
             last_result = result
             last_key = key
-            if is_protocol_error_text(result.error or result.content):
+            classification = classify_error(body=result.error or result.content)
+            if classification.category == "protocol" or is_protocol_error_text(classification.message):
                 logger.error("LLM protocol error, fallback stopped: %s", result.error)
                 result.diagnostics = diagnostics
                 return model_response_to_dict(result)
@@ -487,14 +595,33 @@ class ModelGatewayRouter:
         profile_key: str | None = None,
         mime_type: str = "image/jpeg",
     ) -> str:
+        result = await self.describe_image_detailed(
+            image_bytes=image_bytes,
+            prompt=prompt,
+            profile_key=profile_key,
+            mime_type=mime_type,
+        )
+        return str(result.get("content") or "")
+
+    async def describe_image_detailed(
+        self,
+        image_bytes: bytes,
+        prompt: str = "请详细描述这张图片",
+        profile_key: str | None = None,
+        mime_type: str = "image/jpeg",
+    ) -> dict:
         """Describe an image using the configured vision model, with fallback chain.
 
         Returns the text description from the vision model.
         Falls back through _VISION_FALLBACK if the primary model fails.
         """
         import base64
-        b64 = base64.b64encode(image_bytes).decode("ascii")
-        img_data_url = f"data:{mime_type};base64,{b64}"
+        prepared_bytes, prepared_mime_type, image_preprocess = _prepare_vision_image_for_model(
+            image_bytes,
+            mime_type,
+        )
+        b64 = base64.b64encode(prepared_bytes).decode("ascii")
+        img_data_url = f"data:{prepared_mime_type};base64,{b64}"
         messages = [
             {"role": "system", "content": "You are an image description assistant. Describe the image in Chinese in 1-3 sentences, focusing on visual content."},
             {"role": "user", "content": [
@@ -505,6 +632,7 @@ class ModelGatewayRouter:
 
         # Try requested/primary → fallback chain. Explicit profile requests still
         # fall back when models.json enables fallback_on_explicit_profile.
+        requested_profile = profile_key if profile_key in _VISION_PROFILES else _VISION_PRIMARY
         candidate_keys = _profile_chain_for_model_type(
             "vision",
             profile_key,
@@ -512,6 +640,13 @@ class ModelGatewayRouter:
             fallback_chain=_VISION_FALLBACK,
             profiles=_VISION_PROFILES,
         )
+        diagnostics: dict = {
+            "requested_profile": requested_profile,
+            "candidates": candidate_keys,
+            "attempts": [],
+            "fallback_used": False,
+            "image_preprocess": image_preprocess,
+        }
         last_error = None
         for idx, key in enumerate(candidate_keys):
             profile = _VISION_PROFILES.get(key)
@@ -533,7 +668,17 @@ class ModelGatewayRouter:
                 if profile.get("provider") in ("local",):
                     content = raw.get("content", "")
                     if content:
-                        return content
+                        diagnostics["selected_profile"] = key
+                        diagnostics["selected_provider"] = profile.get("provider", "")
+                        diagnostics["fallback_used"] = idx > 0
+                        diagnostics["attempts"].append({
+                            "profile": key,
+                            "provider": profile.get("provider", ""),
+                            "model": profile.get("model", key),
+                            "success": True,
+                            "error": None,
+                        })
+                        return {"content": content, "diagnostics": diagnostics}
                 adapter = get_adapter(profile.get("model", key))
                 result = adapter.adapt_response(raw, provider=profile.get("provider", ""))
                 content = result.content.strip()
@@ -547,8 +692,25 @@ class ModelGatewayRouter:
                             provider_name=profile.get("provider", ""),
                             caller_module="gateway.describe_image",
                         )
-                    return content
+                    diagnostics["selected_profile"] = key
+                    diagnostics["selected_provider"] = profile.get("provider", "")
+                    diagnostics["fallback_used"] = idx > 0
+                    diagnostics["attempts"].append({
+                        "profile": key,
+                        "provider": profile.get("provider", ""),
+                        "model": profile.get("model", key),
+                        "success": True,
+                        "error": None,
+                    })
+                    return {"content": content, "diagnostics": diagnostics}
             except Exception as exc:
+                diagnostics["attempts"].append({
+                    "profile": key,
+                    "provider": profile.get("provider", ""),
+                    "model": profile.get("model", key),
+                    "success": False,
+                    "error": _format_exception_detail(exc),
+                })
                 logger.warning("Vision model %s failed (attempt %d/%d): %s", key, idx + 1, len(candidate_keys), exc)
                 last_error = exc
                 continue

@@ -17,6 +17,18 @@
       "api_url": "https://opencode.ai/zen/go/v1/chat/completions",
       "api_key_env": "DEEPSEEK_API_KEY"
     },
+    "gptstore-text": {
+      "type": "openai_compat",
+      "api_url": "http://127.0.0.1:61462/v1/chat/completions",
+      "api_key_env": "GPTSTORE_API_KEY",
+      "provider_name": "gptstore-text",
+      "session_affinity": {
+        "header": "X-Session-ID",
+        "prefix": "knowledge-gptstore",
+        "scope": "request"
+      },
+      "description": "Local GPTStore relay for enterprise knowledge text analysis"
+    },
     "llama": {
       "type": "openai_compat",
       "api_url": "http://127.0.0.1:30003/v1/chat/completions",
@@ -49,6 +61,20 @@
       "fallback_on_explicit_profile": true,
       "fallback_chain": ["gemma-4", "ollama-local", "deepseek-v4-pro"],
       "profiles": {
+        "gpt-5.5-knowledge": {
+          "provider": "gptstore-text",
+          "model": "gpt-5.5",
+          "temperature": 0.2,
+          "max_tokens": 16000,
+          "system_prompt": "You are a precise enterprise knowledge analysis model.",
+          "response_adapter": "openai_compat",
+          "context_budget": 128000,
+          "retry_max_attempts": 3,
+          "retry_delay_seconds": 30,
+          "retry_strategy": "fixed",
+          "price_input": 0,
+          "price_output": 0
+        },
         "deepseek-v4-flash": {
           "provider": "opencode",
           "model": "deepseek-v4-flash",
@@ -149,8 +175,15 @@
     "vision": {
       "primary": "mimo",
       "fallback_on_explicit_profile": true,
-      "fallback_chain": ["qwen3-vl"],
+      "fallback_chain": ["mimo", "qwen3-vl"],
       "profiles": {
+        "gpt-5.5-vision": {
+          "provider": "gptstore-text",
+          "model": "gpt-5.5",
+          "temperature": 0.2,
+          "max_tokens": 8192,
+          "response_adapter": "openai_compat"
+        },
         "mimo": {
           "provider": "mimo",
           "model": "mimo-v2.5",
@@ -163,6 +196,22 @@
           "watchdog": "qwen3-vl",
           "response_adapter": "qwen"
         }
+      }
+    }
+  },
+
+  "module_routing": {
+    "knowledge": {
+      "default_profile": "gpt-5.5-knowledge",
+      "fallback_profile": "deepseek-v4-flash",
+      "pause_after_fallback": true,
+      "stages": {
+        "raw_ocr": "gpt-5.5-vision",
+        "raw_vision": "gpt-5.5-vision",
+        "fusion": "gpt-5.5-knowledge",
+        "profile": "gpt-5.5-knowledge",
+        "entity": "gpt-5.5-knowledge",
+        "legacy_page_fusion": "gpt-5.5-knowledge"
       }
     }
   },

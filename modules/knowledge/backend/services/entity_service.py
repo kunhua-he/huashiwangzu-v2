@@ -13,19 +13,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .llm_diagnostics import timed_llm_chat
+from .model_routing import resolve_knowledge_profile
 from .prompt_utils import TENTITY, TFUSION_LEGACY, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("entity")
 
 async def extract_entities_from_text(
     text: str,
-    profile_key: str = "deepseek-v4-flash",
+    profile_key: str | None = None,
     db: AsyncSession | None = None,
 ) -> dict:
     """用大模型从文本中提取实体和关系。返回 {"entities": [...], "relationships": [...]}。"""
     if not text.strip():
         return {"entities": [], "relationships": []}
 
+    resolved_profile_key = resolve_knowledge_profile("entity", profile_key)
     system_prompt = await load_prompt(db, TENTITY)
     try:
         messages = [
@@ -35,7 +37,7 @@ async def extract_entities_from_text(
         resp = await timed_llm_chat(
             logger=logger,
             stage="entity",
-            profile_key=profile_key,
+            profile_key=resolved_profile_key,
             messages=messages,
             chat_func=gateway_router.chat,
             extra={"text_chars": len(text)},
@@ -59,7 +61,12 @@ async def extract_entities_from_text(
         parsed = json.loads(content)
         entities = parsed.get("entities", [])
         relationships = parsed.get("relationships", [])
-        return {"entities": entities, "relationships": relationships}
+        return {
+            "entities": entities,
+            "relationships": relationships,
+            "model_degraded": bool(resp.get("model_degraded")),
+            "model_diagnostics": resp.get("model_diagnostics") or {},
+        }
     except Exception as e:
         logger.warning("Entity extraction failed: %s", e)
         return {"entities": [], "relationships": [], "errors": [str(e)]}
@@ -67,13 +74,14 @@ async def extract_entities_from_text(
 
 async def fuse_page_text(
     text: str,
-    profile_key: str = "deepseek-v4-flash",
+    profile_key: str | None = None,
     db: AsyncSession | None = None,
 ) -> str:
     """用大模型融合页级文本。"""
     if not text.strip():
         return text
 
+    resolved_profile_key = resolve_knowledge_profile("legacy_page_fusion", profile_key)
     system_prompt = await load_prompt(db, TFUSION_LEGACY)
     try:
         messages = [
@@ -83,7 +91,7 @@ async def fuse_page_text(
         resp = await timed_llm_chat(
             logger=logger,
             stage="legacy_page_fusion",
-            profile_key=profile_key,
+            profile_key=resolved_profile_key,
             messages=messages,
             chat_func=gateway_router.chat,
             extra={"text_chars": len(text)},
@@ -141,6 +149,9 @@ async def process_document_entities(
         all_entities.extend(result.get("entities", []))
         all_relationships.extend(result.get("relationships", []))
         stats["errors"].extend(result.get("errors", []))
+        if result.get("model_degraded"):
+            stats["model_degraded"] = True
+            stats.setdefault("model_diagnostics", []).append(result.get("model_diagnostics") or {})
         processed_pages += 1
 
         # 小延迟避免 API 限流
@@ -433,6 +444,9 @@ async def process_document_entities_from_fusions(
         entity_page.extend([pf.page] * len(page_ents))
         all_relationships.extend(result.get("relationships", []))
         stats["errors"].extend(result.get("errors", []))
+        if result.get("model_degraded"):
+            stats["model_degraded"] = True
+            stats.setdefault("model_diagnostics", []).append(result.get("model_diagnostics") or {})
         processed_pages += 1
 
         if processed_pages % 3 == 0 and len(fusions) > 3:

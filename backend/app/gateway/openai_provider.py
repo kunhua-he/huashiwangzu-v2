@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import uuid
 from typing import AsyncGenerator
 
 import httpx
@@ -21,15 +23,33 @@ OPENCODE_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 
 
 class OpenAIProvider(BaseProvider):
-    def __init__(self, api_url: str, api_key: str = "", provider_name: str = "opencode"):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str = "",
+        provider_name: str = "opencode",
+        extra_headers: dict[str, str] | None = None,
+        session_affinity: dict | None = None,
+    ):
         self.api_url = api_url
         self.api_key = api_key
         self.provider_name = provider_name
+        self.extra_headers = extra_headers or {}
+        self.session_affinity = session_affinity or {}
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, payload: dict | None = None, model: str = "") -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        headers.update({str(k): str(v) for k, v in self.extra_headers.items() if k and v})
+        session_header = str(self.session_affinity.get("header") or "").strip()
+        if session_header and payload is not None:
+            prefix = str(self.session_affinity.get("prefix") or self.provider_name or "gateway").strip()
+            scope = str(self.session_affinity.get("scope") or "payload").strip().lower()
+            if scope == "request":
+                headers[session_header] = _request_session_id(prefix=prefix)
+            else:
+                headers[session_header] = _payload_session_id(prefix=prefix, model=model, payload=payload)
         return headers
 
     def _build_payload(
@@ -54,10 +74,10 @@ class OpenAIProvider(BaseProvider):
     ) -> dict:
         payload = self._build_payload(messages, model, temperature, max_tokens, False, tools)
         async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
-            resp = await client.post(self.api_url, json=payload, headers=self._headers())
+            resp = await client.post(self.api_url, json=payload, headers=self._headers(payload, model))
             if resp.status_code >= 400:
                 body_text = await _read_error_body(resp)
-                payload_preview = json.dumps(payload, ensure_ascii=False)[:2000]
+                payload_preview = _payload_preview(payload)
                 logger.error(
                     "AI provider %s returned %s\n请求体: %s\n响应体: %s",
                     self.provider_name, resp.status_code, payload_preview, body_text,
@@ -74,7 +94,7 @@ class OpenAIProvider(BaseProvider):
         payload = self._build_payload(messages, model, temperature, max_tokens, True, tools)
         try:
             async with httpx.AsyncClient(timeout=300, trust_env=False) as client:
-                async with client.stream("POST", self.api_url, json=payload, headers=self._headers()) as resp:
+                async with client.stream("POST", self.api_url, json=payload, headers=self._headers(payload, model)) as resp:
                     if resp.status_code >= 400:
                         yield {"type": "error", "content": error_message(resp.status_code, await resp.aread())}
                         return
@@ -145,3 +165,42 @@ class OpenCodeProvider(OpenAIProvider):
             api_key=api_key or get_settings().DEEPSEEK_API_KEY,
             provider_name="opencode",
         )
+
+
+def _payload_session_id(prefix: str, model: str, payload: dict) -> str:
+    raw = json.dumps(
+        {"model": model, "payload": payload},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:32]
+    clean_prefix = "".join(ch if ch.isalnum() or ch in {"-", "_", ":"} else "-" for ch in prefix)[:48]
+    return f"{clean_prefix}:{digest}" if clean_prefix else digest
+
+
+def _request_session_id(prefix: str) -> str:
+    clean_prefix = "".join(ch if ch.isalnum() or ch in {"-", "_", ":"} else "-" for ch in prefix)[:48]
+    digest = uuid.uuid4().hex
+    return f"{clean_prefix}:{digest}" if clean_prefix else digest
+
+
+def _payload_preview(payload: dict) -> str:
+    return json.dumps(_redact_payload_for_log(payload), ensure_ascii=False, default=str)[:2000]
+
+
+def _redact_payload_for_log(value):
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
+                redacted[key] = "<image data url redacted>"
+            else:
+                redacted[key] = _redact_payload_for_log(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_payload_for_log(item) for item in value]
+    if isinstance(value, str) and value.startswith("data:image/"):
+        return "<image data url redacted>"
+    return value

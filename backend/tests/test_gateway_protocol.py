@@ -44,3 +44,21 @@ def test_normalize_tools_accepts_internal_shorthand() -> None:
         "type": "function",
         "function": {"name": "search", "description": "Search", "parameters": {"type": "object"}},
     }]
+
+
+def test_normalize_preserves_multimodal_image_content() -> None:
+    messages = [
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc", "detail": "high"}},
+            {"type": "text", "text": "描述图片"},
+        ]},
+    ]
+
+    normalized = normalize_openai_messages(messages)
+
+    assert isinstance(normalized[0]["content"], list)
+    assert normalized[0]["content"][0] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,abc", "detail": "high"},
+    }
+    assert normalized[0]["content"][1] == {"type": "text", "text": "描述图片"}

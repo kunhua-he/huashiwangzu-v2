@@ -31,6 +31,7 @@ llm_diagnostics_stream = _load_service("llm_diagnostics_stream")
 StageDef = pipeline_orchestrator.StageDef
 classify_fusion_status = fusion_service.classify_fusion_status
 classify_raw_collection_status = raw_collection_service.classify_raw_collection_status
+completed_raw_pages = raw_collection_service.completed_raw_pages
 
 
 class _ScalarResult:
@@ -259,6 +260,41 @@ def test_raw_collection_classifies_partial_empty_as_degraded():
     ) == "degraded"
 
 
+def test_raw_collection_classifies_page_covered_empty_rounds_as_done():
+    assert classify_raw_collection_status(
+        total_rounds=18,
+        valid_rounds=16,
+        failed_rounds=0,
+        task_count=18,
+        total_pages=6,
+        valid_pages=6,
+    ) == "done"
+
+
+def test_raw_collection_classifies_missing_page_as_degraded():
+    assert classify_raw_collection_status(
+        total_rounds=18,
+        valid_rounds=15,
+        failed_rounds=0,
+        task_count=18,
+        total_pages=6,
+        valid_pages=5,
+    ) == "degraded"
+
+
+def test_raw_collection_only_skips_pages_with_all_rounds_done():
+    rows = [
+        (1, "done"),
+        (1, "done"),
+        (1, "failed"),
+        (2, "done"),
+        (2, "done"),
+        (2, "done"),
+    ]
+
+    assert completed_raw_pages(rows, expected_rounds=3) == {2}
+
+
 def test_fusion_classifies_all_empty_and_index_failure():
     assert classify_fusion_status(total_pages=2, valid_pages=0) == "degraded"
     assert classify_fusion_status(total_pages=2, valid_pages=0, error_pages=2) == "failed"
@@ -299,6 +335,38 @@ async def test_orchestrator_failed_stage_returns_failed(monkeypatch):
     assert result["steps"]["raw"]["stage_status"] == "failed"
     assert stage_rows[-1].stage == "raw"
     assert stage_rows[-1].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_updates_document_status_fields(monkeypatch):
+    async def profile_stage(**_kwargs):
+        return {"subject": "检验报告", "doc_summary": "检测结论"}
+
+    async def graph_stage(**_kwargs):
+        return {"status": "done", "entities": 3}
+
+    async def relations_stage(**_kwargs):
+        return {"status": "done", "relations": 1}
+
+    monkeypatch.setattr(
+        pipeline_orchestrator,
+        "STAGE_REGISTRY",
+        [
+            StageDef("profile", ["fusion"], True, profile_stage),
+            StageDef("graph", ["fusion"], True, graph_stage),
+            StageDef("relations", ["profile", "graph"], True, relations_stage, requires=["profile", "graph"]),
+        ],
+    )
+    monkeypatch.setattr(pipeline_orchestrator, "detect_stale_stages", _always_stale)
+    monkeypatch.setattr(pipeline_orchestrator, "record_artifact_hash", _hash_stage)
+
+    db = _FakeDb()
+    result = await pipeline_orchestrator.run_pipeline(db, 123, 1, 456, 1)
+
+    assert result["status"] == "done"
+    assert db.doc.profile_status == "done"
+    assert db.doc.graph_status == "done"
+    assert db.doc.relation_status == "done"
 
 
 @pytest.mark.asyncio

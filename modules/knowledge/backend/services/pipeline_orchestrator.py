@@ -21,6 +21,7 @@ from ..models import KbDocument, KbPipelineRun, KbPipelineStageRun
 from .document_service import mark_document_source_unavailable
 from .entity_service import process_document_entities_from_fusions
 from .fusion_service import fuse_all_pages
+from .model_routing import should_pause_after_result
 from .profile_service import generate_document_profile
 from .raw_collection_service import collect_raw_data
 from .relation_service import compute_file_relations
@@ -56,6 +57,13 @@ class StageAssessment:
 
 FAILED_STATUSES = {"failed", "error"}
 DEGRADED_STATUSES = {"degraded", "partial", "done_with_errors"}
+STAGE_STATUS_FIELDS = {
+    "raw": "raw_status",
+    "fusion": "fusion_status",
+    "profile": "profile_status",
+    "graph": "graph_status",
+    "relations": "relation_status",
+}
 
 
 def _now() -> datetime:
@@ -253,6 +261,8 @@ def assess_stage_result(stage_name: str, result: dict, required: bool = True) ->
         return StageAssessment("failed", False, str(result.get("error")))
     if status_value in FAILED_STATUSES:
         return StageAssessment("failed", False, str(result.get("reason") or status_value))
+    if result.get("model_degraded"):
+        return StageAssessment("degraded", True, "model_fallback")
     if status_value == "skipped":
         reason = str(result.get("reason") or "skipped")
         return StageAssessment("degraded" if required else "skipped", not required, reason)
@@ -287,6 +297,15 @@ def assess_stage_result(stage_name: str, result: dict, required: bool = True) ->
     if status_value in DEGRADED_STATUSES:
         return StageAssessment("degraded", True, status_value)
     return StageAssessment("done", True, status_value or "done")
+
+
+def _set_document_stage_status(doc: KbDocument, stage_name: str, status: str) -> None:
+    field_name = STAGE_STATUS_FIELDS.get(stage_name)
+    if not field_name:
+        return
+    if status == "skipped":
+        return
+    setattr(doc, field_name, status)
 
 
 # ── Stage 注册表 ──────────────────────────────────────
@@ -469,6 +488,7 @@ async def run_pipeline(
                     "classification": "degraded_dependency",
                 }
                 degraded_stages.add(step_name)
+                _set_document_stage_status(doc, step_name, "degraded")
                 await _record_stage_run(
                     db,
                     run,
@@ -522,9 +542,11 @@ async def run_pipeline(
             steps[step_name]["stage_status"] = assessment.status
             if assessment.reason and "stage_reason" not in steps[step_name]:
                 steps[step_name]["stage_reason"] = assessment.reason
+            pause_after_stage = False
 
             if assessment.status == "failed":
                 failed_stages.add(step_name)
+                _set_document_stage_status(doc, step_name, "failed")
                 await _record_stage_run(
                     db,
                     run,
@@ -545,10 +567,15 @@ async def run_pipeline(
                 return {"document_id": document_id, "status": "failed", "steps": steps}
             if assessment.status == "degraded":
                 degraded_stages.add(step_name)
+                _set_document_stage_status(doc, step_name, "degraded")
                 logger.warning("Pipeline step %s degraded for doc_id=%d: %s",
                                step_name, document_id, assessment.reason)
+                pause_after_stage = should_pause_after_result(steps[step_name])
+            elif assessment.status == "done":
+                _set_document_stage_status(doc, step_name, "done")
 
             # 记录 hash
+
             artifact_hash = None
             if assessment.complete_for_dependencies:
                 artifact_hash = await record_artifact_hash(db, document_id, step_name)
@@ -566,9 +593,38 @@ async def run_pipeline(
                 artifact_hash=artifact_hash,
                 duration_ms=round((perf_counter() - stage_timer) * 1000),
             )
+            if pause_after_stage:
+                pause_reason = "model_fallback_pause"
+                steps["_pause"] = {
+                    "status": "paused",
+                    "reason": pause_reason,
+                    "after_stage": step_name,
+                    "model_diagnostics": steps[step_name].get("model_diagnostics"),
+                }
+                await _record_stage_run(
+                    db,
+                    run,
+                    document_id=document_id,
+                    owner_id=owner_id,
+                    stage="pause",
+                    status="paused",
+                    started_at=_now(),
+                    reason=pause_reason,
+                    metrics=steps["_pause"],
+                    duration_ms=0,
+                )
+                await _finish_pipeline_run(db, run, "paused", reason=pause_reason, diagnostics={"steps": steps})
+                await db.commit()
+                logger.warning(
+                    "Pipeline paused after model fallback at %s for doc_id=%d",
+                    step_name,
+                    document_id,
+                )
+                return {"document_id": document_id, "status": "paused", "reason": pause_reason, "steps": steps}
 
         except Exception as e:
             steps[step_name] = {"error": str(e)}
+            _set_document_stage_status(doc, step_name, "failed")
             await _record_stage_run(
                 db,
                 run,

@@ -39,7 +39,14 @@ _FALLBACK_FUSION_LEGACY = (
     "Return plain text only."
 )
 _FALLBACK_RAW_OCR = "# System\nExtract all visible text from the image in reading order."
-_FALLBACK_RAW_VISION = "# System\nDescribe the page layout and visual composition."
+_FALLBACK_RAW_VISION = (
+    "# System\n"
+    "Analyze this enterprise knowledge-base image in Chinese. Do not describe it as a binary file. "
+    "Classify whether it is a raw material photo, product image, poster, display stand, lightbox, "
+    "brochure page, screenshot, table, or low-information asset. Preserve searchable text, brand/product names, "
+    "layout hierarchy, visual structure, key objects, colors, claims, usage scenario, and relation keywords. "
+    "For raw unprocessed assets, keep the note concise and only record useful labels."
+)
 
 FALLBACKS: dict[str, str] = {
     TPROFILE: _FALLBACK_PROFILE,

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbDocumentProfile, KbPageFusion
 from .llm_diagnostics import timed_llm_chat
+from .model_routing import resolve_knowledge_profile
 from .prompt_utils import TPROFILE, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("profile")
@@ -26,7 +27,7 @@ async def generate_document_profile(
     db: AsyncSession,
     document_id: int,
     owner_id: int,
-    profile_key: str = "deepseek-v4-flash",
+    profile_key: str | None = None,
 ) -> dict:
     """生成文件级画像。
 
@@ -48,6 +49,9 @@ async def generate_document_profile(
         logger.warning("No fused pages for document_id=%d, skipping profile", document_id)
         return {"document_id": document_id, "status": "skipped", "reason": "no_fused_pages"}
 
+    df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
+    doc = df.scalar_one_or_none()
+
     # 聚合各页融合正文
     pages_text = []
     for pf in fusions:
@@ -56,12 +60,15 @@ async def generate_document_profile(
     all_text = "\n\n".join(pages_text)
 
     # 2. LLM 提炼
+    resolved_profile_key = resolve_knowledge_profile("profile", profile_key)
+    model_degraded = False
+    model_diagnostics: dict = {}
     system_prompt = await load_prompt(db, TPROFILE)
     try:
         result = await timed_llm_chat(
             logger=logger,
             stage="profile",
-            profile_key=profile_key,
+            profile_key=resolved_profile_key,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"请分析以下文档内容，生成文件画像：\n\n{all_text[:12000]}"},
@@ -70,6 +77,8 @@ async def generate_document_profile(
             document_id=document_id,
             extra={"pages": len(fusions)},
         )
+        model_degraded = bool(result.get("model_degraded"))
+        model_diagnostics = result.get("model_diagnostics") or {}
         content = (result.get("content") or "").strip()
         if content.startswith("```"):
             lines = content.split("\n")
@@ -104,6 +113,7 @@ async def generate_document_profile(
         key_entities=profile_data.get("key_entities", []),
         doc_summary=profile_data.get("doc_summary", ""),
         searchable_phrases=profile_data.get("searchable_phrases", []),
+        labels_json=profile_data.get("labels") or profile_data.get("labels_json") or {},
         applicable_scenarios=profile_data.get("applicable_scenarios", ""),
         expiry_risk=profile_data.get("expiry_risk", "low"),
         confidence=profile_data.get("confidence", 0.7),
@@ -114,10 +124,9 @@ async def generate_document_profile(
     await db.flush()
 
     # 同步更新文档摘要
-    df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
-    doc = df.scalar_one_or_none()
     if doc:
         doc.summary = profile_data.get("doc_summary", "")[:500]
+        doc.profile_status = "done"
     await db.commit()
 
     return {
@@ -126,7 +135,10 @@ async def generate_document_profile(
         "doc_type": profile.doc_type,
         "key_entities": profile.key_entities,
         "doc_summary": profile.doc_summary,
+        "labels_json": profile.labels_json,
         "confidence": profile.confidence,
+        "model_degraded": model_degraded,
+        "model_diagnostics": model_diagnostics,
     }
 
 
@@ -136,7 +148,7 @@ def _heuristic_profile(fusions: list) -> dict:
         return {
             "subject": "", "doc_type": "其他", "chapter_structure": [],
             "core_conclusions": "", "key_entities": [], "doc_summary": "",
-            "searchable_phrases": [], "applicable_scenarios": "", "expiry_risk": "low", "confidence": 0.3,
+            "searchable_phrases": [], "labels": {}, "applicable_scenarios": "", "expiry_risk": "low", "confidence": 0.3,
         }
 
     # 简单启发式：取第一页前100字作为主题
@@ -174,6 +186,13 @@ def _heuristic_profile(fusions: list) -> dict:
         "key_entities": all_entities[:30],
         "doc_summary": doc_summary[:1000],
         "searchable_phrases": searchable_phrases,
+        "labels": {
+            "business_tags": searchable_phrases,
+            "usage_tags": ["待人工复核"],
+            "content_boundaries": ["LLM 不可用时由启发式兜底生成，需人工复核"],
+            "business_objects": [],
+            "evidence": [],
+        },
         "applicable_scenarios": "",
         "expiry_risk": "low",
         "confidence": 0.3,
@@ -199,6 +218,7 @@ async def get_document_profile(db: AsyncSession, document_id: int, owner_id: int
         "key_entities": profile.key_entities,
         "doc_summary": profile.doc_summary,
         "searchable_phrases": profile.searchable_phrases,
+        "labels_json": profile.labels_json,
         "applicable_scenarios": profile.applicable_scenarios,
         "expiry_risk": profile.expiry_risk,
         "confidence": profile.confidence,

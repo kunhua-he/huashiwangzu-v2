@@ -151,6 +151,7 @@
             </div>
             <div v-if="profile.core_conclusions" class="pf-card"><div class="pf-h">核心结论</div><p>{{ profile.core_conclusions }}</p></div>
             <div v-if="profile.applicable_scenarios" class="pf-card"><div class="pf-h">适用场景</div><p>{{ profile.applicable_scenarios }}</p></div>
+            <div v-if="profileBusinessTags.length" class="pf-card"><div class="pf-h">业务标签</div><div class="chips"><span v-for="tag,i in profileBusinessTags" :key="i" class="chip">{{ tag }}</span></div></div>
             <div v-if="profileEntities.length" class="pf-card"><div class="pf-h">关键信息</div><div class="chips"><span v-for="e,i in profileEntities" :key="i" class="chip">{{ e.name }}</span></div></div>
             <div v-if="profileChapters.length" class="pf-card pf-wide"><div class="pf-h">内容结构</div><ul class="chapter-list"><li v-for="c,i in profileChapters" :key="i" @click="gotoPage(c.page)"><span class="ch-page">P{{ c.page || '·' }}</span><span class="ch-title">{{ c.title }}</span></li></ul></div>
           </div>
@@ -283,6 +284,7 @@ const {
   ingestStatusHint,
   profileEntities,
   profileChapters,
+  profileBusinessTags,
   fileIcon,
   docName,
   statusDotClass,

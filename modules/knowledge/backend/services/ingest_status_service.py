@@ -23,6 +23,8 @@ from ..models import (
     KbFileRelation,
     KbGovernanceCandidate,
     KbGraphNode,
+    KbPipelineRun,
+    KbPipelineStageRun,
 )
 from .document_service import document_source_unavailable_reason
 
@@ -96,7 +98,14 @@ async def find_latest_pipeline_task(
     return None
 
 
-def _stage(status: str | None, *, ready: bool | None = None, count: int | None = None) -> dict:
+def _stage(
+    status: str | None,
+    *,
+    ready: bool | None = None,
+    count: int | None = None,
+    semantic: str | None = None,
+    reason: str | None = None,
+) -> dict:
     normalized = status or "pending"
     item = {
         "status": normalized,
@@ -104,7 +113,45 @@ def _stage(status: str | None, *, ready: bool | None = None, count: int | None =
     }
     if count is not None:
         item["count"] = count
+    if semantic:
+        item["semantic"] = semantic
+    if reason:
+        item["reason"] = reason
     return item
+
+
+def _stage_run_lookup(rows: list[KbPipelineStageRun]) -> dict[str, KbPipelineStageRun]:
+    lookup: dict[str, KbPipelineStageRun] = {}
+    for row in rows:
+        lookup[row.stage] = row
+    return lookup
+
+
+def _stage_semantic(stage_run: KbPipelineStageRun | None, ready: bool, count: int = 0) -> tuple[str | None, str | None]:
+    if stage_run is None:
+        return None, None
+    if stage_run.status == "skipped":
+        return "skipped", stage_run.reason
+    if stage_run.status == "paused":
+        return "paused", stage_run.reason
+    if stage_run.status == "done" and count == 0:
+        return "done_empty", stage_run.reason
+    if ready or stage_run.status == "done":
+        return "done_with_results", stage_run.reason
+    return None, stage_run.reason
+
+
+def _run_payload(run: KbPipelineRun | None) -> dict | None:
+    if run is None:
+        return None
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "reason": run.reason,
+        "diagnostics": run.diagnostics_json,
+        "started_at": _iso(run.started_at),
+        "completed_at": _iso(run.completed_at),
+    }
 
 
 def _task_payload(task: SystemTaskQueue | None) -> dict | None:
@@ -136,6 +183,8 @@ def build_ingest_status_payload(
     relation_count: int = 0,
     source_available: bool = True,
     source_state: str = "available",
+    latest_run: KbPipelineRun | None = None,
+    stage_runs: list[KbPipelineStageRun] | None = None,
 ) -> dict:
     """Build the stable ingest status contract from document + queue state."""
     parse_status = doc.parse_status or "pending"
@@ -144,6 +193,8 @@ def build_ingest_status_payload(
     fusion_status = getattr(doc, "fusion_status", "pending") or "pending"
     task_status = task.status if task is not None else None
     task_result = _json_or_none(task.result if task is not None else None) or {}
+    latest_run_status = latest_run.status if latest_run is not None else ""
+    latest_run_reason = latest_run.reason if latest_run is not None else ""
     stored_source_reason = document_source_unavailable_reason(doc)
     if stored_source_reason:
         source_available = False
@@ -166,19 +217,29 @@ def build_ingest_status_payload(
         and vector_status == "done"
         and (doc.total_chunks or 0) > 0
     )
-    deep_ready = source_available and raw_status == "done" and fusion_status == "done"
+    paused = source_available and latest_run_status == "paused"
+    deep_ready = source_available and raw_status == "done" and fusion_status == "done" and not paused
     profile_ready = source_available and profile_count > 0
     graph_ready = source_available and graph_entity_count > 0
     relation_ready = source_available and relation_count > 0
+    stage_lookup = _stage_run_lookup(stage_runs or [])
+    raw_semantic, raw_reason = _stage_semantic(stage_lookup.get("raw"), raw_status == "done", 1 if raw_status == "done" else 0)
+    fusion_semantic, fusion_reason = _stage_semantic(stage_lookup.get("fusion"), fusion_status == "done", 1 if fusion_status == "done" else 0)
+    profile_semantic, profile_reason = _stage_semantic(stage_lookup.get("profile"), profile_ready, profile_count)
+    graph_semantic, graph_reason = _stage_semantic(stage_lookup.get("graph"), graph_ready, graph_entity_count)
+    relation_semantic, relation_reason = _stage_semantic(stage_lookup.get("relations"), relation_ready, relation_count)
+    pause_semantic, pause_reason = _stage_semantic(stage_lookup.get("pause"), False, 0)
     stage_summary = {
         "parse": _stage(parse_status, ready=parse_ready),
         "vector": _stage(vector_status, ready=search_ready, count=doc.total_chunks or 0),
-        "raw": _stage(raw_status, ready=source_available and raw_status == "done"),
-        "fusion": _stage(fusion_status, ready=source_available and fusion_status == "done"),
-        "profile": _stage("done" if profile_count > 0 else "pending", ready=profile_ready, count=profile_count),
-        "graph": _stage("done" if graph_entity_count > 0 else "pending", ready=graph_ready, count=graph_entity_count),
-        "relation": _stage("done" if relation_count > 0 else "pending", ready=relation_ready, count=relation_count),
+        "raw": _stage(raw_status, ready=source_available and raw_status == "done", semantic=raw_semantic, reason=raw_reason),
+        "fusion": _stage(fusion_status, ready=source_available and fusion_status == "done", semantic=fusion_semantic, reason=fusion_reason),
+        "profile": _stage("done" if profile_count > 0 else "pending", ready=profile_ready, count=profile_count, semantic=profile_semantic, reason=profile_reason),
+        "graph": _stage("done" if graph_entity_count > 0 else "pending", ready=graph_ready, count=graph_entity_count, semantic=graph_semantic, reason=graph_reason),
+        "relation": _stage("done" if relation_count > 0 else "pending", ready=relation_ready, count=relation_count, semantic=relation_semantic, reason=relation_reason),
     }
+    if pause_semantic:
+        stage_summary["pause"] = _stage("paused", ready=False, semantic=pause_semantic, reason=pause_reason)
     stage_summary["graph"]["node_count"] = graph_node_count
     stage_summary["graph"]["chunk_entity_count"] = chunk_entity_count
 
@@ -187,15 +248,19 @@ def build_ingest_status_payload(
         (key for key in stage_order if not stage_summary[key]["ready"]),
         "complete",
     )
+    if paused:
+        current_stage = "paused"
     if not source_available:
         last_error = source_state
     else:
-        last_error = (
+        last_error = latest_run_reason or (
             task.error_message if task is not None and task.error_message else None
         ) or doc.parse_error or task_result.get("error")
 
     if not source_available:
         pipeline_status = "source_unavailable"
+    elif paused:
+        pipeline_status = "paused"
     elif any(s in FAILED_STAGE_STATUSES for s in (parse_status, vector_status, raw_status, fusion_status)):
         pipeline_status = "failed"
     elif task_status == "failed":
@@ -219,6 +284,8 @@ def build_ingest_status_payload(
 
     if pipeline_status == "source_unavailable":
         next_action = "restore_source_or_archive_document"
+    elif pipeline_status == "paused":
+        next_action = "review_model_degradation_before_resume"
     elif pipeline_status == "failed":
         next_action = "inspect_error_or_retry_pipeline"
     elif pipeline_status == "degraded":
@@ -247,6 +314,7 @@ def build_ingest_status_payload(
         "pipeline_status": pipeline_status,
         "task_status": task_status,
         "task": _task_payload(task),
+        "latest_run": _run_payload(latest_run),
         "parse_status": parse_status,
         "vector_status": vector_status,
         "raw_status": raw_status,
@@ -310,6 +378,23 @@ async def get_ingest_status(
         )
     ) or 0
     task = await find_latest_pipeline_task(db, document_id)
+    latest_run = await db.scalar(
+        select(KbPipelineRun)
+        .where(
+            KbPipelineRun.document_id == document_id,
+            KbPipelineRun.owner_id == owner_id,
+        )
+        .order_by(KbPipelineRun.id.desc())
+        .limit(1)
+    )
+    stage_runs = []
+    if latest_run is not None:
+        stage_run_result = await db.execute(
+            select(KbPipelineStageRun)
+            .where(KbPipelineStageRun.run_id == latest_run.id)
+            .order_by(KbPipelineStageRun.id)
+        )
+        stage_runs = list(stage_run_result.scalars().all())
     return build_ingest_status_payload(
         doc,
         task,
@@ -320,4 +405,6 @@ async def get_ingest_status(
         relation_count=relation_count,
         source_available=source.available,
         source_state=source.reason or "available",
+        latest_run=latest_run,
+        stage_runs=stage_runs,
     )

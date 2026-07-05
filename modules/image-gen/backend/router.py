@@ -18,7 +18,7 @@ from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, Integer, Text, desc, func, select
+from sqlalchemy import Column, DateTime, Integer, Text, desc, func, select, text
 from sqlalchemy.orm import declarative_base
 
 from .providers import (
@@ -52,6 +52,8 @@ class ImageGenRecord(_Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     owner_id = Column(Integer, nullable=False, index=True)
     template = Column(Text, nullable=False)
+    provider = Column(Text, nullable=True)
+    request_id = Column(Text, nullable=True)
     prompt = Column(Text, nullable=False)
     image_count = Column(Integer, nullable=False, default=0)
     points_cost = Column(Integer, nullable=True)
@@ -59,6 +61,7 @@ class ImageGenRecord(_Base):
     file_ids = Column(Text, nullable=True)
     status = Column(Text, nullable=False, default="success")
     error_msg = Column(Text, nullable=True)
+    degraded_reason = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -69,6 +72,22 @@ def _ensure_tables():
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(_Base.metadata.create_all)
+                existing = await conn.execute(text("""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'imagegen_records'
+                """))
+                existing_columns = {row[0] for row in existing}
+                extra_columns = {
+                    "provider": "TEXT",
+                    "request_id": "TEXT",
+                    "degraded_reason": "TEXT",
+                }
+                for column_name, column_type in extra_columns.items():
+                    if column_name not in existing_columns:
+                        await conn.execute(text(
+                            f"ALTER TABLE imagegen_records ADD COLUMN {column_name} {column_type}"
+                        ))
             logger.info("imagegen_records table ensured")
         except Exception as e:
             logger.warning("Failed to ensure imagegen_records table: %s", e)
@@ -190,6 +209,7 @@ async def _generate(params: dict, caller: str) -> dict:
     count = _parse_bounded_int(params.get("count", 1), "count", 1, MAX_IMAGE_COUNT)
     steps = _parse_bounded_int(params.get("steps", 30), "steps", MIN_STEPS, MAX_STEPS)
     template_key = str(params.get("template", "")).strip() or get_default_template()
+    request_id = uuid.uuid4().hex
 
     if not prompt:
         raise ValidationError("prompt is required")
@@ -201,6 +221,13 @@ async def _generate(params: dict, caller: str) -> dict:
         provider, template_cfg, is_placeholder = resolve_provider(template_key)
     except ValueError:
         raise ValidationError(f"Unknown template: {template_key}")
+    requested_provider = str(template_cfg.get("provider", ""))
+    provider_key = provider.provider_key
+    degraded_reason = None
+    if is_placeholder and requested_provider != "placeholder":
+        degraded_reason = f"{requested_provider} provider is not configured; downgraded to placeholder"
+    elif is_placeholder:
+        degraded_reason = "placeholder template selected"
 
     if not is_placeholder:
         prompt_language = template_cfg.get("prompt_language", "any")
@@ -226,6 +253,8 @@ async def _generate(params: dict, caller: str) -> dict:
         fallback_provider = get_provider("placeholder")
         gen_results = await fallback_provider.generate(spec)
         is_placeholder = True
+        provider_key = fallback_provider.provider_key
+        degraded_reason = f"{requested_provider} provider is not implemented; downgraded to placeholder"
         logger.info("Fell back to placeholder for template=%s", template_key)
     except RuntimeError as e:
         error_msg = str(e)
@@ -241,6 +270,7 @@ async def _generate(params: dict, caller: str) -> dict:
         await _save_record(
             owner_id=user_id, template=template_key, prompt=spec.prompt,
             image_count=0, file_ids=None, status="failed", error_msg=error_msg,
+            provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
         )
         raise ValidationError(friendly) from e
     except Exception as e:
@@ -249,6 +279,7 @@ async def _generate(params: dict, caller: str) -> dict:
         await _save_record(
             owner_id=user_id, template=template_key, prompt=spec.prompt,
             image_count=0, file_ids=None, status="failed", error_msg=error_msg,
+            provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
         )
         raise ValidationError("生图异常，请稍后重试") from e
 
@@ -311,6 +342,7 @@ async def _generate(params: dict, caller: str) -> dict:
         await _save_record(
             owner_id=user_id, template=template_key, prompt=spec.prompt,
             image_count=0, file_ids=None, status="failed", error_msg=error_msg,
+            provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
         )
         raise ValidationError("生图失败：未生成可用图片")
 
@@ -320,18 +352,28 @@ async def _generate(params: dict, caller: str) -> dict:
         points_cost = gen_results[0].meta.get("points_cost")
         balance = gen_results[0].meta.get("balance")
 
-    await _save_record(
+    if generated_placeholder and degraded_reason is None:
+        degraded_reason = "placeholder generation path"
+    status = "partial" if persist_errors else ("degraded" if generated_placeholder else "success")
+    record_id = await _save_record(
         owner_id=user_id, template=template_key, prompt=spec.prompt,
         image_count=len(results), file_ids=file_ids,
-        status="partial" if persist_errors else ("placeholder" if generated_placeholder else "success"),
+        status=status,
         error_msg="; ".join(persist_errors) if persist_errors else None,
         points_cost=points_cost, balance_after=balance,
+        provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
     )
 
     response = {
+        "task": {"request_id": request_id, "record_id": record_id},
         "images": results,
         "placeholder": generated_placeholder,
+        "degraded": generated_placeholder,
+        "status": status,
         "template": template_key,
+        "provider": provider_key,
+        "requested_provider": requested_provider,
+        "degraded_reason": degraded_reason,
         "points_cost": points_cost,
         "balance": balance,
     }
@@ -346,25 +388,32 @@ async def _save_record(
     image_count: int, file_ids: list[int] | None,
     status: str, error_msg: str | None = None,
     points_cost: int | None = None, balance_after: int | None = None,
-):
+    provider: str | None = None, request_id: str | None = None,
+    degraded_reason: str | None = None,
+) -> int | None:
     try:
         async with AsyncSessionLocal() as db:
             from sqlalchemy import insert
             stmt = insert(ImageGenRecord).values(
                 owner_id=owner_id,
                 template=template,
+                provider=provider,
+                request_id=request_id,
                 prompt=prompt[:500],
                 image_count=image_count,
                 file_ids=json.dumps(file_ids) if file_ids else None,
                 status=status,
                 error_msg=error_msg,
+                degraded_reason=degraded_reason,
                 points_cost=points_cost,
                 balance_after=balance_after,
-            )
-            await db.execute(stmt)
+            ).returning(ImageGenRecord.id)
+            result = await db.execute(stmt)
             await db.commit()
+            return result.scalar_one_or_none()
     except Exception as e:
         logger.warning("Failed to save imagegen record: %s", e)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -395,15 +444,27 @@ async def _usage_history(params: dict, caller: str) -> dict:
             rows = result.scalars().all()
             records = []
             for r in rows:
+                file_ids = []
+                if r.file_ids:
+                    try:
+                        parsed = json.loads(r.file_ids)
+                        if isinstance(parsed, list):
+                            file_ids = [int(item) for item in parsed]
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        file_ids = []
                 records.append({
                     "id": r.id,
+                    "request_id": r.request_id,
                     "template": r.template,
+                    "provider": r.provider,
                     "prompt": r.prompt,
                     "image_count": r.image_count,
+                    "file_ids": file_ids,
                     "points_cost": r.points_cost,
                     "balance_after": r.balance_after,
                     "status": r.status,
                     "error_msg": r.error_msg,
+                    "degraded_reason": r.degraded_reason,
                     "created_at": str(r.created_at) if r.created_at else None,
                 })
             return {"records": records}

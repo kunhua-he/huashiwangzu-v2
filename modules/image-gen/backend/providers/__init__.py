@@ -54,14 +54,22 @@ def list_templates() -> list[dict]:
     for key, tpl in _TEMPLATES.items():
         provider_type = tpl.get("provider", "")
         provider_cls = _PROVIDERS.get(provider_type)
-        available = False
+        configured = False
         if provider_cls is not None:
-            available = _check_provider_credentials(tpl)
+            configured = _check_provider_credentials(tpl)
+        fallback = None
+        if provider_type != "placeholder" and not configured:
+            fallback = "placeholder"
         result.append({
             "key": key,
             "label": tpl.get("label", key),
             "provider": provider_type,
-            "available": available,
+            "configured": configured,
+            "available": configured,
+            "can_generate": configured or fallback == "placeholder",
+            "fallback": fallback,
+            "prompt_language": tpl.get("prompt_language", "any"),
+            "cost_tracking": provider_type in {"liblib", "gptstore"},
         })
     return result
 

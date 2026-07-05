@@ -22,7 +22,7 @@ modules/image-gen/backend/
 | Capability | Parameters | Returns | min_role |
 |---|---|---|---|
 | `image-gen:generate` | `prompt` (str), `size` (str, default "1024x1024"), `aspect_ratio` (str?), `count` (int, 1-4, default 1), `steps` (int, 1-100, default 30), `template` (str, default from config) | `{images: [{file_id, name, size, placeholder}], template, points_cost, balance}` | editor |
-| `image-gen:list_templates` | — | `{templates: [{key, label, provider, available}]}` | viewer |
+| `image-gen:list_templates` | — | `{templates: [{key, label, provider, configured, available, can_generate, fallback, prompt_language, cost_tracking}]}` | viewer |
 | `image-gen:usage_history` | `limit` (int, default 20) | `{records: [...]}` | editor |
 
 Generated images are saved to the framework file system via `file_upload_service`. Costs are tracked in `imagegen_records`.
@@ -40,6 +40,36 @@ All under `/api/image-gen`:
 
 ## Data tables
 - `imagegen_records` — Generation history with points cost tracking. Created automatically at module load time.
+
+## Provider state matrix
+
+| provider | configured | can_generate | fallback | cost/record | debt |
+|---|---|---|---|---|---|
+| `liblib` / `liblib-star3` | Reads `LIBLIB_ACCESS_KEY` + `LIBLIB_SECRET_KEY` from runtime settings or env | Yes when configured; otherwise safe placeholder degradation | `placeholder` when credentials are missing | Liblib cost/balance are saved when returned; request id, provider, template, file ids, status, and degraded reason are recorded | Real external calls spend provider quota; sandbox and default validation do not call it |
+| `gptstore` / `gptstore-gpt5.5` | Reads framework GPTStore gateway credentials | Yes when configured; otherwise safe placeholder degradation | `placeholder` when credentials are missing | Generated framework file ids and provider/template/status are recorded; provider cost only exists if gateway returns it | Gateway provider remains a wrapper around framework model gateway |
+| `placeholder` | Always configured; no credentials | Yes, generates local PIL PNG placeholders | None | Records are marked `status=degraded`, `placeholder=true`, `provider=placeholder`, and include file ids | Not a fake success; UI and history show it as degraded/placeholder |
+
+## Response and history shape
+
+Successful generation returns a task envelope plus explicit provider state:
+
+```json
+{
+  "task": {"request_id": "...", "record_id": 1},
+  "images": [{"type": "image", "file_id": 1, "name": "...", "size": 1024, "placeholder": true}],
+  "placeholder": true,
+  "degraded": true,
+  "status": "degraded",
+  "template": "placeholder",
+  "provider": "placeholder",
+  "requested_provider": "placeholder",
+  "degraded_reason": "placeholder generation path",
+  "points_cost": null,
+  "balance": null
+}
+```
+
+`usage_history` returns the same trace fields for each record: `request_id`, `provider`, `template`, `file_ids`, `status`, `error_msg`, `degraded_reason`, cost, balance, and timestamp.
 
 ## How to add a service provider template
 

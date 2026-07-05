@@ -23,6 +23,24 @@
 - Business logic stays inside this module directory.
 - Cross-module access must go through the framework capability registry or runtime SDK.
 - Framework file content access must preserve `check_file_access` semantics when `file_id` is used.
+- URL inputs only allow public `http`/`https` targets. `file://`, embedded credentials, localhost, private ranges, link-local metadata endpoints, DNS failures, and redirects to blocked targets fail closed.
+- Browser sessions use isolated Playwright contexts and are bound to the caller. Cookie/localStorage are never returned.
+- Screenshot and download artifacts are written only to the caller's terminal workspace. Results return `workspace_path` plus `filename`/`size`, not host absolute paths; pass `workspace_path` to `terminal-tools:publish` when the artifact should become a desktop file.
+- Timeouts are clamped to 1-60 seconds. Downloads stream to disk with a 50 MB cap, screenshots are capped at 5 MB, and extracted text is capped at 512 KB.
+- Failures return `success:false` through the capability handler and direct HTTP routes raise framework `ValidationError`; no 200-style fake success is used for blocked URLs, missing sessions, oversized downloads/screenshots, or cleanup degradation.
+
+## Result Shapes
+
+| Capability | Success data shape |
+|---|---|
+| `open` | `{session_id, title, url, visible_text_preview}` |
+| `read_text` | `{session_id, title, url, visible_text, buttons}` |
+| `list_links` | `{session_id, links, total}` |
+| `click` / `wait_for` | `{session_id, url, title}` |
+| `type` | `{session_id, selector, typed_length}` |
+| `screenshot` | `{session_id, workspace_path, filename, size, full_page, note}` |
+| `download` | `{session_id, workspace_path, filename, size, note}` |
+| `close` | `{session_id, closed, degraded, cleanup_errors}` |
 
 ## Acceptance Matrix
 

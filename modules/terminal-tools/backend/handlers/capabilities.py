@@ -8,8 +8,8 @@ from __future__ import annotations
 from app.services.module_registry import register_capability
 
 from .exec import _exec
-from .file_ops import _write_file, _read_file, _list_workspace, _publish, _import
-from .python import _run_python, _chart
+from .file_ops import _import, _list_workspace, _publish, _read_file, _write_file
+from .python import _chart, _run_python
 
 # ═══════════════════════════════════════════════════════════════════════
 # Register capabilities with framework

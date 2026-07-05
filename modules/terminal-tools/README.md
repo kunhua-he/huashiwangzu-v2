@@ -34,7 +34,7 @@ CLI 的 cwd 永远锁死在该用户工作区，它眼里的"文件/当前目录
 ### 1. 路径约束（核心安全机制）
 - 所有文件操作（write/read/list/publish/import）的文件路径参数，必须先经过 `_resolve_workspace_path()` 规范化+resolve（基于 `app.core.workspace_security.resolve_workspace_path` + `app.core.path_security.validate_within_dir`），再检查 resolve 后的绝对路径是否在用户工作区内。
 - 越界路径（绝对路径如 `/Users/...`、`~`、`../` 逃逸、symlink 逃逸）一律拒绝，返回简洁错误信息（不泄漏宿主机敏感路径）。
-- 工作区根: `backend/data/workspaces/{user_id}/`，按 `user_id` 隔离，用户间互不可见。
+- 工作区根: `data/workspaces/{user_id}/`（从后端运行目录解析），按 `user_id` 隔离，用户间互不可见。
 - API 返回只暴露工作区相对路径，不返回 `absolute_path`。
 - `publish.filename` 和框架文件默认导入名会折叠成单个安全文件名；显式 `import.target_path` 仍允许工作区内子目录，但必须通过同一套边界校验。
 
@@ -54,9 +54,7 @@ CLI 的 cwd 永远锁死在该用户工作区，它眼里的"文件/当前目录
 - 所有命令的 cwd 固定为该用户工作区根目录。
 
 ### 隔离强度
-**本地执行 + 应用层约束 = "约束 + 信任同事"**，适合局域网内部场景。
-不是 Docker 级强隔离，懂行者理论上可绕过（如写 C 程序直接 syscall）。
-将来需要更强隔离再上受限用户/Docker。
+**macOS 上优先使用 `sandbox-exec` 内核沙盒 + 应用层约束**，适合局域网内部场景；没有可用 `sandbox-exec` 的平台 fail-closed，`exec`/`run_python` 直接返回失败。不是 Docker 级跨平台强隔离；将来需要更强隔离再上受限用户/Docker。
 
 ## 产物策略:草稿区 + 显式交付
 
@@ -71,7 +69,7 @@ CLI 的 cwd 永远锁死在该用户工作区，它眼里的"文件/当前目录
 
 ```
 modules/terminal-tools/
-├── manifest.json          # 模块身份声明 + public_actions（6 个基础 action）
+├── manifest.json          # 模块身份声明 + public_actions（8 个 action）
 ├── README.md              # 本文档
 ├── backend/
 │   └── router.py          # FastAPI router + 8 个 register_capability + 9 个 HTTP 端点（含 /health）

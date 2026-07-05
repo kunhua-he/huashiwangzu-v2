@@ -87,6 +87,15 @@ def _get_workspace_path(caller: str) -> Path:
     return workspace
 
 
+def _workspace_relative_path(path: Path, workspace: Path) -> str:
+    """Return a workspace-relative path for caller-facing responses."""
+    resolved_path = path.resolve()
+    resolved_workspace = workspace.resolve()
+    if resolved_path == resolved_workspace:
+        return "."
+    return str(resolved_path.relative_to(resolved_workspace))
+
+
 def _is_blocked_url(url: str) -> tuple[bool, str]:
     """Check URL against blocklist. Returns (blocked, reason)."""
     if not isinstance(url, str) or not url.strip():
@@ -670,9 +679,10 @@ async def _screenshot(params: dict, caller: str) -> dict:
             filepath.unlink(missing_ok=True)
             return _err(f"screenshot too large ({file_size} bytes, max {_MAX_SCREENSHOT_BYTES})")
 
+        workspace_path = _workspace_relative_path(filepath, workspace)
         return _ok({
             "session_id": session_id,
-            "file_path": str(filepath),
+            "workspace_path": workspace_path,
             "filename": filename,
             "size": file_size,
             "full_page": full_page,
@@ -737,8 +747,9 @@ async def _download(params: dict, caller: str) -> dict:
             filepath = workspace / filename
             tmp_filepath.replace(filepath)
 
+        workspace_path = _workspace_relative_path(filepath, workspace)
         return _ok({
-            "file_path": str(filepath),
+            "workspace_path": workspace_path,
             "filename": filename,
             "size": file_size,
             "session_id": session_id or "",

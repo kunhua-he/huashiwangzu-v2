@@ -533,31 +533,33 @@ def test_output_shapes() -> None:
     # Screenshot output shape
     screenshot_result = {
         "session_id": "sess_abc",
-        "file_path": "data/workspaces/1/screenshot_abc123.png",
+        "workspace_path": "screenshot_abc123.png",
         "filename": "screenshot_abc123.png",
         "size": 245760,
         "full_page": True,
         "note": "Use terminal-tools:publish to deliver to desktop",
     }
     assert isinstance(screenshot_result["session_id"], str)
-    assert isinstance(screenshot_result["file_path"], str)
+    assert isinstance(screenshot_result["workspace_path"], str)
+    assert not screenshot_result["workspace_path"].startswith(("/", "data/workspaces/"))
     assert isinstance(screenshot_result["filename"], str)
     assert isinstance(screenshot_result["size"], int) and screenshot_result["size"] >= 0
     assert isinstance(screenshot_result["full_page"], bool)
-    print("  [screenshot] Output shape (file_path, filename, size): PASS")
+    print("  [screenshot] Output shape (workspace_path, filename, size): PASS")
 
     # Download output shape
     download_result = {
         "session_id": "sess_abc",
-        "file_path": "data/workspaces/1/report.pdf",
+        "workspace_path": "report.pdf",
         "filename": "report.pdf",
         "size": 1048576,
         "note": "Use terminal-tools:publish to deliver to desktop",
     }
-    assert isinstance(download_result["file_path"], str)
+    assert isinstance(download_result["workspace_path"], str)
+    assert not download_result["workspace_path"].startswith(("/", "data/workspaces/"))
     assert isinstance(download_result["filename"], str)
     assert isinstance(download_result["size"], int) and download_result["size"] >= 0
-    print("  [download] Output shape (file_path, filename, size): PASS")
+    print("  [download] Output shape (workspace_path, filename, size): PASS")
 
 
 def test_no_cookie_localstorage_return() -> None:

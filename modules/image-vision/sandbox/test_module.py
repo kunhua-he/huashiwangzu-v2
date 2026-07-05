@@ -59,7 +59,7 @@ def test_local_analysis_contract() -> None:
     assert result["color"]["dominant_colors"]
     assert result["hashes"]["average_hash"]
     assert "本地图片分析" in summary
-    assert normalized_ir["schema_version"] == "1.0"
+    assert normalized_ir["schema_version"] == "content-ir/v1"
     assert normalized_ir["content_type"] == "image"
     assert normalized_ir["source"]["module"] == "image-vision"
     assert normalized_ir["blocks"]

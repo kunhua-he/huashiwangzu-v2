@@ -371,12 +371,49 @@ def test_task_queue_audit_reports_deleted_source_obsolete_separately(monkeypatch
         anyio.run(release_gate.check_task_queue_audit, 2, 0)
 
         checks = {item["check"]: item for item in release_gate.results}
-        assert checks["Queue: total"]["level"] == "DEBT"
+        assert checks["Queue: total"]["level"] == "PASS"
         assert checks["Queue: gate-run failed delta"]["level"] == "PASS"
         assert checks["Queue: recent failed window"]["level"] == "PASS"
-        assert checks["Queue: deleted-source obsolete failures"]["level"] == "DEBT"
+        assert checks["Queue: deleted-source obsolete failures"]["level"] == "INFO"
         assert "2 of 2" in checks["Queue: deleted-source obsolete failures"]["detail"]
+        assert "not active failure debt" in checks["Queue: deleted-source obsolete failures"]["detail"]
         assert release_gate.runtime_context["task_debt_summary"]["deleted_source_obsolete_failed_count"] == 2
+    finally:
+        release_gate.results[:] = original
+
+
+def test_task_queue_audit_deleted_source_delta_is_not_blocker(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+
+        async def fake_fetch_task_queue_audit() -> dict:
+            return {
+                "summary": {"failed": 1, "pending": 0, "completed": 10},
+                "classification": {
+                    "recent_failed_count": 0,
+                    "recent_failed_total_count": 1,
+                    "deleted_source_obsolete_failed_count": 1,
+                    "historical_failed_debt_count": 0,
+                    "stale_pending_debt_count": 0,
+                    "orphan_running_debt_count": 0,
+                },
+                "recent_failed_count": 0,
+                "recent_failed_total_count": 1,
+                "historical_debt_total": 0,
+                "metadata": {"recent_failure_window_hours": 1},
+            }
+
+        monkeypatch.setattr(release_gate, "fetch_task_queue_audit", fake_fetch_task_queue_audit)
+        monkeypatch.setattr(release_gate, "find_semantic_failed_completed_tasks", lambda *_args, **_kwargs: (0, []))
+
+        anyio.run(release_gate.check_task_queue_audit, 0, 0)
+
+        checks = {item["check"]: item for item in release_gate.results}
+        assert checks["Queue: total"]["level"] == "PASS"
+        assert "active_failed=0" in checks["Queue: total"]["detail"]
+        assert checks["Queue: gate-run failed delta"]["level"] == "PASS"
+        assert checks["Queue: deleted-source obsolete failures"]["level"] == "INFO"
     finally:
         release_gate.results[:] = original
 

@@ -105,13 +105,21 @@ async def check_task_queue_audit(
         recent_failed = d.get("recent_failed_count", classification.get("recent_failed_count", 0))
         recent_failed_total = d.get("recent_failed_total_count", classification.get("recent_failed_total_count", recent_failed))
         obsolete_failed = classification.get("deleted_source_obsolete_failed_count", 0)
-        gate_failed_delta = None if baseline_failed is None else max(0, int(failed or 0) - baseline_failed)
+        active_failed = max(0, int(failed or 0) - int(obsolete_failed or 0))
+        gate_failed_delta = None if baseline_failed is None else max(0, active_failed - baseline_failed)
         historical_debt = d.get("historical_debt_total", 0)
         stale_pending = classification.get("stale_pending_debt_count", 0)
         orphan_running = classification.get("orphan_running_debt_count", 0)
 
-        add_result("Queue: total", "PASS" if failed == 0 else "DEBT",
-                   f"failed={failed}, pending={pending}, completed={summary.get('completed', 0)}")
+        add_result(
+            "Queue: total",
+            "PASS" if active_failed == 0 else "DEBT",
+            (
+                f"failed={failed}, active_failed={active_failed}, "
+                f"deleted_source_obsolete={obsolete_failed}, pending={pending}, "
+                f"completed={summary.get('completed', 0)}"
+            ),
+        )
 
         if historical_debt > 0:
             add_result("Queue: historical debt", "DEBT",
@@ -124,10 +132,10 @@ async def check_task_queue_audit(
                        "missing pre-smoke failed baseline")
         elif gate_failed_delta > 0:
             add_result("Queue: gate-run failed delta", "BLOCKER",
-                       f"failed increased during gate: {baseline_failed} -> {failed} (+{gate_failed_delta})")
+                       f"active failed increased during gate: {baseline_failed} -> {active_failed} (+{gate_failed_delta})")
         else:
             add_result("Queue: gate-run failed delta", "PASS",
-                       f"no failed tasks added during gate: baseline={baseline_failed}, current={failed}")
+                       f"no active failed tasks added during gate: baseline={baseline_failed}, current={active_failed}")
 
         if recent_failed > 0:
             window_hours = d.get("metadata", {}).get("recent_failure_window_hours", "?")
@@ -140,8 +148,8 @@ async def check_task_queue_audit(
         if obsolete_failed > 0:
             add_result(
                 "Queue: deleted-source obsolete failures",
-                "DEBT",
-                f"{obsolete_failed} of {recent_failed_total} recent failed task(s) are deleted-source obsolete debt",
+                "INFO",
+                f"{obsolete_failed} of {recent_failed_total} recent failed task(s) are deleted-source obsolete; not active failure debt",
             )
         else:
             add_result("Queue: deleted-source obsolete failures", "PASS", "no deleted-source obsolete failed tasks")

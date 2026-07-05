@@ -1,35 +1,7 @@
 import { test, expect } from '@playwright/test'
-import fs from 'fs'
-import path from 'path'
-import { fileURLToPath } from 'url'
 
-const TEST_DIR = path.dirname(fileURLToPath(import.meta.url))
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
-const ADMIN_STORAGE_FILE = path.join(TEST_DIR, '.auth/admin.json')
-const ADMIN_USER = '何焜华'
-const ADMIN_PASS = '123rgE123'
-
-function readAdminToken() {
-  const storage = JSON.parse(fs.readFileSync(ADMIN_STORAGE_FILE, 'utf-8'))
-  const origin = new URL(BASE_URL).origin
-  const state = storage.origins?.find(item => item.origin === origin) || storage.origins?.[0]
-  const token = state?.localStorage?.find(item => item.name === 'v2_auth_token')?.value
-  if (!token) throw new Error('Admin storageState has no v2_auth_token')
-  return token
-}
-
-async function loginAdminToken(request) {
-  const response = await request.post(`${BASE_URL}/api/login`, {
-    headers: { 'Content-Type': 'application/json' },
-    data: { username: ADMIN_USER, password: ADMIN_PASS },
-  })
-  const body = await response.json().catch(() => ({}))
-  const token = body?.data?.access_token
-  if (!response.ok() || !token) {
-    throw new Error(`Admin login failed: ${JSON.stringify(body).slice(0, 300)}`)
-  }
-  return token
-}
+import { refreshAdminToken, requestWithAdminAuthRetry } from './ui-e2e/auth.mjs'
+import { BASE_URL } from './ui-e2e/state.mjs'
 
 function unwrapEnvelope(body, context) {
   if (body?.success !== true) {
@@ -48,14 +20,14 @@ function unwrapCapability(body, context) {
 }
 
 async function callCapability(request, token, action, parameters) {
-  const response = await request.post(`${BASE_URL}/api/modules/call`, {
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  const response = await requestWithAdminAuthRetry(token, (activeToken) => request.post(`${BASE_URL}/api/modules/call`, {
+    headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
     data: {
       target_module: 'content',
       action,
       parameters,
     },
-  })
+  }))
   const body = await response.json().catch(() => ({}))
   if (!response.ok()) {
     throw new Error(`content:${action} HTTP ${response.status()}: ${JSON.stringify(body).slice(0, 300)}`)
@@ -68,7 +40,13 @@ async function apiJson(request, token, method, pathname, data) {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
   }
   if (data !== undefined) options.data = data
-  const response = await request[method](`${BASE_URL}${pathname}`, options)
+  const response = await requestWithAdminAuthRetry(token, (activeToken) => {
+    const activeOptions = {
+      ...options,
+      headers: { ...options.headers, Authorization: `Bearer ${activeToken}` },
+    }
+    return request[method](`${BASE_URL}${pathname}`, activeOptions)
+  })
   const body = await response.json().catch(() => ({}))
   if (!response.ok()) {
     throw new Error(`${method.toUpperCase()} ${pathname} HTTP ${response.status()}: ${JSON.stringify(body).slice(0, 300)}`)
@@ -83,31 +61,31 @@ function listItems(body) {
 
 async function cleanupPublishedArtifact(request, token, state) {
   if (state.artifactId) {
-    await request.delete(`${BASE_URL}/api/artifacts/${state.artifactId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => {})
+    await requestWithAdminAuthRetry(token, (activeToken) => request.delete(`${BASE_URL}/api/artifacts/${state.artifactId}`, {
+      headers: { Authorization: `Bearer ${activeToken}` },
+    })).catch(() => {})
   }
   if (state.packageId) {
-    await request.delete(`${BASE_URL}/api/content/packages/${state.packageId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => {})
+    await requestWithAdminAuthRetry(token, (activeToken) => request.delete(`${BASE_URL}/api/content/packages/${state.packageId}`, {
+      headers: { Authorization: `Bearer ${activeToken}` },
+    })).catch(() => {})
   }
   if (state.fileId) {
-    await request.post(`${BASE_URL}/api/files/delete`, {
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    await requestWithAdminAuthRetry(token, (activeToken) => request.post(`${BASE_URL}/api/files/delete`, {
+      headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
       data: { type: 'file', id: state.fileId },
-    }).catch(() => {})
+    })).catch(() => {})
 
-    const recycleResponse = await request.get(`${BASE_URL}/api/recycle/list`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => null)
+    const recycleResponse = await requestWithAdminAuthRetry(token, (activeToken) => request.get(`${BASE_URL}/api/recycle/list`, {
+      headers: { Authorization: `Bearer ${activeToken}` },
+    })).catch(() => null)
     const recycleBody = recycleResponse ? await recycleResponse.json().catch(() => ({})) : {}
     const recycleItem = listItems(recycleBody).find(item => String(item?.origin_id) === String(state.fileId))
     if (recycleItem?.id) {
-      await request.post(`${BASE_URL}/api/recycle/delete-permanently`, {
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      await requestWithAdminAuthRetry(token, (activeToken) => request.post(`${BASE_URL}/api/recycle/delete-permanently`, {
+        headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
         data: { item_type: 'file', id: recycleItem.id },
-      }).catch(() => {})
+      })).catch(() => {})
     }
   }
 }
@@ -130,7 +108,7 @@ async function closeAllWindows(page) {
 }
 
 test('content publish artifact is visible, openable, and downloadable from desktop file entry', async ({ page, request }) => {
-  const token = await loginAdminToken(request).catch(() => readAdminToken())
+  const token = await refreshAdminToken()
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   const title = `Artifact Desktop ${suffix}`
   const state = { packageId: null, artifactId: null, fileId: null }

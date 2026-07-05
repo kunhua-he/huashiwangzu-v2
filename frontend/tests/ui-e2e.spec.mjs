@@ -830,7 +830,7 @@ test.describe('Scene 5: Key Interaction Flows', () => {
 
 test.describe('Cleanup', () => {
   test('Delete all e2e test files', async ({ request }) => {
-    const token = await getAuthToken(request)
+    let token = await refreshAdminToken()
     const trackedFiles = Array.from(uploadedFilesById.values())
     const cleanupFailures = []
     const softDeletedFileIds = new Set()
@@ -839,6 +839,7 @@ test.describe('Cleanup', () => {
 
     for (const trackedFile of trackedFiles) {
       const { fileId, fileName } = trackedFile
+      token = await refreshAdminToken()
       let activeItems = []
       try {
         activeItems = await readActiveFileItems(request, token, fileName)
@@ -854,6 +855,7 @@ test.describe('Cleanup', () => {
       }
 
       const activeFileId = activeItem.id ?? fileId
+      token = await refreshAdminToken()
       const deleteResp = await requestWithAdminAuthRetry(token, (activeToken) => request.post(`${BASE_URL}/api/files/delete`, {
         headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
         data: { id: activeFileId, type: 'file' },
@@ -870,6 +872,7 @@ test.describe('Cleanup', () => {
     if (softDeletedFileIds.size > 0) {
       try {
         await expect.poll(async () => {
+          token = await refreshAdminToken()
           recycleItems = await readRecycleItems(request, token)
           return Array.from(softDeletedFileIds).every(fileId =>
             recycleItems.some(item => recycleItemMatches(item, fileId, uploadedFilesById.get(fileId)?.fileName))
@@ -884,6 +887,7 @@ test.describe('Cleanup', () => {
     }
 
     try {
+      token = await refreshAdminToken()
       recycleItems = await readRecycleItems(request, token)
     } catch (e) {
       cleanupFailures.push(`recycle query failed after soft delete: ${e.message}`)
@@ -905,6 +909,7 @@ test.describe('Cleanup', () => {
       if (seenRecycleItemIds.has(String(recycleItemId))) continue
       seenRecycleItemIds.add(String(recycleItemId))
 
+      token = await refreshAdminToken()
       const permanentResp = await requestWithAdminAuthRetry(token, (activeToken) => request.post(`${BASE_URL}/api/recycle/delete-permanently`, {
         headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
         data: { id: recycleItemId, item_type: itemType },
@@ -920,6 +925,7 @@ test.describe('Cleanup', () => {
     if (seenRecycleItemIds.size > 0) {
       try {
         await expect.poll(async () => {
+          token = await refreshAdminToken()
           const remainingRecycleItems = await readRecycleItems(request, token)
           return remainingRecycleItems.some(item =>
             trackedFiles.some(({ fileId, fileName }) => recycleItemMatches(item, fileId, fileName))

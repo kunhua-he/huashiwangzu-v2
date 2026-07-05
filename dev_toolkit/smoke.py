@@ -235,10 +235,47 @@ async def _await_queue_settle(
 
 
 async def _read_queue_state() -> dict:
-    r = await probe("GET", "/api/tasks/worker/status")
+    r = await probe("GET", "/api/tasks/worker/audit")
     if r.get("status") != 200 or not _http_envelope_ok(r):
-        raise RuntimeError(f"Queue status probe failed: status={r.get('status')}, data={r.get('data')}")
-    return r.get("data", {}).get("data", r.get("data", {}))
+        raise RuntimeError(f"Queue audit probe failed: status={r.get('status')}, data={r.get('data')}")
+
+    payload: Any = r.get("data", {})
+    while isinstance(payload, dict) and isinstance(payload.get("data"), dict) and "summary" not in payload:
+        payload = payload["data"]
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Queue audit probe returned unexpected payload: {type(payload)}")
+
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    classification = payload.get("classification") if isinstance(payload.get("classification"), dict) else {}
+    state = dict(summary)
+    for key in ("pending", "running", "completed", "failed"):
+        state[key] = int(state.get(key) or 0)
+
+    obsolete_failed = int(classification.get("deleted_source_obsolete_failed_count") or 0)
+    state["deleted_source_obsolete_failed_count"] = obsolete_failed
+    state["active_failed"] = max(0, state["failed"] - obsolete_failed)
+    state["recent_failed_count"] = int(
+        payload.get("recent_failed_count")
+        or classification.get("recent_failed_count")
+        or 0
+    )
+    state["recent_failed_total_count"] = int(
+        payload.get("recent_failed_total_count")
+        or classification.get("recent_failed_total_count")
+        or state["recent_failed_count"]
+    )
+    state["historical_debt_total"] = int(payload.get("historical_debt_total") or 0)
+    state["classification"] = classification
+    state["summary"] = summary
+    state["stalest_pending"] = payload.get("stalest_pending")
+    if state.get("oldest_waiting_seconds") is None:
+        stalest = payload.get("stalest_pending")
+        state["oldest_waiting_seconds"] = (
+            int(stalest.get("age_seconds") or 0)
+            if isinstance(stalest, dict)
+            else 0
+        )
+    return state
 
 
 async def _quick_queue_quiet_probe(
@@ -569,6 +606,15 @@ def _new_failed_delta(failed_now: int, baseline_failed: int) -> int:
 
 def _no_new_queue_failures(failed_now: int, baseline_failed: int) -> bool:
     return _new_failed_delta(failed_now, baseline_failed) == 0
+
+
+def _queue_active_failed(state: dict) -> int:
+    """Return queue failures that still need action; deleted-source obsolete debt is audit-only."""
+    if "active_failed" in state:
+        return int(state.get("active_failed") or 0)
+    failed = int(state.get("failed") or 0)
+    obsolete = int(state.get("deleted_source_obsolete_failed_count") or 0)
+    return max(0, failed - obsolete)
 
 # ── A. 框架主链路 ──────────────────────────────────────────────────
 
@@ -991,9 +1037,15 @@ async def main():
 
     # Capture the queue baseline before business steps create async work.
     init_state = await _read_queue_state()
-    pre_failed = init_state.get("failed", 0)
+    pre_failed = _queue_active_failed(init_state)
+    pre_raw_failed = int(init_state.get("failed") or 0)
+    pre_obsolete_failed = int(init_state.get("deleted_source_obsolete_failed_count") or 0)
     pre_pending = init_state.get("pending", 0)
-    print(f"初始队列基线: failed={pre_failed}, pending={pre_pending}")
+    print(
+        "初始队列基线: "
+        f"active_failed={pre_failed}, raw_failed={pre_raw_failed}, "
+        f"deleted_source_obsolete={pre_obsolete_failed}, pending={pre_pending}"
+    )
 
     for group_name, group in [
         ("健康检查", health_check),
@@ -1059,13 +1111,16 @@ async def main():
             final = await _await_queue_settle(baseline_pending=pre_pending, timeout=30)
 
     # 查最终异步队列状态
-    failed_now = final.get("failed", 0)
+    failed_now = _queue_active_failed(final)
+    raw_failed_now = int(final.get("failed") or 0)
+    obsolete_failed_now = int(final.get("deleted_source_obsolete_failed_count") or 0)
     pending_now = final.get("pending", 0)
     oldest = final.get("oldest_waiting_seconds", 0) or 0
     settle_timed_out = bool(final.get("_settle_timed_out"))
     new_failures = _new_failed_delta(failed_now, pre_failed)
     add_result("Z1 异步队列无意外新增失败", _no_new_queue_failures(failed_now, pre_failed),
-               f"failed: {pre_failed}(业务前基线) → {failed_now}(终), 新增={new_failures}, "
+               f"active_failed: {pre_failed}(业务前基线) → {failed_now}(终), 新增={new_failures}, "
+               f"raw_failed={raw_failed_now}, deleted_source_obsolete={obsolete_failed_now}, "
                f"清理文件数={cleanup_count}")
     add_result("Z2 异步队列积压可解释", pending_now <= 5 and not settle_timed_out,
                f"pending={pending_now}, oldest_waiting={oldest}s, settle_timeout={settle_timed_out}")

@@ -23,6 +23,19 @@ def test_smoke_queue_gate_ignores_external_failed_count_cleanup() -> None:
     assert smoke._no_new_queue_failures(failed_now=9, baseline_failed=10)
 
 
+def test_smoke_queue_gate_excludes_deleted_source_obsolete_failures() -> None:
+    state = {
+        "failed": 3,
+        "deleted_source_obsolete_failed_count": 2,
+    }
+
+    assert smoke._queue_active_failed(state) == 1
+    assert smoke._no_new_queue_failures(
+        failed_now=smoke._queue_active_failed({"failed": 4, "deleted_source_obsolete_failed_count": 4}),
+        baseline_failed=smoke._queue_active_failed({"failed": 3, "deleted_source_obsolete_failed_count": 3}),
+    )
+
+
 def test_cap_ok_rejects_outer_or_inner_semantic_failure() -> None:
     assert not smoke._cap_ok({
         "status": 200,
@@ -46,9 +59,21 @@ def test_smoke_samples_queue_before_business_steps(monkeypatch) -> None:
     order: list[str] = []
 
     async def fake_probe(method: str, path: str, body: dict | None = None, role: str = "admin") -> dict:
-        if path == "/api/tasks/worker/status":
-            order.append("queue_status")
-            return {"status": 200, "data": {"data": {"failed": 7, "pending": 1, "oldest_waiting_seconds": 0}}}
+        if path == "/api/tasks/worker/audit":
+            order.append("queue_audit")
+            return {
+                "status": 200,
+                "data": {
+                    "success": True,
+                    "data": {
+                        "summary": {"failed": 7, "pending": 1, "running": 0, "completed": 0},
+                        "classification": {"deleted_source_obsolete_failed_count": 0},
+                        "recent_failed_count": 0,
+                        "historical_debt_total": 0,
+                        "stalest_pending": {"age_seconds": 0},
+                    },
+                },
+            }
         return {"status": 200, "data": {"success": True, "data": {}}}
 
     async def fake_group() -> None:
@@ -84,8 +109,8 @@ def test_smoke_samples_queue_before_business_steps(monkeypatch) -> None:
 
     asyncio.run(smoke.main())
 
-    assert order[0] == "queue_status"
-    assert order.index("queue_status") < order.index("business")
+    assert order[0] == "queue_audit"
+    assert order.index("queue_audit") < order.index("business")
     assert order.index("pollution_cleanup") > order.index("business")
     assert order.count("settle:1") == 1
     assert any(item["scenario"] == "Z3 测试数据污染清理" and item["passed"] for item in smoke.results)
@@ -107,9 +132,39 @@ def test_read_queue_state_rejects_success_false_body(monkeypatch) -> None:
     try:
         asyncio.run(smoke._read_queue_state())
     except RuntimeError as exc:
-        assert "Queue status probe failed" in str(exc)
+        assert "Queue audit probe failed" in str(exc)
         return
     raise AssertionError("success:false queue body must fail closed")
+
+
+def test_read_queue_state_normalizes_audit_payload(monkeypatch) -> None:
+    async def fake_probe(method: str, path: str, body: dict | None = None, role: str = "admin") -> dict:
+        assert path == "/api/tasks/worker/audit"
+        return {
+            "status": 200,
+            "data": {
+                "success": True,
+                "data": {
+                    "summary": {"failed": 5, "pending": 2, "running": 1, "completed": 9},
+                    "classification": {
+                        "deleted_source_obsolete_failed_count": 4,
+                        "recent_failed_total_count": 5,
+                    },
+                    "recent_failed_count": 1,
+                    "historical_debt_total": 0,
+                    "stalest_pending": {"age_seconds": 12},
+                },
+            },
+        }
+
+    monkeypatch.setattr(smoke, "probe", fake_probe)
+
+    state = asyncio.run(smoke._read_queue_state())
+
+    assert state["failed"] == 5
+    assert state["active_failed"] == 1
+    assert state["deleted_source_obsolete_failed_count"] == 4
+    assert state["oldest_waiting_seconds"] == 12
 
 
 def test_ensure_token_caches_by_role(monkeypatch) -> None:

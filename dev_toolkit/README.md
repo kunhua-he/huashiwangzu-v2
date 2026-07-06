@@ -87,6 +87,8 @@ Do not add large schemas or business implementation blocks directly to `server.p
 - `clear_log` truncates logs.
 - `sql` is read-only by design.
 - `probe` and `call_capability` hit the live backend.
+- `probe` and `call_capability` include an `auth` block with the requested role and current backend user metadata, which helps diagnose owner/permission filtering.
+- `finish_task` accepts an optional `env` string for its internal pytest run. Use JSON object syntax or `KEY=value` lines, for example `{"JWT_SECRET":"test-secret","PYTHONPATH":"/repo"}`. Reported commands redact sensitive env values.
 - `docs_sync` writes Markdown generated sections.
 
 ## Release Gate Modes

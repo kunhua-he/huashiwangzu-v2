@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+TOOL_COMPONENT = False
+
 
 def _string_value(value: Any, default: str = "") -> str:
     if value is None:

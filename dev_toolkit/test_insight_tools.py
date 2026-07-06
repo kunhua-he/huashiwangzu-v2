@@ -38,6 +38,8 @@ def test_every_tool_component_exposes_contract() -> None:
         if path.name.startswith("test_"):
             continue
         module = importlib.import_module(f"dev_toolkit.{path.stem}")
+        if getattr(module, "TOOL_COMPONENT", True) is False:
+            continue
         assert callable(getattr(module, "tool_definitions", None)), path.name
         assert callable(getattr(module, "handles_tool", None)), path.name
         assert callable(getattr(module, "handle_tool", None)), path.name

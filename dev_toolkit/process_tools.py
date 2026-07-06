@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+TOOL_COMPONENT = False
+
 
 def popen_process_group(
     cmd: list[str],

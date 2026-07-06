@@ -64,7 +64,7 @@ class CoreToolContext:
     capabilities: Callable[[str], Awaitable[str]]
     db_schema: Callable[[str], Awaitable[str]]
     plan_task: Callable[[str, str, str], Awaitable[str]]
-    finish_task: Callable[[str, str, str, str, str, str, str, str, str, str, str], Awaitable[str]]
+    finish_task: Callable[[str, str, str, str, str, str, str, str, str, str, str, str], Awaitable[str]]
     knowledge_noise_report: Callable[[], dict[str, Any]]
     knowledge_cleanup_noise: Callable[[], dict[str, Any]]
     workspace_audit: Callable[[], Awaitable[dict[str, Any]]]
@@ -304,6 +304,11 @@ def tool_definitions() -> list[Any]:
                         "description": "可选 JSON 数组或 {items:[...]}，记录已跑验证的 name/status/duration_seconds/command/level",
                         "default": "",
                     },
+                    "env": {
+                        "type": "string",
+                        "description": "可选测试环境变量，支持 JSON object 或 KEY=value 多行；仅用于 finish_task 内部 pytest",
+                        "default": "",
+                    },
                     "verification_summary": {"type": "string", "description": "验证结果摘要", "default": ""},
                     "risk_note": {"type": "string", "description": "残留风险评估", "default": ""},
                 },
@@ -444,6 +449,7 @@ async def handle_tool(context: CoreToolContext, name: str, arguments: dict[str, 
             arguments.get("baseline_paths", ""),
             arguments.get("baseline_status_json", ""),
             arguments.get("timing_data", ""),
+            arguments.get("env", ""),
             arguments.get("verification_summary", ""),
             arguments.get("risk_note", ""),
         )

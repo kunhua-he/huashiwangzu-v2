@@ -296,6 +296,39 @@ async def _ensure_live_token(role: str = "admin") -> str:
     _token_cache.pop(role, None)
     return token
 
+
+def _extract_current_user(data: Any) -> dict[str, Any]:
+    payload = data.get("data", data) if isinstance(data, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "id": payload.get("id"),
+        "username": payload.get("username"),
+        "role": payload.get("role"),
+    }
+
+
+async def _auth_meta(role: str, token: str) -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
+            resp = await client.get("/api/current-user", headers=headers)
+        try:
+            data: Any = resp.json()
+        except Exception:
+            data = resp.text
+        return {
+            "requested_role": role,
+            "status_code": resp.status_code,
+            "user": _extract_current_user(data),
+        }
+    except Exception as exc:
+        return {
+            "requested_role": role,
+            "error": str(exc),
+            "user": {},
+        }
+
 # ── SQL 只读执行器 ──────────────────────────────────────────────────
 
 def _check_sql_readonly(query: str) -> None:
@@ -1210,6 +1243,7 @@ async def _finish_task(
     baseline_paths: str = "",
     baseline_status_json: str = "",
     timing_data: str = "",
+    env: str = "",
     verification_summary: str = "",
     risk_note: str = "",
 ) -> str:
@@ -1223,6 +1257,7 @@ async def _finish_task(
         "lint": [],
         "tests": [],
         "test_timing": parse_timing_data(timing_data),
+        "test_env_keys": [],
         "verification_summary": verification_summary or "(未填写验证结果)",
         "risk_note": risk_note or "(未填写)",
         "memory_write_template": {
@@ -1287,8 +1322,15 @@ async def _finish_task(
         if not lint_result.get("success"):
             report["success"] = False
     if test_targets.strip():
+        env_overrides = _parse_env_overrides(env)
+        report["test_env_keys"] = sorted(env_overrides)
         try:
-            test_result = json.loads(await code_run_test(_run_command_json, REPO_ROOT, test_targets))
+            test_result = json.loads(await code_run_test(
+                _run_command_json,
+                REPO_ROOT,
+                test_targets,
+                env=env_overrides,
+            ))
         except json.JSONDecodeError as exc:
             test_result = {"success": False, "target": test_targets, "error": str(exc)}
         report["tests"].append(test_result)
@@ -1302,6 +1344,33 @@ async def _finish_task(
         if not test_result.get("success"):
             report["success"] = False
     return json.dumps(report, ensure_ascii=False, indent=2)
+
+
+def _parse_env_overrides(raw: str | dict[str, Any] | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return {str(key): str(value) for key, value in raw.items() if str(key)}
+    text_value = str(raw).strip()
+    if not text_value:
+        return {}
+    try:
+        parsed = json.loads(text_value)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        return {str(key): str(value) for key, value in parsed.items() if str(key)}
+
+    values: dict[str, str] = {}
+    for line in text_value.replace(",", "\n").splitlines():
+        item = line.strip()
+        if not item or item.startswith("#") or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if key:
+            values[key] = value.strip()
+    return values
 
 
 # ──────────────────── 工作流: plan_task ──────────────────────────────
@@ -1594,7 +1663,11 @@ async def _probe(
             data = resp.json()
         except Exception:
             data = resp.text
-        result = {"status_code": resp.status_code, "data": data}
+        result = {
+            "status_code": resp.status_code,
+            "data": data,
+            "auth": await _auth_meta(role, token),
+        }
         options = ResponseShapeOptions(
             selector=selector or json_path,
             max_items=max_items,
@@ -1641,6 +1714,7 @@ async def _call_capability(
         "status_code": resp.status_code,
         "data": data,
         "target": {"module": module, "action": action, "role": role},
+        "auth": await _auth_meta(role, token),
     }
     options = ResponseShapeOptions(
         selector=selector or json_path,

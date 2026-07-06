@@ -191,6 +191,53 @@ def test_run_test_uses_repo_root_for_dev_toolkit_targets() -> None:
     assert str(server.REPO_ROOT) in calls[0]["cmd"][1]
 
 
+def test_run_test_injects_env_without_leaking_values_in_summary() -> None:
+    calls = []
+
+    async def fake_run_command_json(cmd, *, cwd: Path, timeout: int = 120):
+        calls.append({"cmd": cmd, "cwd": cwd, "timeout": timeout})
+        return {"success": True, "returncode": 0, "stdout": "ok", "stderr": ""}
+
+    async def run() -> dict:
+        raw = await code_tools.run_test(
+            fake_run_command_json,
+            server.REPO_ROOT,
+            "backend/tests/test_agent_inline_tool_calls.py",
+            env={"JWT_SECRET": "secret-value", "PYTHONPATH": "/repo"},
+        )
+        return json.loads(raw)
+
+    data = anyio.run(run)
+
+    assert calls
+    assert calls[0]["cwd"] == server.REPO_ROOT / "backend"
+    assert calls[0]["cmd"][:3] == ["env", "JWT_SECRET=secret-value", "PYTHONPATH=/repo"]
+    assert data["command"][:3] == ["env", "JWT_SECRET=<redacted>", "PYTHONPATH=/repo"]
+    assert data["env_keys"] == ["JWT_SECRET", "PYTHONPATH"]
+    assert "secret-value" not in json.dumps(data)
+
+
+def test_run_test_env_overrides_auto_pythonpath_once_for_mixed_targets() -> None:
+    calls = []
+
+    async def fake_run_command_json(cmd, *, cwd: Path, timeout: int = 120):
+        calls.append({"cmd": cmd, "cwd": cwd, "timeout": timeout})
+        return {"success": True, "returncode": 0, "stdout": "ok", "stderr": ""}
+
+    async def run() -> None:
+        await code_tools.run_test(
+            fake_run_command_json,
+            server.REPO_ROOT,
+            "backend/tests/test_agent_inline_tool_calls.py dev_toolkit/test_server_helpers.py",
+            env={"PYTHONPATH": "/custom"},
+        )
+
+    anyio.run(run)
+
+    env_entries = [item for item in calls[0]["cmd"] if item.startswith("PYTHONPATH=")]
+    assert env_entries == ["PYTHONPATH=/custom"]
+
+
 def test_run_test_uses_absolute_backend_target_when_mixed_with_repo_target() -> None:
     calls = []
 
@@ -332,6 +379,43 @@ def test_finish_task_collects_timing_data_and_test_duration(monkeypatch: pytest.
     assert data["test_timing"]["summary"] == {"count": 2, "timed_count": 2, "total_duration_seconds": 2.0}
 
 
+def test_finish_task_passes_env_to_test_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = {}
+
+    async def fake_git_status_summary(*_args, **_kwargs) -> dict:
+        return {"branch": "codex/test", "is_main": False, "dirty_count": 0, "sample": []}
+
+    async def fake_worktree_guard(*_args, **_kwargs) -> str:
+        return json.dumps({"success": True, "outside_allowed": []})
+
+    async def fake_code_run_test(*_args, **kwargs) -> str:
+        seen["env"] = kwargs.get("env")
+        return json.dumps({
+            "success": True,
+            "target": "backend/tests/test_x.py",
+            "duration_seconds": 0.25,
+            "env_keys": sorted((kwargs.get("env") or {}).keys()),
+        })
+
+    monkeypatch.setattr(server, "git_status_summary", fake_git_status_summary)
+    monkeypatch.setattr(server, "worktree_guard", fake_worktree_guard)
+    monkeypatch.setattr(server, "code_run_test", fake_code_run_test)
+
+    async def run() -> dict:
+        raw = await server._finish_task(
+            "finish with env",
+            test_targets="backend/tests/test_x.py",
+            env='{"JWT_SECRET":"test-secret","PYTHONPATH":"/repo"}',
+        )
+        return json.loads(raw)
+
+    data = anyio.run(run)
+
+    assert seen["env"] == {"JWT_SECRET": "test-secret", "PYTHONPATH": "/repo"}
+    assert data["test_env_keys"] == ["JWT_SECRET", "PYTHONPATH"]
+    assert data["tests"][0]["env_keys"] == ["JWT_SECRET", "PYTHONPATH"]
+
+
 def test_finish_task_schema_exposes_baseline_parameters() -> None:
     finish_tool = next(tool for tool in core_tools.tool_definitions() if tool.name == "finish_task")
     properties = finish_tool.inputSchema["properties"]
@@ -339,6 +423,7 @@ def test_finish_task_schema_exposes_baseline_parameters() -> None:
     assert "baseline_paths" in properties
     assert "baseline_status_json" in properties
     assert "timing_data" in properties
+    assert "env" in properties
 
 
 def test_normalize_pytest_targets_accepts_module_repo_path() -> None:

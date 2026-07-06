@@ -117,6 +117,19 @@ def pytest_targets_for_command(backend_dir: Path, normalized_targets: list[str])
     return command_targets
 
 
+def redact_env_command(cmd: list[str]) -> list[str]:
+    redacted: list[str] = []
+    sensitive_tokens = ("SECRET", "TOKEN", "PASSWORD", "KEY")
+    for item in cmd:
+        if "=" in item:
+            key, value = item.split("=", 1)
+            if value and any(token in key.upper() for token in sensitive_tokens):
+                redacted.append(f"{key}=<redacted>")
+                continue
+        redacted.append(item)
+    return redacted
+
+
 async def code_explore(codegraph_cli: str, query: str) -> str:
     cmd = [codegraph_cli, "explore", query]
     proc = await asyncio.create_subprocess_exec(
@@ -199,24 +212,37 @@ async def lint(run_command_json, repo_root: Path, ruff_cli: str, path: str, diff
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-async def run_test(run_command_json, repo_root: Path, target: str, timeout: int = 120) -> str:
+async def run_test(
+    run_command_json,
+    repo_root: Path,
+    target: str,
+    timeout: int = 120,
+    env: dict[str, str] | None = None,
+) -> str:
     normalized_targets = normalize_pytest_targets(repo_root, target)
     backend_dir = repo_root / "backend"
     command_targets = pytest_targets_for_command(backend_dir, normalized_targets)
     cmd = [str(backend_dir / ".venv" / "bin" / "pytest"), *command_targets]
     cwd = backend_dir
+    command_env: dict[str, str] = {}
     if any(Path(item.partition("::")[0]).is_absolute() for item in command_targets):
         cwd = repo_root
         pythonpath = str(repo_root)
         if os.environ.get("PYTHONPATH"):
             pythonpath = f"{pythonpath}:{os.environ['PYTHONPATH']}"
-        cmd = ["env", f"PYTHONPATH={pythonpath}", *cmd]
+        command_env["PYTHONPATH"] = pythonpath
+    env_overrides = {str(key): str(value) for key, value in (env or {}).items() if str(key)}
+    command_env.update(env_overrides)
+    if command_env:
+        env_entries = [f"{key}={value}" for key, value in sorted(command_env.items())]
+        cmd = ["env", *env_entries, *cmd]
     result = await run_command_json(cmd, cwd=cwd, timeout=timeout)
     return json.dumps({
         "success": result.get("success", False),
         "target": target,
         "normalized_targets": normalized_targets,
-        "command": cmd,
+        "command": redact_env_command(cmd),
+        "env_keys": sorted(env_overrides),
         "cwd": result.get("cwd"),
         "duration_seconds": result.get("duration_seconds"),
         "returncode": result.get("returncode"),

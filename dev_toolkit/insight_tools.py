@@ -87,6 +87,8 @@ def _component_tool_names(module_name: str) -> list[str]:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError:
         module = importlib.import_module(module_name.rsplit(".", 1)[-1])
+    if getattr(module, "TOOL_COMPONENT", True) is False:
+        return []
     if not hasattr(module, "tool_definitions"):
         return []
     try:
@@ -102,6 +104,12 @@ def _discover_components(repo_root: Path) -> list[dict[str, Any]]:
             continue
         module_stem = path.stem
         module_name = f"dev_toolkit.{module_stem}"
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            module = importlib.import_module(module_name.rsplit(".", 1)[-1])
+        if getattr(module, "TOOL_COMPONENT", True) is False:
+            continue
         text = path.read_text(encoding="utf-8")
         tool_names = _component_tool_names(module_name)
         components.append(

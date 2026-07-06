@@ -6,6 +6,7 @@
 """
 import json
 import logging
+from time import perf_counter
 
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbDocumentProfile, KbPageFusion
 from .llm_diagnostics import timed_llm_chat
+from .model_routing import resolve_knowledge_profile
 from .prompt_utils import TPROFILE, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("profile")
@@ -26,12 +28,13 @@ async def generate_document_profile(
     db: AsyncSession,
     document_id: int,
     owner_id: int,
-    profile_key: str = "deepseek-v4-flash",
+    profile_key: str | None = None,
 ) -> dict:
     """生成文件级画像。
 
     从 kb_page_fusions 聚合所有页的融合正文 → LLM 提炼文件画像 → 写入 kb_document_profiles。
     """
+    stage_started = perf_counter()
     # 1. 读取所有页融合内容（过滤空文本，与 fusion_service / entity_service 一致）
     r = await db.execute(
         select(KbPageFusion)
@@ -48,6 +51,9 @@ async def generate_document_profile(
         logger.warning("No fused pages for document_id=%d, skipping profile", document_id)
         return {"document_id": document_id, "status": "skipped", "reason": "no_fused_pages"}
 
+    df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
+    doc = df.scalar_one_or_none()
+
     # 聚合各页融合正文
     pages_text = []
     for pf in fusions:
@@ -56,12 +62,19 @@ async def generate_document_profile(
     all_text = "\n\n".join(pages_text)
 
     # 2. LLM 提炼
+    resolved_profile_key = resolve_knowledge_profile("profile", profile_key)
+    model_degraded = False
+    model_diagnostics: dict = {}
+    llm_duration_ms = 0
+    embedding_duration_ms = 0
+    db_write_duration_ms = 0
     system_prompt = await load_prompt(db, TPROFILE)
     try:
+        llm_started = perf_counter()
         result = await timed_llm_chat(
             logger=logger,
             stage="profile",
-            profile_key=profile_key,
+            profile_key=resolved_profile_key,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"请分析以下文档内容，生成文件画像：\n\n{all_text[:12000]}"},
@@ -70,6 +83,9 @@ async def generate_document_profile(
             document_id=document_id,
             extra={"pages": len(fusions)},
         )
+        llm_duration_ms = round((perf_counter() - llm_started) * 1000)
+        model_degraded = bool(result.get("model_degraded"))
+        model_diagnostics = result.get("model_diagnostics") or {}
         content = (result.get("content") or "").strip()
         if content.startswith("```"):
             lines = content.split("\n")
@@ -78,6 +94,8 @@ async def generate_document_profile(
                 content = content[:-3].strip()
         profile_data = json.loads(content)
     except Exception as e:
+        if llm_duration_ms == 0:
+            llm_duration_ms = round((perf_counter() - llm_started) * 1000) if "llm_started" in locals() else 0
         logger.warning("LLM profiling failed for document_id=%d, using heuristic: %s", document_id, e)
         profile_data = _heuristic_profile(fusions)
 
@@ -85,11 +103,16 @@ async def generate_document_profile(
     profile_text_for_embed = f"{profile_data.get('subject', '')} {profile_data.get('doc_summary', '')}"
     profile_embedding = None
     try:
+        embedding_started = perf_counter()
         profile_embedding = await get_embedding(profile_text_for_embed[:2000])
+        embedding_duration_ms = round((perf_counter() - embedding_started) * 1000)
     except Exception as e:
+        if embedding_duration_ms == 0:
+            embedding_duration_ms = round((perf_counter() - embedding_started) * 1000) if "embedding_started" in locals() else 0
         logger.warning("Profile embedding failed for document_id=%d: %s", document_id, e)
 
     # 4. 写入 kb_document_profiles
+    db_write_started = perf_counter()
     await db.execute(
         sa_delete(KbDocumentProfile).where(KbDocumentProfile.document_id == document_id)
     )
@@ -104,6 +127,7 @@ async def generate_document_profile(
         key_entities=profile_data.get("key_entities", []),
         doc_summary=profile_data.get("doc_summary", ""),
         searchable_phrases=profile_data.get("searchable_phrases", []),
+        labels_json=profile_data.get("labels") or profile_data.get("labels_json") or {},
         applicable_scenarios=profile_data.get("applicable_scenarios", ""),
         expiry_risk=profile_data.get("expiry_risk", "low"),
         confidence=profile_data.get("confidence", 0.7),
@@ -114,11 +138,11 @@ async def generate_document_profile(
     await db.flush()
 
     # 同步更新文档摘要
-    df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
-    doc = df.scalar_one_or_none()
     if doc:
         doc.summary = profile_data.get("doc_summary", "")[:500]
+        doc.profile_status = "done"
     await db.commit()
+    db_write_duration_ms = round((perf_counter() - db_write_started) * 1000)
 
     return {
         "document_id": document_id,
@@ -126,7 +150,18 @@ async def generate_document_profile(
         "doc_type": profile.doc_type,
         "key_entities": profile.key_entities,
         "doc_summary": profile.doc_summary,
+        "labels_json": profile.labels_json,
         "confidence": profile.confidence,
+        "model_degraded": model_degraded,
+        "model_diagnostics": model_diagnostics,
+        "timing": {
+            "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+            "llm_ms": llm_duration_ms,
+            "embedding_ms": embedding_duration_ms,
+            "db_write_ms": db_write_duration_ms,
+            "pages": len(fusions),
+            "input_chars": len(all_text),
+        },
     }
 
 
@@ -136,7 +171,7 @@ def _heuristic_profile(fusions: list) -> dict:
         return {
             "subject": "", "doc_type": "其他", "chapter_structure": [],
             "core_conclusions": "", "key_entities": [], "doc_summary": "",
-            "searchable_phrases": [], "applicable_scenarios": "", "expiry_risk": "low", "confidence": 0.3,
+            "searchable_phrases": [], "labels": {}, "applicable_scenarios": "", "expiry_risk": "low", "confidence": 0.3,
         }
 
     # 简单启发式：取第一页前100字作为主题
@@ -174,6 +209,13 @@ def _heuristic_profile(fusions: list) -> dict:
         "key_entities": all_entities[:30],
         "doc_summary": doc_summary[:1000],
         "searchable_phrases": searchable_phrases,
+        "labels": {
+            "business_tags": searchable_phrases,
+            "usage_tags": ["待人工复核"],
+            "content_boundaries": ["LLM 不可用时由启发式兜底生成，需人工复核"],
+            "business_objects": [],
+            "evidence": [],
+        },
         "applicable_scenarios": "",
         "expiry_risk": "low",
         "confidence": 0.3,
@@ -199,6 +241,7 @@ async def get_document_profile(db: AsyncSession, document_id: int, owner_id: int
         "key_entities": profile.key_entities,
         "doc_summary": profile.doc_summary,
         "searchable_phrases": profile.searchable_phrases,
+        "labels_json": profile.labels_json,
         "applicable_scenarios": profile.applicable_scenarios,
         "expiry_risk": profile.expiry_risk,
         "confidence": profile.confidence,

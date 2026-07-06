@@ -85,6 +85,10 @@ def classify_error(
     if exception is not None:
         body_lower = f"{body_lower}\n{exception}".lower()
 
+    if any(kw in body_lower for kw in _AUTH_BODY_KW):
+        return ErrorClassification("auth", False, message="Authentication error detected in response")
+    if any(kw in body_lower for kw in _QUOTA_BODY_KW):
+        return ErrorClassification("quota", False, message="Quota exceeded")
     if any(kw in body_lower for kw in _PROTOCOL_BODY_KW):
         return ErrorClassification("protocol", False, message="Invalid model request payload")
 

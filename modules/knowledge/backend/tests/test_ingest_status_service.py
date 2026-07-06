@@ -64,6 +64,30 @@ def _task(**overrides):
     return SimpleNamespace(**values)
 
 
+def _run(**overrides):
+    values = {
+        "id": 88,
+        "status": "running",
+        "reason": None,
+        "diagnostics_json": None,
+        "started_at": None,
+        "completed_at": None,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _stage_run(**overrides):
+    values = {
+        "id": 89,
+        "stage": "profile",
+        "status": "done",
+        "reason": None,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def test_document_registration_payload_exposes_new_task_id() -> None:
     payload = document_registration_payload(
         _doc(),
@@ -246,8 +270,51 @@ def test_ingest_status_parser_empty_degraded_can_be_search_ready() -> None:
     assert payload["pipeline_status"] == "degraded"
     assert payload["stage_summary"]["parse"]["ready"] is True
     assert payload["search_ready"] is True
-    assert payload["deep_ready"] is True
+    assert payload["deep_ready"] is False
     assert payload["last_error"] == "Parser returned no content blocks: empty_result"
+
+
+def test_ingest_status_paused_after_model_fallback_is_explicit() -> None:
+    payload = build_ingest_status_payload(
+        _doc(
+            parse_status="done",
+            vector_status="done",
+            raw_status="done",
+            fusion_status="done",
+            total_chunks=8,
+        ),
+        _task(status="completed", result='{"status":"paused"}'),
+        profile_count=1,
+        latest_run=_run(status="paused", reason="model_fallback_pause"),
+        stage_runs=[_stage_run(stage="pause", status="paused", reason="model_fallback_pause")],
+    )
+
+    assert payload["pipeline_status"] == "paused"
+    assert payload["stage"] == "paused"
+    assert payload["search_ready"] is True
+    assert payload["deep_ready"] is False
+    assert payload["latest_run"]["status"] == "paused"
+    assert payload["stage_summary"]["pause"]["semantic"] == "paused"
+    assert payload["next_action"] == "review_model_degradation_before_resume"
+
+
+def test_ingest_status_done_empty_semantic_uses_stage_run() -> None:
+    payload = build_ingest_status_payload(
+        _doc(
+            parse_status="done",
+            vector_status="done",
+            raw_status="done",
+            fusion_status="done",
+            total_chunks=8,
+        ),
+        _task(status="completed", result='{"status":"done"}'),
+        profile_count=0,
+        stage_runs=[_stage_run(stage="profile", status="done", reason="no_profile_rows")],
+    )
+
+    profile = payload["stage_summary"]["profile"]
+    assert profile["semantic"] == "done_empty"
+    assert profile["reason"] == "no_profile_rows"
 
 
 def test_ingest_status_source_unavailable_is_not_search_ready() -> None:

@@ -31,6 +31,8 @@ llm_diagnostics_stream = _load_service("llm_diagnostics_stream")
 StageDef = pipeline_orchestrator.StageDef
 classify_fusion_status = fusion_service.classify_fusion_status
 classify_raw_collection_status = raw_collection_service.classify_raw_collection_status
+completed_raw_pages = raw_collection_service.completed_raw_pages
+summarize_raw_content_quality = raw_collection_service.summarize_raw_content_quality
 
 
 class _ScalarResult:
@@ -259,6 +261,136 @@ def test_raw_collection_classifies_partial_empty_as_degraded():
     ) == "degraded"
 
 
+def test_raw_collection_classifies_page_covered_empty_rounds_as_done():
+    assert classify_raw_collection_status(
+        total_rounds=18,
+        valid_rounds=16,
+        failed_rounds=0,
+        task_count=18,
+        total_pages=6,
+        valid_pages=6,
+    ) == "done"
+
+
+def test_raw_collection_classifies_missing_page_as_degraded():
+    assert classify_raw_collection_status(
+        total_rounds=18,
+        valid_rounds=15,
+        failed_rounds=0,
+        task_count=18,
+        total_pages=6,
+        valid_pages=5,
+    ) == "degraded"
+
+
+def test_raw_quality_treats_empty_visual_ocr_as_optional():
+    rows = [
+        (1, 1, "text", "local image description", "done", 120, {}),
+        (1, 2, "ocr", "", "degraded", 35, {"method": "tesseract_boxes", "words": []}),
+        (1, 3, "vision", "poster layout and text", "done", 18000, {}),
+    ]
+
+    quality = summarize_raw_content_quality(
+        rows,
+        total_pages=1,
+        expected_rounds=3,
+        visual_document=True,
+    )
+
+    assert quality["valid_rounds"] == 2
+    assert quality["empty_rounds"] == 1
+    assert quality["optional_empty_rounds"] == 1
+    assert quality["primary_valid_pages"] == 1
+    assert quality["primary_empty_pages"] == 0
+    assert classify_raw_collection_status(
+        total_rounds=quality["total_rounds"],
+        valid_rounds=quality["valid_rounds"],
+        failed_rounds=0,
+        task_count=3,
+        total_pages=1,
+        valid_pages=quality["valid_pages"],
+        primary_valid_pages=quality["primary_valid_pages"],
+    ) == "done"
+
+
+def test_raw_quality_degrades_when_visual_page_lacks_primary_content():
+    rows = [
+        (1, 1, "text", "", "degraded", 120, {}),
+        (1, 2, "ocr", "only ocr text", "done", 35, {"method": "tesseract_boxes"}),
+        (1, 3, "vision", "", "degraded", 18000, {}),
+    ]
+
+    quality = summarize_raw_content_quality(
+        rows,
+        total_pages=1,
+        expected_rounds=3,
+        visual_document=True,
+    )
+
+    assert quality["valid_rounds"] == 1
+    assert quality["primary_empty_pages"] == 1
+    assert classify_raw_collection_status(
+        total_rounds=quality["total_rounds"],
+        valid_rounds=quality["valid_rounds"],
+        failed_rounds=0,
+        task_count=3,
+        total_pages=1,
+        valid_pages=quality["valid_pages"],
+        primary_valid_pages=quality["primary_valid_pages"],
+    ) == "degraded"
+
+
+def test_raw_collection_only_skips_pages_with_all_rounds_done():
+    rows = [
+        (1, "done"),
+        (1, "done"),
+        (1, "failed"),
+        (2, "done"),
+        (2, "done"),
+        (2, "done"),
+    ]
+
+    assert completed_raw_pages(rows, expected_rounds=3) == {2}
+
+
+def test_stage_assessment_allows_optional_raw_empty_rounds():
+    assessment = pipeline_orchestrator.assess_stage_result(
+        "raw",
+        {
+            "status": "done",
+            "total_rounds": 3,
+            "valid_rounds": 2,
+            "empty_rounds": 1,
+            "optional_empty_rounds": 1,
+            "empty_pages": 0,
+            "primary_empty_pages": 0,
+        },
+        required=True,
+    )
+
+    assert assessment.status == "done"
+    assert assessment.complete_for_dependencies is True
+
+
+def test_stage_assessment_degrades_raw_missing_primary_page():
+    assessment = pipeline_orchestrator.assess_stage_result(
+        "raw",
+        {
+            "status": "done",
+            "total_rounds": 3,
+            "valid_rounds": 1,
+            "empty_rounds": 2,
+            "empty_pages": 0,
+            "primary_empty_pages": 1,
+        },
+        required=True,
+    )
+
+    assert assessment.status == "degraded"
+    assert assessment.complete_for_dependencies is True
+    assert assessment.reason == "raw_content_partial"
+
+
 def test_fusion_classifies_all_empty_and_index_failure():
     assert classify_fusion_status(total_pages=2, valid_pages=0) == "degraded"
     assert classify_fusion_status(total_pages=2, valid_pages=0, error_pages=2) == "failed"
@@ -299,6 +431,106 @@ async def test_orchestrator_failed_stage_returns_failed(monkeypatch):
     assert result["steps"]["raw"]["stage_status"] == "failed"
     assert stage_rows[-1].stage == "raw"
     assert stage_rows[-1].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_updates_document_status_fields(monkeypatch):
+    async def profile_stage(**_kwargs):
+        return {"subject": "检验报告", "doc_summary": "检测结论"}
+
+    async def graph_stage(**_kwargs):
+        return {"status": "done", "entities": 3}
+
+    async def relations_stage(**_kwargs):
+        return {"status": "done", "relations": 1}
+
+    monkeypatch.setattr(
+        pipeline_orchestrator,
+        "STAGE_REGISTRY",
+        [
+            StageDef("profile", ["fusion"], True, profile_stage),
+            StageDef("graph", ["fusion"], True, graph_stage),
+            StageDef("relations", ["profile", "graph"], True, relations_stage, requires=["profile", "graph"]),
+        ],
+    )
+    monkeypatch.setattr(pipeline_orchestrator, "detect_stale_stages", _always_stale)
+    monkeypatch.setattr(pipeline_orchestrator, "record_artifact_hash", _hash_stage)
+
+    db = _FakeDb()
+    result = await pipeline_orchestrator.run_pipeline(db, 123, 1, 456, 1)
+
+    assert result["status"] == "done"
+    assert db.doc.profile_status == "done"
+    assert db.doc.graph_status == "done"
+    assert db.doc.relation_status == "done"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_done_deep_stages_when_not_stale(monkeypatch):
+    async def stale_none(*_args, **_kwargs):
+        return []
+
+    async def should_not_run(**_kwargs):
+        raise AssertionError("done stage should be resumed as skipped")
+
+    monkeypatch.setattr(
+        pipeline_orchestrator,
+        "STAGE_REGISTRY",
+        [
+            StageDef("profile", ["fusion"], False, should_not_run),
+            StageDef("graph", ["fusion"], False, should_not_run),
+            StageDef("relations", ["profile", "graph"], False, should_not_run, requires=["profile", "graph"]),
+        ],
+    )
+    monkeypatch.setattr(pipeline_orchestrator, "detect_stale_stages", stale_none)
+    monkeypatch.setattr(pipeline_orchestrator, "record_artifact_hash", _hash_stage)
+
+    db = _FakeDb()
+    db.doc.profile_status = "done"
+    db.doc.graph_status = "done"
+    db.doc.relation_status = "done"
+
+    result = await pipeline_orchestrator.run_pipeline(db, 123, 1, 456, 1)
+
+    assert result["status"] == "done"
+    assert result["steps"]["profile"]["reason"] == "already done"
+    assert result["steps"]["graph"]["reason"] == "already done"
+    assert result["steps"]["relations"]["reason"] == "already done"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_force_fusion_reruns_downstream(monkeypatch):
+    calls: list[str] = []
+
+    async def stale_none(*_args, **_kwargs):
+        return []
+
+    async def stage_fn(**_kwargs):
+        calls.append(_kwargs["document_id"] and "called")
+        return {"status": "done"}
+
+    monkeypatch.setattr(
+        pipeline_orchestrator,
+        "STAGE_REGISTRY",
+        [
+            StageDef("fusion", ["raw"], False, stage_fn, requires=[]),
+            StageDef("profile", ["fusion"], False, stage_fn, requires=["fusion"]),
+            StageDef("relations", ["profile"], False, stage_fn, requires=["profile"]),
+        ],
+    )
+    monkeypatch.setattr(pipeline_orchestrator, "detect_stale_stages", stale_none)
+    monkeypatch.setattr(pipeline_orchestrator, "record_artifact_hash", _hash_stage)
+    monkeypatch.setattr(pipeline_orchestrator, "mark_stale", _noop)
+
+    db = _FakeDb()
+    db.doc.fusion_status = "done"
+    db.doc.profile_status = "done"
+    db.doc.relation_status = "done"
+
+    result = await pipeline_orchestrator.run_pipeline(db, 123, 1, 456, 1, force_fusion=True)
+
+    assert result["status"] == "done"
+    assert len(calls) == 3
 
 
 @pytest.mark.asyncio

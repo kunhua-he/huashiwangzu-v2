@@ -76,36 +76,80 @@ class DocumentIr(BaseModel):
         return result
 
 
+CANONICAL_BLOCK_TYPES = {
+    "heading", "paragraph", "table", "list", "code", "image", "figure", "formula", "quote", "separator",
+    "divider", "sheet", "range", "cell_patch", "slide", "chart",
+}
+
+
+LEGACY_BLOCK_TYPES = {
+    "标题": ("heading", 1),
+    "段落": ("paragraph", 0),
+    "表格": ("table", 0),
+    "图片": ("image", 0),
+    "代码": ("code", 0),
+    "融合": ("paragraph", 0),
+}
+
+
+LEGACY_OUTPUT_TYPES = {
+    "heading": "标题",
+    "paragraph": "段落",
+    "table": "表格",
+    "image": "图片",
+    "figure": "图片",
+    "code": "代码",
+    "sheet": "标题",
+    "slide": "标题",
+}
+
+
+def _normalize_block_type(value: object) -> tuple[str, int]:
+    raw = str(value or "")
+    if raw in LEGACY_BLOCK_TYPES:
+        return LEGACY_BLOCK_TYPES[raw]
+    if raw in CANONICAL_BLOCK_TYPES:
+        level = 1 if raw in {"heading", "sheet", "slide"} else 0
+        return raw, level
+    return "paragraph", 0
+
+
+def _block_metadata(block: dict) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    data = block.get("data")
+    if isinstance(data, dict):
+        metadata.update(data)
+    source_ref = block.get("source_ref")
+    if isinstance(source_ref, dict):
+        metadata.setdefault("source_ref", source_ref)
+    return metadata
+
+
+def _content_block_from_dict(block: dict) -> ContentBlock:
+    block_type, level = _normalize_block_type(block.get("type", ""))
+    children = [
+        _content_block_from_dict(child)
+        for child in block.get("children") or []
+        if isinstance(child, dict)
+    ]
+    return ContentBlock(
+        type=block_type,
+        text=str(block.get("text") or ""),
+        page=block.get("page"),
+        resource_ref=block.get("resource_ref"),
+        hierarchy_level=level,
+        children=children,
+        metadata=_block_metadata(block),
+    )
+
+
 def from_legacy_blocks(
     file_id: int, fmt: str, blocks: list[dict],
     resources: list[dict] | None = None,
     resource_diagnostics: list[dict] | None = None,
     parse_status: str = "ok",
 ) -> DocumentIr:
-    ir_blocks = []
-    for b in blocks:
-        level = 0
-        bt = b.get("type", "")
-        if bt in ("标题", "heading"):
-            bt = "heading"
-            level = 1
-        elif bt in ("段落", "paragraph", ""):
-            bt = "paragraph"
-        elif bt in ("表格", "table"):
-            bt = "table"
-        elif bt in ("图片", "image", "figure"):
-            bt = "image"
-        elif bt in ("代码", "code"):
-            bt = "code"
-        elif bt in ("融合",):
-            bt = "paragraph"
-        ir_blocks.append(ContentBlock(
-            type=bt,
-            text=b.get("text", ""),
-            page=b.get("page"),
-            resource_ref=b.get("resource_ref"),
-            hierarchy_level=level,
-        ))
+    ir_blocks = [_content_block_from_dict(b) for b in blocks if isinstance(b, dict)]
     ir_resources = []
     if resources:
         for r in resources:
@@ -132,22 +176,9 @@ def from_legacy_blocks(
 
 def to_legacy_dict(ir: DocumentIr) -> dict:
     block_dicts = []
-    for b in ir.blocks:
-        bt = b.type
-        if bt == "heading":
-            legacy_type = "标题"
-        elif bt == "paragraph":
-            legacy_type = "段落"
-        elif bt == "table":
-            legacy_type = "表格"
-        elif bt == "image":
-            legacy_type = "图片"
-        elif bt == "code":
-            legacy_type = "代码"
-        else:
-            legacy_type = "段落"
+    for b in ir._iter_all():
         block_dicts.append({
-            "type": legacy_type,
+            "type": LEGACY_OUTPUT_TYPES.get(b.type, "段落"),
             "text": b.text,
             "page": b.page,
             "resource_ref": b.resource_ref,

@@ -1,0 +1,6 @@
+{
+  "worker_lanes_per_process": 2,
+  "poll_interval_seconds": 2.0,
+  "running_timeout_seconds": 1200,
+  "config_reload_seconds": 5.0
+}

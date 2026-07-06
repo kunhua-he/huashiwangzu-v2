@@ -44,6 +44,10 @@ class KbDocument(Base, TimestampMixin):
     raw_status: Mapped[str] = mapped_column(String(32), default="pending")
     # 页级融合状态：pending/running/done/failed
     fusion_status: Mapped[str] = mapped_column(String(32), default="pending")
+    # 文档画像/图谱/关联阶段状态
+    profile_status: Mapped[str] = mapped_column(String(32), default="pending")
+    graph_status: Mapped[str] = mapped_column(String(32), default="pending")
+    relation_status: Mapped[str] = mapped_column(String(32), default="pending")
     # 解析计数
     total_chunks: Mapped[int] = mapped_column(Integer, default=0)
     total_pages: Mapped[int] = mapped_column(Integer, default=0)
@@ -285,6 +289,8 @@ class KbDocumentProfile(Base, TimestampMixin):
     doc_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 可检索短语 JSON
     searchable_phrases: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # 模型返回的文档级标签、边界、证据页等结构化分类信息
+    labels_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 适用场景
     applicable_scenarios: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 过期风险

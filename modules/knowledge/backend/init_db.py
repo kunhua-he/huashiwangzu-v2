@@ -56,6 +56,9 @@ _INDEX_STATEMENTS = [
 _MIGRATION_STATEMENTS = [
     ("kb_documents", "raw_status", "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS raw_status VARCHAR(32) DEFAULT 'pending'"),
     ("kb_documents", "fusion_status", "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS fusion_status VARCHAR(32) DEFAULT 'pending'"),
+    ("kb_documents", "profile_status", "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS profile_status VARCHAR(32) DEFAULT 'pending'"),
+    ("kb_documents", "graph_status", "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS graph_status VARCHAR(32) DEFAULT 'pending'"),
+    ("kb_documents", "relation_status", "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS relation_status VARCHAR(32) DEFAULT 'pending'"),
     ("kb_page_fusions", "page_summary", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS page_summary TEXT"),
     ("kb_page_fusions", "page_title", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS page_title VARCHAR(512)"),
     ("kb_page_fusions", "body_json", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS body_json JSON"),
@@ -75,6 +78,7 @@ _MIGRATION_STATEMENTS = [
     ("kb_page_fusions", "diagnostics_json", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS diagnostics_json JSON"),
     ("kb_page_fusions", "error_message", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS error_message TEXT"),
     ("kb_page_fusions", "duration_ms", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS duration_ms INTEGER"),
+    ("kb_document_profiles", "labels_json", "ALTER TABLE kb_document_profiles ADD COLUMN IF NOT EXISTS labels_json JSON"),
 ]
 
 _KNOWLEDGE_PROMPT_CATEGORY = {
@@ -89,18 +93,38 @@ _KNOWLEDGE_PROMPTS = [
         "description": "Knowledge document profile generation system prompt",
         "content": """你是企业文档分析专家。请根据以下各页的融合内容，生成文件级画像。
 
+企业资料范围：
+- 这里是企业历史资料库，包含合规报告、备案/检验/质检资料、产品说明、配方/成分资料、营销文案、培训材料、协议合同、管理制度、数据表、图片/海报/物料页面等。
+- 历史资料不等于无价值：请判断它更适合“当前可用参考、历史留档、合规备查、营销复用、低价值素材、待人工复核”中的哪类用途。
+- 图片、海报、素材类资料只保留可检索文本、设计结构、业务标签和关联线索；不要要求存储图片二进制。
+
 输出严格 JSON（不要 markdown 标记）：
 {
   "subject": "文件主旨（一句话）",
-  "doc_type": "品牌介绍/产品说明/培训手册/数据报表/配方文件/会员方案/管理制度/其他",
+  "doc_type": "基于正文证据自由返回具体中文类型，例如：品牌介绍、产品说明、营销文案、培训手册、数据报表、配方文件、会员方案、管理制度、协议合同、检验报告、备案报告、质检报告、海报素材、图片素材等；不要局限于示例",
   "chapter_structure": [{"title": "章节标题", "page": 1, "summary": "该章节内容"}],
   "core_conclusions": "核心结论（2-3句话）",
   "key_entities": [{"name": "实体名", "type": "产品/品牌/成分/人物/事件/其他", "relevance": "high"}],
   "doc_summary": "文档级摘要（3-5句话）",
   "searchable_phrases": ["搜索短语1", "搜索短语2"],
+  "labels": {
+    "business_tags": ["模型根据正文返回的业务标签"],
+    "usage_tags": ["当前可用参考/历史留档/合规备查/营销复用/低价值素材/待人工复核"],
+    "content_boundaries": ["使用边界，例如不得用于广告宣传、仅供内部归档、需人工复核等"],
+    "business_objects": [{"name": "对象名", "type": "产品/品牌/报告编号/机构/素材用途/其他", "evidence_pages": [1]}],
+    "evidence": [{"label": "标签或判断", "pages": [1], "excerpt": "支持该判断的短原文"}]
+  },
   "applicable_scenarios": "适用场景描述",
   "expiry_risk": "none/low/medium/high"
-}""",
+}
+
+分类要求：
+1. 优先依据正文证据，而不是仅依据文件名或目录名。
+2. doc_type 由你根据正文自由归纳，允许出现示例之外的企业资料类型。
+3. 当正文与文件名冲突时，以正文结构和证据为准，并在摘要中保留可追溯线索。
+4. 标签、边界、用途必须由正文证据或清晰页面结构支持；不能因为目录名看起来像某类资料就直接下结论。
+5. 无法从正文确认时才使用“其他”，并在 labels.evidence 或 content_boundaries 中说明需要人工复核。
+6. business_tags 用于知识库检索与后续 Agent 路由，保持短、准、可组合，不要输出空泛词。""",
     },
     {
         "name": "knowledge_entity_extraction",
@@ -170,7 +194,19 @@ _KNOWLEDGE_PROMPTS = [
     {
         "name": "knowledge_raw_vision",
         "description": "Knowledge raw collection visual composition prompt",
-        "content": "请详细描述这张页面的版面和视觉构成，包括：1)整体布局结构 2)图表/图片的位置和内容 3)色彩和视觉层次 4)任何特殊视觉元素。",
+        "content": """请按企业知识库检索用途分析这张图片或页面，不要描述为二进制文件本身。
+
+先判断素材类型：未加工素材/产品图/海报/展架/灯箱/宣传册页面/截图/表格/低信息量图片。
+
+请保留可用于后续 Agent 检索和关联的文本信息与设计结构：
+1. 可见文字：品牌、产品、功效、价格、活动、适用人群、警示语等，按阅读顺序整理。
+2. 版式结构：标题区、主视觉、产品区、功效区、案例对比区、参数/表格区、二维码/联系方式、页脚等。
+3. 视觉层级：主体是什么，哪些元素最醒目，信息从上到下/从左到右如何组织。
+4. 关键视觉对象：产品瓶身/套盒/人物/肌肤对比/门店物料/背景图案等。
+5. 颜色与风格：主色、辅助色、风格倾向，只记录对识别和复用有价值的信息。
+6. 业务关联关键词：品牌、系列、产品、功效、使用场景、适合人群、物料用途。
+
+如果判断为未加工素材或低信息量图片，只输出简短注释和可关联标签；不要强行编造业务含义。""",
     },
 ]
 

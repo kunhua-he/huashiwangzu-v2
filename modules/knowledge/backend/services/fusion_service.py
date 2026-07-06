@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbPageFusion, KbRawData
 from .llm_diagnostics import timed_llm_chat
+from .model_routing import resolve_knowledge_profile
 from .prompt_utils import TFUSION, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("fusion")
@@ -106,6 +107,7 @@ def classify_fusion_status(
 
 async def _llm_fuse(db: AsyncSession | None, round_texts: dict[int, str]) -> dict:
     """调用 LLM 进行交叉印证融合。"""
+    profile_key = resolve_knowledge_profile("fusion")
     system_prompt = await load_prompt(db, TFUSION)
     user_message = f"""请交叉印证以下三轮采集结果，输出融合后的权威描述。
 
@@ -122,7 +124,7 @@ async def _llm_fuse(db: AsyncSession | None, round_texts: dict[int, str]) -> dic
         result = await timed_llm_chat(
             logger=logger,
             stage="fusion",
-            profile_key="deepseek-v4-flash",
+            profile_key=profile_key,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
@@ -145,6 +147,8 @@ async def _llm_fuse(db: AsyncSession | None, round_texts: dict[int, str]) -> dic
         if not (parsed.get("page_summary") or "").strip():
             parsed["page_summary"] = str(parsed.get("fused_text") or "")[:120]
         parsed["_diagnostic_fallback"] = False
+        parsed["model_degraded"] = bool(result.get("model_degraded"))
+        parsed["model_diagnostics"] = result.get("model_diagnostics") or {}
         return parsed
     except Exception as e:
         logger.warning("LLM fusion failed, using heuristic fallback: %s", e)
@@ -209,6 +213,8 @@ async def fuse_page(
         "valid_raw_rounds": sum(1 for value in round_texts.values() if value and value.strip()),
         "conflict_count": len(all_conflicts),
         "fallback_used": bool(fusion_result.get("_diagnostic_fallback")),
+        "model_degraded": bool(fusion_result.get("model_degraded")),
+        "model_diagnostics": fusion_result.get("model_diagnostics") or {},
     }
 
     # 6. 写入 kb_page_fusions
@@ -271,6 +277,7 @@ async def fuse_all_pages(
     已完成的页（kb_page_fusions 已有记录且 fusion_status='done'）跳过。
     返回: {"document_id": int, "pages_fused": int, "results": [...]}
     """
+    stage_started = perf_counter()
     # 获取文档页数
     df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
     doc = df.scalar_one_or_none()
@@ -319,12 +326,14 @@ async def fuse_all_pages(
     # → 对外检索(hybrid_search)默认召回的就是融合层内容(华哥设计:对外用第4层)
     indexed = 0
     index_error = ""
+    index_started = perf_counter()
     try:
         indexed = await index_fusions_to_chunks(db, document_id, owner_id)
         logger.info("Indexed fusion layer to chunks: doc_id=%d chunks=%d", document_id, indexed)
     except Exception as e:
         index_error = str(e)
         logger.error("Index fusion to chunks failed for doc_id=%d (non-fatal): %s", document_id, e)
+    index_duration_ms = round((perf_counter() - index_started) * 1000)
 
     fusion_rows = await db.execute(
         select(KbPageFusion.fused_text).where(KbPageFusion.document_id == document_id)
@@ -332,6 +341,19 @@ async def fuse_all_pages(
     valid_pages = sum(1 for (text,) in fusion_rows.all() if text and text.strip())
     empty_pages = max(total_pages - valid_pages, 0)
     error_pages = sum(1 for item in results if item.get("error"))
+    model_diagnostics = [
+        item.get("diagnostics", {}).get("model_diagnostics")
+        for item in results
+        if item.get("diagnostics", {}).get("model_degraded")
+    ]
+    model_degraded = bool(model_diagnostics)
+    page_durations = {
+        int(item["page"]): int(item.get("duration_ms") or 0)
+        for item in results
+        if item.get("page") is not None and not item.get("skipped")
+    }
+    skipped_pages = sorted(int(item["page"]) for item in results if item.get("skipped") and item.get("page") is not None)
+    failed_pages = sorted(int(item["page"]) for item in results if item.get("error") and item.get("page") is not None)
 
     await db.refresh(doc)
     doc.fusion_status = classify_fusion_status(
@@ -362,6 +384,17 @@ async def fuse_all_pages(
         "indexed_chunks": indexed,
         "index_error": index_error,
         "status": doc.fusion_status,
+        "model_degraded": model_degraded,
+        "model_diagnostics": model_diagnostics,
+        "timing": {
+            "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+            "fusion_model_wall_ms": sum(page_durations.values()),
+            "index_ms": index_duration_ms,
+            "page_durations_ms": dict(sorted(page_durations.items())),
+            "failed_pages": failed_pages,
+            "skipped_pages": skipped_pages,
+            "execution_mode": "sequential_pages",
+        },
         "results": results,
     }
 

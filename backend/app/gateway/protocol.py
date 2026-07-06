@@ -170,12 +170,33 @@ def _normalize_arguments(arguments: object) -> str:
         return json.dumps({"value": str(arguments)}, ensure_ascii=False)
 
 
-def _normalize_content(content: object, *, allow_empty: bool = False) -> str:
+def _normalize_content(content: object, *, allow_empty: bool = False) -> str | list[dict]:
     if content is None:
         return "" if allow_empty else " "
     if isinstance(content, str):
         return content
+    if isinstance(content, list):
+        return [_normalize_content_part(part, idx) for idx, part in enumerate(content)]
     try:
         return json.dumps(content, ensure_ascii=False, default=str)
     except Exception:
         return str(content)
+
+
+def _normalize_content_part(part: object, index: int) -> dict:
+    if not isinstance(part, dict):
+        return {"type": "text", "text": str(part)}
+    part_type = str(part.get("type") or "").strip()
+    if part_type == "text":
+        return {"type": "text", "text": str(part.get("text") or "")}
+    if part_type == "image_url":
+        image_url = part.get("image_url")
+        if isinstance(image_url, dict):
+            url = str(image_url.get("url") or "")
+            normalized = {"url": url}
+            detail = image_url.get("detail")
+            if detail:
+                normalized["detail"] = str(detail)
+            return {"type": "image_url", "image_url": normalized}
+        return {"type": "image_url", "image_url": {"url": str(image_url or "")}}
+    raise GatewayProtocolError(f"content part at index {index} has unsupported type '{part_type}'")

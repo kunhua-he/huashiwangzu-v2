@@ -31,6 +31,34 @@ def _extra_text(extra: Mapping[str, object] | None) -> str:
     return " " + " ".join(parts)
 
 
+def model_degradation_from_diagnostics(
+    diagnostics: Mapping[str, Any] | None,
+    requested_profile: str,
+) -> dict[str, Any]:
+    """Normalize gateway fallback diagnostics for knowledge stages."""
+    diagnostics = diagnostics or {}
+    selected_profile = str(diagnostics.get("selected_profile") or requested_profile)
+    fallback_used = bool(diagnostics.get("fallback_used"))
+    return {
+        "requested_profile": requested_profile,
+        "selected_profile": selected_profile,
+        "selected_provider": str(diagnostics.get("selected_provider") or ""),
+        "fallback_used": fallback_used,
+        "model_degraded": fallback_used and selected_profile != requested_profile,
+    }
+
+
+def annotate_model_degradation(result: dict[str, Any], requested_profile: str) -> dict[str, Any]:
+    """Attach normalized model fallback flags to a gateway result dict."""
+    model_diagnostics = model_degradation_from_diagnostics(
+        result.get("diagnostics") if isinstance(result.get("diagnostics"), Mapping) else None,
+        requested_profile,
+    )
+    result["model_diagnostics"] = model_diagnostics
+    result["model_degraded"] = bool(model_diagnostics["model_degraded"])
+    return result
+
+
 async def timed_llm_chat(
     *,
     logger: logging.Logger,
@@ -83,6 +111,7 @@ async def timed_llm_chat(
 
     elapsed_ms = (time.perf_counter() - started) * 1000
     content = str(result.get("content") or "")
+    annotate_model_degradation(result, profile_key)
     # Extract gateway diagnostics if present
     diagnostics = result.get("diagnostics") or {}
     diag_fields = ""
@@ -91,11 +120,14 @@ async def timed_llm_chat(
         attempts = diagnostics.get("attempts", 0)
         total_elapsed = diagnostics.get("total_elapsed_ms", 0)
         response_summary = diagnostics.get("response_summary", {})
+        model_diagnostics = result.get("model_diagnostics") or {}
         diag_fields = (
             f" trace_id={trace_id} gateway_attempts={attempts}"
             f" gateway_elapsed_ms={total_elapsed}"
             f" output_chars={response_summary.get('output_chars', '')}"
             f" reasoning_chars={response_summary.get('reasoning_chars', '')}"
+            f" selected_profile={model_diagnostics.get('selected_profile', '')}"
+            f" model_degraded={model_diagnostics.get('model_degraded', False)}"
         )
     logger.info(
         "LLM_CALL_END stage=%s profile_key=%s document_id=%s page=%s "
@@ -113,4 +145,13 @@ async def timed_llm_chat(
         extra_fields,
         diag_fields,
     )
+    if result.get("model_degraded"):
+        logger.warning(
+            "LLM_CALL_DEGRADED stage=%s requested_profile=%s selected_profile=%s document_id=%s page=%s",
+            stage,
+            profile_key,
+            result.get("model_diagnostics", {}).get("selected_profile"),
+            document_id,
+            page,
+        )
     return result

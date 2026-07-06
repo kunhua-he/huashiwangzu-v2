@@ -119,3 +119,19 @@ async def describe_image(
         profile_key=profile_key,
         mime_type=mime_type,
     )
+
+
+async def describe_image_detailed(
+    image_bytes: bytes,
+    prompt: str = "请详细描述这张图片",
+    profile_key: str | None = None,
+    mime_type: str = "image/jpeg",
+) -> dict:
+    """Describe an image and return content plus gateway diagnostics."""
+    from app.gateway.router import gateway_router
+    return await gateway_router.describe_image_detailed(
+        image_bytes=image_bytes,
+        prompt=prompt,
+        profile_key=profile_key,
+        mime_type=mime_type,
+    )

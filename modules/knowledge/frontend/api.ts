@@ -66,7 +66,7 @@ export interface ProgressStage {
   done: number
   total: number
   percent: number
-  status: 'done' | 'running' | 'pending' | 'failed' | 'degraded' | 'source_unavailable'
+  status: 'done' | 'running' | 'pending' | 'failed' | 'degraded' | 'paused' | 'source_unavailable'
   count?: number
 }
 
@@ -74,7 +74,7 @@ export interface DocumentProgress {
   document_id: number
   filename: string
   total_pages: number
-  overall_status: 'done' | 'running' | 'pending' | 'failed' | 'degraded' | 'source_unavailable'
+  overall_status: 'done' | 'running' | 'pending' | 'failed' | 'degraded' | 'paused' | 'source_unavailable'
   overall_percent: number
   current_stage: string
   source_available?: boolean
@@ -86,6 +86,8 @@ export interface IngestStageStatus {
   status: string
   ready: boolean
   count?: number
+  semantic?: 'done_with_results' | 'done_empty' | 'skipped' | 'paused'
+  reason?: string | null
   node_count?: number
   chunk_entity_count?: number
 }
@@ -161,6 +163,13 @@ export interface DocumentProfile {
   applicable_scenarios?: string
   key_entities?: Array<{ name: string; type?: string }>
   chapter_structure?: Array<{ title?: string; page?: number; summary?: string }>
+  labels_json?: {
+    business_tags?: string[]
+    usage_tags?: string[]
+    content_boundaries?: string[]
+    business_objects?: Array<{ name?: string; type?: string; evidence_pages?: number[] }>
+    evidence?: Array<{ label?: string; pages?: number[]; excerpt?: string }>
+  }
   confidence?: number
 }
 

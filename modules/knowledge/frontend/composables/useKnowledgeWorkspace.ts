@@ -87,7 +87,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     if (!wasOpen && !folderFiles.value[key]) {
       try {
         const data = await getFileList(key)
-        const children: FileTreeNode[] = (data.items || []).map((f) => {
+        const children: FileTreeNode[] = (data.items || []).filter((f) => !f.is_folder).map((f) => {
           const doc = kbDocMap.value[f.id]
           const node: FileTreeNode = {
             id: f.id, name: f.name, parent_id: key, is_folder: f.is_folder,
@@ -113,7 +113,13 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
         const nameMatch = !kw || n.name.toLowerCase().includes(kw)
         // 合并子文件夹和已加载的文件，文件夹在前
         const fileKids = folderFiles.value[n.id] || []
-        const allKids = [...n.children, ...fileKids].sort((a, b) => {
+        const seenKids = new Set<string>()
+        const allKids = [...n.children, ...fileKids].filter((child) => {
+          const childKey = `${child.is_folder ? 'folder' : 'file'}:${child.id}`
+          if (seenKids.has(childKey)) return false
+          seenKids.add(childKey)
+          return true
+        }).sort((a, b) => {
           if (a.is_folder !== b.is_folder) return a.is_folder ? -1 : 1
           if (!a.is_folder) return (b._created_at || '').localeCompare(a._created_at || '')
           return a.name.localeCompare(b.name)
@@ -203,8 +209,8 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
   const runningCount = computed(() => Object.values(liveProgressMap.value).filter(p => p.overall_status === 'running').length)
   const hasResult = computed(() => progress.value?.overall_status === 'done' || fusions.value.length > 0)
   const showProgress = computed(() => !!progress.value && progress.value.overall_status !== 'done')
-  const headStatusText = computed(() => { const p = progress.value; if (!p) return '尚未分析'; if (p.overall_status === 'done') return '分析完成'; if (p.overall_status === 'failed') return '分析出错'; if (p.overall_status === 'degraded') return '分析有缺损'; if (p.overall_status === 'source_unavailable') return '源文件不可用'; if (p.overall_status === 'running') return p.current_stage + '…'; return '待分析' })
-  const progressHeadline = computed(() => { const p = progress.value; if (!p) return ''; if (p.overall_status === 'done') return '全部完成'; if (p.overall_status === 'failed') return '分析出错,可重新分析'; if (p.overall_status === 'degraded') return '分析有缺损,可重新分析'; if (p.overall_status === 'source_unavailable') return '源文件已删除或不可用'; return '正在「' + p.current_stage + '」' })
+  const headStatusText = computed(() => { const p = progress.value; if (!p) return '尚未分析'; if (p.overall_status === 'done') return '分析完成'; if (p.overall_status === 'failed') return '分析出错'; if (p.overall_status === 'degraded') return '分析有缺损'; if (p.overall_status === 'paused') return '模型降级后已暂停'; if (p.overall_status === 'source_unavailable') return '源文件不可用'; if (p.overall_status === 'running') return p.current_stage + '…'; return '待分析' })
+  const progressHeadline = computed(() => { const p = progress.value; if (!p) return ''; if (p.overall_status === 'done') return '全部完成'; if (p.overall_status === 'failed') return '分析出错,可重新分析'; if (p.overall_status === 'degraded') return '分析有缺损,可重新分析'; if (p.overall_status === 'paused') return 'GPT5.5 降级后已按规则暂停，可检查后再继续'; if (p.overall_status === 'source_unavailable') return '源文件已删除或不可用'; return '正在「' + p.current_stage + '」' })
   const ringStyle = computed(() => { const pct = progress.value?.overall_percent ?? 0; return { background: `conic-gradient(#2395bc ${pct * 3.6}deg, #e6eef5 0deg)` } })
   const overallPercent = computed(() => Math.max(0, Math.min(100, progress.value?.overall_percent ?? 0)))
   const sourceUnavailable = computed(() => ingestStatus.value?.source_available === false || progress.value?.overall_status === 'source_unavailable')
@@ -225,6 +231,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     if (status === 'search_ready') return '可检索'
     if (status === 'failed') return '失败'
     if (status === 'degraded') return '部分完成'
+    if (status === 'paused') return '已暂停'
     if (status === 'running') return '处理中'
     if (status === 'queued') return '等待中'
     return '待分析'
@@ -232,7 +239,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
   const statusClassForIngest = computed(() => {
     const status = ingestStatus.value?.pipeline_status || progress.value?.overall_status || 'pending'
     if (status === 'source_unavailable' || status === 'failed') return 'err'
-    if (status === 'degraded') return 'warn'
+    if (status === 'degraded' || status === 'paused') return 'warn'
     if (status === 'running' || status === 'queued') return 'busy'
     if (status === 'deep_ready' || status === 'search_ready') return 'ok'
     return ''
@@ -242,6 +249,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     if (!status) return ''
     if (!status.source_available) return sourceStateText(status.source_state)
     if (status.next_action === 'ready') return '可以搜索、问 AI 或导出资料内容。'
+    if (status.next_action === 'review_model_degradation_before_resume') return 'GPT5.5 已降级，本轮已按规则暂停；可检查日志或重新触发深度分析。'
     if (status.next_action === 'wait_for_search_index') return '正在建立检索索引，请稍后再试。'
     if (status.next_action === 'wait_for_deep_analysis') return '检索已可用，深度分析仍在继续。'
     if (status.next_action.includes('retry')) return '可以查看失败原因后重新分析。'
@@ -249,10 +257,15 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
   })
   const profileEntities = computed(() => parseJsonField<Array<{ name: string }>>(profile.value?.key_entities, []).slice(0, 12))
   const profileChapters = computed(() => parseJsonField<Array<{ title?: string; page?: number }>>(profile.value?.chapter_structure, []))
+  const profileBusinessTags = computed(() => {
+    const labels = profile.value?.labels_json
+    const tags = Array.isArray(labels?.business_tags) ? labels.business_tags : []
+    return tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0).slice(0, 12)
+  })
 
   function fileIcon(ext?: string): string { const e = (ext || '').toLowerCase(); if (e === 'pdf') return '📕'; if (['doc','docx'].includes(e)) return '📘'; if (['xls','xlsx'].includes(e)) return '📗'; if (['ppt','pptx'].includes(e)) return '📙'; if (['png','jpg','jpeg','gif','webp'].includes(e)) return '🖼'; return '📄' }
   function docName(id: number): string { return documents.value.find(d => d.id === id)?.filename || ('资料 #'+id) }
-  function statusDotClass(status?: string): string { if (status === 'done') return 'ok'; if (status === 'running' || status === 'collecting' || status === 'parsing' || status === 'fusing') return 'busy'; if (status === 'failed' || status === 'source_unavailable') return 'failed'; return 'idle' }
+  function statusDotClass(status?: string): string { if (status === 'done') return 'ok'; if (status === 'running' || status === 'collecting' || status === 'parsing' || status === 'fusing') return 'busy'; if (status === 'failed' || status === 'source_unavailable') return 'failed'; if (status === 'paused') return 'warn'; return 'idle' }
   function stageLabel(stage: string): string { const labels: Record<string, string> = { source: '源文件', parse: '解析', vector: '索引', raw: '原始采集', fusion: '页级融合', profile: '画像', graph: '图谱', relation: '关联', complete: '完成' }; return labels[stage] || stage }
   function sourceStateText(state: string): string { const labels: Record<string, string> = { source_file_deleted: '原始文件已删除或进入回收站。', source_file_missing: '原始文件路径不可用。', permission_denied: '当前账号没有访问原始文件的权限。', source_unavailable: '原始文件不可用。' }; return labels[state] || '原始文件不可用。' }
   function readableFailure(message: string): string { return message.replace(/^Document source file unavailable:\s*/i, '源文件不可用：') }
@@ -487,12 +500,8 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
       }
     }
 
-    // 登记完握手一次进度
+    // 登记完握手一次进度；已登记文档由后端断点队列接管，不在前端打开时批量补跑。
     await handshakeAll()
-
-    // ── 补齐已登记但未完成的文档（已登记但 raw_status/fusion_status 仍非终态，且未在运行中） ──
-    // 用 liveProgressMap 判定状态，避免重复入队正在跑的
-    await retryPendingDocuments()
   }
 
   /**
@@ -818,6 +827,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     ingestStatusHint,
     profileEntities,
     profileChapters,
+    profileBusinessTags,
     fileIcon,
     docName,
     statusDotClass,

@@ -110,6 +110,7 @@ def classify_raw_collection_status(
     task_count: int,
     total_pages: int | None = None,
     valid_pages: int | None = None,
+    primary_valid_pages: int | None = None,
 ) -> str:
     """根据有效内容统计判定 raw 阶段状态。"""
     if total_rounds > 0 and valid_rounds == 0:
@@ -117,6 +118,12 @@ def classify_raw_collection_status(
     if failed_rounds > 0:
         return "degraded"
     if total_pages is not None and valid_pages is not None:
+        if primary_valid_pages is not None:
+            if total_pages > 0 and primary_valid_pages == 0:
+                return "degraded"
+            if total_pages > primary_valid_pages:
+                return "degraded"
+            return "done"
         if total_pages > 0 and valid_pages == 0:
             return "degraded"
         if total_pages > valid_pages:
@@ -134,6 +141,48 @@ def completed_raw_pages(rows: list[tuple[int, str]], expected_rounds: int) -> se
         if status == "done":
             page_round_count[page] = page_round_count.get(page, 0) + 1
     return {page for page, count in page_round_count.items() if count >= expected_rounds}
+
+
+def summarize_raw_content_quality(
+    rows: list[tuple[int, int, str, str, str, int | None, dict | None]],
+    *,
+    total_pages: int,
+    expected_rounds: int,
+    visual_document: bool,
+) -> dict:
+    """Summarize raw rows without treating empty OCR as primary content loss."""
+    raw_contents = [content or "" for (_page, _round, _source, content, _status, _duration, _metadata) in rows]
+    total_rounds = total_pages * expected_rounds
+    valid_rounds = sum(1 for content in raw_contents if content.strip())
+    valid_pages = len({
+        page
+        for (page, _round, _source, content, _status, _duration, _metadata) in rows
+        if (content or "").strip()
+    })
+    primary_source_types = {"text", "vision"} if visual_document else {"text"}
+    primary_valid_pages = len({
+        page
+        for (page, _round, source_type, content, status, _duration, _metadata) in rows
+        if source_type in primary_source_types and status == "done" and (content or "").strip()
+    })
+    optional_empty_rounds = sum(
+        1
+        for (_page, _round, source_type, content, status, _duration, _metadata) in rows
+        if visual_document
+        and source_type == "ocr"
+        and status != "failed"
+        and not (content or "").strip()
+    )
+    return {
+        "total_rounds": total_rounds,
+        "valid_rounds": valid_rounds,
+        "empty_rounds": max(total_rounds - valid_rounds, 0),
+        "valid_pages": valid_pages,
+        "empty_pages": max(total_pages - valid_pages, 0),
+        "primary_valid_pages": primary_valid_pages,
+        "primary_empty_pages": max(total_pages - primary_valid_pages, 0),
+        "optional_empty_rounds": optional_empty_rounds,
+    }
 
 
 async def _exec_round_1_text(
@@ -485,11 +534,19 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
         ).where(KbRawData.document_id == doc_id)
     )
     raw_result_rows = raw_rows.all()
-    raw_contents = [content or "" for (_page, _round, _source, content, _status, _duration, _metadata) in raw_result_rows]
-    total_rounds = total_pages * expected_rounds
-    valid_rounds = sum(1 for content in raw_contents if content.strip())
-    empty_rounds = max(total_rounds - valid_rounds, 0)
-    valid_pages = len({page for (page, _round, _source, content, _status, _duration, _metadata) in raw_result_rows if (content or "").strip()})
+    quality = summarize_raw_content_quality(
+        raw_result_rows,
+        total_pages=total_pages,
+        expected_rounds=expected_rounds,
+        visual_document=is_pdf or is_image,
+    )
+    total_rounds = int(quality["total_rounds"])
+    valid_rounds = int(quality["valid_rounds"])
+    empty_rounds = int(quality["empty_rounds"])
+    valid_pages = int(quality["valid_pages"])
+    primary_valid_pages = int(quality["primary_valid_pages"])
+    primary_empty_pages = int(quality["primary_empty_pages"])
+    optional_empty_rounds = int(quality["optional_empty_rounds"])
     failed_row_count = sum(1 for (_page, _round, _source, _content, status, _duration, _metadata) in raw_result_rows if status == "failed")
     failed_pages = sorted({
         page
@@ -528,13 +585,17 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
         task_count=len(tasks),
         total_pages=total_pages,
         valid_pages=valid_pages,
+        primary_valid_pages=primary_valid_pages,
     )
     if doc.raw_status == "failed":
         logger.error("All raw collection tasks failed for doc_id=%d", doc_id)
     elif doc.raw_status == "degraded":
         logger.warning(
-            "Raw collection degraded for doc_id=%d: valid_rounds=%d empty_rounds=%d failed_rounds=%d",
-            doc_id, valid_rounds, empty_rounds, failed_count + failed_row_count,
+            (
+                "Raw collection degraded for doc_id=%d: valid_rounds=%d "
+                "empty_rounds=%d primary_empty_pages=%d failed_rounds=%d"
+            ),
+            doc_id, valid_rounds, empty_rounds, primary_empty_pages, failed_count + failed_row_count,
         )
     await db.commit()
 
@@ -550,8 +611,11 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
         "total_rounds": total_rounds,
         "valid_rounds": valid_rounds,
         "empty_rounds": empty_rounds,
+        "optional_empty_rounds": optional_empty_rounds,
         "valid_pages": valid_pages,
         "empty_pages": max(total_pages - valid_pages, 0),
+        "primary_valid_pages": primary_valid_pages,
+        "primary_empty_pages": primary_empty_pages,
         "failed_rounds": failed_count + failed_row_count,
         "rounds": all_results,
         "timing": {

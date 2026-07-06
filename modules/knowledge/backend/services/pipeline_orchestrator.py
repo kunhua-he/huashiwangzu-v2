@@ -272,7 +272,10 @@ def assess_stage_result(stage_name: str, result: dict, required: bool = True) ->
         valid_rounds = int(result.get("valid_rounds") or 0)
         if total_rounds > 0 and valid_rounds == 0:
             return StageAssessment("degraded", False, "raw_content_empty")
-        if int(result.get("empty_rounds") or 0) > 0 or status_value in DEGRADED_STATUSES:
+        primary_empty_pages = int(result.get("primary_empty_pages") or result.get("empty_pages") or 0)
+        if primary_empty_pages > 0:
+            return StageAssessment("degraded", True, "raw_content_partial")
+        if status_value in DEGRADED_STATUSES:
             return StageAssessment("degraded", True, "raw_content_partial")
 
     if stage_name == "fusion":

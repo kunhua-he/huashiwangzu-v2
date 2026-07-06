@@ -32,6 +32,7 @@ StageDef = pipeline_orchestrator.StageDef
 classify_fusion_status = fusion_service.classify_fusion_status
 classify_raw_collection_status = raw_collection_service.classify_raw_collection_status
 completed_raw_pages = raw_collection_service.completed_raw_pages
+summarize_raw_content_quality = raw_collection_service.summarize_raw_content_quality
 
 
 class _ScalarResult:
@@ -282,6 +283,63 @@ def test_raw_collection_classifies_missing_page_as_degraded():
     ) == "degraded"
 
 
+def test_raw_quality_treats_empty_visual_ocr_as_optional():
+    rows = [
+        (1, 1, "text", "local image description", "done", 120, {}),
+        (1, 2, "ocr", "", "degraded", 35, {"method": "tesseract_boxes", "words": []}),
+        (1, 3, "vision", "poster layout and text", "done", 18000, {}),
+    ]
+
+    quality = summarize_raw_content_quality(
+        rows,
+        total_pages=1,
+        expected_rounds=3,
+        visual_document=True,
+    )
+
+    assert quality["valid_rounds"] == 2
+    assert quality["empty_rounds"] == 1
+    assert quality["optional_empty_rounds"] == 1
+    assert quality["primary_valid_pages"] == 1
+    assert quality["primary_empty_pages"] == 0
+    assert classify_raw_collection_status(
+        total_rounds=quality["total_rounds"],
+        valid_rounds=quality["valid_rounds"],
+        failed_rounds=0,
+        task_count=3,
+        total_pages=1,
+        valid_pages=quality["valid_pages"],
+        primary_valid_pages=quality["primary_valid_pages"],
+    ) == "done"
+
+
+def test_raw_quality_degrades_when_visual_page_lacks_primary_content():
+    rows = [
+        (1, 1, "text", "", "degraded", 120, {}),
+        (1, 2, "ocr", "only ocr text", "done", 35, {"method": "tesseract_boxes"}),
+        (1, 3, "vision", "", "degraded", 18000, {}),
+    ]
+
+    quality = summarize_raw_content_quality(
+        rows,
+        total_pages=1,
+        expected_rounds=3,
+        visual_document=True,
+    )
+
+    assert quality["valid_rounds"] == 1
+    assert quality["primary_empty_pages"] == 1
+    assert classify_raw_collection_status(
+        total_rounds=quality["total_rounds"],
+        valid_rounds=quality["valid_rounds"],
+        failed_rounds=0,
+        task_count=3,
+        total_pages=1,
+        valid_pages=quality["valid_pages"],
+        primary_valid_pages=quality["primary_valid_pages"],
+    ) == "degraded"
+
+
 def test_raw_collection_only_skips_pages_with_all_rounds_done():
     rows = [
         (1, "done"),
@@ -293,6 +351,44 @@ def test_raw_collection_only_skips_pages_with_all_rounds_done():
     ]
 
     assert completed_raw_pages(rows, expected_rounds=3) == {2}
+
+
+def test_stage_assessment_allows_optional_raw_empty_rounds():
+    assessment = pipeline_orchestrator.assess_stage_result(
+        "raw",
+        {
+            "status": "done",
+            "total_rounds": 3,
+            "valid_rounds": 2,
+            "empty_rounds": 1,
+            "optional_empty_rounds": 1,
+            "empty_pages": 0,
+            "primary_empty_pages": 0,
+        },
+        required=True,
+    )
+
+    assert assessment.status == "done"
+    assert assessment.complete_for_dependencies is True
+
+
+def test_stage_assessment_degrades_raw_missing_primary_page():
+    assessment = pipeline_orchestrator.assess_stage_result(
+        "raw",
+        {
+            "status": "done",
+            "total_rounds": 3,
+            "valid_rounds": 1,
+            "empty_rounds": 2,
+            "empty_pages": 0,
+            "primary_empty_pages": 1,
+        },
+        required=True,
+    )
+
+    assert assessment.status == "degraded"
+    assert assessment.complete_for_dependencies is True
+    assert assessment.reason == "raw_content_partial"
 
 
 def test_fusion_classifies_all_empty_and_index_failure():

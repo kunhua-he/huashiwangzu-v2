@@ -87,7 +87,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     if (!wasOpen && !folderFiles.value[key]) {
       try {
         const data = await getFileList(key)
-        const children: FileTreeNode[] = (data.items || []).map((f) => {
+        const children: FileTreeNode[] = (data.items || []).filter((f) => !f.is_folder).map((f) => {
           const doc = kbDocMap.value[f.id]
           const node: FileTreeNode = {
             id: f.id, name: f.name, parent_id: key, is_folder: f.is_folder,
@@ -113,7 +113,13 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
         const nameMatch = !kw || n.name.toLowerCase().includes(kw)
         // 合并子文件夹和已加载的文件，文件夹在前
         const fileKids = folderFiles.value[n.id] || []
-        const allKids = [...n.children, ...fileKids].sort((a, b) => {
+        const seenKids = new Set<string>()
+        const allKids = [...n.children, ...fileKids].filter((child) => {
+          const childKey = `${child.is_folder ? 'folder' : 'file'}:${child.id}`
+          if (seenKids.has(childKey)) return false
+          seenKids.add(childKey)
+          return true
+        }).sort((a, b) => {
           if (a.is_folder !== b.is_folder) return a.is_folder ? -1 : 1
           if (!a.is_folder) return (b._created_at || '').localeCompare(a._created_at || '')
           return a.name.localeCompare(b.name)
@@ -494,12 +500,8 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
       }
     }
 
-    // 登记完握手一次进度
+    // 登记完握手一次进度；已登记文档由后端断点队列接管，不在前端打开时批量补跑。
     await handshakeAll()
-
-    // ── 补齐已登记但未完成的文档（已登记但 raw_status/fusion_status 仍非终态，且未在运行中） ──
-    // 用 liveProgressMap 判定状态，避免重复入队正在跑的
-    await retryPendingDocuments()
   }
 
   /**

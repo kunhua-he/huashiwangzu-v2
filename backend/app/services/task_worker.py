@@ -7,7 +7,9 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from sqlalchemy import and_, or_, select, update
@@ -20,14 +22,30 @@ logger = logging.getLogger("v2.task_worker")
 
 POLL_INTERVAL_SECONDS = 2.0
 RUNNING_TIMEOUT_SECONDS = 1200  # running 超过 20 分钟视为死任务，回收重排
+CONFIG_RELOAD_SECONDS = 5.0
+MAX_LANES_PER_PROCESS = 16
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "data" / "config" / "task_worker.json"
+
+
+@dataclass(frozen=True)
+class WorkerConfig:
+    worker_lanes_per_process: int = 1
+    poll_interval_seconds: float = POLL_INTERVAL_SECONDS
+    running_timeout_seconds: int = RUNNING_TIMEOUT_SECONDS
+    config_reload_seconds: float = CONFIG_RELOAD_SECONDS
 
 # task_type -> async handler(parameters: dict) -> dict | None
 TaskHandler = Callable[[dict], Awaitable[dict | None]]
 _HANDLERS: dict[str, TaskHandler] = {}
 
 _worker_task: asyncio.Task | None = None
+_lane_tasks: dict[int, asyncio.Task] = {}
+_retiring_lane_ids: set[int] = set()
+_next_lane_id = 1
 _stop_flag = False
 _last_active: datetime | None = None
+_runtime_config = WorkerConfig()
+_config_mtime: float | None = None
 
 
 def register_task_handler(task_type: str, handler: TaskHandler) -> None:
@@ -48,6 +66,83 @@ async def _echo_handler(parameters: dict) -> dict:
 _HANDLERS["_echo"] = _echo_handler
 
 
+def _clamp_int(value: object, default: int, min_value: int, max_value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(max_value, parsed))
+
+
+def _clamp_float(value: object, default: float, min_value: float, max_value: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(max_value, parsed))
+
+
+def _parse_worker_config(raw: dict | None) -> WorkerConfig:
+    raw = raw or {}
+    return WorkerConfig(
+        worker_lanes_per_process=_clamp_int(
+            raw.get("worker_lanes_per_process"),
+            WorkerConfig.worker_lanes_per_process,
+            0,
+            MAX_LANES_PER_PROCESS,
+        ),
+        poll_interval_seconds=_clamp_float(
+            raw.get("poll_interval_seconds"),
+            WorkerConfig.poll_interval_seconds,
+            0.2,
+            60.0,
+        ),
+        running_timeout_seconds=_clamp_int(
+            raw.get("running_timeout_seconds"),
+            WorkerConfig.running_timeout_seconds,
+            60,
+            24 * 60 * 60,
+        ),
+        config_reload_seconds=_clamp_float(
+            raw.get("config_reload_seconds"),
+            WorkerConfig.config_reload_seconds,
+            1.0,
+            300.0,
+        ),
+    )
+
+
+def _load_worker_config(force: bool = False) -> WorkerConfig:
+    global _config_mtime, _runtime_config
+    try:
+        stat = CONFIG_PATH.stat()
+    except FileNotFoundError:
+        if force:
+            _runtime_config = WorkerConfig()
+        return _runtime_config
+    except OSError as exc:
+        logger.warning("Task worker config stat failed: %s", exc)
+        return _runtime_config
+
+    if not force and _config_mtime == stat.st_mtime:
+        return _runtime_config
+
+    try:
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("config root must be an object")
+    except Exception as exc:
+        logger.warning("Task worker config load failed: %s", exc)
+        return _runtime_config
+
+    next_config = _parse_worker_config(raw)
+    if next_config != _runtime_config:
+        logger.info("Task worker config loaded: %s", next_config)
+    _runtime_config = next_config
+    _config_mtime = stat.st_mtime
+    return _runtime_config
+
+
 async def _reconcile_one_orphan(task: SystemTaskQueue, now: datetime) -> None:
     """Increment retry_count on an orphan task and fail it if over limit."""
     task.retry_count = (task.retry_count or 0) + 1
@@ -60,9 +155,10 @@ async def _reconcile_one_orphan(task: SystemTaskQueue, now: datetime) -> None:
         task.started_at = None
 
 
-async def _recover_stale_tasks(db) -> None:
+async def _recover_stale_tasks(db, running_timeout_seconds: int | None = None) -> None:
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(seconds=RUNNING_TIMEOUT_SECONDS)
+    timeout = running_timeout_seconds or _runtime_config.running_timeout_seconds
+    cutoff = now - timedelta(seconds=timeout)
 
     # Phase 1: timeout-reclaim — running tasks older than cutoff
     result = await db.execute(
@@ -112,7 +208,7 @@ async def _recover_orphan_running_tasks() -> None:
     """
     try:
         async with AsyncSessionLocal() as db:
-            await _recover_stale_tasks(db)
+            await _recover_stale_tasks(db, _runtime_config.running_timeout_seconds)
     except Exception as exc:
         logger.error("Orphan recovery failed: %s", exc)
 
@@ -227,33 +323,76 @@ async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: s
     await db.commit()
 
 
-async def _worker_loop() -> None:
+async def _worker_lane_loop(lane_id: int) -> None:
     global _last_active
-    logger.info("Task worker loop started")
-    # Startup: reclaim any orphan running tasks from a dead process
-    await _recover_orphan_running_tasks()
-    while not _stop_flag:
+    logger.info("Task worker lane %s started", lane_id)
+    while not _stop_flag and lane_id not in _retiring_lane_ids:
+        config = _runtime_config
         try:
             async with AsyncSessionLocal() as db:
-                await _recover_stale_tasks(db)
+                await _recover_stale_tasks(db, config.running_timeout_seconds)
                 task = await _claim_one_task(db)
             if task is None:
-                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                await asyncio.sleep(config.poll_interval_seconds)
                 continue
             _last_active = datetime.now(timezone.utc)
             ok, result, error = await _run_handler(task)
             async with AsyncSessionLocal() as db:
                 await _finish_task(db, task.id, ok, result, error)
         except Exception as exc:
-            logger.error("Task worker loop error: %s", exc)
-            await asyncio.sleep(POLL_INTERVAL_SECONDS)
-    logger.info("Task worker loop stopped")
+            logger.error("Task worker lane %s error: %s", lane_id, exc)
+            await asyncio.sleep(config.poll_interval_seconds)
+    logger.info("Task worker lane %s stopped", lane_id)
+
+
+def _start_lane() -> None:
+    global _next_lane_id
+    lane_id = _next_lane_id
+    _next_lane_id += 1
+    _lane_tasks[lane_id] = asyncio.create_task(_worker_lane_loop(lane_id))
+
+
+def _reconcile_lanes(target_count: int) -> None:
+    for lane_id, task in list(_lane_tasks.items()):
+        if task.done():
+            _lane_tasks.pop(lane_id, None)
+            _retiring_lane_ids.discard(lane_id)
+
+    active_count = len(_lane_tasks)
+    if active_count <= target_count:
+        _retiring_lane_ids.clear()
+
+    while active_count < target_count:
+        _start_lane()
+        active_count += 1
+
+    if active_count > target_count:
+        active_lane_ids = sorted(_lane_tasks.keys(), reverse=True)
+        for lane_id in active_lane_ids[: active_count - target_count]:
+            _retiring_lane_ids.add(lane_id)
+
+
+async def _worker_supervisor_loop() -> None:
+    logger.info("Task worker supervisor started")
+    _load_worker_config(force=True)
+    await _recover_orphan_running_tasks()
+    while not _stop_flag:
+        config = _load_worker_config()
+        _reconcile_lanes(config.worker_lanes_per_process)
+        await asyncio.sleep(config.config_reload_seconds)
+
+    _reconcile_lanes(0)
+    if _lane_tasks:
+        await asyncio.gather(*_lane_tasks.values(), return_exceptions=True)
+    logger.info("Task worker supervisor stopped")
 
 
 def start_worker() -> None:
     global _worker_task, _stop_flag
+    if _worker_task is not None and not _worker_task.done():
+        return
     _stop_flag = False
-    _worker_task = asyncio.create_task(_worker_loop())
+    _worker_task = asyncio.create_task(_worker_supervisor_loop())
 
 
 async def stop_worker() -> None:
@@ -261,14 +400,22 @@ async def stop_worker() -> None:
     _stop_flag = True
     if _worker_task:
         try:
-            await asyncio.wait_for(_worker_task, timeout=POLL_INTERVAL_SECONDS + 1)
+            timeout = _runtime_config.poll_interval_seconds + _runtime_config.config_reload_seconds + 1
+            await asyncio.wait_for(_worker_task, timeout=timeout)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             _worker_task.cancel()
+            for lane_task in _lane_tasks.values():
+                lane_task.cancel()
 
 
 def worker_health() -> dict:
     return {
         "running": _worker_task is not None and not _worker_task.done(),
+        "configured_lanes_per_process": _runtime_config.worker_lanes_per_process,
+        "active_lanes": len([task for task in _lane_tasks.values() if not task.done()]),
+        "retiring_lanes": sorted(_retiring_lane_ids),
+        "config_path": str(CONFIG_PATH),
+        "config_reload_seconds": _runtime_config.config_reload_seconds,
         "registered_handlers": sorted(_HANDLERS.keys()),
         "last_active": _last_active.isoformat() if _last_active else None,
         "process_local": True,

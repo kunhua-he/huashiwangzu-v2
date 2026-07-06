@@ -49,3 +49,32 @@ def test_task_worker_treats_legacy_code_nonzero_as_failure() -> None:
 
     assert failed is True
     assert error == "legacy tool failed"
+
+
+def test_task_worker_config_defaults_are_safe() -> None:
+    config = task_worker._parse_worker_config({})
+
+    assert config.worker_lanes_per_process == 1
+    assert config.poll_interval_seconds == 2.0
+    assert config.running_timeout_seconds == 1200
+    assert config.config_reload_seconds == 5.0
+
+
+def test_task_worker_config_clamps_lane_count() -> None:
+    config = task_worker._parse_worker_config({
+        "worker_lanes_per_process": 999,
+        "poll_interval_seconds": 0,
+        "running_timeout_seconds": 1,
+        "config_reload_seconds": 0,
+    })
+
+    assert config.worker_lanes_per_process == task_worker.MAX_LANES_PER_PROCESS
+    assert config.poll_interval_seconds == 0.2
+    assert config.running_timeout_seconds == 60
+    assert config.config_reload_seconds == 1.0
+
+
+def test_task_worker_config_allows_zero_lanes_for_hot_pause() -> None:
+    config = task_worker._parse_worker_config({"worker_lanes_per_process": 0})
+
+    assert config.worker_lanes_per_process == 0

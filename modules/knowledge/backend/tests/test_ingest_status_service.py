@@ -270,7 +270,7 @@ def test_ingest_status_parser_empty_degraded_can_be_search_ready() -> None:
     assert payload["pipeline_status"] == "degraded"
     assert payload["stage_summary"]["parse"]["ready"] is True
     assert payload["search_ready"] is True
-    assert payload["deep_ready"] is True
+    assert payload["deep_ready"] is False
     assert payload["last_error"] == "Parser returned no content blocks: empty_result"
 
 

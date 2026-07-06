@@ -191,6 +191,9 @@ def build_ingest_status_payload(
     vector_status = doc.vector_status or "pending"
     raw_status = getattr(doc, "raw_status", "pending") or "pending"
     fusion_status = getattr(doc, "fusion_status", "pending") or "pending"
+    profile_status = getattr(doc, "profile_status", "pending") or "pending"
+    graph_status = getattr(doc, "graph_status", "pending") or "pending"
+    relation_status = getattr(doc, "relation_status", "pending") or "pending"
     task_status = task.status if task is not None else None
     task_result = _json_or_none(task.result if task is not None else None) or {}
     latest_run_status = latest_run.status if latest_run is not None else ""
@@ -218,10 +221,21 @@ def build_ingest_status_payload(
         and (doc.total_chunks or 0) > 0
     )
     paused = source_available and latest_run_status == "paused"
-    deep_ready = source_available and raw_status == "done" and fusion_status == "done" and not paused
-    profile_ready = source_available and profile_count > 0
-    graph_ready = source_available and graph_entity_count > 0
-    relation_ready = source_available and relation_count > 0
+    effective_profile_status = "done" if profile_status == "pending" and profile_count > 0 else profile_status
+    effective_graph_status = "done" if graph_status == "pending" and graph_entity_count > 0 else graph_status
+    effective_relation_status = "done" if relation_status == "pending" and relation_count > 0 else relation_status
+    deep_ready = (
+        source_available
+        and raw_status == "done"
+        and fusion_status == "done"
+        and effective_profile_status == "done"
+        and effective_graph_status == "done"
+        and effective_relation_status == "done"
+        and not paused
+    )
+    profile_ready = source_available and effective_profile_status == "done"
+    graph_ready = source_available and effective_graph_status == "done"
+    relation_ready = source_available and effective_relation_status == "done"
     stage_lookup = _stage_run_lookup(stage_runs or [])
     raw_semantic, raw_reason = _stage_semantic(stage_lookup.get("raw"), raw_status == "done", 1 if raw_status == "done" else 0)
     fusion_semantic, fusion_reason = _stage_semantic(stage_lookup.get("fusion"), fusion_status == "done", 1 if fusion_status == "done" else 0)
@@ -234,9 +248,9 @@ def build_ingest_status_payload(
         "vector": _stage(vector_status, ready=search_ready, count=doc.total_chunks or 0),
         "raw": _stage(raw_status, ready=source_available and raw_status == "done", semantic=raw_semantic, reason=raw_reason),
         "fusion": _stage(fusion_status, ready=source_available and fusion_status == "done", semantic=fusion_semantic, reason=fusion_reason),
-        "profile": _stage("done" if profile_count > 0 else "pending", ready=profile_ready, count=profile_count, semantic=profile_semantic, reason=profile_reason),
-        "graph": _stage("done" if graph_entity_count > 0 else "pending", ready=graph_ready, count=graph_entity_count, semantic=graph_semantic, reason=graph_reason),
-        "relation": _stage("done" if relation_count > 0 else "pending", ready=relation_ready, count=relation_count, semantic=relation_semantic, reason=relation_reason),
+        "profile": _stage(effective_profile_status, ready=profile_ready, count=profile_count, semantic=profile_semantic, reason=profile_reason),
+        "graph": _stage(effective_graph_status, ready=graph_ready, count=graph_entity_count, semantic=graph_semantic, reason=graph_reason),
+        "relation": _stage(effective_relation_status, ready=relation_ready, count=relation_count, semantic=relation_semantic, reason=relation_reason),
     }
     if pause_semantic:
         stage_summary["pause"] = _stage("paused", ready=False, semantic=pause_semantic, reason=pause_reason)
@@ -257,20 +271,30 @@ def build_ingest_status_payload(
             task.error_message if task is not None and task.error_message else None
         ) or doc.parse_error or task_result.get("error")
 
+    all_stage_statuses = (
+        parse_status,
+        vector_status,
+        raw_status,
+        fusion_status,
+        effective_profile_status,
+        effective_graph_status,
+        effective_relation_status,
+    )
+
     if not source_available:
         pipeline_status = "source_unavailable"
     elif paused:
         pipeline_status = "paused"
-    elif any(s in FAILED_STAGE_STATUSES for s in (parse_status, vector_status, raw_status, fusion_status)):
+    elif any(s in FAILED_STAGE_STATUSES for s in all_stage_statuses):
         pipeline_status = "failed"
     elif task_status == "failed":
         pipeline_status = "failed"
-    elif any(s in DEGRADED_STAGE_STATUSES for s in (parse_status, vector_status, raw_status, fusion_status)):
+    elif any(s in DEGRADED_STAGE_STATUSES for s in all_stage_statuses):
         pipeline_status = "degraded"
     elif task_result.get("status") in DEGRADED_STAGE_STATUSES:
         pipeline_status = "degraded"
     elif task_status == "running" or any(
-        s in RUNNING_STAGE_STATUSES for s in (parse_status, vector_status, raw_status, fusion_status)
+        s in RUNNING_STAGE_STATUSES for s in all_stage_statuses
     ):
         pipeline_status = "running"
     elif task_status == "pending":

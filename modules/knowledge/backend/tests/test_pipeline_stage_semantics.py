@@ -466,6 +466,74 @@ async def test_orchestrator_updates_document_status_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_skips_done_deep_stages_when_not_stale(monkeypatch):
+    async def stale_none(*_args, **_kwargs):
+        return []
+
+    async def should_not_run(**_kwargs):
+        raise AssertionError("done stage should be resumed as skipped")
+
+    monkeypatch.setattr(
+        pipeline_orchestrator,
+        "STAGE_REGISTRY",
+        [
+            StageDef("profile", ["fusion"], False, should_not_run),
+            StageDef("graph", ["fusion"], False, should_not_run),
+            StageDef("relations", ["profile", "graph"], False, should_not_run, requires=["profile", "graph"]),
+        ],
+    )
+    monkeypatch.setattr(pipeline_orchestrator, "detect_stale_stages", stale_none)
+    monkeypatch.setattr(pipeline_orchestrator, "record_artifact_hash", _hash_stage)
+
+    db = _FakeDb()
+    db.doc.profile_status = "done"
+    db.doc.graph_status = "done"
+    db.doc.relation_status = "done"
+
+    result = await pipeline_orchestrator.run_pipeline(db, 123, 1, 456, 1)
+
+    assert result["status"] == "done"
+    assert result["steps"]["profile"]["reason"] == "already done"
+    assert result["steps"]["graph"]["reason"] == "already done"
+    assert result["steps"]["relations"]["reason"] == "already done"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_force_fusion_reruns_downstream(monkeypatch):
+    calls: list[str] = []
+
+    async def stale_none(*_args, **_kwargs):
+        return []
+
+    async def stage_fn(**_kwargs):
+        calls.append(_kwargs["document_id"] and "called")
+        return {"status": "done"}
+
+    monkeypatch.setattr(
+        pipeline_orchestrator,
+        "STAGE_REGISTRY",
+        [
+            StageDef("fusion", ["raw"], False, stage_fn, requires=[]),
+            StageDef("profile", ["fusion"], False, stage_fn, requires=["fusion"]),
+            StageDef("relations", ["profile"], False, stage_fn, requires=["profile"]),
+        ],
+    )
+    monkeypatch.setattr(pipeline_orchestrator, "detect_stale_stages", stale_none)
+    monkeypatch.setattr(pipeline_orchestrator, "record_artifact_hash", _hash_stage)
+    monkeypatch.setattr(pipeline_orchestrator, "mark_stale", _noop)
+
+    db = _FakeDb()
+    db.doc.fusion_status = "done"
+    db.doc.profile_status = "done"
+    db.doc.relation_status = "done"
+
+    result = await pipeline_orchestrator.run_pipeline(db, 123, 1, 456, 1, force_fusion=True)
+
+    assert result["status"] == "done"
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_degraded_empty_required_stage_skips_downstream(monkeypatch):
     async def empty_raw(**_kwargs):
         return {

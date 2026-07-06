@@ -42,7 +42,7 @@ class StageDef:
     """单个 pipeline stage 定义。"""
     name: str
     deps: list[str]            # 依赖的上游 stage
-    always_run: bool           # True = 每次 pipeline 都执行（不受 stale 影响）
+    always_run: bool           # True = 每次 pipeline 都执行（通常仅用于测试/手动强制）
     fn: StageFn                # 异步执行函数
     requires: list[str] = field(default_factory=list)  # 必须前置执行完的 stage
 
@@ -311,6 +311,13 @@ def _set_document_stage_status(doc: KbDocument, stage_name: str, status: str) ->
     setattr(doc, field_name, status)
 
 
+def _get_document_stage_status(doc: KbDocument, stage_name: str) -> str:
+    field_name = STAGE_STATUS_FIELDS.get(stage_name)
+    if not field_name:
+        return "pending"
+    return str(getattr(doc, field_name, "pending") or "pending")
+
+
 # ── Stage 注册表 ──────────────────────────────────────
 # 顺序即执行顺序
 STAGE_REGISTRY: list[StageDef] = [
@@ -323,18 +330,33 @@ STAGE_REGISTRY: list[StageDef] = [
         fn=fuse_all_pages, requires=["raw"],
     ),
     StageDef(
-        name="profile", deps=["fusion"], always_run=True,
+        name="profile", deps=["fusion"], always_run=False,
         fn=generate_document_profile, requires=["fusion"],
     ),
     StageDef(
-        name="graph", deps=["fusion"], always_run=True,
+        name="graph", deps=["fusion"], always_run=False,
         fn=process_document_entities_from_fusions, requires=["fusion"],
     ),
     StageDef(
-        name="relations", deps=["profile", "graph"], always_run=True,
+        name="relations", deps=["profile", "graph"], always_run=False,
         fn=compute_file_relations, requires=["profile", "graph"],
     ),
 ]
+
+
+def _expand_stale_stages(stages: set[str]) -> set[str]:
+    """Include all downstream stages affected by changed or forced upstream work."""
+    expanded = set(stages)
+    changed = True
+    while changed:
+        changed = False
+        for stage_def in STAGE_REGISTRY:
+            if stage_def.name in expanded:
+                continue
+            if any(dep in expanded for dep in stage_def.deps):
+                expanded.add(stage_def.name)
+                changed = True
+    return expanded
 
 
 async def run_pipeline(
@@ -386,6 +408,7 @@ async def run_pipeline(
     if force_fusion:
         await mark_stale(db, document_id, "fusion")
         stale_stages.add("fusion")
+    stale_stages = _expand_stale_stages(stale_stages)
 
     # 记录当前源文件 hash
     source_started = _now()
@@ -433,8 +456,7 @@ async def run_pipeline(
             pass
         elif step_name not in stale_stages:
             # 非 stale 且已 done → 跳过
-            status_field = f"{step_name}_status"
-            current_status = getattr(doc, status_field, "pending")
+            current_status = _get_document_stage_status(doc, step_name)
             if current_status == "done":
                 steps[step_name] = {"status": "skipped", "reason": "already done"}
                 completed_stages.add(step_name)
@@ -515,6 +537,8 @@ async def run_pipeline(
         stage_started = _now()
         stage_timer = perf_counter()
         try:
+            _set_document_stage_status(doc, step_name, "running")
+            await db.commit()
             fn_kwargs: dict[str, Any] = {"db": db, "document_id": document_id, "owner_id": owner_id}
             if step_name == "raw":
                 fn_kwargs = {"db": db, "doc_id": document_id, "owner_id": owner_id, "file_id": file_id, "user_id": user_id}

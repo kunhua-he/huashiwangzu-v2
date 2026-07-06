@@ -41,6 +41,17 @@ def _stage(key: str, label: str, done: int, total: int, count: int | None = None
     return item
 
 
+def _stage_with_status(key: str, label: str, done: int, total: int, status: str, count: int | None = None) -> dict:
+    item = _stage(key, label, done, total, count=count)
+    normalized = status or item["status"]
+    if normalized in {"done", "running", "pending", "failed", "degraded", "paused", "source_unavailable"}:
+        item["status"] = normalized
+        if normalized == "done":
+            item["done"] = max(done, total, 1)
+            item["percent"] = 100
+    return item
+
+
 async def get_document_progress(db: AsyncSession, document_id: int, owner_id: int) -> dict:
     """聚合单文档全链路细颗粒进度。"""
     dr = await db.execute(
@@ -105,30 +116,36 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
     paused = latest_run is not None and latest_run.status == "paused"
 
     tp = total_pages
+    raw_status = doc.raw_status or "pending"
+    fusion_status = doc.fusion_status or "pending"
+    profile_status = getattr(doc, "profile_status", "pending") or "pending"
+    graph_status = getattr(doc, "graph_status", "pending") or "pending"
+    relation_status = getattr(doc, "relation_status", "pending") or "pending"
+    effective_profile_status = "done" if profile_status == "pending" and profile_done > 0 else profile_status
+    effective_graph_status = "done" if graph_status == "pending" and entity_count > 0 else graph_status
+    effective_relation_status = "done" if relation_status == "pending" and relation_count > 0 else relation_status
     stages = [
         _stage("text", "提取文字", round_done.get(1, 0), tp),
         _stage("ocr", "识别截图", round_done.get(2, 0), tp),
         _stage("vision", "理解版面", round_done.get(3, 0), tp),
-        _stage("fusion", "交叉印证", fusion_done, tp),
-        _stage("profile", "提炼画像", profile_done, 1),
-        _stage("graph", "构建图谱", 1 if entity_count > 0 else 0, 1, count=entity_count),
-        _stage("relation", "关联织网", 1 if relation_count > 0 else 0, 1, count=relation_count),
+        _stage_with_status("fusion", "交叉印证", fusion_done, tp, fusion_status),
+        _stage_with_status("profile", "提炼画像", profile_done, 1, effective_profile_status, count=profile_done),
+        _stage_with_status("graph", "构建图谱", 1 if entity_count > 0 else 0, 1, effective_graph_status, count=entity_count),
+        _stage_with_status("relation", "关联织网", 1 if relation_count > 0 else 0, 1, effective_relation_status, count=relation_count),
     ]
 
     # 整体状态:raw_status / fusion_status 为权威态;细分阶段算百分比
-    raw_status = doc.raw_status or "pending"
-    fusion_status = doc.fusion_status or "pending"
     if not source.available:
         overall_status = "source_unavailable"
     elif paused:
         overall_status = "paused"
-    elif raw_status == "failed" or fusion_status == "failed":
+    elif any(s == "failed" for s in (raw_status, fusion_status, effective_profile_status, effective_graph_status, effective_relation_status)):
         overall_status = "failed"
-    elif raw_status == "degraded" or fusion_status == "degraded":
+    elif any(s == "degraded" for s in (raw_status, fusion_status, effective_profile_status, effective_graph_status, effective_relation_status)):
         overall_status = "degraded"
-    elif profile_done > 0 and fusion_done >= tp and tp > 0:
+    elif all(s == "done" for s in (raw_status, fusion_status, effective_profile_status, effective_graph_status, effective_relation_status)):
         overall_status = "done"
-    elif raw_status == "pending" and fusion_status == "pending":
+    elif all(s == "pending" for s in (raw_status, fusion_status, effective_profile_status, effective_graph_status, effective_relation_status)):
         overall_status = "pending"
     else:
         overall_status = "running"

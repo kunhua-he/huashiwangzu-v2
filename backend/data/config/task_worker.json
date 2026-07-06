@@ -1,6 +1,9 @@
 {
-  "worker_lanes_per_process": 2,
+  "worker_lanes_per_process": 24,
+  "max_lanes_per_process": 32,
   "poll_interval_seconds": 2.0,
   "running_timeout_seconds": 1200,
-  "config_reload_seconds": 5.0
+  "config_reload_seconds": 5.0,
+  "reclaim_running_on_startup": true,
+  "startup_reclaim_min_age_seconds": 10
 }

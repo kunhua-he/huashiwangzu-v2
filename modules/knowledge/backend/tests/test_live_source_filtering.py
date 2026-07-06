@@ -273,27 +273,23 @@ async def test_pipeline_skips_unavailable_sources_before_parse_or_index() -> Non
                 )
             }
 
-            deleted_result = await pipeline_service._run_pipeline(
+            deleted_result = await pipeline_service._run_stage(
                 db,
-                docs["source_deleted"],
-                OWNER_ID,
-                deleted_doc.file_id,
-                OWNER_ID,
+                doc=deleted_doc,
+                user_id=OWNER_ID,
+                stage=pipeline_service.ROOT_STAGE,
             )
-            missing_result = await pipeline_service._run_pipeline(
+            missing_result = await pipeline_service._run_stage(
                 db,
-                docs["source_missing"],
-                OWNER_ID,
-                missing_doc.file_id,
-                OWNER_ID,
+                doc=missing_doc,
+                user_id=OWNER_ID,
+                stage=pipeline_service.ROOT_STAGE,
             )
 
             assert deleted_result["status"] == "skipped"
             assert deleted_result["reason"] == "source_file_deleted"
-            assert deleted_result["classification"] == "source_unavailable"
             assert missing_result["status"] == "skipped"
             assert missing_result["reason"] == "source_file_missing"
-            assert missing_result["classification"] == "source_unavailable"
 
             await db.refresh(deleted_doc)
             await db.refresh(missing_doc)

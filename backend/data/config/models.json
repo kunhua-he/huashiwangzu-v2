@@ -182,6 +182,12 @@
       "primary": "gpt-5.5-vision",
       "fallback_on_explicit_profile": true,
       "fallback_chain": ["mimo", "qwen3-vl"],
+      "image_preprocess": {
+        "max_side": 1600,
+        "max_bytes": 1048576,
+        "jpeg_quality_start": 84,
+        "jpeg_quality_floor": 72
+      },
       "profiles": {
         "gpt-5.5-vision": {
           "provider": "gptstore-text",
@@ -212,9 +218,30 @@
       "fallback_profile": "deepseek-v4-flash",
       "pause_after_fallback": true,
       "pipeline_concurrency": {
-        "raw_collect": 5,
+        "raw_collect": 12,
+        "raw_text": 32,
+        "raw_ocr": 16,
+        "raw_vision": 12,
         "page_fusion": 6,
-        "entity_extract": 6
+        "entity_extract": 6,
+        "model_call_global": 20
+      },
+      "image_preprocess": {
+        "raw_ocr_max_side": 1600,
+        "raw_ocr_max_bytes": 1048576,
+        "raw_ocr_jpeg_quality_start": 84,
+        "raw_ocr_jpeg_quality_floor": 72
+      },
+      "pipeline_priorities": {
+        "source_validate": 12,
+        "parse_index": 11,
+        "raw_text": 11,
+        "raw_ocr": 11,
+        "raw_vision": 8,
+        "fusion": 7,
+        "profile": 6,
+        "graph": 6,
+        "relations": 5
       },
       "stages": {
         "raw_ocr": "gpt-5.5-vision",

@@ -1,10 +1,4 @@
-"""Unified ingest status for knowledge documents.
-
-The queue table is framework-owned, but knowledge owns the business meaning of
-its kb_pipeline tasks. This service reads queue rows by parsing task parameters
-for document_id so callers can distinguish "queued" from "searchable" and
-"deep analysis complete".
-"""
+"""Unified ingest status for knowledge documents."""
 from __future__ import annotations
 
 import json
@@ -73,7 +67,7 @@ async def find_latest_pipeline_task(
     db: AsyncSession,
     document_id: int,
 ) -> SystemTaskQueue | None:
-    """Find the newest kb_pipeline task whose parameters name document_id."""
+    """Find the newest knowledge pipeline stage task whose parameters name document_id."""
     document_id_value = int(document_id)
     # Narrow in SQL first. Historical queue rows store parameters as text JSON, so
     # keep the final Python parser as the contract check while avoiding a full
@@ -84,7 +78,7 @@ async def find_latest_pipeline_task(
         select(SystemTaskQueue)
         .where(
             SystemTaskQueue.module == "knowledge",
-            SystemTaskQueue.task_type == "kb_pipeline",
+            SystemTaskQueue.task_type == "kb_pipeline_stage",
             or_(
                 SystemTaskQueue.parameters.contains(needle_with_space),
                 SystemTaskQueue.parameters.contains(needle_without_space),
@@ -157,9 +151,11 @@ def _run_payload(run: KbPipelineRun | None) -> dict | None:
 def _task_payload(task: SystemTaskQueue | None) -> dict | None:
     if task is None:
         return None
+    params = _load_task_parameters(task.parameters)
     return {
         "task_id": task.id,
         "task_type": task.task_type,
+        "stage": params.get("stage"),
         "status": task.status,
         "retry_count": task.retry_count,
         "max_retries": task.max_retries,
@@ -196,6 +192,8 @@ def build_ingest_status_payload(
     relation_status = getattr(doc, "relation_status", "pending") or "pending"
     task_status = task.status if task is not None else None
     task_result = _json_or_none(task.result if task is not None else None) or {}
+    task_params = _load_task_parameters(getattr(task, "parameters", None) if task is not None else None)
+    active_task_stage = str(task_params.get("stage") or "")
     latest_run_status = latest_run.status if latest_run is not None else ""
     latest_run_reason = latest_run.reason if latest_run is not None else ""
     stored_source_reason = document_source_unavailable_reason(doc)
@@ -262,6 +260,8 @@ def build_ingest_status_payload(
         (key for key in stage_order if not stage_summary[key]["ready"]),
         "complete",
     )
+    if task_status in ACTIVE_TASK_STATUSES and active_task_stage:
+        current_stage = active_task_stage
     if paused:
         current_stage = "paused"
     if not source_available:

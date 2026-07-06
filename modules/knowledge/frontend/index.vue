@@ -24,7 +24,7 @@
         <div v-else-if="!fileTree.length" class="empty-tip">暂无可分析文件</div>
         <button
           v-for="node in visibleTree"
-          :key="node.id + (node.is_folder ? 'd' : 'f')"
+          :key="node.node_key"
           class="tree-node"
           :style="{ paddingLeft: (node._depth || 0) * 16 + 10 + 'px' }"
           :class="{ active: activeId && node.kb_doc_id === activeId }"

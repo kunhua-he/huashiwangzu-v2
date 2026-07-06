@@ -16,6 +16,7 @@ from .image_analysis import (
     build_local_summary,
     build_vlm_prompt,
     should_use_vlm,
+    strip_png_text_chunks,
 )
 
 router = APIRouter(prefix="/api/image-vision", tags=["image-vision"])
@@ -74,6 +75,9 @@ def _classify_vlm_failure(exc: Exception) -> dict[str, object]:
 
 def _prepare_vlm_image(raw: bytes, ext: str) -> tuple[bytes, str, dict[str, object]]:
     original_mime = MIME_TYPE_MAP.get(ext, "image/jpeg")
+    cleanup_info: dict[str, object] | None = None
+    if ext.lower().lstrip(".") == "png":
+        raw, cleanup_info = strip_png_text_chunks(raw)
     try:
         from PIL import Image
 
@@ -87,6 +91,7 @@ def _prepare_vlm_image(raw: bytes, ext: str) -> tuple[bytes, str, dict[str, obje
                     "original_width": width,
                     "original_height": height,
                     "mime_type": original_mime,
+                    "png_text_chunk_cleanup": cleanup_info,
                 }
             image.thumbnail((MAX_VLM_IMAGE_SIDE, MAX_VLM_IMAGE_SIDE))
             rgb = image.convert("RGB")
@@ -103,6 +108,7 @@ def _prepare_vlm_image(raw: bytes, ext: str) -> tuple[bytes, str, dict[str, obje
                 "sent_height": rgb.height,
                 "mime_type": "image/jpeg",
                 "reason": "vlm_context_budget",
+                "png_text_chunk_cleanup": cleanup_info,
             }
     except Exception as exc:
         return raw, original_mime, {

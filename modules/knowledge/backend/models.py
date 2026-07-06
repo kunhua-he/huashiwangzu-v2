@@ -577,7 +577,7 @@ class KbPipelineRun(Base, TimestampMixin):
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     file_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    trigger: Mapped[str] = mapped_column(String(64), default="kb_pipeline")
+    trigger: Mapped[str] = mapped_column(String(64), default="kb_pipeline_stage")
     status: Mapped[str] = mapped_column(String(32), default="running")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)

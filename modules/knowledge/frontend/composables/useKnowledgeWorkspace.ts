@@ -14,6 +14,7 @@ import {
   getProgress,
   getProgressBatch,
   getRelations,
+  listKnowledgeDocuments,
   parseJsonField,
   type DocumentProfile,
   type DocumentProgress,
@@ -49,6 +50,10 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
   const folderFiles = ref<Record<number, FileTreeNode[]>>({})  // folder_id → 文件节点列表
   const kbDocMap = ref<Record<number, KnowledgeDocument>>({})
   const liveProgressMap = ref<Record<number, DocumentProgress>>({})
+
+  const DOCUMENT_PAGE_SIZE = 100
+  const FILE_PAGE_SIZE = 200
+  const PROGRESS_BATCH_SIZE = 100
 
   // ── 树节点状态/百分比实时派生（从 liveProgressMap 现查，不存静态快照） ──
   function getNodeLiveStatus(node: FileTreeNode): string | undefined {
@@ -86,11 +91,12 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     // 展开时加载文件夹内文件（仅一次）
     if (!wasOpen && !folderFiles.value[key]) {
       try {
-        const data = await getFileList(key)
-        const children: FileTreeNode[] = (data.items || []).filter((f) => !f.is_folder).map((f) => {
+        const items = await loadAllFilesInFolder(key)
+        const children: FileTreeNode[] = items.filter((f) => !f.is_folder).map((f) => {
           const doc = kbDocMap.value[f.id]
           const node: FileTreeNode = {
             id: f.id, name: f.name, parent_id: key, is_folder: f.is_folder,
+            node_key: `${f.is_folder ? 'folder' : 'file'}:${f.id}`,
             children: [], _depth: 0, _open: false, _ext: f.extension || '',
             _pct: null, _created_at: f.created_at || '',
           }
@@ -359,18 +365,38 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     await openDocument(doc)
   }
 
+  async function loadAllKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+    const all: KnowledgeDocument[] = []
+    for (let page = 1; page <= 100; page += 1) {
+      const data = await listKnowledgeDocuments(page, DOCUMENT_PAGE_SIZE)
+      all.push(...(data.items || []))
+      if (all.length >= data.total || (data.items || []).length < DOCUMENT_PAGE_SIZE) break
+    }
+    return all
+  }
+
+  async function loadAllFilesInFolder(folderId: number): Promise<Awaited<ReturnType<typeof getFileList>>['items']> {
+    const all: Awaited<ReturnType<typeof getFileList>>['items'] = []
+    for (let page = 1; page <= 100; page += 1) {
+      const data = await getFileList(folderId, page, FILE_PAGE_SIZE)
+      all.push(...(data.items || []))
+      if (all.length >= data.total || (data.items || []).length < FILE_PAGE_SIZE) break
+    }
+    return all
+  }
+
   async function loadFileTree() {
     treeLoading.value = true
     treeError.value = ''
     try {
       const [folders, docs] = await Promise.all([
         getFileTree(),
-        apiGet<{ items: KnowledgeDocument[] }>('/knowledge/documents?page=1&page_size=100'),
+        loadAllKnowledgeDocuments(),
       ])
-      documents.value = docs.items
+      documents.value = docs
       const tree = buildFolderTree(folders)
       const docByFileId: Record<number, KnowledgeDocument> = {}
-      for (const d of docs.items) docByFileId[d.file_id] = d
+      for (const d of docs) docByFileId[d.file_id] = d
       kbDocMap.value = docByFileId
 
       function attachDocs(nodes: FileTreeNode[]) {
@@ -395,13 +421,14 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
 
       // 加载根目录文件（folder_id=0 的文件和文件夹混合）
       try {
-        const rootData = await getFileList(0)
+        const rootItems = await loadAllFilesInFolder(0)
         const rootFiles: FileTreeNode[] = []
-        for (const f of (rootData.items || [])) {
+        for (const f of rootItems) {
           if (f.is_folder) continue  // 文件夹已在 tree 中
           const doc = kbDocMap.value[f.id]
           const fn: FileTreeNode = {
             id: f.id, name: f.name, parent_id: null, is_folder: false,
+            node_key: `file:${f.id}`,
             children: [], _depth: 0, _open: false, _ext: f.extension || '', _pct: null,
             _created_at: f.created_at || '',
           }
@@ -577,9 +604,12 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     const ids = documents.value.map(d => d.id)
     if (!ids.length) return
     try {
-      const map = await getProgressBatch(ids)
       const norm: Record<number, DocumentProgress> = {}
-      for (const k of Object.keys(map)) norm[Number(k)] = map[k]
+      for (let i = 0; i < ids.length; i += PROGRESS_BATCH_SIZE) {
+        const batch = ids.slice(i, i + PROGRESS_BATCH_SIZE)
+        const map = await getProgressBatch(batch)
+        for (const k of Object.keys(map)) norm[Number(k)] = map[k]
+      }
       liveProgressMap.value = norm
       if (Object.values(norm).some(p => p.overall_status === 'running')) ensurePolling()
     } catch { /* ignore */ }

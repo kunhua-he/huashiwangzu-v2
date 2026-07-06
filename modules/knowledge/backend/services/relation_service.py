@@ -7,8 +7,6 @@
 import logging
 from time import perf_counter
 
-from app.database import AsyncSessionLocal
-from app.services.task_worker import register_task_handler
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -258,30 +256,3 @@ async def get_relation_graph(db: AsyncSession, owner_id: int) -> dict:
     ]
 
     return {"nodes": nodes, "edges": edges}
-
-
-# ── 框架任务 handler ────────────────────────────────
-
-
-async def _relation_handler(params: dict) -> dict:
-    """框架后台任务 handler：处理 kb_relation 任务。"""
-    document_id = int(params.get("document_id", 0))
-    if document_id <= 0:
-        return {"error": "document_id required", "status": "failed"}
-
-    async with AsyncSessionLocal() as db:
-        df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
-        doc = df.scalar_one_or_none()
-        if not doc:
-            return {"error": f"Document {document_id} not found", "status": "failed"}
-
-        owner_id = doc.owner_id
-        try:
-            result = await compute_file_relations(db, document_id, owner_id)
-            return {"status": "done", **result}
-        except Exception as e:
-            logger.error("Relation handler failed for document_id=%d: %s", document_id, e)
-            return {"error": str(e), "status": "failed"}
-
-
-register_task_handler("kb_relation", _relation_handler)

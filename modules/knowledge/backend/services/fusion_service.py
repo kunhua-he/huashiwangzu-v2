@@ -3,7 +3,7 @@
 把同一页的三轮独立采集结果（文本 / OCR / 视觉构成）交叉印证，
 消解冲突，输出带置信度的权威描述。
 
-后台任务模式（kb_fuse）：逐页 fuse → 逐页 commit，超时只丢当前页。
+统一 DAG stage 模式（fusion）：逐页 fuse → 逐页 commit，超时只丢当前页。
 """
 import asyncio
 import json
@@ -12,7 +12,6 @@ from time import perf_counter
 
 from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
-from app.services.task_worker import register_task_handler
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,7 +110,7 @@ def classify_fusion_status(
 async def _llm_fuse(db: AsyncSession | None, round_texts: dict[int, str]) -> dict:
     """调用 LLM 进行交叉印证融合。"""
     profile_key = resolve_knowledge_profile("fusion")
-    system_prompt = await load_prompt(db, TFUSION)
+    system_prompt = await load_prompt(db, TFUSION, release_transaction=True)
     user_message = f"""请交叉印证以下三轮采集结果，输出融合后的权威描述。
 
 === 第1轮：文本提取 ===
@@ -302,6 +301,7 @@ async def fuse_all_pages(
         )
     )
     done_pages = {row[0] for row in r.all()}
+    await db.commit()
 
     async def _run_page(page: int) -> dict:
         if page in done_pages:
@@ -444,38 +444,6 @@ async def index_fusions_to_chunks(db: AsyncSession, document_id: int, owner_id: 
         doc.vector_status = "done" if count > 0 else "error"
         await db.commit()
     return count
-
-
-# ── 框架任务 handler ────────────────────────────────
-
-
-async def _fuse_handler(params: dict) -> dict:
-    """框架后台任务 handler：处理 kb_fuse 任务。"""
-    document_id = int(params.get("document_id", 0))
-    if document_id <= 0:
-        return {"error": "document_id required", "status": "failed"}
-
-    async with AsyncSessionLocal() as db:
-        df = await db.execute(select(KbDocument).where(KbDocument.id == document_id))
-        doc = df.scalar_one_or_none()
-        if not doc:
-            return {"error": f"Document {document_id} not found", "status": "failed"}
-
-        owner_id = doc.owner_id
-        try:
-            result = await fuse_all_pages(db, document_id, owner_id)
-            return result
-        except Exception as e:
-            logger.error("Fuse handler failed for document_id=%d: %s", document_id, e)
-            try:
-                doc.fusion_status = "failed"
-                await db.commit()
-            except Exception:
-                pass
-            return {"error": str(e), "status": "failed"}
-
-
-register_task_handler("kb_fuse", _fuse_handler)
 
 
 async def get_page_fusion_detail(

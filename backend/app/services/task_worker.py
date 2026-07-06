@@ -12,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, text, update
 
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, engine
 from app.models.system import SystemTaskQueue
 from app.services.module_registry import semantic_failure_reason
 
@@ -23,16 +23,21 @@ logger = logging.getLogger("v2.task_worker")
 POLL_INTERVAL_SECONDS = 2.0
 RUNNING_TIMEOUT_SECONDS = 1200  # running 超过 20 分钟视为死任务，回收重排
 CONFIG_RELOAD_SECONDS = 5.0
-MAX_LANES_PER_PROCESS = 16
+DEFAULT_MAX_LANES_PER_PROCESS = 16
+ABSOLUTE_MAX_LANES_PER_PROCESS = 128
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "data" / "config" / "task_worker.json"
+WORKER_LEADER_LOCK_KEY = 94022025
 
 
 @dataclass(frozen=True)
 class WorkerConfig:
     worker_lanes_per_process: int = 1
+    max_lanes_per_process: int = DEFAULT_MAX_LANES_PER_PROCESS
     poll_interval_seconds: float = POLL_INTERVAL_SECONDS
     running_timeout_seconds: int = RUNNING_TIMEOUT_SECONDS
     config_reload_seconds: float = CONFIG_RELOAD_SECONDS
+    reclaim_running_on_startup: bool = False
+    startup_reclaim_min_age_seconds: int = 10
 
 # task_type -> async handler(parameters: dict) -> dict | None
 TaskHandler = Callable[[dict], Awaitable[dict | None]]
@@ -40,12 +45,14 @@ _HANDLERS: dict[str, TaskHandler] = {}
 
 _worker_task: asyncio.Task | None = None
 _lane_tasks: dict[int, asyncio.Task] = {}
+_lane_current_task_ids: dict[int, int] = {}
 _retiring_lane_ids: set[int] = set()
 _next_lane_id = 1
 _stop_flag = False
 _last_active: datetime | None = None
 _runtime_config = WorkerConfig()
 _config_mtime: float | None = None
+_worker_is_leader = False
 
 
 def register_task_handler(task_type: str, handler: TaskHandler) -> None:
@@ -82,15 +89,36 @@ def _clamp_float(value: object, default: float, min_value: float, max_value: flo
     return max(min_value, min(max_value, parsed))
 
 
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
+
 def _parse_worker_config(raw: dict | None) -> WorkerConfig:
     raw = raw or {}
+    max_lanes_per_process = _clamp_int(
+        raw.get("max_lanes_per_process"),
+        WorkerConfig.max_lanes_per_process,
+        1,
+        ABSOLUTE_MAX_LANES_PER_PROCESS,
+    )
     return WorkerConfig(
         worker_lanes_per_process=_clamp_int(
             raw.get("worker_lanes_per_process"),
             WorkerConfig.worker_lanes_per_process,
             0,
-            MAX_LANES_PER_PROCESS,
+            max_lanes_per_process,
         ),
+        max_lanes_per_process=max_lanes_per_process,
         poll_interval_seconds=_clamp_float(
             raw.get("poll_interval_seconds"),
             WorkerConfig.poll_interval_seconds,
@@ -108,6 +136,16 @@ def _parse_worker_config(raw: dict | None) -> WorkerConfig:
             WorkerConfig.config_reload_seconds,
             1.0,
             300.0,
+        ),
+        reclaim_running_on_startup=_coerce_bool(
+            raw.get("reclaim_running_on_startup"),
+            WorkerConfig.reclaim_running_on_startup,
+        ),
+        startup_reclaim_min_age_seconds=_clamp_int(
+            raw.get("startup_reclaim_min_age_seconds"),
+            WorkerConfig.startup_reclaim_min_age_seconds,
+            0,
+            3600,
         ),
     )
 
@@ -213,6 +251,75 @@ async def _recover_orphan_running_tasks() -> None:
         logger.error("Orphan recovery failed: %s", exc)
 
 
+async def _acquire_worker_leader_connection():
+    conn = await engine.connect()
+    try:
+        result = await conn.execute(
+            text("select pg_try_advisory_lock(:lock_key)"),
+            {"lock_key": WORKER_LEADER_LOCK_KEY},
+        )
+        acquired = bool(result.scalar())
+        await conn.commit()
+        if acquired:
+            return conn
+        await conn.close()
+        return None
+    except Exception as exc:
+        logger.warning("Task worker leader lock acquire failed: %s", exc)
+        await conn.close()
+        return None
+
+
+async def _release_worker_leader_connection(conn) -> None:
+    try:
+        await conn.execute(
+            text("select pg_advisory_unlock(:lock_key)"),
+            {"lock_key": WORKER_LEADER_LOCK_KEY},
+        )
+        await conn.commit()
+    except Exception as exc:
+        logger.warning("Task worker leader lock release failed: %s", exc)
+    finally:
+        await conn.close()
+
+
+async def _reclaim_running_tasks_on_startup(min_age_seconds: int = 10) -> None:
+    """Release DB-running tasks when this deployment restarts as a single owner.
+
+    This is intentionally config-gated. The default timeout recovery is safer
+    for multi-instance deployments; local enterprise imports prefer immediate
+    restart recovery because the queue is DB-persisted and the watchdog restarts
+    the only backend owner.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=max(0, int(min_age_seconds or 0)))
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                update(SystemTaskQueue)
+                .where(
+                    SystemTaskQueue.status == "running",
+                    SystemTaskQueue.started_at < cutoff,
+                )
+                .values(
+                    status="pending",
+                    started_at=None,
+                    error_message="Task reclaimed on worker startup; released for retry",
+                    updated_at=now,
+                )
+            )
+            await db.commit()
+            reclaimed = int(result.rowcount or 0)
+            if reclaimed:
+                logger.info(
+                    "Startup recovery: reclaimed %d running task(s) older than %ss",
+                    reclaimed,
+                    min_age_seconds,
+                )
+    except Exception as exc:
+        logger.error("Startup running-task reclaim failed: %s", exc)
+
+
 def _result_is_semantic_failure(result: dict | None) -> tuple[bool, str | None]:
     """Return whether a handler result is a business failure contract."""
     reason = semantic_failure_reason(result)
@@ -246,6 +353,9 @@ async def _claim_one_task(db) -> SystemTaskQueue | None:
         return None
     task.status = "running"
     task.started_at = datetime.now(timezone.utc)
+    task.completed_at = None
+    task.error_message = None
+    task.result = None
     await db.commit()
     await db.refresh(task)
     return task
@@ -291,6 +401,10 @@ def _compute_next_recur(recur: str, ref_time: datetime) -> datetime | None:
     return None
 
 
+def _serialize_task_result(result: dict | None) -> str | None:
+    return json.dumps(result, ensure_ascii=False, default=str) if result is not None else None
+
+
 async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: str | None) -> None:
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
@@ -298,7 +412,7 @@ async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: s
     now = datetime.now(timezone.utc)
     if ok:
         task.status = "completed"
-        task.result = json.dumps(result, ensure_ascii=False) if result is not None else None
+        task.result = _serialize_task_result(result)
         task.error_message = None
         task.completed_at = now
         # 周期任务: 完成后自动重排下一次
@@ -323,6 +437,44 @@ async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: s
     await db.commit()
 
 
+def _active_task_ids_snapshot() -> list[int]:
+    return sorted(set(_lane_current_task_ids.values()))
+
+
+async def _release_active_tasks_on_shutdown(task_ids: list[int] | None = None) -> None:
+    """Return tasks owned by this process to the DB queue during graceful restart.
+
+    Startup recovery only reclaims timed-out tasks because multiple uvicorn
+    workers may be alive at once. During process shutdown, however, this process
+    knows exactly which task IDs its lanes claimed, so releasing only those tasks
+    avoids both duplicate execution and 20-minute stale waits after a restart.
+    """
+    task_ids = sorted(set(task_ids or _active_task_ids_snapshot()))
+    if not task_ids:
+        return
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                update(SystemTaskQueue)
+                .where(
+                    SystemTaskQueue.id.in_(task_ids),
+                    SystemTaskQueue.status == "running",
+                )
+                .values(
+                    status="pending",
+                    started_at=None,
+                    error_message="Task interrupted by worker shutdown; released for retry",
+                )
+            )
+            await db.commit()
+            released = int(result.rowcount or 0)
+            if released:
+                logger.info("Released %d running task(s) during worker shutdown", released)
+    except Exception as exc:
+        logger.error("Failed to release running tasks during worker shutdown: %s", exc)
+
+
 async def _worker_lane_loop(lane_id: int) -> None:
     global _last_active
     logger.info("Task worker lane %s started", lane_id)
@@ -336,9 +488,13 @@ async def _worker_lane_loop(lane_id: int) -> None:
                 await asyncio.sleep(config.poll_interval_seconds)
                 continue
             _last_active = datetime.now(timezone.utc)
-            ok, result, error = await _run_handler(task)
-            async with AsyncSessionLocal() as db:
-                await _finish_task(db, task.id, ok, result, error)
+            _lane_current_task_ids[lane_id] = int(task.id)
+            try:
+                ok, result, error = await _run_handler(task)
+                async with AsyncSessionLocal() as db:
+                    await _finish_task(db, task.id, ok, result, error)
+            finally:
+                _lane_current_task_ids.pop(lane_id, None)
         except Exception as exc:
             logger.error("Task worker lane %s error: %s", lane_id, exc)
             await asyncio.sleep(config.poll_interval_seconds)
@@ -373,14 +529,46 @@ def _reconcile_lanes(target_count: int) -> None:
 
 
 async def _worker_supervisor_loop() -> None:
+    global _worker_is_leader
     logger.info("Task worker supervisor started")
     _load_worker_config(force=True)
-    await _recover_orphan_running_tasks()
     while not _stop_flag:
         config = _load_worker_config()
-        _reconcile_lanes(config.worker_lanes_per_process)
-        await asyncio.sleep(config.config_reload_seconds)
+        leader_conn = None
+        try:
+            leader_conn = await _acquire_worker_leader_connection()
+            if leader_conn is None:
+                _worker_is_leader = False
+                _reconcile_lanes(0)
+                await asyncio.sleep(config.config_reload_seconds)
+                continue
 
+            _worker_is_leader = True
+            logger.info("Task worker leader lock acquired by pid=%s", os.getpid())
+            if config.reclaim_running_on_startup:
+                await _reclaim_running_tasks_on_startup(config.startup_reclaim_min_age_seconds)
+            else:
+                await _recover_orphan_running_tasks()
+
+            while not _stop_flag:
+                config = _load_worker_config()
+                _reconcile_lanes(config.worker_lanes_per_process)
+                await asyncio.sleep(config.config_reload_seconds)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.error("Task worker supervisor error: %s", exc)
+            _worker_is_leader = False
+            _reconcile_lanes(0)
+            await asyncio.sleep(config.config_reload_seconds)
+        finally:
+            _reconcile_lanes(0)
+            if _lane_tasks:
+                await asyncio.gather(*_lane_tasks.values(), return_exceptions=True)
+            if leader_conn is not None:
+                await _release_worker_leader_connection(leader_conn)
+
+    _worker_is_leader = False
     _reconcile_lanes(0)
     if _lane_tasks:
         await asyncio.gather(*_lane_tasks.values(), return_exceptions=True)
@@ -399,6 +587,7 @@ async def stop_worker() -> None:
     global _stop_flag
     _stop_flag = True
     if _worker_task:
+        active_task_ids = _active_task_ids_snapshot()
         try:
             timeout = _runtime_config.poll_interval_seconds + _runtime_config.config_reload_seconds + 1
             await asyncio.wait_for(_worker_task, timeout=timeout)
@@ -406,16 +595,26 @@ async def stop_worker() -> None:
             _worker_task.cancel()
             for lane_task in _lane_tasks.values():
                 lane_task.cancel()
+            if _lane_tasks:
+                await asyncio.gather(*_lane_tasks.values(), return_exceptions=True)
+        finally:
+            await _release_active_tasks_on_shutdown(active_task_ids)
 
 
 def worker_health() -> dict:
     return {
         "running": _worker_task is not None and not _worker_task.done(),
         "configured_lanes_per_process": _runtime_config.worker_lanes_per_process,
+        "max_lanes_per_process": _runtime_config.max_lanes_per_process,
         "active_lanes": len([task for task in _lane_tasks.values() if not task.done()]),
+        "active_task_ids": _active_task_ids_snapshot(),
         "retiring_lanes": sorted(_retiring_lane_ids),
         "config_path": str(CONFIG_PATH),
         "config_reload_seconds": _runtime_config.config_reload_seconds,
+        "reclaim_running_on_startup": _runtime_config.reclaim_running_on_startup,
+        "startup_reclaim_min_age_seconds": _runtime_config.startup_reclaim_min_age_seconds,
+        "is_leader": _worker_is_leader,
+        "leader_lock_key": WORKER_LEADER_LOCK_KEY,
         "registered_handlers": sorted(_HANDLERS.keys()),
         "last_active": _last_active.isoformat() if _last_active else None,
         "process_local": True,

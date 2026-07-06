@@ -32,14 +32,54 @@ from .openai_provider import OpenAIProvider, OpenCodeProvider
 from .usage_tracker import UsageRecord, log_usage, log_usage_event
 
 logger = logging.getLogger("v2.gateway.router")
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+PNG_TEXT_CHUNKS = {b"tEXt", b"zTXt", b"iTXt"}
+
+
+def _strip_png_text_chunks(image_bytes: bytes) -> tuple[bytes, dict]:
+    diagnostics = {
+        "stripped": False,
+        "removed_chunks": 0,
+        "removed_bytes": 0,
+        "original_bytes": len(image_bytes),
+        "prepared_bytes": len(image_bytes),
+    }
+    if not image_bytes.startswith(PNG_SIGNATURE):
+        return image_bytes, diagnostics
+    output = bytearray(PNG_SIGNATURE)
+    offset = len(PNG_SIGNATURE)
+    try:
+        while offset + 12 <= len(image_bytes):
+            chunk_start = offset
+            length = int.from_bytes(image_bytes[offset:offset + 4], "big")
+            chunk_type = image_bytes[offset + 4:offset + 8]
+            chunk_end = offset + 12 + length
+            if chunk_end > len(image_bytes):
+                return image_bytes, {**diagnostics, "error": "malformed_png_chunk"}
+            if chunk_type in PNG_TEXT_CHUNKS:
+                diagnostics["stripped"] = True
+                diagnostics["removed_chunks"] += 1
+                diagnostics["removed_bytes"] += chunk_end - chunk_start
+            else:
+                output.extend(image_bytes[chunk_start:chunk_end])
+            offset = chunk_end
+            if chunk_type == b"IEND":
+                break
+    except Exception as exc:
+        return image_bytes, {**diagnostics, "error": str(exc)}
+    prepared = bytes(output)
+    diagnostics["prepared_bytes"] = len(prepared)
+    return prepared, diagnostics
 
 
 def _prepare_vision_image_for_model(
     image_bytes: bytes,
     mime_type: str,
     *,
-    max_dimension: int = 1920,
-    max_bytes: int = 1800 * 1024,
+    max_dimension: int = 1600,
+    max_bytes: int = 1024 * 1024,
+    jpeg_quality_start: int = 84,
+    jpeg_quality_floor: int = 72,
 ) -> tuple[bytes, str, dict]:
     """Resize/compress images before embedding them in multimodal requests."""
     metadata = {
@@ -55,6 +95,12 @@ def _prepare_vision_image_for_model(
     except Exception as exc:
         metadata["skipped_reason"] = f"pillow_unavailable:{exc}"
         return image_bytes, mime_type, metadata
+
+    if mime_type.lower() in {"image/png", "png"} or image_bytes.startswith(PNG_SIGNATURE):
+        cleaned_bytes, cleanup_info = _strip_png_text_chunks(image_bytes)
+        if cleanup_info.get("stripped"):
+            image_bytes = cleaned_bytes
+            metadata["png_text_chunk_cleanup"] = cleanup_info
 
     try:
         with Image.open(io.BytesIO(image_bytes)) as img:
@@ -92,20 +138,48 @@ def _prepare_vision_image_for_model(
     elif working.mode != "RGB":
         working = working.convert("RGB")
 
+    quality_start = max(40, min(95, int(jpeg_quality_start)))
+    quality_floor = max(40, min(quality_start, int(jpeg_quality_floor)))
+    quality_steps = [q for q in (quality_start, 78, quality_floor) if quality_floor <= q <= quality_start]
+    qualities = sorted(set(quality_steps), reverse=True)
+    metadata["jpeg_quality_start"] = quality_start
+    metadata["jpeg_quality_floor"] = quality_floor
+    metadata["target_max_bytes"] = max_bytes
+
     prepared = image_bytes
-    for quality in (90, 84, 78, 72):
+    selected_quality = qualities[-1]
+
+    def encode_jpeg(quality: int) -> bytes:
         out = io.BytesIO()
         working.save(out, format="JPEG", quality=quality, optimize=True)
-        candidate = out.getvalue()
-        prepared = candidate
-        metadata["jpeg_quality"] = quality
-        if len(candidate) <= max_bytes:
+        return out.getvalue()
+
+    for quality in qualities:
+        prepared = encode_jpeg(quality)
+        selected_quality = quality
+        if len(prepared) <= max_bytes:
             break
+
+    metadata["jpeg_quality"] = selected_quality
+    metadata["prepared_size"] = [working.width, working.height]
 
     metadata["prepared_bytes"] = len(prepared)
     metadata["prepared_mime_type"] = "image/jpeg"
     metadata["reencoded"] = True
     return prepared, "image/jpeg", metadata
+
+
+def _vision_image_preprocess_config() -> dict:
+    config = get_model_type_config("vision").get("image_preprocess", {})
+    return config if isinstance(config, dict) else {}
+
+
+def _preprocess_int(config: dict, key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(config.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
 
 
 @dataclass
@@ -617,9 +691,18 @@ class ModelGatewayRouter:
         Falls back through _VISION_FALLBACK if the primary model fails.
         """
         import base64
+        preprocess_config = _vision_image_preprocess_config()
+        max_dimension = _preprocess_int(preprocess_config, "max_side", 1600, 640, 4096)
+        max_bytes = _preprocess_int(preprocess_config, "max_bytes", 1800 * 1024, 256 * 1024, 32 * 1024 * 1024)
+        jpeg_quality_start = _preprocess_int(preprocess_config, "jpeg_quality_start", 84, 40, 95)
+        jpeg_quality_floor = _preprocess_int(preprocess_config, "jpeg_quality_floor", 72, 40, jpeg_quality_start)
         prepared_bytes, prepared_mime_type, image_preprocess = _prepare_vision_image_for_model(
             image_bytes,
             mime_type,
+            max_dimension=max_dimension,
+            max_bytes=max_bytes,
+            jpeg_quality_start=jpeg_quality_start,
+            jpeg_quality_floor=jpeg_quality_floor,
         )
         b64 = base64.b64encode(prepared_bytes).decode("ascii")
         img_data_url = f"data:{prepared_mime_type};base64,{b64}"

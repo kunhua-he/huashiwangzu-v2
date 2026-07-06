@@ -175,7 +175,9 @@ def test_prepare_vision_image_resizes_large_images_before_multimodal_send() -> N
     assert len(prepared) <= 1800 * 1024
     assert metadata["resized"] is True
     assert metadata["reencoded"] is True
-    assert max(metadata["prepared_size"]) == 1920
+    assert max(metadata["prepared_size"]) == 1600
+    assert metadata["jpeg_quality_start"] == 84
+    assert metadata["jpeg_quality_floor"] == 72
 
 
 def test_openai_provider_session_affinity_header_is_payload_scoped() -> None:

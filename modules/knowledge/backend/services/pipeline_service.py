@@ -43,6 +43,7 @@ from .profile_service import generate_document_profile
 from .raw_collection_service import collect_raw_stage
 from .relation_service import compute_file_relations
 from .source_file_state import get_source_file_availability, raise_if_source_unavailable
+from .stage_result_cache_service import delete_stage_result_cache, write_stage_result_cache
 
 logger = logging.getLogger("v2.knowledge").getChild("pipeline")
 
@@ -575,6 +576,19 @@ async def _pipeline_stage_handler(params: dict) -> dict:
 
         status, reason = _stage_status_from_result(result)
         duration_ms = round((perf_counter() - timer) * 1000)
+        stage_result_cache_path = write_stage_result_cache(
+            document_id=document_id,
+            file_id=int(doc.file_id),
+            owner_id=int(doc.owner_id),
+            stage=stage,
+            status=status,
+            result=_json_safe(result),
+            task_id=task_id,
+            pipeline_run_id=pipeline_run_id,
+            reason=reason,
+            started_at=started_at,
+            duration_ms=duration_ms,
+        )
         successors: list[dict] = []
         if status in {"done", "degraded", "skipped"}:
             if should_pause_after_result(result):
@@ -670,6 +684,7 @@ async def _pipeline_stage_handler(params: dict) -> dict:
             duration_ms=duration_ms,
         )
         await db.commit()
+        delete_stage_result_cache(stage_result_cache_path)
         return {
             "task_status": "completed" if status != "failed" else "failed",
             "document_id": document_id,

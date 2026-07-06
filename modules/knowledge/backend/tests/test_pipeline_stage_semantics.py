@@ -41,6 +41,7 @@ llm_diagnostics_stream = _load_service("llm_diagnostics_stream")
 model_routing = _load_service("model_routing")
 pipeline_service = _load_service("pipeline_service")
 raw_collection_service = _load_service("raw_collection_service")
+stage_result_cache_service = _load_service("stage_result_cache_service")
 
 classify_fusion_status = fusion_service.classify_fusion_status
 classify_raw_collection_status = raw_collection_service.classify_raw_collection_status
@@ -270,6 +271,49 @@ class _ParsedIr:
     parse_errors = ["empty_result"]
     parse_status = "ok"
     resource_diagnostics = []
+
+
+class _FakePipelineRun:
+    id = 99
+    status = "running"
+    reason = None
+    diagnostics_json = {}
+    completed_at = None
+
+
+class _PipelineHandlerDb:
+    def __init__(self, *, fail_commit: bool = False):
+        self.doc = _FakeDocument()
+        self.run = _FakePipelineRun()
+        self.fail_commit = fail_commit
+        self.commits = 0
+
+    async def scalar(self, _stmt):
+        return self.doc
+
+    async def get(self, model, _item_id):
+        if getattr(model, "__name__", "") == "KbPipelineRun":
+            return self.run
+        return None
+
+    async def refresh(self, _obj):
+        return None
+
+    async def commit(self):
+        self.commits += 1
+        if self.fail_commit:
+            raise RuntimeError("commit failed")
+
+
+class _PipelineHandlerSession:
+    def __init__(self, db):
+        self.db = db
+
+    async def __aenter__(self):
+        return self.db
+
+    async def __aexit__(self, *_exc_info):
+        return None
 
 
 def test_raw_collection_classifies_all_empty_as_degraded_or_failed():
@@ -592,6 +636,94 @@ def test_analysis_artifact_stable_hash_ignores_dict_order():
         "stage": "fusion",
         "payload": {"b": [1, 2], "a": "文本"},
     })
+
+
+def test_stage_result_cache_writes_recoverable_json_until_deleted(tmp_path):
+    started_at = datetime.now(timezone.utc)
+
+    cache_path = stage_result_cache_service.write_stage_result_cache(
+        cache_dir=tmp_path,
+        document_id=123,
+        file_id=456,
+        owner_id=1,
+        stage="raw_vision",
+        status="done",
+        result={"text": "海报标题", "layout": {"blocks": 2}},
+        task_id=777,
+        pipeline_run_id=888,
+        reason="done",
+        started_at=started_at,
+        duration_ms=321,
+    )
+
+    assert cache_path.exists()
+    assert cache_path.suffix == ".json"
+    assert not list(tmp_path.glob("*.tmp"))
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == stage_result_cache_service.CACHE_SCHEMA_VERSION
+    assert payload["document_id"] == 123
+    assert payload["stage"] == "raw_vision"
+    assert payload["result"]["text"] == "海报标题"
+    assert payload["started_at"] == started_at.isoformat()
+
+    stage_result_cache_service.delete_stage_result_cache(cache_path)
+
+    assert not cache_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_stage_cache_survives_main_commit_failure(tmp_path, monkeypatch):
+    db = _PipelineHandlerDb(fail_commit=True)
+    deleted_paths: list[Path] = []
+
+    async def fake_raise_if_source_unavailable(*_args, **_kwargs):
+        return None
+
+    async def fake_run_stage(*_args, **_kwargs):
+        return {"status": "done", "text": "LLM result that must not be lost"}
+
+    async def fake_record_stage_artifact(*_args, **_kwargs):
+        return "artifact-hash"
+
+    async def fake_record_stage_run(*_args, **_kwargs):
+        return None
+
+    async def fake_enqueue_successors(*_args, **_kwargs):
+        return []
+
+    def fake_write_stage_result_cache(**kwargs):
+        kwargs["cache_dir"] = tmp_path
+        return stage_result_cache_service.write_stage_result_cache(**kwargs)
+
+    def fake_delete_stage_result_cache(path):
+        deleted_paths.append(path)
+        stage_result_cache_service.delete_stage_result_cache(path)
+
+    monkeypatch.setattr(pipeline_service, "AsyncSessionLocal", lambda: _PipelineHandlerSession(db))
+    monkeypatch.setattr(pipeline_service, "raise_if_source_unavailable", fake_raise_if_source_unavailable)
+    monkeypatch.setattr(pipeline_service, "_run_stage", fake_run_stage)
+    monkeypatch.setattr(pipeline_service, "_record_stage_artifact", fake_record_stage_artifact)
+    monkeypatch.setattr(pipeline_service, "_record_stage_run", fake_record_stage_run)
+    monkeypatch.setattr(pipeline_service, "_enqueue_successors", fake_enqueue_successors)
+    monkeypatch.setattr(pipeline_service, "document_deep_pipeline_complete", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(pipeline_service, "write_stage_result_cache", fake_write_stage_result_cache)
+    monkeypatch.setattr(pipeline_service, "delete_stage_result_cache", fake_delete_stage_result_cache)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await pipeline_service._pipeline_stage_handler({
+            "document_id": db.doc.id,
+            "user_id": 1,
+            "stage": "graph",
+            "task_id": 777,
+            "pipeline_run_id": db.run.id,
+        })
+
+    cache_files = list(tmp_path.glob("*.json"))
+    assert len(cache_files) == 1
+    assert deleted_paths == []
+    payload = json.loads(cache_files[0].read_text(encoding="utf-8"))
+    assert payload["result"]["text"] == "LLM result that must not be lost"
+    assert payload["pipeline_run_id"] == db.run.id
 
 
 @pytest.mark.asyncio

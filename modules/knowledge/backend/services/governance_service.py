@@ -226,6 +226,15 @@ async def get_evidence_detail(db: AsyncSession, owner_id: int, entity_id: int) -
             "excerpt": e.excerpt,
             "confidence": e.confidence,
             "status": e.status,
+            "raw_data_id": e.raw_data_id,
+            "page_fusion_id": e.page_fusion_id,
+            "artifact_id": e.artifact_id,
+            "source_round": e.source_round,
+            "claim_type": e.claim_type,
+            "source_hash": e.source_hash,
+            "prompt_hash": e.prompt_hash,
+            "model_used": e.model_used,
+            "diagnostics": e.diagnostics_json or {},
         }
         for e in evidences
     ]

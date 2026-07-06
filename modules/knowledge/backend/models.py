@@ -226,6 +226,17 @@ class KbEvidence(Base, TimestampMixin):
     excerpt: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/confirmed/rejected
+    raw_data_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    page_fusion_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    artifact_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_round: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    claim_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bbox_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    offset_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class KbConclusionEvidence(Base, TimestampMixin):

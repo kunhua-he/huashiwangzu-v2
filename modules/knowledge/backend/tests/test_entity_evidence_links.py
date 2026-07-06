@@ -23,13 +23,15 @@ from app.database import AsyncSessionLocal
 
 from modules.knowledge.backend.init_db import ensure_kb_tables, ensure_migration_columns
 from modules.knowledge.backend.models import (
+    KbAnalysisArtifact,
     KbChunk,
     KbChunkEntity,
     KbDocument,
     KbEvidence,
     KbPageFusion,
+    KbRawData,
 )
-from modules.knowledge.backend.services import entity_service
+from modules.knowledge.backend.services import entity_service, governance_service
 
 OWNER_ID = 1
 TEST_FILE_IDS = (900_000_000, 900_000_001)
@@ -69,6 +71,8 @@ async def _delete_document_rows(db, document_id: int, marker: str) -> None:
         "kb_chunk_entities",
         "kb_evidence",
         "kb_governance_candidates",
+        "kb_analysis_artifacts",
+        "kb_raw_data",
         "kb_page_fusions",
         "kb_chunks",
     ):
@@ -166,6 +170,139 @@ async def test_process_document_entities_links_evidence_to_real_chunks(
         assert evidence is not None
         assert evidence.chunk_id > 0
         assert evidence.page == 1
+        assert evidence.claim_type == "entity"
+        assert evidence.source_round == "chunk"
+        assert evidence.source_hash
+        assert evidence.prompt_hash
+        assert evidence.diagnostics_json["source"] == "legacy_chunk_entity_extraction"
+    finally:
+        if document_id:
+            await _cleanup(document_id, marker)
+
+
+@pytest.mark.asyncio
+async def test_process_document_entities_from_fusions_links_evidence_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = uuid.uuid4().hex[:8]
+    document_id = 0
+
+    async def fake_extract(_text: str, **_kwargs) -> dict:
+        return {
+            "entities": [
+                {
+                    "name": f"FusionEntity-{marker}",
+                    "category": "test",
+                    "description": f"Fusion evidence for {marker}",
+                }
+            ],
+            "relationships": [],
+            "model_diagnostics": {
+                "requested_profile": "gpt-5.5-knowledge",
+                "selected_profile": "gpt-5.5",
+            },
+        }
+
+    monkeypatch.setattr(entity_service, "extract_entities_from_text", fake_extract)
+    await _ensure_schema()
+
+    async with AsyncSessionLocal() as db:
+        doc = KbDocument(
+            owner_id=OWNER_ID,
+            file_id=900_000_000,
+            filename=f"entity-link-{marker}.pdf",
+            extension="pdf",
+            file_size=1,
+            mime_type="application/pdf",
+            parse_status="done",
+            vector_status="done",
+            raw_status="done",
+            fusion_status="done",
+            total_chunks=1,
+            total_pages=1,
+            deleted=False,
+        )
+        db.add(doc)
+        await db.flush()
+        document_id = int(doc.id)
+        chunk = KbChunk(
+            document_id=document_id,
+            owner_id=OWNER_ID,
+            page=1,
+            chunk_index=0,
+            block_type="fusion",
+            text=f"FusionEntity-{marker} appears in fused text.",
+            keywords=marker,
+        )
+        raw = KbRawData(
+            document_id=document_id,
+            file_id=doc.file_id,
+            owner_id=OWNER_ID,
+            page=1,
+            round=1,
+            source_type="text",
+            content=f"raw text {marker}",
+            content_hash=f"raw-hash-{marker}",
+            status="done",
+        )
+        fusion = KbPageFusion(
+            document_id=document_id,
+            owner_id=OWNER_ID,
+            page=1,
+            fused_text=f"FusionEntity-{marker} appears in fused text with enough content.",
+            fusion_version=1,
+            fusion_status="done",
+        )
+        artifact = KbAnalysisArtifact(
+            owner_id=OWNER_ID,
+            document_id=document_id,
+            file_id=doc.file_id,
+            stage="fusion",
+            status="done",
+            input_hash=f"input-{marker}",
+            output_hash=f"output-{marker}",
+            prompt_hash=f"prompt-{marker}",
+            schema_version="fusion_v1",
+        )
+        db.add_all([chunk, raw, fusion, artifact])
+        await db.commit()
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await entity_service.process_document_entities_from_fusions(db, document_id, OWNER_ID)
+            assert result["entities_found"] == 1
+            evidence = await db.scalar(
+                select(KbEvidence).where(KbEvidence.document_id == document_id)
+            )
+            fusion_id = await db.scalar(
+                select(KbPageFusion.id).where(KbPageFusion.document_id == document_id)
+            )
+            raw_id = await db.scalar(
+                select(KbRawData.id).where(KbRawData.document_id == document_id)
+            )
+            artifact_id = await db.scalar(
+                select(KbAnalysisArtifact.id).where(KbAnalysisArtifact.document_id == document_id)
+            )
+            details = await governance_service.get_evidence_detail(db, OWNER_ID, int(evidence.entity_id))
+
+        assert evidence is not None
+        assert evidence.chunk_id > 0
+        assert evidence.page == 1
+        assert evidence.raw_data_id == raw_id
+        assert evidence.page_fusion_id == fusion_id
+        assert evidence.artifact_id == artifact_id
+        assert evidence.claim_type == "entity"
+        assert evidence.source_round == "fusion"
+        assert evidence.source_hash
+        assert evidence.prompt_hash
+        assert evidence.model_used == "gpt-5.5"
+        assert evidence.diagnostics_json["source"]["raw_data_ids"] == [raw_id]
+        assert evidence.diagnostics_json["model_diagnostics"]["selected_profile"] == "gpt-5.5"
+        assert details[0]["raw_data_id"] == raw_id
+        assert details[0]["page_fusion_id"] == fusion_id
+        assert details[0]["artifact_id"] == artifact_id
+        assert details[0]["claim_type"] == "entity"
+        assert details[0]["diagnostics"]["model_diagnostics"]["selected_profile"] == "gpt-5.5"
     finally:
         if document_id:
             await _cleanup(document_id, marker)

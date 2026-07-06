@@ -32,6 +32,10 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_kb_graph_edges_source ON kb_graph_edges(source_node_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_graph_edges_target ON kb_graph_edges(target_node_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_evidence_entity ON kb_evidence(entity_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_evidence_raw_data ON kb_evidence(raw_data_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_evidence_page_fusion ON kb_evidence(page_fusion_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_evidence_artifact ON kb_evidence(artifact_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_evidence_doc_claim ON kb_evidence(document_id, claim_type)",
     "CREATE INDEX IF NOT EXISTS idx_kb_chunk_entities_chunk ON kb_chunk_entities(chunk_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_chunk_entities_entity ON kb_chunk_entities(entity_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_governance_status ON kb_governance_candidates(audit_status)",
@@ -83,6 +87,17 @@ _MIGRATION_STATEMENTS = [
     ("kb_page_fusions", "error_message", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS error_message TEXT"),
     ("kb_page_fusions", "duration_ms", "ALTER TABLE kb_page_fusions ADD COLUMN IF NOT EXISTS duration_ms INTEGER"),
     ("kb_document_profiles", "labels_json", "ALTER TABLE kb_document_profiles ADD COLUMN IF NOT EXISTS labels_json JSON"),
+    ("kb_evidence", "raw_data_id", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS raw_data_id BIGINT"),
+    ("kb_evidence", "page_fusion_id", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS page_fusion_id BIGINT"),
+    ("kb_evidence", "artifact_id", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS artifact_id BIGINT"),
+    ("kb_evidence", "source_round", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS source_round VARCHAR(32)"),
+    ("kb_evidence", "claim_type", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS claim_type VARCHAR(64)"),
+    ("kb_evidence", "bbox_json", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS bbox_json JSON"),
+    ("kb_evidence", "offset_json", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS offset_json JSON"),
+    ("kb_evidence", "source_hash", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS source_hash VARCHAR(64)"),
+    ("kb_evidence", "prompt_hash", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS prompt_hash VARCHAR(64)"),
+    ("kb_evidence", "model_used", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS model_used VARCHAR(128)"),
+    ("kb_evidence", "diagnostics_json", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS diagnostics_json JSON"),
 ]
 
 _KNOWLEDGE_PROMPT_CATEGORY = {
@@ -328,8 +343,8 @@ async def ensure_prompt_templates(db: AsyncSession) -> None:
 async def run_init(db: AsyncSession) -> None:
     """知识库模块启动初始化入口。"""
     await ensure_kb_tables(db)
-    await ensure_kb_indexes(db)
     await ensure_migration_columns(db)
+    await ensure_kb_indexes(db)
     await ensure_prompt_templates(db)
 
 
@@ -346,8 +361,8 @@ def _run_startup_init():
         from app.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             await ensure_kb_tables(db)
-            await ensure_kb_indexes(db)
             await ensure_migration_columns(db)
+            await ensure_kb_indexes(db)
             await ensure_prompt_templates(db)
 
     try:

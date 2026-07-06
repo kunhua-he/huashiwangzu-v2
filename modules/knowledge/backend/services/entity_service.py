@@ -13,6 +13,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .analysis_artifact_service import model_used_from_result, resolve_stage_prompt_hash, stable_hash
 from .llm_diagnostics import timed_llm_chat
 from .model_routing import resolve_knowledge_profile
 from .prompt_utils import TENTITY, TFUSION_LEGACY, load_prompt
@@ -104,6 +105,49 @@ async def fuse_page_text(
         return text
 
 
+def _first_model_diagnostics_value(diagnostics: dict | list | None, key: str) -> str | None:
+    if isinstance(diagnostics, list):
+        for item in diagnostics:
+            if isinstance(item, dict) and item.get(key):
+                return str(item[key])
+    if isinstance(diagnostics, dict) and diagnostics.get(key):
+        return str(diagnostics[key])
+    return None
+
+
+def _model_used_from_diagnostics(diagnostics: dict | list | None) -> str | None:
+    return (
+        _first_model_diagnostics_value(diagnostics, "selected_profile")
+        or _first_model_diagnostics_value(diagnostics, "model_used")
+    )
+
+
+async def _latest_analysis_artifact_id(db: AsyncSession, document_id: int, owner_id: int, stage: str) -> int | None:
+    from ..models import KbAnalysisArtifact
+
+    result = await db.execute(
+        select(KbAnalysisArtifact.id)
+        .where(
+            KbAnalysisArtifact.document_id == document_id,
+            KbAnalysisArtifact.owner_id == owner_id,
+            KbAnalysisArtifact.stage == stage,
+        )
+        .order_by(KbAnalysisArtifact.id.desc())
+        .limit(1)
+    )
+    value = result.scalar_one_or_none()
+    return int(value) if value is not None else None
+
+
+def _fusion_source_hash(fusion, raw_rows: list) -> str:
+    return stable_hash({
+        "page_fusion_id": getattr(fusion, "id", None),
+        "page": getattr(fusion, "page", None),
+        "fused_text": getattr(fusion, "fused_text", ""),
+        "raw_hashes": [getattr(row, "content_hash", None) for row in raw_rows],
+    })
+
+
 async def process_document_entities(
     db: AsyncSession,
     document_id: int,
@@ -138,6 +182,8 @@ async def process_document_entities(
 
     all_entities: list[dict] = []
     all_relationships: list[dict] = []
+    page_model_diagnostics: dict[int, dict | list | None] = {}
+    page_model_used: dict[int, str | None] = {}
     processed_pages = 0
 
     for page, texts in page_texts.items():
@@ -147,6 +193,10 @@ async def process_document_entities(
 
         # 每页抽取一次实体
         result = await extract_entities_from_text(combined, db=db)
+        page_model_diagnostics[page] = result.get("model_diagnostics")
+        page_model_used[page] = model_used_from_result(result) or _model_used_from_diagnostics(
+            page_model_diagnostics[page]
+        )
         all_entities.extend(result.get("entities", []))
         all_relationships.extend(result.get("relationships", []))
         stats["errors"].extend(result.get("errors", []))
@@ -294,6 +344,7 @@ async def process_document_entities(
 
     seen_evidence_key: set[tuple[int, int]] = set()
     seen_chunk_entity_key: set[tuple[int, int]] = set()
+    graph_prompt_hash = await resolve_stage_prompt_hash(db, "graph")
 
     # 保存证据与 chunk-entity 关联。旧版本曾写 chunk_id=0，导致证据链不可追溯。
     for ent in all_entities:
@@ -323,6 +374,20 @@ async def process_document_entities(
                     excerpt=evidence_text[:500],
                     confidence=0.7,
                     status="pending",
+                    source_round="chunk",
+                    claim_type="entity",
+                    source_hash=stable_hash({
+                        "document_id": document_id,
+                        "page": page,
+                        "chunk_ids": chunk_ids,
+                        "excerpt": evidence_text[:500],
+                    }),
+                    prompt_hash=graph_prompt_hash,
+                    model_used=page_model_used.get(page),
+                    diagnostics_json={
+                        "model_diagnostics": page_model_diagnostics.get(page),
+                        "source": "legacy_chunk_entity_extraction",
+                    },
                 )
                 db.add(evidence)
         for cid in chunk_ids:
@@ -366,6 +431,7 @@ async def process_document_entities_from_fusions(
         KbGraphEdge,
         KbGraphNode,
         KbPageFusion,
+        KbRawData,
     )
 
     stage_started = perf_counter()
@@ -432,9 +498,23 @@ async def process_document_entities_from_fusions(
         stats["errors"].append("No fused pages found")
         return stats
 
+    fusion_by_page = {int(pf.page): pf for pf in fusions}
+    raw_rows_r = await db.execute(
+        select(KbRawData)
+        .where(KbRawData.document_id == document_id, KbRawData.owner_id == owner_id)
+        .order_by(KbRawData.page, KbRawData.round, KbRawData.id)
+    )
+    page_to_raw_rows: dict[int, list[KbRawData]] = {}
+    for raw in raw_rows_r.scalars().all():
+        page_to_raw_rows.setdefault(int(raw.page), []).append(raw)
+    fusion_artifact_id = await _latest_analysis_artifact_id(db, document_id, owner_id, "fusion")
+    graph_prompt_hash = await resolve_stage_prompt_hash(db, "graph")
+
     all_entities: list[dict] = []
     all_relationships: list[dict] = []
     entity_page: list[int] = []  # tracks which page each raw entity came from (parallel to all_entities)
+    page_model_diagnostics: dict[int, dict | list | None] = {}
+    page_model_used: dict[int, str | None] = {}
     processed_pages = 0
     extraction_started = perf_counter()
     page_durations: dict[int, int] = {}
@@ -448,6 +528,10 @@ async def process_document_entities_from_fusions(
         result = await extract_entities_from_text(text, db=db)
         page_durations[int(pf.page)] = round((perf_counter() - page_started) * 1000)
         page_ents = result.get("entities", [])
+        page_model_diagnostics[int(pf.page)] = result.get("model_diagnostics")
+        page_model_used[int(pf.page)] = model_used_from_result(result) or _model_used_from_diagnostics(
+            page_model_diagnostics[int(pf.page)]
+        )
         all_entities.extend(page_ents)
         entity_page.extend([pf.page] * len(page_ents))
         all_relationships.extend(result.get("relationships", []))
@@ -572,12 +656,31 @@ async def process_document_entities_from_fusions(
         if ev_key not in seen_evidence_key:
             seen_evidence_key.add(ev_key)
             first_chunk_id = chunk_ids[0] if chunk_ids else 0
+            fusion = fusion_by_page.get(int(page))
+            raw_rows = page_to_raw_rows.get(int(page), [])
+            raw_data_id = int(raw_rows[0].id) if raw_rows else None
             evidence = KbEvidence(
                 owner_id=owner_id, entity_id=entity_id,
                 document_id=document_id, chunk_id=first_chunk_id,
                 page=page,
                 excerpt=(description or "")[:500],
                 confidence=0.7, status="pending",
+                raw_data_id=raw_data_id,
+                page_fusion_id=int(fusion.id) if fusion is not None else None,
+                artifact_id=fusion_artifact_id,
+                source_round="fusion",
+                claim_type="entity",
+                source_hash=_fusion_source_hash(fusion, raw_rows) if fusion is not None else None,
+                prompt_hash=graph_prompt_hash,
+                model_used=page_model_used.get(int(page)),
+                diagnostics_json={
+                    "model_diagnostics": page_model_diagnostics.get(int(page)),
+                    "source": {
+                        "page_fusion_id": int(fusion.id) if fusion is not None else None,
+                        "raw_data_ids": [int(row.id) for row in raw_rows],
+                        "artifact_stage": "fusion" if fusion_artifact_id is not None else None,
+                    },
+                },
             )
             db.add(evidence)
 

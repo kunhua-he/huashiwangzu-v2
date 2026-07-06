@@ -17,6 +17,10 @@ KB_TABLES = [
     "kb_governance_candidates", "kb_pipeline_runs",
     "kb_pipeline_stage_runs", "kb_analysis_artifacts", "kb_pipeline_stale",
     "kb_image_assets", "kb_image_similar_pairs", "kb_image_similarity_groups",
+    "kb_content_objects", "kb_file_knowledge_links", "kb_ingest_batches",
+    "kb_validation_reports", "kb_artifact_lineage", "kb_terms",
+    "kb_term_occurrences", "kb_term_edges", "kb_fact_candidates",
+    "kb_causal_candidates", "kb_query_contexts",
 ]
 
 # 关键索引语句（幂等，CREATE INDEX IF NOT EXISTS）
@@ -66,6 +70,35 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_kb_image_pairs_source ON kb_image_similar_pairs(source_asset_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_image_pairs_target ON kb_image_similar_pairs(target_asset_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_image_groups_owner ON kb_image_similarity_groups(owner_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_content_objects_owner ON kb_content_objects(owner_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_content_objects_md5 ON kb_content_objects(owner_id, md5_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_content_objects_sha256 ON kb_content_objects(owner_id, sha256_hash)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_content_objects_owner_md5 ON kb_content_objects(owner_id, md5_hash) WHERE md5_hash IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_content_objects_owner_sha256 ON kb_content_objects(owner_id, sha256_hash) WHERE sha256_hash IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_kb_content_objects_canonical_doc ON kb_content_objects(canonical_document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_file_links_owner_role ON kb_file_knowledge_links(owner_id, link_role)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_file_links_content ON kb_file_knowledge_links(content_object_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_file_links_doc ON kb_file_knowledge_links(document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_file_links_canonical_doc ON kb_file_knowledge_links(canonical_document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_ingest_batches_owner ON kb_ingest_batches(owner_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_validation_reports_owner ON kb_validation_reports(owner_id, report_type)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_artifact_lineage_doc_stage ON kb_artifact_lineage(document_id, stage)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_artifact_lineage_reuse ON kb_artifact_lineage(reused_from_artifact_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_terms_owner_norm ON kb_terms(owner_id, normalized)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_terms_owner_type ON kb_terms(owner_id, term_type)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_term_occurrences_doc ON kb_term_occurrences(document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_term_occurrences_term ON kb_term_occurrences(term_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_term_occurrences_source_hash ON kb_term_occurrences(owner_id, source_hash)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_term_occurrences_owner_source ON kb_term_occurrences(owner_id, source_hash) WHERE source_hash IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_kb_term_edges_source ON kb_term_edges(source_term_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_term_edges_target ON kb_term_edges(target_term_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_fact_candidates_doc ON kb_fact_candidates(document_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_fact_candidates_source_hash ON kb_fact_candidates(owner_id, source_hash)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_fact_candidates_owner_source ON kb_fact_candidates(owner_id, source_hash) WHERE source_hash IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_kb_causal_candidates_doc ON kb_causal_candidates(document_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_causal_candidates_source_hash ON kb_causal_candidates(owner_id, source_hash)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_causal_candidates_owner_source ON kb_causal_candidates(owner_id, source_hash) WHERE source_hash IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_kb_query_contexts_owner_hash ON kb_query_contexts(owner_id, query_hash)",
 ]
 
 # ALTER 列补齐语句（幂等，ADD COLUMN IF NOT EXISTS）。
@@ -107,6 +140,8 @@ _MIGRATION_STATEMENTS = [
     ("kb_evidence", "prompt_hash", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS prompt_hash VARCHAR(64)"),
     ("kb_evidence", "model_used", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS model_used VARCHAR(128)"),
     ("kb_evidence", "diagnostics_json", "ALTER TABLE kb_evidence ADD COLUMN IF NOT EXISTS diagnostics_json JSON"),
+    ("kb_fact_candidates", "source_hash", "ALTER TABLE kb_fact_candidates ADD COLUMN IF NOT EXISTS source_hash VARCHAR(64)"),
+    ("kb_causal_candidates", "source_hash", "ALTER TABLE kb_causal_candidates ADD COLUMN IF NOT EXISTS source_hash VARCHAR(64)"),
 ]
 
 _KNOWLEDGE_PROMPT_CATEGORY = {
@@ -243,10 +278,13 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
     """确保所有 kb_* 表已创建。"""
     from .models import (  # noqa: F401 注册到 Base.metadata
         KbAnalysisArtifact,
+        KbArtifactLineage,
         KbCatalog,
+        KbCausalCandidate,
         KbChunk,
         KbChunkEntity,
         KbConclusionEvidence,
+        KbContentObject,
         KbDisambiguation,
         KbDocument,
         KbDocumentProfile,
@@ -254,6 +292,8 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
         KbEntityDictionary,
         KbEntityMergeLog,
         KbEvidence,
+        KbFactCandidate,
+        KbFileKnowledgeLink,
         KbFileRelation,
         KbGovernanceCandidate,
         KbGraphEdge,
@@ -261,11 +301,17 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
         KbImageAsset,
         KbImageSimilarityGroup,
         KbImageSimilarPair,
+        KbIngestBatch,
         KbPageFusion,
         KbPipelineRun,
         KbPipelineStageRun,
         KbPipelineStale,
+        KbQueryContext,
         KbRawData,
+        KbTerm,
+        KbTermEdge,
+        KbTermOccurrence,
+        KbValidationReport,
     )
     kb_tables = [t for n, t in Base.metadata.tables.items() if n.startswith("kb_")]
     # 用原始连接执行建表（SQLAlchemy async 兼容）

@@ -55,14 +55,16 @@ Backend HTTP prefix: `/api/knowledge`
 <!-- DOCS-SYNC: section=public_actions -->
 Runtime authority: backend `register_capability(...)`. Discovery metadata: `manifest.public_actions`.
 
-Total public actions: 17
+Total public actions: 20
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
 | `apply_pipeline_debt` | `admin` | `action`, `categories`, `category`, `category_limits`, `dry_run`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 或 guarded apply 历史知识库管道债治理动作 |
 | `archive_source_unavailable_documents` | `admin` | `audit_reason`, `confirm`, `dry_run`, `limit`, `reason` | dry-run 或确认归档源文件不可用的知识库文档 |
-| `audit_lifecycle_debt` | `admin` | `limit`, `reason` | 审计源文件已删除或缺失的 active 知识库文档 |
+| `audit_lifecycle_debt` | `admin` | `limit`, `reason` | 审计源文件已删除、缺失、路径异常或磁盘文件缺失的 active 知识库文档 |
+| `backfill_cognitive_v3` | `admin` | `build_terms`, `dry_run`, `limit`, `source_root` | 回填知识库 V3 内容复用链路、批次验收报告和可选认知派生索引 |
 | `classify_pipeline_debt` | `admin` | `categories`, `category`, `category_limits`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 分类历史知识库管道债，不修改队列 |
+| `derive_cognitive_index` | `admin` | `document_id`, `limit` | 按单文档重建 V3 词项、事实和因果候选派生索引 |
 | `export` | `viewer` | `document_id`, `format` | 导出已解析文档（markdown/html/json） |
 | `get_block` | `viewer` | `block_id` | 按 block_id 获取内容块详情 |
 | `get_entity_dictionary` | `viewer` | `keyword` | 查询实体词典 |
@@ -75,6 +77,7 @@ Total public actions: 17
 | `ingest` | `editor` | `file_id` | 将文件注册到知识库并触发分析 |
 | `plan_pipeline_rerun` | `admin` | `document_id`, `reason`, `stage` | dry-run 规划知识库管道重跑，不修改队列或产物 |
 | `reconcile_orphan_pipeline_runs` | `admin` | `dry_run`, `limit`, `run_ids` | dry-run 或 guarded apply 收口无 task_id 的 orphan running 诊断运行 |
+| `reconcile_pending_pipeline_queue` | `admin` | `categories`, `category`, `category_limits`, `dry_run`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 或归档已不可执行的 pending kb_pipeline 队列任务，保留仍可执行的 live pending |
 | `search` | `viewer` | `query`, `top_k` | 按关键词搜索知识库，返回相关块 |
 <!-- /DOCS-SYNC -->
 
@@ -83,10 +86,13 @@ Total public actions: 17
 | Table / Prefix | Purpose |
 |---|---|
 | `kb_analysis_artifacts` | Owned by `knowledge` module |
+| `kb_artifact_lineage` | Owned by `knowledge` module |
 | `kb_catalogs` | Owned by `knowledge` module |
 | `kb_chunk_entities` | Owned by `knowledge` module |
 | `kb_chunks` | Owned by `knowledge` module |
 | `kb_conclusion_evidence` | Owned by `knowledge` module |
+| `kb_causal_candidates` | Owned by `knowledge` module |
+| `kb_content_objects` | Owned by `knowledge` module |
 | `kb_disambiguation` | Owned by `knowledge` module |
 | `kb_document_profiles` | Owned by `knowledge` module |
 | `kb_documents` | Owned by `knowledge` module |
@@ -94,6 +100,8 @@ Total public actions: 17
 | `kb_entity_dictionary` | Owned by `knowledge` module |
 | `kb_entity_merge_log` | Owned by `knowledge` module |
 | `kb_evidence` | Owned by `knowledge` module |
+| `kb_fact_candidates` | Owned by `knowledge` module |
+| `kb_file_knowledge_links` | Owned by `knowledge` module |
 | `kb_file_relations` | Owned by `knowledge` module |
 | `kb_governance_candidates` | Owned by `knowledge` module |
 | `kb_graph_edges` | Owned by `knowledge` module |
@@ -101,11 +109,17 @@ Total public actions: 17
 | `kb_image_assets` | Owned by `knowledge` module |
 | `kb_image_similar_pairs` | Owned by `knowledge` module |
 | `kb_image_similarity_groups` | Owned by `knowledge` module |
+| `kb_ingest_batches` | Owned by `knowledge` module |
 | `kb_page_fusions` | Owned by `knowledge` module |
 | `kb_pipeline_runs` | Owned by `knowledge` module |
 | `kb_pipeline_stage_runs` | Owned by `knowledge` module |
 | `kb_pipeline_stale` | Owned by `knowledge` module |
+| `kb_query_contexts` | Owned by `knowledge` module |
 | `kb_raw_data` | Owned by `knowledge` module |
+| `kb_term_edges` | Owned by `knowledge` module |
+| `kb_term_occurrences` | Owned by `knowledge` module |
+| `kb_terms` | Owned by `knowledge` module |
+| `kb_validation_reports` | Owned by `knowledge` module |
 
 Use `db_schema()` for live database details. This module must not directly read or write other modules' tables.
 
@@ -115,6 +129,20 @@ Use `db_schema()` for live database details. This module must not directly read 
 - Evidence rows may carry lineage back to raw data, page fusion, artifacts, prompt hash, model used, and diagnostics.
 - Image similarity is a sidecar stage for PDF page renders and image files. It stores perceptual hashes, suspected/high pairs, and groups, but it does not skip VLM analysis or reuse representative-image VLM output.
 - Chaotic model-returned tags, entity types, and relation types are preserved as raw business signals until a later governance phase.
+
+## V3 Cognitive Substrate
+
+- V3 is additive on PostgreSQL/pgvector and the current `kb_*` pipeline; it does not replace the storage engine, vector index, parser, or model gateway.
+- `kb_content_objects` and `kb_file_knowledge_links` make duplicate-file reuse explicit. Multiple file records may point to one canonical knowledge document without copying chunks, raw data, fusion pages, or profile rows.
+- `kb_ingest_batches` and `kb_validation_reports` record batch-level coverage, duplicate counts, missing canonical mappings, and validation findings for enterprise imports.
+- `kb_terms`, `kb_term_occurrences`, `kb_term_edges`, `kb_fact_candidates`, `kb_causal_candidates`, and `kb_query_contexts` are rebuildable derived indexes. They preserve chaotic model/business signals for later governance instead of freezing a premature taxonomy.
+- `backfill_cognitive_v3` is dry-run by default. `derive_cognitive_index` can rebuild one document's V3 derived layer from existing page fusion and document profile outputs without rerunning raw/VLM/LLM stages.
+
+## Queue Governance
+
+- Failed `kb_pipeline` tasks are historical debt and do not block worker execution. They can be classified and selectively retried or archived through `classify_pipeline_debt` and `apply_pipeline_debt`.
+- Pending `kb_pipeline` tasks are executable queue head items. `reconcile_pending_pipeline_queue` archives only obsolete pending rows whose document is gone, file row is deleted/missing, storage path is invalid, or physical source file is missing, while leaving live pending work in place.
+- Running task recovery is handled by the framework task worker timeout logic; knowledge-specific orphan diagnostics remain available through `reconcile_orphan_pipeline_runs`.
 
 ## Cross-Module Dependencies
 

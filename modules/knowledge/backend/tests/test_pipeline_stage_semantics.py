@@ -35,6 +35,18 @@ classify_fusion_status = fusion_service.classify_fusion_status
 classify_raw_collection_status = raw_collection_service.classify_raw_collection_status
 completed_raw_pages = raw_collection_service.completed_raw_pages
 summarize_raw_content_quality = raw_collection_service.summarize_raw_content_quality
+TEST_STORAGE_PATH = "_knowledge_tests/stage-semantics-source.txt"
+
+
+@pytest.fixture(autouse=True)
+def _live_upload_fixture():
+    marker = REPO_ROOT / "data" / "uploads" / TEST_STORAGE_PATH
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("knowledge pipeline stage semantics source", encoding="utf-8")
+    try:
+        yield
+    finally:
+        marker.unlink(missing_ok=True)
 
 
 class _ScalarResult:
@@ -63,6 +75,7 @@ class _ListResult:
 
 class _FakeDocument:
     id = 123
+    storage_path = TEST_STORAGE_PATH
     raw_status = "pending"
     fusion_status = "pending"
     parse_error = None

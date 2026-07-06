@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbPipelineRun, KbPipelineStageRun
 from .document_service import mark_document_source_unavailable
+from .source_file_state import SourceFileAvailability, classify_file_availability
 
 FILE_NOT_FOUND_MARKER = "File not found"
 DOC_NOT_FOUND_PATTERN = "Document % not found"
@@ -27,6 +28,18 @@ LIFECYCLE_ARCHIVE_CATEGORIES = {
     "doc_deleted",
     "source_file_missing",
     "source_file_deleted",
+    "source_storage_path_missing",
+    "source_path_unsafe",
+    "source_file_physical_missing",
+}
+PENDING_OBSOLETE_CATEGORIES = {
+    "pending_doc_missing",
+    "pending_doc_deleted",
+    "pending_source_file_missing",
+    "pending_source_file_deleted",
+    "pending_source_storage_path_missing",
+    "pending_source_path_unsafe",
+    "pending_source_file_physical_missing",
 }
 RETRYABLE_CATEGORIES = {"file_row_live"}
 ACTIVE_DOCUMENT_STATUSES = {"parsing", "indexing", "collecting", "running", "fusing"}
@@ -54,10 +67,9 @@ def _classify_task(
         return "doc_missing", "archive_obsolete", None, error_family
     if doc.deleted:
         return "doc_deleted", "archive_obsolete", None, error_family
-    if file is None:
-        return "source_file_missing", "archive_lifecycle_skip", "source_file_missing", error_family
-    if file.deleted:
-        return "source_file_deleted", "archive_lifecycle_skip", "source_file_deleted", error_family
+    source_state = classify_file_availability(file)
+    if not source_state.available:
+        return source_state.reason, "archive_lifecycle_skip", source_state.reason, error_family
     if error_family == "parser_no_content_blocks":
         return "parser_no_content_blocks", "parser_quality_investigation", None, error_family
     if error_family == "task_result_failed":
@@ -101,10 +113,9 @@ def _classify_orphan_run(
         return "orphan_run_doc_missing", "reconcile_archive_diagnostic", None
     if doc.deleted:
         return "orphan_run_doc_deleted", "reconcile_archive_diagnostic", None
-    if file is None:
-        return "orphan_run_source_file_missing", "reconcile_source_unavailable", "source_file_missing"
-    if file.deleted:
-        return "orphan_run_source_file_deleted", "reconcile_source_unavailable", "source_file_deleted"
+    source_state = classify_file_availability(file)
+    if not source_state.available:
+        return f"orphan_run_{source_state.reason}", "reconcile_source_unavailable", source_state.reason
     return "orphan_run_live_without_task", "reconcile_stale_running_run", None
 
 
@@ -154,6 +165,42 @@ async def _load_candidate_tasks(
         query = query.limit(limit)
     result = await db.execute(query)
     return list(result.scalars().all())
+
+
+async def _load_pending_pipeline_tasks(
+    db: AsyncSession,
+    *,
+    limit: int = 500,
+    task_ids: list[int] | None = None,
+    order: str = "oldest",
+) -> list[SystemTaskQueue]:
+    filters = [
+        SystemTaskQueue.module == "knowledge",
+        SystemTaskQueue.task_type == "kb_pipeline",
+        SystemTaskQueue.status == "pending",
+    ]
+    if task_ids:
+        filters.append(SystemTaskQueue.id.in_(task_ids))
+    order_by = SystemTaskQueue.id.desc() if order == "newest" else SystemTaskQueue.id.asc()
+    query = select(SystemTaskQueue).where(*filters).order_by(order_by)
+    if not task_ids:
+        query = query.limit(limit)
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
+def _classify_pending_task(
+    doc: KbDocument | None,
+    file: File | None,
+) -> tuple[str, str, str | None, SourceFileAvailability | None]:
+    if doc is None:
+        return "pending_doc_missing", "archive_pending_obsolete", None, None
+    if doc.deleted:
+        return "pending_doc_deleted", "archive_pending_obsolete", None, None
+    source_state = classify_file_availability(file)
+    if not source_state.available:
+        return f"pending_{source_state.reason}", "archive_pending_obsolete", source_state.reason, source_state
+    return "pending_live", "keep_pending", None, source_state
 
 
 def _normalize_category_tokens(values: list[str] | None) -> list[str]:
@@ -276,6 +323,7 @@ async def _classify_tasks(db: AsyncSession, tasks: list[SystemTaskQueue]) -> dic
         document_id = int(params.get("document_id", 0) or 0)
         doc = await db.get(KbDocument, document_id) if document_id > 0 else None
         file = await db.get(File, doc.file_id) if doc is not None else None
+        source_state = classify_file_availability(file) if doc is not None else None
         category, suggested_action, parse_error, error_family = _classify_task(doc, file, task.error_message)
         summary[category] += 1
         error_summary[error_family] += 1
@@ -283,6 +331,8 @@ async def _classify_tasks(db: AsyncSession, tasks: list[SystemTaskQueue]) -> dic
             "task_id": task.id,
             "document_id": document_id or None,
             "file_id": doc.file_id if doc is not None else None,
+            "storage_path": source_state.storage_path if source_state is not None else None,
+            "physical_path": source_state.physical_path if source_state is not None else None,
             "category": category,
             "error_family": error_family,
             "suggested_action": suggested_action,
@@ -299,6 +349,40 @@ async def _classify_tasks(db: AsyncSession, tasks: list[SystemTaskQueue]) -> dic
         "matched": len(items),
         "summary": dict(summary),
         "error_summary": dict(error_summary),
+        "items": items,
+    }
+
+
+async def _classify_pending_tasks(db: AsyncSession, tasks: list[SystemTaskQueue]) -> dict:
+    items: list[dict[str, Any]] = []
+    summary: Counter[str] = Counter()
+
+    for task in tasks:
+        params = _load_task_parameters(task.parameters)
+        document_id = int(params.get("document_id", 0) or 0)
+        doc = await db.get(KbDocument, document_id) if document_id > 0 else None
+        file = await db.get(File, doc.file_id) if doc is not None else None
+        category, suggested_action, parse_error, source_state = _classify_pending_task(doc, file)
+        summary[category] += 1
+        items.append({
+            "task_id": task.id,
+            "document_id": document_id or None,
+            "file_id": doc.file_id if doc is not None else None,
+            "storage_path": source_state.storage_path if source_state is not None else None,
+            "physical_path": source_state.physical_path if source_state is not None else None,
+            "category": category,
+            "suggested_action": suggested_action,
+            "archiveable": category in PENDING_OBSOLETE_CATEGORIES,
+            "would_set_parse_error": parse_error,
+            "queue_status": task.status,
+            "created_at": task.created_at.isoformat() if getattr(task, "created_at", None) else None,
+            "updated_at": task.updated_at.isoformat() if getattr(task, "updated_at", None) else None,
+        })
+
+    return {
+        "dry_run": True,
+        "matched": len(items),
+        "summary": dict(summary),
         "items": items,
     }
 
@@ -539,6 +623,84 @@ async def classify_pipeline_lifecycle_debt(
         status_machine_audit,
     )
     return classification
+
+
+async def reconcile_pending_pipeline_queue(
+    db: AsyncSession,
+    *,
+    limit: int = 500,
+    task_ids: list[int] | None = None,
+    dry_run: bool = True,
+    categories: list[str] | None = None,
+    category_limits: dict[str, int] | None = None,
+    limit_each: int | None = None,
+    order: str = "oldest",
+) -> dict:
+    """Dry-run or archive obsolete pending kb_pipeline queue rows.
+
+    Live pending rows are never mutated. This is for import/reload scenarios
+    where old queue rows point at documents or files that no longer exist.
+    """
+    tasks = await _load_pending_pipeline_tasks(
+        db,
+        limit=max(1, min(int(limit or 500), 5000)),
+        task_ids=task_ids,
+        order=order,
+    )
+    classification = await _classify_pending_tasks(db, tasks)
+    selection = _select_items_by_category(
+        classification["items"],
+        categories=categories,
+        category_limits=category_limits,
+        limit_each=limit_each,
+        precise_task_ids=bool(task_ids),
+    )
+    selected_items = selection["selected_items"]
+    selected_obsolete = [
+        item for item in selected_items
+        if str(item.get("category")) in PENDING_OBSOLETE_CATEGORIES
+    ]
+    skipped_live = len(selected_items) - len(selected_obsolete)
+    result = {
+        **classification,
+        "dry_run": dry_run,
+        "will_mutate": not dry_run,
+        "order": order if order in PIPELINE_DEBT_ORDER_VALUES else "oldest",
+        "selected": len(selected_items),
+        "selected_obsolete": len(selected_obsolete),
+        "skipped_live": skipped_live,
+        "not_selected": len(selection["not_selected_items"]),
+        "selected_by_category": selection["selected_by_category"],
+        "not_selected_by_category": selection["not_selected_by_category"],
+        "selected_items": selected_items,
+        "not_selected_items": selection["not_selected_items"],
+        "selection": {
+            "applied": selection["applied"],
+            "mode": selection["mode"],
+            "categories": selection["categories"],
+            "category_limits": selection["category_limits"],
+            "limit_each": selection["limit_each"],
+        },
+        "changed": 0,
+    }
+    if dry_run or not selected_obsolete:
+        return result
+
+    tasks_by_id = {int(task.id): task for task in tasks}
+    now = datetime.now(timezone.utc)
+    for item in selected_obsolete:
+        task = tasks_by_id.get(int(item["task_id"]))
+        if task is None or task.status != "pending":
+            continue
+        _archive_task(task, item, now)
+        if item.get("would_set_parse_error"):
+            await _mark_document_for_archived_lifecycle_debt(db, item)
+        result["changed"] += 1
+
+    await db.commit()
+    result["dry_run"] = False
+    result["will_mutate"] = True
+    return result
 
 
 def _count_by_category(items: list[dict[str, Any]]) -> dict[str, int]:

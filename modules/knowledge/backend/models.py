@@ -334,6 +334,240 @@ class KbFileRelation(Base, TimestampMixin):
     weight: Mapped[float] = mapped_column(Float, default=1.0)
 
 
+class KbContentObject(Base, TimestampMixin):
+    """V3 内容对象：同一份物理内容只对应一个 canonical 知识对象。"""
+    __tablename__ = "kb_content_objects"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "md5_hash", name="uq_kb_content_objects_owner_md5"),
+        UniqueConstraint("owner_id", "sha256_hash", name="uq_kb_content_objects_owner_sha256"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    md5_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sha256_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    file_size: Mapped[int] = mapped_column(BigInteger, default=0)
+    mime_type: Mapped[str] = mapped_column(String(128), default="")
+    extension: Mapped[str] = mapped_column(String(32), default="")
+    canonical_document_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    canonical_file_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbFileKnowledgeLink(Base, TimestampMixin):
+    """V3 文件实例到 canonical 知识对象的显式血缘链接。"""
+    __tablename__ = "kb_file_knowledge_links"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "file_id", name="uq_kb_file_links_owner_file"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    content_object_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    document_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    canonical_document_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    canonical_file_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    link_role: Mapped[str] = mapped_column(String(32), default="canonical")
+    reuse_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    md5_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_name_snapshot: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_extension_snapshot: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_folder_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    ingest_batch_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbIngestBatch(Base, TimestampMixin):
+    """V3 导入批次账本，用于企业微盘批量验收和回滚说明。"""
+    __tablename__ = "kb_ingest_batches"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    source_root: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(64), default="manual")
+    total_files: Mapped[int] = mapped_column(Integer, default=0)
+    distinct_content_count: Mapped[int] = mapped_column(Integer, default=0)
+    duplicate_file_count: Mapped[int] = mapped_column(Integer, default=0)
+    canonical_document_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="running")
+    summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KbValidationReport(Base, TimestampMixin):
+    """V3 验收报告：保存批次覆盖、重复复用、失败项和抽检结论。"""
+    __tablename__ = "kb_validation_reports"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    batch_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    scope: Mapped[str] = mapped_column(String(128), default="knowledge_v3")
+    report_type: Mapped[str] = mapped_column(String(64), default="batch_validation")
+    status: Mapped[str] = mapped_column(String(32), default="done")
+    metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    findings_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    recommendations_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KbArtifactLineage(Base, TimestampMixin):
+    """V3 产物血缘：说明一个 artifact 是新跑、复用还是派生。"""
+    __tablename__ = "kb_artifact_lineage"
+    __table_args__ = (
+        UniqueConstraint("artifact_id", name="uq_kb_artifact_lineage_artifact"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    artifact_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    unit_type: Mapped[str] = mapped_column(String(32), default="document")
+    unit_key: Mapped[str] = mapped_column(String(128), default="document")
+    source_artifact_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    reused_from_artifact_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reuse_type: Mapped[str] = mapped_column(String(32), default="new")
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
+    output_hash: Mapped[str] = mapped_column(String(64), default="")
+    schema_version: Mapped[str] = mapped_column(String(32), default="")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbTerm(Base, TimestampMixin):
+    """V3 词项节点：品牌、产品、成分、备案号、别名和自由业务标签。"""
+    __tablename__ = "kb_terms"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "normalized", "term_type", name="uq_kb_terms_owner_norm_type"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    term: Mapped[str] = mapped_column(String(256), nullable=False)
+    normalized: Mapped[str] = mapped_column(String(256), nullable=False)
+    term_type: Mapped[str] = mapped_column(String(64), default="term")
+    language: Mapped[str] = mapped_column(String(16), default="mixed")
+    semantic_bucket: Mapped[int] = mapped_column(Integer, default=0)
+    category_bucket: Mapped[int] = mapped_column(Integer, default=0)
+    exact_hash: Mapped[str] = mapped_column(String(64), default="")
+    source: Mapped[str] = mapped_column(String(64), default="derived")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class KbTermOccurrence(Base, TimestampMixin):
+    """V3 词项出现位置，用于可解释召回和后续治理。"""
+    __tablename__ = "kb_term_occurrences"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_hash", name="uq_kb_term_occurrences_owner_source"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    term_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    chunk_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    page_fusion_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    evidence_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    artifact_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(64), default="derived")
+    position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class KbTermEdge(Base, TimestampMixin):
+    """V3 词项边：别名、共现、上下位、近义和业务关联。"""
+    __tablename__ = "kb_term_edges"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_term_id", "target_term_id", "edge_type", name="uq_kb_term_edges_owner_pair_type"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_term_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    target_term_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    edge_type: Mapped[str] = mapped_column(String(64), default="co_occurs")
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    evidence_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_artifact_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    decision_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+
+
+class KbFactCandidate(Base, TimestampMixin):
+    """V3 候选事实：先沉淀混沌结果，后治理，不硬编码业务枚举。"""
+    __tablename__ = "kb_fact_candidates"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_hash", name="uq_kb_fact_candidates_owner_source"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    subject: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    predicate: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    object_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_text: Mapped[str] = mapped_column(Text, default="")
+    evidence_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_artifact_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(64), default="derived")
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="candidate")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbCausalCandidate(Base, TimestampMixin):
+    """V3 因果候选：必须保留上下文和证据，不能直接当作已确认事实。"""
+    __tablename__ = "kb_causal_candidates"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_hash", name="uq_kb_causal_candidates_owner_source"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cause: Mapped[str] = mapped_column(Text, default="")
+    effect: Mapped[str] = mapped_column(Text, default="")
+    relation: Mapped[str] = mapped_column(String(64), default="causal_candidate")
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_artifact_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="candidate")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbQueryContext(Base, TimestampMixin):
+    """V3 查询上下文：记录一次查询如何被词项图、证据和因果候选增强。"""
+    __tablename__ = "kb_query_contexts"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    query: Mapped[str] = mapped_column(Text, default="")
+    normalized_query: Mapped[str] = mapped_column(Text, default="")
+    query_hash: Mapped[str] = mapped_column(String(64), default="")
+    expanded_terms: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    related_terms: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    causal_links: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    facts: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    evidence_refs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    result_document_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
 class KbPipelineRun(Base, TimestampMixin):
     """一次知识库全链路运行的持久诊断账本。"""
     __tablename__ = "kb_pipeline_runs"

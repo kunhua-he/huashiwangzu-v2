@@ -9,23 +9,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument
 from .document_service import mark_document_source_unavailable
+from .source_file_state import classify_file_availability
 
-LifecycleReason = Literal["source_file_deleted", "source_file_missing", "source_unavailable"]
+LifecycleReason = Literal[
+    "source_file_deleted",
+    "source_file_missing",
+    "source_storage_path_missing",
+    "source_path_unsafe",
+    "source_file_physical_missing",
+    "source_unavailable",
+]
 CONFIRM_ARCHIVE_SOURCE_UNAVAILABLE = "ARCHIVE_SOURCE_UNAVAILABLE"
-VALID_LIFECYCLE_REASONS = {"source_file_deleted", "source_file_missing", "source_unavailable"}
+SOURCE_UNAVAILABLE_REASONS = {
+    "source_file_deleted",
+    "source_file_missing",
+    "source_storage_path_missing",
+    "source_path_unsafe",
+    "source_file_physical_missing",
+}
+VALID_LIFECYCLE_REASONS = {*SOURCE_UNAVAILABLE_REASONS, "source_unavailable"}
 
 
 def _classify_source(file: File | None) -> str:
-    if file is None:
-        return "source_file_missing"
-    if file.deleted:
-        return "source_file_deleted"
-    return "source_available"
+    state = classify_file_availability(file)
+    return "source_available" if state.available else state.reason
 
 
 def _reason_matches(reason: str, filter_reason: str | None) -> bool:
     if not filter_reason or filter_reason == "source_unavailable":
-        return reason in {"source_file_deleted", "source_file_missing"}
+        return reason in SOURCE_UNAVAILABLE_REASONS
     return reason == filter_reason
 
 
@@ -33,7 +45,11 @@ def _validate_reason(reason: str | None) -> str | None:
     if not reason:
         return None
     if reason not in VALID_LIFECYCLE_REASONS:
-        raise ValidationError("reason must be source_file_deleted, source_file_missing, or source_unavailable")
+        raise ValidationError(
+            "reason must be one of source_file_deleted, source_file_missing, "
+            "source_storage_path_missing, source_path_unsafe, "
+            "source_file_physical_missing, or source_unavailable"
+        )
     return reason
 
 
@@ -63,12 +79,15 @@ async def _source_unavailable_rows(
 
 
 def _item_payload(doc: KbDocument, file: File | None, reason: str) -> dict[str, Any]:
+    source_state = classify_file_availability(file)
     return {
         "document_id": int(doc.id),
         "file_id": int(doc.file_id),
         "filename": doc.filename,
         "reason": reason,
-        "source_lifecycle_state": "source_recycled" if reason == "source_file_deleted" else "source_missing",
+        "source_lifecycle_state": _source_lifecycle_state(reason),
+        "storage_path": source_state.storage_path,
+        "physical_path": source_state.physical_path,
         "parse_error": doc.parse_error,
         "stage_statuses": {
             "parse": doc.parse_status,
@@ -84,6 +103,18 @@ def _item_payload(doc: KbDocument, file: File | None, reason: str) -> dict[str, 
     }
 
 
+def _source_lifecycle_state(reason: str) -> str:
+    if reason == "source_file_deleted":
+        return "source_recycled"
+    if reason == "source_file_missing":
+        return "source_db_missing"
+    if reason == "source_file_physical_missing":
+        return "source_disk_missing"
+    if reason in {"source_storage_path_missing", "source_path_unsafe"}:
+        return "source_path_invalid"
+    return "source_missing"
+
+
 async def audit_lifecycle_debt(
     db: AsyncSession,
     owner_id: int,
@@ -93,7 +124,7 @@ async def audit_lifecycle_debt(
 ) -> dict[str, Any]:
     limit = max(1, min(int(limit or 500), 5000))
     rows = await _source_unavailable_rows(db, owner_id, reason=reason)
-    summary = {"source_file_deleted": 0, "source_file_missing": 0}
+    summary = {reason: 0 for reason in SOURCE_UNAVAILABLE_REASONS}
     items = []
     for doc, file, source_reason in rows:
         summary[source_reason] += 1
@@ -105,6 +136,7 @@ async def audit_lifecycle_debt(
         "summary": summary,
         "source_recycled_count": summary["source_file_deleted"],
         "source_missing_count": summary["source_file_missing"],
+        "source_physical_missing_count": summary["source_file_physical_missing"],
         "candidate_document_ids": [item["document_id"] for item in items],
         "sample_documents": items[:20],
         "items": items,
@@ -125,7 +157,7 @@ async def archive_source_unavailable_documents(
 ) -> dict[str, Any]:
     limit = max(1, min(int(limit or 100), 5000))
     rows = await _source_unavailable_rows(db, owner_id, reason=reason)
-    summary = {"source_file_deleted": 0, "source_file_missing": 0}
+    summary = {reason: 0 for reason in SOURCE_UNAVAILABLE_REASONS}
     selected = []
     for doc, file, source_reason in rows:
         summary[source_reason] += 1
@@ -141,7 +173,7 @@ async def archive_source_unavailable_documents(
             "selected": len(items),
             "changed": 0,
             "summary": summary,
-            "changed_by_reason": {"source_file_deleted": 0, "source_file_missing": 0},
+            "changed_by_reason": {reason: 0 for reason in SOURCE_UNAVAILABLE_REASONS},
             "candidate_document_ids": [item["document_id"] for item in items],
             "sample_documents": items[:20],
             "requires_confirm": True,
@@ -152,7 +184,7 @@ async def archive_source_unavailable_documents(
     if confirm != CONFIRM_ARCHIVE_SOURCE_UNAVAILABLE:
         raise ValidationError("confirm must be ARCHIVE_SOURCE_UNAVAILABLE to archive lifecycle debt")
 
-    changed_by_reason = {"source_file_deleted": 0, "source_file_missing": 0}
+    changed_by_reason = {reason: 0 for reason in SOURCE_UNAVAILABLE_REASONS}
     changed_items = []
     for doc, file, source_reason in selected:
         mark_document_source_unavailable(doc, source_reason)

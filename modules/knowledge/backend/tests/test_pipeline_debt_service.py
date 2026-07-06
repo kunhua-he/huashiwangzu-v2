@@ -17,6 +17,8 @@ for path in (REPO_ROOT, BACKEND_ROOT):
 
 pipeline_debt_service = importlib.import_module("modules.knowledge.backend.services.pipeline_debt_service")
 
+TEST_STORAGE_PATH = "_knowledge_tests/live-source.txt"
+
 
 class _Doc:
     id = 1
@@ -31,6 +33,7 @@ class _DeletedDoc(_Doc):
 class _File:
     id = 10
     deleted = False
+    storage_path = TEST_STORAGE_PATH
 
 
 class _DeletedFile(_File):
@@ -59,9 +62,16 @@ class _MutableDoc:
 
 
 class _MutableFile:
-    def __init__(self, file_id: int, *, deleted: bool = False):
+    def __init__(
+        self,
+        file_id: int,
+        *,
+        deleted: bool = False,
+        storage_path: str = TEST_STORAGE_PATH,
+    ):
         self.id = file_id
         self.deleted = deleted
+        self.storage_path = storage_path
 
 
 class _Task:
@@ -72,12 +82,13 @@ class _Task:
         error_message: str,
         *,
         result: str | None = None,
+        status: str = "failed",
     ):
         self.id = task_id
         self.task_type = "kb_pipeline"
         self.module = "knowledge"
         self.parameters = json.dumps({"document_id": document_id})
-        self.status = "failed"
+        self.status = status
         self.error_message = error_message
         self.result = result
         self.started_at = "started"
@@ -119,6 +130,18 @@ class _CaptureExecuteDb:
     async def execute(self, statement):
         self.statement = statement
         return _EmptyExecuteResult()
+
+
+@pytest.fixture(autouse=True)
+def _live_upload_fixture():
+    upload_root = REPO_ROOT / "data" / "uploads"
+    marker = upload_root / TEST_STORAGE_PATH
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("knowledge pipeline debt test source", encoding="utf-8")
+    try:
+        yield
+    finally:
+        marker.unlink(missing_ok=True)
 
 
 def test_pipeline_debt_error_family_covers_recent_unmatched_markers():
@@ -184,6 +207,33 @@ def test_pipeline_debt_live_invalid_image_content_is_not_archiveable():
     assert parse_error is None
     assert family == "invalid_or_unsupported_image_content"
     assert pipeline_debt_service._is_archiveable(category) is False
+
+
+def test_pipeline_debt_live_file_row_with_missing_disk_file_is_lifecycle_debt():
+    category, action, parse_error, family = pipeline_debt_service._classify_task(
+        _Doc(),
+        _MutableFile(10, storage_path="_knowledge_tests/missing-source.pdf"),
+        "File not found on disk",
+    )
+
+    assert category == "source_file_physical_missing"
+    assert action == "archive_lifecycle_skip"
+    assert parse_error == "source_file_physical_missing"
+    assert family == "file_not_found"
+    assert pipeline_debt_service._is_archiveable(category) is True
+
+
+def test_pipeline_debt_storage_path_missing_is_lifecycle_debt():
+    category, action, parse_error, family = pipeline_debt_service._classify_task(
+        _Doc(),
+        _MutableFile(10, storage_path=""),
+        "File storage path is empty",
+    )
+
+    assert category == "source_storage_path_missing"
+    assert action == "archive_lifecycle_skip"
+    assert parse_error == "source_storage_path_missing"
+    assert family == "other"
 
 
 def test_pipeline_debt_orphan_running_run_classification_is_diagnostic_only():
@@ -567,3 +617,53 @@ async def test_archive_obsolete_dry_run_and_apply_return_same_shape(monkeypatch)
     assert apply_result["dry_run"] is False
     assert dry_result["selection"] == apply_result["selection"]
     assert dry_result["changed_by_category"] == apply_result["changed_by_category"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pending_archives_physical_missing_without_touching_live(monkeypatch):
+    docs = {
+        1: _MutableDoc(1, 10),
+        2: _MutableDoc(2, 20),
+    }
+    files = {
+        10: _MutableFile(10, storage_path="_knowledge_tests/missing-source.pdf"),
+        20: _MutableFile(20),
+    }
+    tasks = [
+        _Task(701, 1, "", status="pending"),
+        _Task(702, 2, "", status="pending"),
+    ]
+
+    async def fake_load_pending_tasks(db, *, limit=500, task_ids=None, order="oldest"):
+        return tasks
+
+    monkeypatch.setattr(
+        pipeline_debt_service,
+        "_load_pending_pipeline_tasks",
+        fake_load_pending_tasks,
+    )
+    db = _FakeDb(docs=docs, files=files)
+
+    result = await pipeline_debt_service.reconcile_pending_pipeline_queue(db, dry_run=False)
+
+    assert result["matched"] == 2
+    assert result["selected"] == 2
+    assert result["selected_obsolete"] == 1
+    assert result["skipped_live"] == 1
+    assert result["changed"] == 1
+    assert result["summary"] == {
+        "pending_source_file_physical_missing": 1,
+        "pending_live": 1,
+    }
+    assert tasks[0].status == "completed"
+    assert tasks[1].status == "pending"
+    assert docs[1].parse_error == "source_file_physical_missing"
+    assert docs[2].parse_error == "previous-doc-error"
+    assert db.commit_count == 1
+
+    archived_payload = json.loads(tasks[0].result or "{}")
+    assert archived_payload["status"] == "skipped"
+    assert archived_payload["classification"] == "pending_source_file_physical_missing"
+    assert archived_payload["reason"] == "source_file_physical_missing"
+    assert archived_payload["document_id"] == 1
+    assert archived_payload["file_id"] == 10

@@ -19,6 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .init_db import _run_startup_init
 from .services import file_lifecycle_service, pipeline_service  # noqa: F401
 from .services.chunk_rebuild_service import rebuild_document_chunks
+from .services.cognitive_v3_service import (
+    backfill_cognitive_v3,
+    derive_document_cognitive_index,
+    persist_query_context,
+)
 from .services.dashboard_service import get_dashboard_stats
 from .services.document_service import (
     enqueue_pipeline_task,
@@ -49,12 +54,14 @@ from .services.lifecycle_debt_service import (
 from .services.pipeline_debt_api import (
     cap_apply_pipeline_debt,
     cap_classify_pipeline_debt,
+    cap_reconcile_pending_pipeline_queue,
     merge_category_params,
     parse_category_limits_query,
 )
 from .services.pipeline_debt_service import (
     apply_pipeline_lifecycle_debt_action,
     classify_pipeline_lifecycle_debt,
+    reconcile_pending_pipeline_queue,
 )
 from .services.pipeline_reconcile_service import (
     apply_orphan_pipeline_run_reconcile,
@@ -244,10 +251,26 @@ class PipelineRunReconcileRequest(BaseModel):
     limit: int = Field(default=500, ge=1, le=5000)
     run_ids: list[int] = Field(default_factory=list)
     dry_run: bool = True
+class PendingPipelineQueueReconcileRequest(BaseModel):
+    limit: int = Field(default=500, ge=1, le=5000)
+    task_ids: list[int] = Field(default_factory=list)
+    dry_run: bool = True
+    category: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    category_limits: dict[str, int] = Field(default_factory=dict)
+    limit_each: int | None = Field(default=None, ge=1, le=5000)
+    order: Literal["newest", "oldest"] = "oldest"
 class LifecycleArchiveRequest(BaseModel):
     dry_run: bool = True
     limit: int = Field(default=100, ge=1, le=5000)
-    reason: Literal["source_file_deleted", "source_file_missing", "source_unavailable"] = "source_unavailable"
+    reason: Literal[
+        "source_file_deleted",
+        "source_file_missing",
+        "source_storage_path_missing",
+        "source_path_unsafe",
+        "source_file_physical_missing",
+        "source_unavailable",
+    ] = "source_unavailable"
     confirm: str = ""
     audit_reason: str = ""
 class RerunPlanRequest(BaseModel):
@@ -261,6 +284,14 @@ class RerunPlanRequest(BaseModel):
         "manual_failed_retry",
     ]
     stage: str | None = None
+class V3BackfillRequest(BaseModel):
+    dry_run: bool = True
+    limit: int = Field(default=1000, ge=1, le=10000)
+    source_root: str = ""
+    build_terms: bool = True
+class V3DeriveDocumentRequest(BaseModel):
+    document_id: int
+    limit: int = Field(default=200, ge=1, le=1000)
 
 @router.get("/health")
 async def health():
@@ -627,6 +658,13 @@ async def api_search(
 ):
     results = await hybrid_search(db, payload.query, user.id, payload.top_k, payload.use_rerank)
     enriched, context_data = await _enrich_search_results(db, results, user.id)
+    query_context = await persist_query_context(
+        db,
+        owner_id=user.id,
+        query=payload.query,
+        results=enriched,
+    )
+    await db.commit()
     return ApiResponse(data={
         "query": payload.query,
         "results": enriched,
@@ -634,6 +672,7 @@ async def api_search(
             **context_data,
             "top_k": payload.top_k,
             "use_rerank": payload.use_rerank,
+            "query_context": query_context,
         },
     })
 
@@ -818,10 +857,36 @@ async def api_orphan_pipeline_run_reconcile_apply(
     )
     return ApiResponse(data=result)
 
+@router.post("/governance/pipeline-queue/pending/reconcile")
+async def api_pending_pipeline_queue_reconcile(
+    payload: PendingPipelineQueueReconcileRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    _ = user
+    result = await reconcile_pending_pipeline_queue(
+        db,
+        limit=payload.limit,
+        task_ids=payload.task_ids or None,
+        dry_run=payload.dry_run,
+        categories=merge_category_params(payload.category, payload.categories),
+        category_limits=payload.category_limits,
+        limit_each=payload.limit_each,
+        order=payload.order,
+    )
+    return ApiResponse(data=result)
+
 @router.get("/governance/lifecycle-debt/dry-run")
 async def api_lifecycle_debt_dry_run(
     limit: int = Query(default=500, ge=1, le=5000),
-    reason: Literal["source_file_deleted", "source_file_missing", "source_unavailable"] = Query(default="source_unavailable"),
+    reason: Literal[
+        "source_file_deleted",
+        "source_file_missing",
+        "source_storage_path_missing",
+        "source_path_unsafe",
+        "source_file_physical_missing",
+        "source_unavailable",
+    ] = Query(default="source_unavailable"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
@@ -858,6 +923,38 @@ async def api_rerun_plan_dry_run(
         reason=payload.reason,
         stage=payload.stage,
     )
+    return ApiResponse(data=result)
+
+@router.post("/governance/v3/backfill")
+async def api_cognitive_v3_backfill(
+    payload: V3BackfillRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    result = await backfill_cognitive_v3(
+        db,
+        owner_id=user.id,
+        dry_run=payload.dry_run,
+        limit=payload.limit,
+        source_root=payload.source_root,
+        build_terms=payload.build_terms,
+    )
+    return ApiResponse(data=result)
+
+@router.post("/governance/v3/derive-document")
+async def api_cognitive_v3_derive_document(
+    payload: V3DeriveDocumentRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    await get_live_document_or_raise(db, payload.document_id, user.id)
+    result = await derive_document_cognitive_index(
+        db,
+        owner_id=user.id,
+        document_id=payload.document_id,
+        limit=payload.limit,
+    )
+    await db.commit()
     return ApiResponse(data=result)
 
 # ── Cross-module capabilities ───────────────────────────────
@@ -907,6 +1004,13 @@ async def _cap_search(params: dict, caller: str) -> dict:
             owner_id,
             include_page_fusion=True,
         )
+        query_context = await persist_query_context(
+            db,
+            owner_id=owner_id,
+            query=query,
+            results=enriched,
+        )
+        await db.commit()
         return {
             "query": query,
             "results": enriched,
@@ -914,6 +1018,7 @@ async def _cap_search(params: dict, caller: str) -> dict:
                 **context_data,
                 "top_k": top_k,
                 "use_rerank": False,
+                "query_context": query_context,
             },
         }
 
@@ -1020,6 +1125,39 @@ async def _cap_plan_pipeline_rerun(params: dict, caller: str) -> dict:
             stage=str(stage) if stage else None,
         )
 
+async def _cap_backfill_cognitive_v3(params: dict, caller: str) -> dict:
+    owner_id = resolve_user_id(caller)
+    dry_run = bool(params.get("dry_run", True))
+    limit = int(params.get("limit", 1000) or 1000)
+    source_root = str(params.get("source_root", "") or "")
+    build_terms = bool(params.get("build_terms", True))
+    async with AsyncSessionLocal() as db:
+        return await backfill_cognitive_v3(
+            db,
+            owner_id=owner_id,
+            dry_run=dry_run,
+            limit=limit,
+            source_root=source_root,
+            build_terms=build_terms,
+        )
+
+async def _cap_derive_cognitive_index(params: dict, caller: str) -> dict:
+    owner_id = resolve_user_id(caller)
+    document_id = int(params.get("document_id", 0) or 0)
+    if document_id <= 0:
+        raise ValueError("document_id must be positive")
+    limit = int(params.get("limit", 200) or 200)
+    async with AsyncSessionLocal() as db:
+        await get_live_document_or_raise(db, document_id, owner_id)
+        result = await derive_document_cognitive_index(
+            db,
+            owner_id=owner_id,
+            document_id=document_id,
+            limit=limit,
+        )
+        await db.commit()
+        return result
+
 # 注册对外能力：Agent 会通过 list_capabilities 自动发现 knowledge__search 等工具。
 register_capability(
     "knowledge", "search", _cap_search,
@@ -1113,12 +1251,34 @@ register_capability(
     min_role="admin",
 )
 register_capability(
+    "knowledge", "reconcile_pending_pipeline_queue", cap_reconcile_pending_pipeline_queue,
+    description="Dry-run or archive obsolete pending kb_pipeline queue rows while leaving live pending work untouched",
+    brief="收口过期待处理队列",
+    parameters={
+        "limit": {"type": "integer", "description": "Maximum pending tasks to inspect, default 500"},
+        "task_ids": {"type": "array", "description": "Optional exact task IDs; bypasses category limits"},
+        "dry_run": {"type": "boolean", "description": "Preview only when true, default true"},
+        "category": {"type": "string", "description": "Optional comma-separated category filter"},
+        "categories": {"type": "array", "description": "Optional category filters"},
+        "category_limits": {"type": "object", "description": "Optional per-category limits"},
+        "limit_each": {"type": "integer", "description": "Optional default per-category limit"},
+        "order": {"type": "string", "description": "Candidate order: newest or oldest"},
+    },
+    min_role="admin",
+)
+register_capability(
     "knowledge", "audit_lifecycle_debt", _cap_audit_lifecycle_debt,
-    description="Audit active knowledge documents whose source files are recycled or missing",
+    description="Audit active knowledge documents whose source files are recycled, missing, path-invalid, or physically missing",
     brief="审计知识库源文件债",
     parameters={
         "limit": {"type": "integer", "description": "Maximum candidate documents to return, default 500"},
-        "reason": {"type": "string", "description": "source_file_deleted, source_file_missing, or source_unavailable"},
+        "reason": {
+            "type": "string",
+            "description": (
+                "source_file_deleted, source_file_missing, source_storage_path_missing, "
+                "source_path_unsafe, source_file_physical_missing, or source_unavailable"
+            ),
+        },
     },
     min_role="admin",
 )
@@ -1129,7 +1289,13 @@ register_capability(
     parameters={
         "dry_run": {"type": "boolean", "description": "Preview only when true, default true"},
         "limit": {"type": "integer", "description": "Maximum documents to archive, default 100"},
-        "reason": {"type": "string", "description": "source_file_deleted, source_file_missing, or source_unavailable"},
+        "reason": {
+            "type": "string",
+            "description": (
+                "source_file_deleted, source_file_missing, source_storage_path_missing, "
+                "source_path_unsafe, source_file_physical_missing, or source_unavailable"
+            ),
+        },
         "confirm": {"type": "string", "description": "ARCHIVE_SOURCE_UNAVAILABLE required for apply"},
         "audit_reason": {"type": "string", "description": "Operator reason recorded in result"},
     },
@@ -1150,6 +1316,28 @@ register_capability(
         "document_id": {"type": "integer", "description": "Document ID"},
         "reason": {"type": "string", "description": "prompt_changed/schema_changed/model_changed/source_changed/vlm_preprocess_changed/manual_failed_retry"},
         "stage": {"type": "string", "description": "Optional starting stage: raw/fusion/profile/graph/relations"},
+    },
+    min_role="admin",
+)
+register_capability(
+    "knowledge", "backfill_cognitive_v3", _cap_backfill_cognitive_v3,
+    description="Backfill Knowledge V3 content links, validation batch report, and optional derived cognitive indexes",
+    brief="回填知识库V3认知账本",
+    parameters={
+        "dry_run": {"type": "boolean", "description": "Preview only when true, default true"},
+        "limit": {"type": "integer", "description": "Maximum files to inspect, default 1000"},
+        "source_root": {"type": "string", "description": "Optional import source label for the batch report"},
+        "build_terms": {"type": "boolean", "description": "Build term/fact/causal derived indexes when applying"},
+    },
+    min_role="admin",
+)
+register_capability(
+    "knowledge", "derive_cognitive_index", _cap_derive_cognitive_index,
+    description="Rebuild V3 derived term, fact, and causal candidates for one knowledge document",
+    brief="重建文档V3认知索引",
+    parameters={
+        "document_id": {"type": "integer", "description": "Document ID"},
+        "limit": {"type": "integer", "description": "Maximum terms per source text, default 200"},
     },
     min_role="admin",
 )

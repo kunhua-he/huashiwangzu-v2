@@ -1,6 +1,9 @@
 """Source-file lifecycle helpers for the knowledge pipeline."""
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
+from app.config import get_settings
 from app.core.exceptions import NotFound
 from app.models.file import File
 from sqlalchemy import select
@@ -11,6 +14,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 class SourceFileAvailability:
     available: bool
     reason: str = ""
+    storage_path: str | None = None
+    physical_path: str | None = None
+
+
+def classify_file_availability(file: File | None) -> SourceFileAvailability:
+    """Classify both database lifecycle and on-disk source availability."""
+    if not file:
+        return SourceFileAvailability(False, "source_file_missing")
+    storage_path = str(file.storage_path or "").strip()
+    if file.deleted:
+        return SourceFileAvailability(False, "source_file_deleted", storage_path=storage_path or None)
+    if not storage_path:
+        return SourceFileAvailability(False, "source_storage_path_missing")
+
+    upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+    try:
+        full_path = (upload_root / storage_path).resolve()
+        if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
+            return SourceFileAvailability(False, "source_path_unsafe", storage_path=storage_path)
+        if not full_path.exists() or not full_path.is_file():
+            return SourceFileAvailability(
+                False,
+                "source_file_physical_missing",
+                storage_path=storage_path,
+                physical_path=str(full_path),
+            )
+    except (OSError, ValueError):
+        return SourceFileAvailability(False, "source_path_unsafe", storage_path=storage_path)
+
+    return SourceFileAvailability(
+        True,
+        "",
+        storage_path=storage_path,
+        physical_path=str(full_path),
+    )
 
 
 class SourceFileUnavailable(Exception):
@@ -26,18 +64,14 @@ async def get_source_file_availability(
     db: AsyncSession,
     file_id: int,
 ) -> SourceFileAvailability:
-    """Classify lifecycle absence without reading file contents from disk."""
+    """Classify lifecycle and physical absence without reading file contents."""
     result = await db.execute(
         select(File)
         .where(File.id == file_id)
         .execution_options(populate_existing=True)
     )
     file = result.scalar_one_or_none()
-    if not file:
-        return SourceFileAvailability(False, "source_file_missing")
-    if file.deleted:
-        return SourceFileAvailability(False, "source_file_deleted")
-    return SourceFileAvailability(True, "")
+    return classify_file_availability(file)
 
 
 async def raise_if_source_unavailable(db: AsyncSession, file_id: int) -> None:

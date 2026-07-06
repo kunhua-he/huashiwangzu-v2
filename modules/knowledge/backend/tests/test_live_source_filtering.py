@@ -39,6 +39,16 @@ VECTOR_SIZE = 1024
 _FRAMEWORK_READY = False
 
 
+def _upload_path(storage_path: str) -> Path:
+    return REPO_ROOT / "data" / "uploads" / storage_path
+
+
+def _write_upload_file(storage_path: str, content: str) -> None:
+    path = _upload_path(storage_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
 async def _ensure_framework_ready() -> None:
     global _FRAMEWORK_READY
     if _FRAMEWORK_READY:
@@ -61,18 +71,24 @@ async def _cleanup(doc_ids: list[int], file_ids: list[int]) -> None:
         for file_id in file_ids:
             await db.execute(text("DELETE FROM framework_file_items WHERE id = :file_id"), {"file_id": file_id})
         await db.commit()
+    for path in (REPO_ROOT / "data" / "uploads" / "tests").glob("k3_*"):
+        path.unlink(missing_ok=True)
 
 
 async def _create_case(marker: str) -> tuple[dict[str, int], dict[str, int]]:
     await _ensure_framework_ready()
     vector = [1.0] + [0.0] * (VECTOR_SIZE - 1)
+    live_storage_path = f"tests/k3_live_{marker}.txt"
+    deleted_storage_path = f"tests/k3_deleted_source_{marker}.txt"
+    _write_upload_file(live_storage_path, f"live source {marker}")
+    _write_upload_file(deleted_storage_path, f"deleted source {marker}")
     async with AsyncSessionLocal() as db:
         live_file = File(
             name=f"k3_live_{marker}",
             extension="txt",
             size=1,
             owner_id=OWNER_ID,
-            storage_path=f"tests/k3_live_{marker}.txt",
+            storage_path=live_storage_path,
             mime_type="text/plain",
             deleted=False,
         )
@@ -81,7 +97,7 @@ async def _create_case(marker: str) -> tuple[dict[str, int], dict[str, int]]:
             extension="txt",
             size=1,
             owner_id=OWNER_ID,
-            storage_path=f"tests/k3_deleted_source_{marker}.txt",
+            storage_path=deleted_storage_path,
             mime_type="text/plain",
             deleted=True,
         )

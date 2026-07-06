@@ -4,6 +4,17 @@ Validates core shapes: search results, document, chunk, entity, page fusion,
 and governance candidates — without calling external embedding services or real DB.
 """
 
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = REPO_ROOT / "backend"
+for path in (REPO_ROOT, BACKEND_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
 
 def test_search_result_shape() -> None:
     """Hybrid search result shape contract."""
@@ -80,14 +91,24 @@ def test_lifecycle_debt_governance_contract() -> None:
     """Lifecycle debt audit/archive capability must be dry-run and confirm guarded."""
     audit = {
         "dry_run": True,
-        "matched": 2,
-        "summary": {"source_file_deleted": 1, "source_file_missing": 1},
+        "matched": 3,
+        "summary": {
+            "source_file_deleted": 1,
+            "source_file_missing": 1,
+            "source_file_physical_missing": 1,
+        },
         "source_recycled_count": 1,
         "source_missing_count": 1,
+        "source_physical_missing_count": 1,
         "candidate_document_ids": [10, 11],
         "sample_documents": [
             {"document_id": 10, "reason": "source_file_deleted", "source_lifecycle_state": "source_recycled"},
-            {"document_id": 11, "reason": "source_file_missing", "source_lifecycle_state": "source_missing"},
+            {"document_id": 11, "reason": "source_file_missing", "source_lifecycle_state": "source_db_missing"},
+            {
+                "document_id": 12,
+                "reason": "source_file_physical_missing",
+                "source_lifecycle_state": "source_disk_missing",
+            },
         ],
         "recommended_action": "archive_source_unavailable_documents",
     }
@@ -101,12 +122,14 @@ def test_lifecycle_debt_governance_contract() -> None:
     }
 
     assert audit["dry_run"] is True
-    assert audit["matched"] == 2
+    assert audit["matched"] == 3
     assert audit["source_recycled_count"] == 1
     assert audit["source_missing_count"] == 1
+    assert audit["source_physical_missing_count"] == 1
     assert {item["source_lifecycle_state"] for item in audit["sample_documents"]} == {
         "source_recycled",
-        "source_missing",
+        "source_db_missing",
+        "source_disk_missing",
     }
     assert archive_dry_run["changed"] == 0
     assert archive_dry_run["confirm_token"] == "ARCHIVE_SOURCE_UNAVAILABLE"
@@ -297,6 +320,70 @@ def test_ingest_status_shape() -> None:
     print("  [INGEST-STATUS] Shape valid")
 
 
+def test_cognitive_v3_registration_link_shape() -> None:
+    """V3 registration payload must expose canonical/duplicate reuse links."""
+    payload = {
+        "document_id": 1,
+        "status": "existing",
+        "duplicate_reused": True,
+        "content_link": {
+            "link_id": 10,
+            "file_id": 101,
+            "content_object_id": 20,
+            "document_id": 1,
+            "canonical_document_id": 1,
+            "canonical_file_id": 100,
+            "link_role": "duplicate",
+            "reuse_reason": "md5_duplicate",
+            "md5_hash": "a" * 32,
+            "source_name_snapshot": "copy.pdf",
+            "status": "active",
+        },
+    }
+
+    link = payload["content_link"]
+    assert payload["duplicate_reused"] is True
+    assert link["link_role"] in {"canonical", "duplicate"}
+    assert link["canonical_document_id"] == payload["document_id"]
+    assert link["reuse_reason"]
+    print("  [COGNITIVE-V3] Registration link shape valid")
+
+
+def test_cognitive_v3_query_context_shape() -> None:
+    """Search context should include persisted V3 query enrichment metadata."""
+    context_data = {
+        "query_context": {
+            "query_context_id": 99,
+            "expanded_terms": ["精华水", "备案报告"],
+            "related_terms": [],
+            "causal_links": [],
+            "facts": [{"text": "备案报告正文", "document_id": 1, "page": 1}],
+            "evidence_refs": [{"document_id": 1, "chunk_id": 10, "page": 1, "score": 0.9}],
+            "result_document_ids": [1],
+            "diagnostics": {"schema_version": "kb_query_context_v1"},
+        }
+    }
+
+    query_context = context_data["query_context"]
+    assert query_context["query_context_id"] > 0
+    assert query_context["diagnostics"]["schema_version"] == "kb_query_context_v1"
+    assert query_context["result_document_ids"] == [1]
+    assert query_context["evidence_refs"][0]["chunk_id"] == 10
+    print("  [COGNITIVE-V3] Query context shape valid")
+
+
+def test_cognitive_v3_capability_params() -> None:
+    """V3 admin capabilities must stay dry-run friendly and document scoped."""
+    backfill = {"dry_run": True, "limit": 1000, "source_root": "企业微盘导入", "build_terms": True}
+    derive = {"document_id": 1, "limit": 200}
+
+    assert backfill["dry_run"] is True
+    assert 1 <= backfill["limit"] <= 10000
+    assert derive["document_id"] > 0
+    assert 1 <= derive["limit"] <= 1000
+    print("  [COGNITIVE-V3] Capability params valid")
+
+
 def test_export_format_contract() -> None:
     """Export format contract must stay explicit."""
     allowed_formats = {"markdown", "html", "json"}
@@ -365,6 +452,9 @@ def main() -> None:
     test_response_shape()
     test_ingest_capability_params()
     test_ingest_status_shape()
+    test_cognitive_v3_registration_link_shape()
+    test_cognitive_v3_query_context_shape()
+    test_cognitive_v3_capability_params()
     test_export_format_contract()
     test_export_uses_single_canonical_source()
     test_export_metadata_shape()

@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..ir_models import to_legacy_dict
+from .cognitive_v3_service import link_payload, upsert_file_knowledge_link
 from .embedding_service import chunk_and_embed, store_chunks
 from .entity_service import fuse_page_text, process_document_entities
 from .parsing_service import parse_document
@@ -28,7 +29,13 @@ SUPPORTED_EXTENSIONS = {
 _ACTIVE_OR_SOURCE_ERROR_STATUSES = {
     "parsing", "indexing", "collecting", "running", "error", "failed",
 }
-SOURCE_UNAVAILABLE_REASONS = {"source_file_deleted", "source_file_missing"}
+SOURCE_UNAVAILABLE_REASONS = {
+    "source_file_deleted",
+    "source_file_missing",
+    "source_storage_path_missing",
+    "source_path_unsafe",
+    "source_file_physical_missing",
+}
 PARSER_NO_CONTENT_MARKER = "Parser returned no content blocks"
 PARSE_LOCK_STALE_AFTER_SECONDS = 30 * 60
 
@@ -289,13 +296,33 @@ async def register_document(
             }
         else:
             task_info = await enqueue_pipeline_task(db, existing, owner_id)
-            await db.commit()
-        return document_registration_payload(existing, task_info)
+        link = await upsert_file_knowledge_link(
+            db,
+            owner_id=owner_id,
+            file=file,
+            document=existing,
+            link_role="canonical",
+            reuse_reason=task_info.get("reason") or "existing_document",
+        )
+        await db.commit()
+        return document_registration_payload(existing, task_info, content_link=link_payload(link))
 
     duplicate_doc, duplicate_task_info = await _find_content_duplicate(db, file, owner_id)
     if duplicate_doc is not None:
+        link = await upsert_file_knowledge_link(
+            db,
+            owner_id=owner_id,
+            file=file,
+            document=duplicate_doc,
+            link_role="duplicate",
+            reuse_reason=(duplicate_task_info or {}).get("reason") or "md5_duplicate",
+        )
         await db.commit()
-        return document_registration_payload(duplicate_doc, duplicate_task_info)
+        return document_registration_payload(
+            duplicate_doc,
+            duplicate_task_info,
+            content_link=link_payload(link),
+        )
 
     # Look up existing content package for this file
     content_package_id = None
@@ -346,6 +373,7 @@ async def register_document(
         await db.flush()
     except IntegrityError:
         await db.rollback()
+        file = await check_file_access(db, file_id, owner_id)
         existing_r = await db.execute(
             select(KbDocument).where(
                 KbDocument.file_id == file_id,
@@ -356,10 +384,26 @@ async def register_document(
         existing = existing_r.scalar_one_or_none()
         if existing:
             task_info = await enqueue_pipeline_task(db, existing, owner_id)
+            link = await upsert_file_knowledge_link(
+                db,
+                owner_id=owner_id,
+                file=file,
+                document=existing,
+                link_role="canonical",
+                reuse_reason=task_info.get("reason") or "integrity_race_existing",
+            )
             await db.commit()
-            return document_registration_payload(existing, task_info)
+            return document_registration_payload(existing, task_info, content_link=link_payload(link))
         raise
 
+    link = await upsert_file_knowledge_link(
+        db,
+        owner_id=owner_id,
+        file=file,
+        document=doc,
+        link_role="canonical",
+        reuse_reason="new_canonical",
+    )
     # ── 自动入队 kb_pipeline 后台任务（上传即开始分析） ──
     task_info = await enqueue_pipeline_task(db, doc, owner_id)
     await db.commit()
@@ -369,7 +413,7 @@ async def register_document(
         doc.id, file_id, task_info.get("task_id"), task_info.get("enqueued"),
     )
 
-    return document_registration_payload(doc, task_info)
+    return document_registration_payload(doc, task_info, content_link=link_payload(link))
 
 
 def document_payload(doc) -> dict:
@@ -402,7 +446,12 @@ def document_payload(doc) -> dict:
     }
 
 
-def document_registration_payload(doc, task_info: dict | None = None) -> dict:
+def document_registration_payload(
+    doc,
+    task_info: dict | None = None,
+    *,
+    content_link: dict | None = None,
+) -> dict:
     """Document payload plus stable ingest queue metadata."""
     payload = document_payload(doc)
     info = task_info or {
@@ -451,6 +500,8 @@ def document_registration_payload(doc, task_info: dict | None = None) -> dict:
             "raw": getattr(doc, "raw_status", "pending"),
             "fusion": getattr(doc, "fusion_status", "pending"),
         },
+        "content_link": content_link,
+        "duplicate_reused": bool(content_link and content_link.get("link_role") == "duplicate"),
     })
     return payload
 

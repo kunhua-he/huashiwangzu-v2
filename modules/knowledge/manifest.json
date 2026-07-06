@@ -222,8 +222,47 @@
       "min_role": "admin"
     },
     {
+      "action": "reconcile_pending_pipeline_queue",
+      "description": "dry-run 或归档已不可执行的 pending kb_pipeline 队列任务，保留仍可执行的 live pending",
+      "parameters": {
+        "limit": {
+          "type": "integer",
+          "description": "最多检查的 pending 任务数（默认500）"
+        },
+        "task_ids": {
+          "type": "array",
+          "description": "可选，精确 task id 列表；不受分类限制影响"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "为 true 时只预览，默认 true"
+        },
+        "category": {
+          "type": "string",
+          "description": "可选，单个或逗号分隔分类过滤"
+        },
+        "categories": {
+          "type": "array",
+          "description": "可选，分类过滤列表"
+        },
+        "category_limits": {
+          "type": "object",
+          "description": "可选，按分类限制数量"
+        },
+        "limit_each": {
+          "type": "integer",
+          "description": "可选，每个分类默认选取数量"
+        },
+        "order": {
+          "type": "string",
+          "description": "候选排序：newest 或 oldest"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
       "action": "audit_lifecycle_debt",
-      "description": "审计源文件已删除或缺失的 active 知识库文档",
+      "description": "审计源文件已删除、缺失、路径异常或磁盘文件缺失的 active 知识库文档",
       "parameters": {
         "limit": {
           "type": "integer",
@@ -231,7 +270,7 @@
         },
         "reason": {
           "type": "string",
-          "description": "source_file_deleted、source_file_missing 或 source_unavailable"
+          "description": "source_file_deleted、source_file_missing、source_storage_path_missing、source_path_unsafe、source_file_physical_missing 或 source_unavailable"
         }
       },
       "min_role": "admin"
@@ -250,7 +289,7 @@
         },
         "reason": {
           "type": "string",
-          "description": "source_file_deleted、source_file_missing 或 source_unavailable"
+          "description": "source_file_deleted、source_file_missing、source_storage_path_missing、source_path_unsafe、source_file_physical_missing 或 source_unavailable"
         },
         "confirm": {
           "type": "string",
@@ -289,6 +328,44 @@
         "stage": {
           "type": "string",
           "description": "可选起始阶段：raw/fusion/profile/graph/relations"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
+      "action": "backfill_cognitive_v3",
+      "description": "回填知识库 V3 内容复用链路、批次验收报告和可选认知派生索引",
+      "parameters": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "为 true 时只预览，默认 true"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "最多检查文件数（默认1000）"
+        },
+        "source_root": {
+          "type": "string",
+          "description": "可选导入来源标签，写入批次报告"
+        },
+        "build_terms": {
+          "type": "boolean",
+          "description": "真实执行时是否构建词项/事实/因果派生索引"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
+      "action": "derive_cognitive_index",
+      "description": "按单文档重建 V3 词项、事实和因果候选派生索引",
+      "parameters": {
+        "document_id": {
+          "type": "integer",
+          "description": "文档ID"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "每段来源文本最多提取词项数（默认200）"
         }
       },
       "min_role": "admin"

@@ -98,6 +98,9 @@ Total public actions: 17
 | `kb_governance_candidates` | Owned by `knowledge` module |
 | `kb_graph_edges` | Owned by `knowledge` module |
 | `kb_graph_nodes` | Owned by `knowledge` module |
+| `kb_image_assets` | Owned by `knowledge` module |
+| `kb_image_similar_pairs` | Owned by `knowledge` module |
+| `kb_image_similarity_groups` | Owned by `knowledge` module |
 | `kb_page_fusions` | Owned by `knowledge` module |
 | `kb_pipeline_runs` | Owned by `knowledge` module |
 | `kb_pipeline_stage_runs` | Owned by `knowledge` module |
@@ -105,6 +108,13 @@ Total public actions: 17
 | `kb_raw_data` | Owned by `knowledge` module |
 
 Use `db_schema()` for live database details. This module must not directly read or write other modules' tables.
+
+## Analysis Artifacts And Image Similarity
+
+- `kb_analysis_artifacts` is an append-only stage ledger for pipeline traceability and dry-run rerun planning.
+- Evidence rows may carry lineage back to raw data, page fusion, artifacts, prompt hash, model used, and diagnostics.
+- Image similarity is a sidecar stage for PDF page renders and image files. It stores perceptual hashes, suspected/high pairs, and groups, but it does not skip VLM analysis or reuse representative-image VLM output.
+- Chaotic model-returned tags, entity types, and relation types are preserved as raw business signals until a later governance phase.
 
 ## Cross-Module Dependencies
 

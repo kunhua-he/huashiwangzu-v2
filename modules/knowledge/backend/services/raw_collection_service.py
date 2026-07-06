@@ -599,6 +599,56 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
         )
     await db.commit()
 
+    image_similarity_result = {"status": "skipped", "assets": 0, "pairs": 0, "reason": "no_page_images"}
+    if page_images:
+        try:
+            from .analysis_artifact_service import build_input_hash, build_output_hash, record_analysis_artifact
+            from .image_similarity_service import IMAGE_HASH_SCHEMA_VERSION, record_document_image_assets
+
+            image_similarity_result = await record_document_image_assets(
+                db,
+                owner_id=owner_id,
+                document_id=doc_id,
+                file_id=file_id,
+                page_images=page_images,
+                asset_type="image_file" if is_image else "page_render",
+            )
+            await record_analysis_artifact(
+                owner_id=owner_id,
+                document_id=doc_id,
+                file_id=file_id,
+                stage="image_similarity",
+                status=str(image_similarity_result.get("status") or "done"),
+                unit_type="document",
+                unit_key="document",
+                input_hash=build_input_hash(
+                    stage="image_similarity",
+                    document_id=doc_id,
+                    file_id=file_id,
+                    extra={
+                        "pages": sorted(page_images),
+                        "hash_schema_version": IMAGE_HASH_SCHEMA_VERSION,
+                    },
+                ),
+                output_hash=build_output_hash(
+                    stage="image_similarity",
+                    status=str(image_similarity_result.get("status") or "done"),
+                    payload=image_similarity_result,
+                ),
+                preprocess_version=IMAGE_HASH_SCHEMA_VERSION,
+                reason="sidecar_image_similarity",
+                diagnostics=image_similarity_result,
+                metrics={
+                    "assets": int(image_similarity_result.get("assets") or 0),
+                    "pairs": int(image_similarity_result.get("pairs") or 0),
+                    "high": int(image_similarity_result.get("high") or 0),
+                    "suspected": int(image_similarity_result.get("suspected") or 0),
+                },
+            )
+        except Exception as e:
+            logger.warning("Image similarity sidecar skipped for doc_id=%d: %s", doc_id, e)
+            image_similarity_result = {"status": "failed", "assets": 0, "pairs": 0, "error": str(e)}
+
     model_diagnostics = [
         item.get("model_diagnostics")
         for item in all_results
@@ -630,6 +680,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
             "failed_pages": failed_pages,
             "skipped_pages": sorted(done_pages),
         },
+        "image_similarity": image_similarity_result,
         "status": doc.raw_status,
         "model_degraded": bool(model_diagnostics),
         "model_diagnostics": model_diagnostics,

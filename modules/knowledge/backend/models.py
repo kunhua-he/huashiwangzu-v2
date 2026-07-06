@@ -402,6 +402,85 @@ class KbAnalysisArtifact(Base, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class KbImageSimilarityGroup(Base, TimestampMixin):
+    """Visual near-duplicate group for knowledge image assets."""
+    __tablename__ = "kb_image_similarity_groups"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    representative_asset_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    asset_count: Mapped[int] = mapped_column(Integer, default=0)
+    asset_type: Mapped[str] = mapped_column(String(64), default="unknown")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    rep_vlm_artifact_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    rep_vlm_cache_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbImageAsset(Base, TimestampMixin):
+    """Fingerprint metadata for an image, page render, screenshot, or poster."""
+    __tablename__ = "kb_image_assets"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_id",
+            "document_id",
+            "page",
+            "hash_schema_version",
+            name="uq_kb_image_assets_owner_doc_page_hash_version",
+        ),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    file_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    block_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_data_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    asset_type: Mapped[str] = mapped_column(String(64), default="unknown")
+    visual_box_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_md5: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ahash: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    dhash: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    phash: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ocr_text_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    similarity_group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    group_representative: Mapped[bool] = mapped_column(Boolean, default=False)
+    hash_schema_version: Mapped[str] = mapped_column(String(32), default="image_hash_v1")
+    clip_model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbImageSimilarPair(Base, TimestampMixin):
+    """Auditable similarity evidence between two image assets."""
+    __tablename__ = "kb_image_similar_pairs"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_asset_id",
+            "target_asset_id",
+            "calc_version",
+            name="uq_kb_image_similar_pairs_assets_calc",
+        ),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_asset_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    target_asset_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    hamming_phash: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hamming_dhash: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ocr_text_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    clip_cosine: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ssim_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    similarity_level: Mapped[str] = mapped_column(String(32), default="suspected")
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calc_version: Mapped[str] = mapped_column(String(32), default="image_similarity_v1")
+    manual_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    review_result: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
 class KbPipelineStale(Base, TimestampMixin):
     """Pipeline stage 产物 hash 记录表。
 

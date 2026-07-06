@@ -24,6 +24,7 @@ STAGE_SCHEMA_VERSIONS: dict[str, str] = {
     "profile": "profile_v1",
     "graph": "entity_graph_v1",
     "relations": "relations_v1",
+    "image_similarity": "image_similarity_v1",
     "pause": "pause_v1",
 }
 

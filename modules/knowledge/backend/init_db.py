@@ -16,6 +16,7 @@ KB_TABLES = [
     "kb_evidence", "kb_conclusion_evidence", "kb_entity_merge_log",
     "kb_governance_candidates", "kb_pipeline_runs",
     "kb_pipeline_stage_runs", "kb_analysis_artifacts", "kb_pipeline_stale",
+    "kb_image_assets", "kb_image_similar_pairs", "kb_image_similarity_groups",
 ]
 
 # 关键索引语句（幂等，CREATE INDEX IF NOT EXISTS）
@@ -57,6 +58,14 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_kb_analysis_artifacts_status ON kb_analysis_artifacts(status)",
     "CREATE INDEX IF NOT EXISTS idx_kb_analysis_artifacts_input_hash ON kb_analysis_artifacts(input_hash)",
     "CREATE INDEX IF NOT EXISTS idx_kb_pipeline_stale_doc ON kb_pipeline_stale(document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_assets_owner ON kb_image_assets(owner_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_assets_doc_page ON kb_image_assets(document_id, page)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_assets_hashes ON kb_image_assets(phash, dhash)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_assets_group ON kb_image_assets(similarity_group_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_pairs_owner_level ON kb_image_similar_pairs(owner_id, similarity_level)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_pairs_source ON kb_image_similar_pairs(source_asset_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_pairs_target ON kb_image_similar_pairs(target_asset_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_image_groups_owner ON kb_image_similarity_groups(owner_id)",
 ]
 
 # ALTER 列补齐语句（幂等，ADD COLUMN IF NOT EXISTS）。
@@ -249,6 +258,9 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
         KbGovernanceCandidate,
         KbGraphEdge,
         KbGraphNode,
+        KbImageAsset,
+        KbImageSimilarityGroup,
+        KbImageSimilarPair,
         KbPageFusion,
         KbPipelineRun,
         KbPipelineStageRun,

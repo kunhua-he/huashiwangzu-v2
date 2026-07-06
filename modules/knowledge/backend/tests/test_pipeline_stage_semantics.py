@@ -530,7 +530,7 @@ async def test_pipeline_root_fans_out_parallelizable_stages(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_relations_waits_for_profile_and_graph(monkeypatch):
+async def test_pipeline_profile_graph_backfills_missing_peer_before_relations(monkeypatch):
     doc = _FakeDocument()
     doc.profile_status = "done"
     doc.graph_status = "pending"
@@ -546,13 +546,14 @@ async def test_pipeline_relations_waits_for_profile_and_graph(monkeypatch):
         async def refresh(self, _doc):
             return None
 
-    assert await pipeline_service._enqueue_successors(
+    successors = await pipeline_service._enqueue_successors(
         Db(),
         doc=doc,
         user_id=1,
         completed_stage="profile",
         pipeline_run_id=10,
-    ) == []
+    )
+    assert [item["stage"] for item in successors] == ["graph"]
 
     doc.graph_status = "done"
     successors = await pipeline_service._enqueue_successors(
@@ -563,6 +564,17 @@ async def test_pipeline_relations_waits_for_profile_and_graph(monkeypatch):
         pipeline_run_id=10,
     )
     assert [item["stage"] for item in successors] == ["relations"]
+
+    doc.profile_status = "pending"
+    doc.graph_status = "done"
+    successors = await pipeline_service._enqueue_successors(
+        Db(),
+        doc=doc,
+        user_id=1,
+        completed_stage="graph",
+        pipeline_run_id=10,
+    )
+    assert [item["stage"] for item in successors] == ["profile"]
 
 
 def test_fusion_classifies_all_empty_and_index_failure():

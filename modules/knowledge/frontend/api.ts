@@ -66,6 +66,7 @@ export interface FileTreeNode {
   _ext?: string
   _pct?: number | null
   _created_at?: string
+  _render_key?: string
 }
 
 export interface ProgressStage {

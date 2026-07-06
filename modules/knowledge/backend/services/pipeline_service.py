@@ -378,6 +378,10 @@ def _ready_for_relations(doc: KbDocument) -> bool:
     )
 
 
+def _stage_needs_work(status: str | None) -> bool:
+    return str(status or "pending").lower() in {"", "pending", "running", "collecting", "parsing", "fusing"}
+
+
 async def _enqueue_successors(
     db: AsyncSession,
     *,
@@ -424,8 +428,13 @@ async def _enqueue_successors(
         enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "graph", priority=6, pipeline_run_id=pipeline_run_id))
         return enqueued
 
-    if completed_stage in {"profile", "graph"} and _ready_for_relations(doc):
-        enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "relations", priority=5, pipeline_run_id=pipeline_run_id))
+    if completed_stage in {"profile", "graph"}:
+        if _ready_for_relations(doc):
+            enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "relations", priority=5, pipeline_run_id=pipeline_run_id))
+        elif _stage_needs_work(getattr(doc, "profile_status", "pending")):
+            enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "profile", priority=6, pipeline_run_id=pipeline_run_id))
+        elif _stage_needs_work(getattr(doc, "graph_status", "pending")):
+            enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "graph", priority=6, pipeline_run_id=pipeline_run_id))
         return enqueued
 
     return enqueued

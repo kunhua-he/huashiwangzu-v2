@@ -51,6 +51,14 @@ def get_parser_for_format(extension: str) -> tuple[str, str] | None:
     return None
 
 
+def _build_parser_params(file_id: int, extension: str, module_key: str, action: str) -> dict:
+    params = {"file_id": file_id}
+    ext = extension.lower().strip(".")
+    if module_key == "image-vision" and action == "describe" and ext in IMAGE_FORMATS:
+        params["analysis_mode"] = "local"
+    return params
+
+
 async def parse_document(file_id: int, extension: str, caller: str) -> DocumentIr:
     """按文件格式调用对应的格式解析模块，返回统一 DocumentIr。
 
@@ -68,7 +76,12 @@ async def parse_document(file_id: int, extension: str, caller: str) -> DocumentI
     module_key, action = parser
     logger.info("Parsing file_id=%d via %s:%s", file_id, module_key, action)
     try:
-        result = await call_capability(module_key, action, {"file_id": file_id}, caller)
+        result = await call_capability(
+            module_key,
+            action,
+            _build_parser_params(file_id, extension, module_key, action),
+            caller,
+        )
     except Exception as e:
         logger.error("Parse failed for file_id=%d via %s:%s: %s", file_id, module_key, action, e)
         raise

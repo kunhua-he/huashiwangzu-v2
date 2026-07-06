@@ -82,6 +82,14 @@ def _get_parser_for_format(extension: str) -> tuple[str, str] | None:
     return None
 
 
+def _build_parser_params(file_id: int, extension: str, module_key: str, action: str) -> dict:
+    params = {"file_id": file_id}
+    ext = extension.lower().strip(".")
+    if module_key == "image-vision" and action == "describe" and ext in IMAGE_FORMATS:
+        params["analysis_mode"] = "local"
+    return params
+
+
 def _ensure_block_ids(blocks: list[dict]) -> list[dict]:
     for i, b in enumerate(blocks):
         if not b.get("id"):
@@ -178,7 +186,7 @@ class ContentPackageService:
         try:
             result = await call_capability(
                 module_key, action,
-                {"file_id": pkg.source_file_id},
+                _build_parser_params(pkg.source_file_id, ext, module_key, action),
                 caller,
             )
         except Exception as e:

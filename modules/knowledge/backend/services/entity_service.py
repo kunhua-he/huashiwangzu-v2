@@ -2,6 +2,7 @@
 
 用 gateway 大模型从解析内容中抽取实体、关系、证据，构建知识图谱。
 """
+import asyncio
 import json
 import logging
 from time import perf_counter
@@ -15,10 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .analysis_artifact_service import model_used_from_result, resolve_stage_prompt_hash, stable_hash
 from .llm_diagnostics import timed_llm_chat
-from .model_routing import resolve_knowledge_profile
+from .model_routing import resolve_knowledge_concurrency, resolve_knowledge_profile
 from .prompt_utils import TENTITY, TFUSION_LEGACY, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("entity")
+
+ENTITY_PAGE_CONCURRENCY = 6
 
 async def extract_entities_from_text(
     text: str,
@@ -519,31 +522,50 @@ async def process_document_entities_from_fusions(
     extraction_started = perf_counter()
     page_durations: dict[int, int] = {}
 
-    for pf in fusions:
-        text = pf.fused_text
-        if len(text) < 20:
-            continue
+    page_concurrency = resolve_knowledge_concurrency("entity_extract", ENTITY_PAGE_CONCURRENCY)
+    sem = asyncio.Semaphore(page_concurrency)
 
-        page_started = perf_counter()
-        result = await extract_entities_from_text(text, db=db)
-        page_durations[int(pf.page)] = round((perf_counter() - page_started) * 1000)
+    async def _extract_page(pf) -> dict:
+        text = pf.fused_text
+        page = int(pf.page)
+        if len(text) < 20:
+            return {"page": page, "skipped": True}
+        async with sem:
+            page_started = perf_counter()
+            async with AsyncSessionLocal() as prompt_db:
+                result = await extract_entities_from_text(text, db=prompt_db)
+            return {
+                "page": page,
+                "duration_ms": round((perf_counter() - page_started) * 1000),
+                "result": result,
+            }
+
+    page_results = await asyncio.gather(
+        *(_extract_page(pf) for pf in fusions),
+        return_exceptions=True,
+    )
+    for item in page_results:
+        if isinstance(item, Exception):
+            stats["errors"].append(str(item))
+            continue
+        if item.get("skipped"):
+            continue
+        page = int(item["page"])
+        result = item["result"]
+        page_durations[page] = int(item.get("duration_ms") or 0)
         page_ents = result.get("entities", [])
-        page_model_diagnostics[int(pf.page)] = result.get("model_diagnostics")
-        page_model_used[int(pf.page)] = model_used_from_result(result) or _model_used_from_diagnostics(
-            page_model_diagnostics[int(pf.page)]
+        page_model_diagnostics[page] = result.get("model_diagnostics")
+        page_model_used[page] = model_used_from_result(result) or _model_used_from_diagnostics(
+            page_model_diagnostics[page]
         )
         all_entities.extend(page_ents)
-        entity_page.extend([pf.page] * len(page_ents))
+        entity_page.extend([page] * len(page_ents))
         all_relationships.extend(result.get("relationships", []))
         stats["errors"].extend(result.get("errors", []))
         if result.get("model_degraded"):
             stats["model_degraded"] = True
             stats.setdefault("model_diagnostics", []).append(result.get("model_diagnostics") or {})
         processed_pages += 1
-
-        if processed_pages % 3 == 0 and len(fusions) > 3:
-            import asyncio
-            await asyncio.sleep(0.5)
     extraction_duration_ms = round((perf_counter() - extraction_started) * 1000)
 
     # 去重 + 写入（复用同逻辑）
@@ -748,7 +770,8 @@ async def process_document_entities_from_fusions(
         "graph_write_ms": write_duration_ms,
         "processed_pages": processed_pages,
         "page_durations_ms": dict(sorted(page_durations.items())),
-        "execution_mode": "sequential_pages",
+        "execution_mode": "parallel_pages",
+        "page_concurrency": page_concurrency,
     }
     logger.info("Fusion-entity extraction doc_id=%d: %d entities, %d relationships", document_id, stats["entities_found"], stats["relationships_found"])
     return stats

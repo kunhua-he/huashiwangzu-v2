@@ -28,6 +28,7 @@ analysis_artifact_service = _load_service("analysis_artifact_service")
 document_service = _load_service("document_service")
 fusion_service = _load_service("fusion_service")
 raw_collection_service = _load_service("raw_collection_service")
+model_routing = _load_service("model_routing")
 llm_diagnostics_stream = _load_service("llm_diagnostics_stream")
 StageDef = pipeline_orchestrator.StageDef
 classify_fusion_status = fusion_service.classify_fusion_status
@@ -251,6 +252,32 @@ def test_raw_collection_classifies_all_empty_as_degraded_or_failed():
         failed_rounds=3,
         task_count=3,
     ) == "failed"
+
+
+def test_knowledge_concurrency_reads_models_json_between_batches(tmp_path, monkeypatch):
+    config_path = tmp_path / "models.json"
+    config_path.write_text(
+        """
+        {
+          "module_routing": {
+            "knowledge": {
+              "pipeline_concurrency": {
+                "raw_collect": 7,
+                "entity_extract": 99,
+                "page_fusion": "bad"
+              }
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(model_routing, "get_models_config_path", lambda: config_path)
+    monkeypatch.setattr(model_routing, "get_models_config", lambda: {})
+
+    assert model_routing.resolve_knowledge_concurrency("raw_collect", 5) == 7
+    assert model_routing.resolve_knowledge_concurrency("entity_extract", 6, maximum=16) == 16
+    assert model_routing.resolve_knowledge_concurrency("page_fusion", 6) == 6
 
 
 def test_raw_collection_classifies_partial_empty_as_degraded():

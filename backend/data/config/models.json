@@ -211,6 +211,11 @@
       "default_profile": "gpt-5.5-knowledge",
       "fallback_profile": "deepseek-v4-flash",
       "pause_after_fallback": true,
+      "pipeline_concurrency": {
+        "raw_collect": 5,
+        "page_fusion": 6,
+        "entity_extract": 6
+      },
       "stages": {
         "raw_ocr": "gpt-5.5-vision",
         "raw_vision": "gpt-5.5-vision",

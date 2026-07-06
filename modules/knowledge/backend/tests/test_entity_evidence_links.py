@@ -271,6 +271,11 @@ async def test_process_document_entities_from_fusions_links_evidence_lineage(
         async with AsyncSessionLocal() as db:
             result = await entity_service.process_document_entities_from_fusions(db, document_id, OWNER_ID)
             assert result["entities_found"] == 1
+            assert result["timing"]["execution_mode"] == "parallel_pages"
+            assert result["timing"]["page_concurrency"] == entity_service.resolve_knowledge_concurrency(
+                "entity_extract",
+                entity_service.ENTITY_PAGE_CONCURRENCY,
+            )
             evidence = await db.scalar(
                 select(KbEvidence).where(KbEvidence.document_id == document_id)
             )

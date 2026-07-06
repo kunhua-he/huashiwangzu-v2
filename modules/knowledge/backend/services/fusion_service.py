@@ -5,6 +5,7 @@
 
 后台任务模式（kb_fuse）：逐页 fuse → 逐页 commit，超时只丢当前页。
 """
+import asyncio
 import json
 import logging
 from time import perf_counter
@@ -17,10 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument, KbPageFusion, KbRawData
 from .llm_diagnostics import timed_llm_chat
-from .model_routing import resolve_knowledge_profile
+from .model_routing import resolve_knowledge_concurrency, resolve_knowledge_profile
 from .prompt_utils import TFUSION, load_prompt
 
 logger = logging.getLogger("v2.knowledge").getChild("fusion")
+
+FUSION_PAGE_CONCURRENCY = 6
 
 
 def _detect_simple_conflicts(
@@ -300,27 +303,28 @@ async def fuse_all_pages(
     )
     done_pages = {row[0] for row in r.all()}
 
-    results = []
-    for page in range(1, total_pages + 1):
+    async def _run_page(page: int) -> dict:
         if page in done_pages:
             logger.info("Fusion page=%d already done, skip", page)
-            results.append({"page": page, "skipped": True, "status": "done"})
-            continue
+            return {"page": page, "skipped": True, "status": "done"}
 
-        try:
-            result = await fuse_page(db, document_id, owner_id, page)
-            results.append(result)
-            # 逐页 commit：超时/中断只丢当前页
-            await db.commit()
-            logger.info("Fusion page=%d committed (confidence=%.2f)", page, result.get("confidence", 0))
-        except Exception as e:
-            logger.error("Fusion failed for doc_id=%d page=%d: %s", document_id, page, e)
-            results.append({"page": page, "error": str(e)})
-            # 出错也 commit 状态，避免事务膨胀
-            try:
-                await db.commit()
-            except Exception:
-                await db.rollback()
+        async with sem:
+            async with AsyncSessionLocal() as page_db:
+                try:
+                    result = await fuse_page(page_db, document_id, owner_id, page)
+                    # 逐页 commit：超时/中断只丢当前页
+                    await page_db.commit()
+                    logger.info("Fusion page=%d committed (confidence=%.2f)", page, result.get("confidence", 0))
+                    return result
+                except Exception as e:
+                    await page_db.rollback()
+                    logger.error("Fusion failed for doc_id=%d page=%d: %s", document_id, page, e)
+                    return {"page": page, "error": str(e)}
+
+    page_concurrency = resolve_knowledge_concurrency("page_fusion", FUSION_PAGE_CONCURRENCY)
+    sem = asyncio.Semaphore(page_concurrency)
+    page_tasks = [_run_page(page) for page in range(1, total_pages + 1)]
+    results = list(await asyncio.gather(*page_tasks)) if page_tasks else []
 
     # 第4层融合落库后,把"融合正文"切块+向量化写进 kb_chunks
     # → 对外检索(hybrid_search)默认召回的就是融合层内容(华哥设计:对外用第4层)
@@ -393,7 +397,8 @@ async def fuse_all_pages(
             "page_durations_ms": dict(sorted(page_durations.items())),
             "failed_pages": failed_pages,
             "skipped_pages": skipped_pages,
-            "execution_mode": "sequential_pages",
+            "execution_mode": "parallel_pages",
+            "page_concurrency": page_concurrency,
         },
         "results": results,
     }

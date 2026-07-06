@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..ir_models import to_legacy_dict
 from ..models import KbDocument, KbRawData
-from .model_routing import resolve_knowledge_vision_profile
+from .model_routing import resolve_knowledge_concurrency, resolve_knowledge_vision_profile
 from .parsing_service import IMAGE_FORMATS, parse_document
 from .pdf_render_service import get_pdf_page_count, render_page_to_image
 from .prompt_utils import TRAW_OCR, TRAW_VISION, load_prompt
@@ -482,8 +482,9 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
             logger.warning("Cannot read image bytes for file_id=%d: %s", file_id, e)
     pre_render_duration_ms = round((perf_counter() - pre_render_started) * 1000)
 
-    # 5 并发门池 + 摊平任务列表
-    sem = asyncio.Semaphore(RAW_COLLECT_CONCURRENCY)
+    # 并发门池 + 摊平任务列表；配置在下一批 stage 启动时生效。
+    raw_collect_concurrency = resolve_knowledge_concurrency("raw_collect", RAW_COLLECT_CONCURRENCY)
+    sem = asyncio.Semaphore(raw_collect_concurrency)
     all_results: list[dict] = []
 
     async def _task_wrapper(round_num: int, page: int) -> dict:
@@ -672,7 +673,7 @@ async def collect_raw_data(db: AsyncSession, doc_id: int, owner_id: int, file_id
             "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
             "pre_render_ms": pre_render_duration_ms,
             "task_wall_ms": task_wall_duration_ms,
-            "raw_collect_concurrency": RAW_COLLECT_CONCURRENCY,
+            "raw_collect_concurrency": raw_collect_concurrency,
             "local_processing_ms": local_processing_duration_ms,
             "model_call_ms": model_call_duration_ms,
             "page_durations_ms": dict(sorted(page_durations.items())),

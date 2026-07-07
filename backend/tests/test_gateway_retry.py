@@ -840,7 +840,8 @@ async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profi
     assert profiles["gpt-5.5-knowledge"]["fallback_policy"] == "knowledge_text_primary"
     assert fallback_policies["knowledge_text_primary"]["chain"] == ["deepseek-v4-flash"]
     assert vision_profiles["gpt-5.5-vision"]["fallback_policy"] == "knowledge_vision_primary"
-    assert fallback_policies["knowledge_vision_primary"]["chain"] == ["mimo"]
+    assert fallback_policies["knowledge_vision_primary"]["chain"] == []
+    assert vision_cfg["fallback_chain"] == []
     assert knowledge_routing["default_profile"] == "gpt-5.5-knowledge"
     assert knowledge_routing["fallback_profile"] == "deepseek-v4-flash"
     assert knowledge_routing["stages"]["raw_vision"] == "gpt-5.5-vision"

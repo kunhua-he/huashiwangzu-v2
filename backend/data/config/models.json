@@ -82,8 +82,8 @@
       "chain": ["deepseek-v4-flash"]
     },
     "knowledge_vision_primary": {
-      "description": "Knowledge vision analysis: GPTStore VLM first, cloud VLM fallback before any local fallback.",
-      "chain": ["mimo"]
+      "description": "Knowledge vision analysis: GPTStore VLM first; failed relay/account attempts should remain retryable instead of falling back to lower-priority providers.",
+      "chain": []
     }
   },
   "model_types": {
@@ -207,7 +207,7 @@
     "vision": {
       "primary": "gpt-5.5-vision",
       "fallback_on_explicit_profile": true,
-      "fallback_chain": ["mimo", "qwen3-vl"],
+      "fallback_chain": [],
       "image_preprocess": {
         "max_side": 1600,
         "max_bytes": 1048576,

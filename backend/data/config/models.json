@@ -27,16 +27,20 @@
       },
       "auth_recovery": {
         "strategy": "rotate_session",
-        "status_codes": [401],
+        "status_codes": [401, 429, 502, 503, 504],
         "max_attempts": 5,
         "delay_seconds": 0.2,
         "exception_names": [
           "ReadTimeout",
           "ConnectTimeout",
           "TimeoutException",
+          "RemoteProtocolError",
+          "ConnectError",
           "httpx.ReadTimeout",
           "httpx.ConnectTimeout",
-          "httpx.TimeoutException"
+          "httpx.TimeoutException",
+          "httpx.RemoteProtocolError",
+          "httpx.ConnectError"
         ],
         "timeout_seconds": 90
       },

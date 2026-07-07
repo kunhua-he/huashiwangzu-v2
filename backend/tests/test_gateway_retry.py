@@ -848,14 +848,18 @@ async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profi
     assert get_models_config()["providers"]["gptstore-text"]["session_affinity"]["scope"] == "request"
     assert get_models_config()["providers"]["gptstore-text"]["auth_recovery"] == {
         "strategy": "rotate_session",
-        "status_codes": [401],
+        "status_codes": [401, 429, 502, 503, 504],
         "exception_names": [
             "ReadTimeout",
             "ConnectTimeout",
             "TimeoutException",
+            "RemoteProtocolError",
+            "ConnectError",
             "httpx.ReadTimeout",
             "httpx.ConnectTimeout",
             "httpx.TimeoutException",
+            "httpx.RemoteProtocolError",
+            "httpx.ConnectError",
         ],
         "max_attempts": 5,
         "delay_seconds": 0.2,

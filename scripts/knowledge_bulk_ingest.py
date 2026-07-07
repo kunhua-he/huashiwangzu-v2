@@ -422,8 +422,18 @@ def main() -> int:
                 failed += 1
                 print(json.dumps({"event": "http_error", "index": idx, "code": exc.code, "path": str(path), "body": body[:500]}, ensure_ascii=False), flush=True)
         except Exception as exc:
+            message = str(exc)
+            if "A file with the same name already exists in this directory" in message:
+                skipped += 1
+                print(json.dumps({
+                    "event": "skipped_conflict",
+                    "index": idx,
+                    "path": str(path),
+                    "error": message,
+                }, ensure_ascii=False), flush=True)
+                continue
             failed += 1
-            print(json.dumps({"event": "error", "index": idx, "path": str(path), "error": str(exc)}, ensure_ascii=False), flush=True)
+            print(json.dumps({"event": "error", "index": idx, "path": str(path), "error": message}, ensure_ascii=False), flush=True)
 
     pending, running = _queue_depth(args.base_url)
     print(json.dumps({

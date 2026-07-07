@@ -77,9 +77,32 @@ class OpenAIProvider(BaseProvider):
     ) -> dict:
         payload = self._build_payload(messages, model, temperature, max_tokens, False, tools)
         recovery = _auth_recovery_settings(self.auth_recovery)
-        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+        timeout = float(self.auth_recovery.get("timeout_seconds") or 120)
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             for attempt in range(1, recovery["max_attempts"] + 1):
-                resp = await client.post(self.api_url, json=payload, headers=self._headers(payload, model))
+                try:
+                    resp = await client.post(self.api_url, json=payload, headers=self._headers(payload, model))
+                except Exception as exc:
+                    should_recover = (
+                        recovery["strategy"] == "rotate_session"
+                        and _is_recoverable_exception(exc, recovery["exception_names"])
+                        and attempt < recovery["max_attempts"]
+                        and bool(str(self.session_affinity.get("header") or "").strip())
+                    )
+                    if should_recover:
+                        logger.warning(
+                            "AI provider %s raised %s; rotating session header %s (%d/%d)",
+                            self.provider_name,
+                            type(exc).__name__,
+                            self.session_affinity.get("header"),
+                            attempt,
+                            recovery["max_attempts"],
+                        )
+                        delay = recovery["delay_seconds"]
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        continue
+                    raise
                 if resp.status_code < 400:
                     return resp.json()
 
@@ -195,14 +218,30 @@ def _auth_recovery_settings(config: dict) -> dict:
     }
     max_attempts = int(config.get("max_attempts") or 1)
     delay_seconds = float(config.get("delay_seconds") or 0)
-    if strategy != "rotate_session" or not status_codes:
+    raw_exception_names = config.get("exception_names") or config.get("exceptions") or []
+    exception_names = {
+        str(name).strip()
+        for name in raw_exception_names
+        if str(name).strip()
+    }
+    if strategy != "rotate_session" or (not status_codes and not exception_names):
         max_attempts = 1
     return {
         "strategy": strategy,
         "status_codes": status_codes,
+        "exception_names": exception_names,
         "max_attempts": max(1, max_attempts),
         "delay_seconds": max(0.0, delay_seconds),
     }
+
+
+def _is_recoverable_exception(exc: Exception, names: set[str]) -> bool:
+    exc_type = type(exc)
+    candidates = {
+        exc_type.__name__,
+        f"{exc_type.__module__}.{exc_type.__name__}",
+    }
+    return bool(candidates & names)
 
 
 class OpenCodeProvider(OpenAIProvider):

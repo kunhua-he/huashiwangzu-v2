@@ -194,7 +194,7 @@ def resolve_knowledge_model_call_concurrency(default: int = DEFAULT_MODEL_CALL_G
         "model_call_global",
         default,
         minimum=1,
-        maximum=64,
+        maximum=256,
     )
 
 

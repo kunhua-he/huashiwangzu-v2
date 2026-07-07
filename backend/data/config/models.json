@@ -4,13 +4,11 @@
     "Edit here instead of modifying Python code for day-to-day model changes.",
     "Each profile needs a response_adapter matching an adapter in gateway/adapters/."
   ],
-
   "watchdog_defaults": {
     "poll_interval": 2.0,
     "launch_timeout": 120,
     "model_load_seconds": 20
   },
-
   "providers": {
     "opencode": {
       "type": "opencode",
@@ -30,8 +28,17 @@
       "auth_recovery": {
         "strategy": "rotate_session",
         "status_codes": [401],
-        "max_attempts": 3,
-        "delay_seconds": 0.2
+        "max_attempts": 5,
+        "delay_seconds": 0.2,
+        "exception_names": [
+          "ReadTimeout",
+          "ConnectTimeout",
+          "TimeoutException",
+          "httpx.ReadTimeout",
+          "httpx.ConnectTimeout",
+          "httpx.TimeoutException"
+        ],
+        "timeout_seconds": 90
       },
       "description": "Local GPTStore relay for enterprise knowledge text analysis"
     },
@@ -65,7 +72,6 @@
       "description": "Xiaomi MiMo cloud vision-language model"
     }
   },
-
   "fallback_policies": {
     "knowledge_text_primary": {
       "description": "Knowledge text analysis: GPTStore first, direct cloud fallback for high-throughput batch ingestion.",
@@ -76,7 +82,6 @@
       "chain": ["mimo"]
     }
   },
-
   "model_types": {
     "llm": {
       "primary": "deepseek-v4-flash",
@@ -229,7 +234,6 @@
       }
     }
   },
-
   "module_routing": {
     "knowledge": {
       "default_profile": "gpt-5.5-knowledge",
@@ -278,7 +282,6 @@
       }
     }
   },
-
   "watchdog_models": {
     "bge-m3": {
       "purpose": "embedding",
@@ -384,7 +387,6 @@
       "description": "MiMo cloud multimodal model (mimo-v2.5)"
     }
   },
-
   "local_bin": {
     "llama_server_env": "LLAMA_CPP_SERVER_BIN",
     "llama_server": "",

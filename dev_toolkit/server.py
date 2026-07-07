@@ -55,6 +55,9 @@ try:
     from dev_toolkit.insight_tools import handle_tool as insight_handle_tool
     from dev_toolkit.insight_tools import handles_tool as insight_handles_tool
     from dev_toolkit.insight_tools import tool_definitions as insight_tool_definitions
+    from dev_toolkit.knowledge_tools import handle_tool as knowledge_handle_tool
+    from dev_toolkit.knowledge_tools import handles_tool as knowledge_handles_tool
+    from dev_toolkit.knowledge_tools import tool_definitions as knowledge_tool_definitions
     from dev_toolkit.mailbox_tools import handle_tool as mailbox_handle_tool
     from dev_toolkit.mailbox_tools import handles_tool as mailbox_handles_tool
     from dev_toolkit.mailbox_tools import outbox_dir as mailbox_outbox_dir
@@ -125,6 +128,9 @@ except ModuleNotFoundError:
     from insight_tools import handle_tool as insight_handle_tool
     from insight_tools import handles_tool as insight_handles_tool
     from insight_tools import tool_definitions as insight_tool_definitions
+    from knowledge_tools import handle_tool as knowledge_handle_tool
+    from knowledge_tools import handles_tool as knowledge_handles_tool
+    from knowledge_tools import tool_definitions as knowledge_tool_definitions
     from mailbox_tools import handle_tool as mailbox_handle_tool
     from mailbox_tools import handles_tool as mailbox_handles_tool
     from mailbox_tools import outbox_dir as mailbox_outbox_dir
@@ -1772,6 +1778,7 @@ async def list_tools() -> list[Tool]:
         *edit_tool_definitions(),
         *db_reverse_tool_definitions(),
         *insight_tool_definitions(),
+        *knowledge_tool_definitions(),
         *worktree_tool_definitions(),
         *tool_usage_tool_definitions(),
         *user_profile_tool_definitions(),
@@ -1815,6 +1822,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await db_reverse_handle_tool(REPO_ROOT, name, arguments)
         elif insight_handles_tool(name):
             result = await insight_handle_tool(REPO_ROOT, TOOL_USAGE_PATH, name, arguments)
+        elif knowledge_handles_tool(name):
+            result = await knowledge_handle_tool(REPO_ROOT, name, arguments)
         elif worktree_handles_tool(name):
             result = await worktree_handle_tool(_run_command_json, REPO_ROOT, name, arguments)
         elif tool_usage_handles_tool(name):

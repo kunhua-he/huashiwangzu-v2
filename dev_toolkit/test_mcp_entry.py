@@ -16,6 +16,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: E402
 REQUIRED_TOOLS = {
     "agent_board_claim",
     "db_reverse_audit",
+    "knowledge_pipeline_snapshot",
     "module_sandbox_matrix",
     "opencode_dispatch_letter",
     "opencode_pty_start",

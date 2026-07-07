@@ -348,6 +348,63 @@ async def test_openai_provider_auth_recovery_rotates_session_on_configured_401(m
 
 
 @pytest.mark.asyncio
+async def test_openai_provider_recovery_rotates_session_on_configured_timeout(monkeypatch) -> None:
+    seen_sessions: list[str] = []
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url, json, headers):
+            seen_sessions.append(headers["X-Session-ID"])
+            if len(seen_sessions) == 1:
+                raise httpx.ReadTimeout("relay account stalled")
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(openai_provider_module.httpx, "AsyncClient", FakeAsyncClient)
+    provider = OpenAIProvider(
+        api_url="http://127.0.0.1:61462/v1/chat/completions",
+        api_key="test-key",
+        provider_name="gptstore-text",
+        session_affinity={
+            "header": "X-Session-ID",
+            "prefix": "knowledge-gptstore",
+            "scope": "request",
+        },
+        auth_recovery={
+            "strategy": "rotate_session",
+            "exception_names": ["ReadTimeout"],
+            "max_attempts": 2,
+            "delay_seconds": 0,
+            "timeout_seconds": 90,
+        },
+    )
+
+    result = await provider.chat(
+        messages=[{"role": "user", "content": "hello"}],
+        model="gpt-5.5",
+        temperature=0.2,
+        max_tokens=128,
+    )
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(seen_sessions) == 2
+    assert seen_sessions[0].startswith("knowledge-gptstore:")
+    assert seen_sessions[1].startswith("knowledge-gptstore:")
+    assert seen_sessions[0] != seen_sessions[1]
+
+
+@pytest.mark.asyncio
 async def test_openai_provider_auth_recovery_exhaustion_raises_final_401(monkeypatch) -> None:
     seen_sessions: list[str] = []
 
@@ -792,8 +849,17 @@ async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profi
     assert get_models_config()["providers"]["gptstore-text"]["auth_recovery"] == {
         "strategy": "rotate_session",
         "status_codes": [401],
-        "max_attempts": 3,
+        "exception_names": [
+            "ReadTimeout",
+            "ConnectTimeout",
+            "TimeoutException",
+            "httpx.ReadTimeout",
+            "httpx.ConnectTimeout",
+            "httpx.TimeoutException",
+        ],
+        "max_attempts": 5,
         "delay_seconds": 0.2,
+        "timeout_seconds": 90,
     }
 
 

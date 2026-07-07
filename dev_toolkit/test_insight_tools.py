@@ -34,8 +34,9 @@ def test_mcp_self_check_discovers_components_and_wiring() -> None:
 
 
 def test_every_tool_component_exposes_contract() -> None:
+    helper_only = {"process_tools.py", "timing_tools.py"}
     for path in sorted((REPO_ROOT / "dev_toolkit").glob("*_tools.py")):
-        if path.name.startswith("test_"):
+        if path.name.startswith("test_") or path.name in helper_only:
             continue
         module = importlib.import_module(f"dev_toolkit.{path.stem}")
         assert callable(getattr(module, "tool_definitions", None)), path.name

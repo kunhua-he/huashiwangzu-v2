@@ -318,6 +318,23 @@ class KbDocumentProfile(Base, TimestampMixin):
     profile_embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
+class KbDocumentProfileVector(Base, TimestampMixin):
+    """Document profile vector sidecar for indexed relation candidate recall."""
+    __tablename__ = "kb_document_profile_vectors"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "document_id", name="uq_kb_doc_profile_vectors_owner_doc"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    profile_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(1024), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(64), default="bge-m3")
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+
+
 class KbFileRelation(Base, TimestampMixin):
     """第7层跨文件动态关联（★华哥最看重）。"""
     __tablename__ = "kb_file_relations"

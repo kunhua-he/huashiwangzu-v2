@@ -605,6 +605,7 @@ async def _pipeline_stage_handler(params: dict) -> dict:
         file_id = int(doc.file_id)
         try:
             await raise_if_source_unavailable(db, file_id)
+            await _release_stage_transaction(db, document_id=document_id, stage=stage)
             result = await _run_stage(
                 db,
                 doc=doc,

@@ -351,8 +351,12 @@ async def load_page_asset_bytes(
     )
     if asset is None or not asset.storage_path:
         return None
+    storage_path = str(asset.storage_path)
+    mime_type = asset.mime_type or "image/jpeg"
+    diagnostics = asset.diagnostics_json or {}
+    await db.commit()
     upload_root = _upload_root()
-    abs_path = (upload_root / asset.storage_path).resolve()
+    abs_path = (upload_root / storage_path).resolve()
     if os.path.commonpath([str(upload_root), str(abs_path)]) != str(upload_root) or not abs_path.exists():
         return None
-    return abs_path.read_bytes(), asset.mime_type or "image/jpeg", asset.diagnostics_json or {}
+    return abs_path.read_bytes(), mime_type, diagnostics

@@ -11,7 +11,7 @@ _STARTUP_INIT_LOCK_KEY = 1262633101
 # 知识库模块的所有表名
 KB_TABLES = [
     "kb_catalogs", "kb_documents", "kb_chunks", "kb_page_fusions",
-    "kb_raw_data", "kb_document_profiles", "kb_file_relations",
+    "kb_raw_data", "kb_document_profiles", "kb_document_profile_vectors", "kb_file_relations",
     "kb_entity_dictionary", "kb_entity_aliases", "kb_disambiguation",
     "kb_graph_nodes", "kb_graph_edges", "kb_chunk_entities",
     "kb_evidence", "kb_conclusion_evidence", "kb_entity_merge_log",
@@ -53,9 +53,18 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_kb_raw_data_owner ON kb_raw_data(owner_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_doc_profiles_doc ON kb_document_profiles(document_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_doc_profiles_owner ON kb_document_profiles(owner_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_doc_profile_vectors_owner_doc ON kb_document_profile_vectors(owner_id, document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_doc_profile_vectors_status ON kb_document_profile_vectors(owner_id, status)",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_kb_doc_profile_vectors_embedding_hnsw "
+        "ON kb_document_profile_vectors USING hnsw (embedding vector_cosine_ops) "
+        "WITH (m = 16, ef_construction = 64)"
+    ),
     "CREATE INDEX IF NOT EXISTS idx_kb_file_rel_source ON kb_file_relations(source_document_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_file_rel_target ON kb_file_relations(target_document_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_file_rel_owner ON kb_file_relations(owner_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_file_rel_owner_source_target ON kb_file_relations(owner_id, source_document_id, target_document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_file_rel_owner_target_source ON kb_file_relations(owner_id, target_document_id, source_document_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_pipeline_runs_doc ON kb_pipeline_runs(document_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_pipeline_runs_status ON kb_pipeline_runs(status)",
     "CREATE INDEX IF NOT EXISTS idx_kb_pipeline_stage_runs_doc_stage ON kb_pipeline_stage_runs(document_id, stage)",
@@ -298,6 +307,7 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
         KbDisambiguation,
         KbDocument,
         KbDocumentProfile,
+        KbDocumentProfileVector,
         KbEntityAlias,
         KbEntityDictionary,
         KbEntityMergeLog,
@@ -338,6 +348,7 @@ async def ensure_kb_indexes(db: AsyncSession) -> None:
             await db.execute(text(stmt))
         except Exception as e:
             logger.warning("Index creation skipped (%s): %s", stmt[:60], e)
+            await db.rollback()
     await db.commit()
     logger.info("Ensured kb_* indexes")
 

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import KbDocument, KbDocumentProfile, KbPageFusion
 from .llm_diagnostics import timed_llm_chat
 from .model_routing import resolve_knowledge_profile
+from .profile_vector_service import normalize_profile_embedding, upsert_profile_vector
 from .prompt_utils import TPROFILE, load_prompt_detached
 
 logger = logging.getLogger("v2.knowledge").getChild("profile")
@@ -142,6 +143,15 @@ async def generate_document_profile(
     )
     db.add(profile)
     await db.flush()
+    normalized_embedding = normalize_profile_embedding(profile_embedding)
+    if normalized_embedding:
+        await upsert_profile_vector(
+            db,
+            owner_id=owner_id,
+            document_id=document_id,
+            profile_id=int(profile.id),
+            embedding=normalized_embedding,
+        )
 
     # 同步更新文档摘要
     if doc:

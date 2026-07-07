@@ -983,6 +983,8 @@ async def parse_and_index_document(
             except Exception as e:
                 logger.warning("Failed to read from Content Package document_id=%d: %s", document_id, e)
 
+        await db.commit()
+
         ir_parse_status = "ok"
         ir_resource_diagnostics: list[dict] = []
         if not blocks:

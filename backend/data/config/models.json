@@ -252,11 +252,15 @@
         "raw_vision": 12,
         "page_fusion": 64,
         "fusion": 64,
-        "profile": 16,
-        "graph": 16,
-        "relations": 16,
-        "entity_extract": 16,
-        "model_call_global": 80
+        "profile": 20,
+        "graph": 32,
+        "relations": 24,
+        "entity_extract": 32,
+        "relation_vector_candidates": 2000,
+        "relation_entity_candidates": 1000,
+        "relation_write_batch": 100,
+        "graph_write_batch": 10,
+        "model_call_global": 120
       },
       "image_preprocess": {
         "raw_ocr_max_side": 1600,

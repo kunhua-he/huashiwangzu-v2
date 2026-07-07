@@ -7,7 +7,6 @@ import json
 import logging
 from time import perf_counter
 
-from app.database import AsyncSessionLocal
 from app.gateway.router import gateway_router
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
@@ -21,6 +20,17 @@ from .prompt_utils import TENTITY, TFUSION_LEGACY, load_prompt_detached
 logger = logging.getLogger("v2.knowledge").getChild("entity")
 
 ENTITY_PAGE_CONCURRENCY = 6
+GRAPH_WRITE_COMMIT_EVERY = 50
+
+
+def _graph_write_commit_every() -> int:
+    """Resolve graph write batch size from hot JSON config."""
+    return resolve_knowledge_concurrency(
+        "graph_write_batch",
+        GRAPH_WRITE_COMMIT_EVERY,
+        minimum=1,
+        maximum=200,
+    )
 
 async def extract_entities_from_text(
     text: str,
@@ -489,8 +499,7 @@ async def process_document_entities_from_fusions(
             return {"page": page, "skipped": True}
         async with sem:
             page_started = perf_counter()
-            async with AsyncSessionLocal() as prompt_db:
-                result = await extract_entities_from_text(text, db=prompt_db)
+            result = await extract_entities_from_text(text)
             return {
                 "page": page,
                 "duration_ms": round((perf_counter() - page_started) * 1000),
@@ -577,21 +586,49 @@ async def process_document_entities_from_fusions(
     # 本地 dedup：避免重复 governance candidate（DB query 看不到 same-session 未 flush 的数据）
     seen_candidate_names: set[str] = set()
     entity_name_to_id: dict[str, int] = {}
+    graph_write_commit_every = _graph_write_commit_every()
+    pending_entity_writes = 0
+    entity_names = sorted(
+        {
+            (ent.get("name") or key.split("|")[0]).strip()
+            for key, ent in seen_entities.items()
+            if (ent.get("name") or key.split("|")[0]).strip()
+        }
+    )
+    existing_entities_by_name: dict[str, KbEntityDictionary] = {}
+    existing_node_entity_ids: set[int] = set()
+    if entity_names:
+        existing_entities_r = await db.execute(
+            select(KbEntityDictionary)
+            .where(
+                KbEntityDictionary.owner_id == owner_id,
+                KbEntityDictionary.name.in_(entity_names),
+            )
+            .order_by(KbEntityDictionary.id)
+        )
+        for entity in existing_entities_r.scalars().all():
+            existing_entities_by_name.setdefault(str(entity.name), entity)
+
+        existing_entity_ids = [int(entity.id) for entity in existing_entities_by_name.values()]
+        if existing_entity_ids:
+            existing_nodes_r = await db.execute(
+                select(KbGraphNode.entity_id).where(
+                    KbGraphNode.owner_id == owner_id,
+                    KbGraphNode.entity_id.in_(existing_entity_ids),
+                )
+            )
+            existing_node_entity_ids = {int(row[0]) for row in existing_nodes_r.all()}
+        await db.commit()
 
     for key, ent in seen_entities.items():
-        name = ent.get("name", key.split("|")[0])
+        name = (ent.get("name") or key.split("|")[0]).strip()
+        if not name:
+            continue
         category = ent.get("category", "通用")
         description = ent.get("description", "")
 
-        # 查重：是否已有同名实体（避免跨文档重复创建）
-        existing_r = await db.execute(
-            select(KbEntityDictionary).where(
-                KbEntityDictionary.name == name,
-                KbEntityDictionary.owner_id == owner_id,
-            ).order_by(KbEntityDictionary.id).limit(1)
-        )
-        existing_entity = existing_r.scalars().first()
-
+        # 查重：同文档实体名已在进入循环前批量加载，避免逐实体 DB 往返。
+        existing_entity = existing_entities_by_name.get(str(name))
         if existing_entity:
             entity_id = existing_entity.id
             entity_name_to_id[name] = entity_id
@@ -600,19 +637,14 @@ async def process_document_entities_from_fusions(
             if len(description) > len(existing_desc):
                 existing_entity.description = description
             # 建图谱节点（如果还没有的话）
-            node_r = await db.execute(
-                select(KbGraphNode)
-                .where(KbGraphNode.entity_id == entity_id, KbGraphNode.owner_id == owner_id)
-                .limit(1)
-            )
-            existing_node = node_r.scalars().first()
-            if not existing_node:
+            if int(entity_id) not in existing_node_entity_ids:
                 node = KbGraphNode(
                     owner_id=owner_id, entity_id=entity_id,
                     label=name, category=category, description=description,
                 )
                 db.add(node)
                 await db.flush()
+                existing_node_entity_ids.add(int(entity_id))
         else:
             entity_record = KbEntityDictionary(
                 owner_id=owner_id, name=name, category=category,
@@ -622,6 +654,7 @@ async def process_document_entities_from_fusions(
             await db.flush()
             entity_id = entity_record.id
             entity_name_to_id[name] = entity_id
+            existing_entities_by_name[str(name)] = entity_record
 
             node = KbGraphNode(
                 owner_id=owner_id, entity_id=entity_id,
@@ -629,6 +662,7 @@ async def process_document_entities_from_fusions(
             )
             db.add(node)
             await db.flush()
+            existing_node_entity_ids.add(int(entity_id))
 
         # 治理候选（本文档的，本地 set 去重避免 same-session 重复）
         if name not in seen_candidate_names:
@@ -639,6 +673,10 @@ async def process_document_entities_from_fusions(
                 confidence=0.7, audit_status="pending",
             )
             db.add(candidate)
+        pending_entity_writes += 1
+        if pending_entity_writes >= graph_write_commit_every:
+            await db.commit()
+            pending_entity_writes = 0
 
     stats["entities_found"] = len(seen_entities)
     await db.commit()
@@ -661,6 +699,7 @@ async def process_document_entities_from_fusions(
     # 用 entity_name_to_id 把原始非去重实体列表按页写出精确关联
     seen_evidence_key: set[tuple[int, int]] = set()  # (entity_id, page)
     seen_chunk_entity_key: set[tuple[int, int]] = set()  # (entity_id, chunk_id)
+    pending_evidence_writes = 0
     for raw_idx, ent in enumerate(all_entities):
         name = (ent.get("name") or "").strip()
         entity_id = entity_name_to_id.get(name)
@@ -702,6 +741,7 @@ async def process_document_entities_from_fusions(
                 },
             )
             db.add(evidence)
+            pending_evidence_writes += 1
 
         # chunk_entity：将该实体关联到该页所有 chunk
         for cid in chunk_ids:
@@ -714,6 +754,10 @@ async def process_document_entities_from_fusions(
                     confidence=0.7,
                 )
                 db.add(ce)
+                pending_evidence_writes += 1
+        if pending_evidence_writes >= graph_write_commit_every:
+            await db.commit()
+            pending_evidence_writes = 0
 
     await db.commit()
 
@@ -783,7 +827,7 @@ async def process_document_entities_from_fusions(
             db.add(edge)
             existing_edge_keys.add(edge_key)
             pending_edges += 1
-            if pending_edges >= 100:
+            if pending_edges >= graph_write_commit_every:
                 await db.commit()
                 pending_edges = 0
 
@@ -802,6 +846,7 @@ async def process_document_entities_from_fusions(
         "page_durations_ms": dict(sorted(page_durations.items())),
         "execution_mode": "parallel_pages",
         "page_concurrency": page_concurrency,
+        "graph_write_commit_every": graph_write_commit_every,
     }
     logger.info("Fusion-entity extraction doc_id=%d: %d entities, %d relationships", document_id, stats["entities_found"], stats["relationships_found"])
     return stats

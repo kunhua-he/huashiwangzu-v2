@@ -98,6 +98,7 @@ Total public actions: 23
 | `kb_content_objects` | Owned by `knowledge` module |
 | `kb_disambiguation` | Owned by `knowledge` module |
 | `kb_document_profiles` | Owned by `knowledge` module |
+| `kb_document_profile_vectors` | Owned by `knowledge` module |
 | `kb_documents` | Owned by `knowledge` module |
 | `kb_entity_aliases` | Owned by `knowledge` module |
 | `kb_entity_dictionary` | Owned by `knowledge` module |
@@ -139,6 +140,7 @@ Use `db_schema()` for live database details. This module must not directly read 
 - V3 is additive on PostgreSQL/pgvector and the current `kb_*` pipeline; it does not replace the storage engine, vector index, parser, or model gateway.
 - `kb_content_objects` and `kb_file_knowledge_links` make duplicate-file reuse explicit. Multiple file records may point to one canonical knowledge document without copying chunks, raw data, fusion pages, or profile rows.
 - `kb_ingest_batches` and `kb_validation_reports` record batch-level coverage, duplicate counts, missing canonical mappings, and validation findings for enterprise imports.
+- `kb_document_profile_vectors` is the indexed document-profile vector sidecar for relation candidate recall. `relations` first combines pgvector semantic TopK and entity-inverted candidates, then keeps the existing exact cosine/Jaccard scoring before writing `kb_file_relations`.
 - `kb_terms`, `kb_term_occurrences`, `kb_term_edges`, `kb_fact_candidates`, `kb_causal_candidates`, and `kb_query_contexts` are rebuildable derived indexes. They preserve chaotic model/business signals for later governance instead of freezing a premature taxonomy.
 - `backfill_cognitive_v3` is dry-run by default. `derive_cognitive_index` can rebuild one document's V3 derived layer from existing page fusion and document profile outputs without rerunning raw/VLM/LLM stages.
 

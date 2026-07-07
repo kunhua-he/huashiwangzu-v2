@@ -8,12 +8,18 @@ import logging
 from time import perf_counter
 
 from app.database import AsyncSessionLocal
-from sqlalchemy import select
+from sqlalchemy import desc, distinct, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbChunkEntity, KbDocument, KbDocumentProfile, KbEntityDictionary, KbFileRelation
+from .model_routing import resolve_knowledge_concurrency
+from .profile_vector_service import ensure_document_profile_vector, vector_literal
 
 logger = logging.getLogger("v2.knowledge").getChild("relation")
+
+VECTOR_CANDIDATE_LIMIT = 2000
+ENTITY_CANDIDATE_LIMIT = 1000
+RELATION_WRITE_BATCH = 100
 
 
 def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
@@ -45,6 +51,10 @@ def _entity_overlap_score(entities_a: set[int], entities_b: set[int]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def _batched(items: list[dict], batch_size: int) -> list[list[dict]]:
+    return [items[index:index + batch_size] for index in range(0, len(items), batch_size)]
+
+
 async def compute_file_relations(
     db: AsyncSession,
     document_id: int,
@@ -63,14 +73,12 @@ async def compute_file_relations(
 
     snapshot_started = perf_counter()
     async with AsyncSessionLocal() as read_db:
-        r = await read_db.execute(
-            select(KbDocumentProfile).where(
-                KbDocumentProfile.document_id == document_id,
-                KbDocumentProfile.owner_id == owner_id,
-            )
+        new_embedding = await ensure_document_profile_vector(
+            read_db,
+            owner_id=owner_id,
+            document_id=document_id,
         )
-        new_profile = r.scalar_one_or_none()
-        if not new_profile or not new_profile.profile_embedding:
+        if not new_embedding:
             await read_db.commit()
             logger.warning("No profile/embedding for document_id=%d, skipping relations", document_id)
             return {
@@ -96,19 +104,117 @@ async def compute_file_relations(
             )
         )
         existing_edges = {(row[0], row[1]) for row in r.all()}
+        await read_db.commit()
 
-        r = await read_db.execute(
-            select(KbDocumentProfile).where(
-                KbDocumentProfile.owner_id == owner_id,
-                KbDocumentProfile.document_id != document_id,
-                KbDocumentProfile.profile_embedding.isnot(None),
+    async with AsyncSessionLocal() as current_entity_db:
+        current_entity_result = await current_entity_db.execute(
+            select(KbChunkEntity.entity_id).where(
+                KbChunkEntity.owner_id == owner_id,
+                KbChunkEntity.document_id == document_id,
             )
         )
-        existing_profiles = r.scalars().all()
-        candidate_ids = [int(profile.document_id) for profile in existing_profiles]
+        new_entities = {int(row[0]) for row in current_entity_result.all()}
+        await current_entity_db.commit()
+    snapshot_duration_ms = round((perf_counter() - snapshot_started) * 1000)
+
+    if not new_embedding:
+        logger.warning("No profile/embedding for document_id=%d, skipping relations", document_id)
+        return {
+            "document_id": document_id,
+            "relations_created": 0,
+            "timing": {
+                "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
+                "snapshot_ms": snapshot_duration_ms,
+                "candidate_documents": 0,
+                "relations_created": 0,
+                "reason": "missing_profile_embedding",
+            },
+        }
+
+    candidate_started = perf_counter()
+    vector_candidate_limit = resolve_knowledge_concurrency(
+        "relation_vector_candidates",
+        VECTOR_CANDIDATE_LIMIT,
+        minimum=100,
+        maximum=10000,
+    )
+    entity_candidate_limit = resolve_knowledge_concurrency(
+        "relation_entity_candidates",
+        ENTITY_CANDIDATE_LIMIT,
+        minimum=100,
+        maximum=10000,
+    )
+    vector_candidate_scores: dict[int, float] = {}
+    async with AsyncSessionLocal() as candidate_db:
+        vector_result = await candidate_db.execute(
+            text(
+                """
+                SELECT document_id, 1 - (embedding <=> CAST(:embedding AS vector)) AS vector_score
+                FROM kb_document_profile_vectors
+                WHERE owner_id = :owner_id
+                  AND status = 'active'
+                  AND document_id != :document_id
+                ORDER BY embedding <=> CAST(:embedding AS vector)
+                LIMIT :limit
+                """
+            ),
+            {
+                "owner_id": owner_id,
+                "document_id": document_id,
+                "embedding": vector_literal(new_embedding),
+                "limit": vector_candidate_limit,
+            },
+        )
+        vector_candidate_scores = {
+            int(row[0]): float(row[1] or 0.0)
+            for row in vector_result.all()
+        }
+        await candidate_db.commit()
+
+    entity_candidate_ids: set[int] = set()
+    if new_entities:
+        async with AsyncSessionLocal() as entity_candidate_db:
+            entity_candidate_result = await entity_candidate_db.execute(
+                select(
+                    KbChunkEntity.document_id,
+                    func.count(distinct(KbChunkEntity.entity_id)).label("shared_count"),
+                )
+                .where(
+                    KbChunkEntity.owner_id == owner_id,
+                    KbChunkEntity.document_id != document_id,
+                    KbChunkEntity.entity_id.in_(list(new_entities)),
+                )
+                .group_by(KbChunkEntity.document_id)
+                .order_by(desc("shared_count"))
+                .limit(entity_candidate_limit)
+            )
+            entity_candidate_ids = {int(row[0]) for row in entity_candidate_result.all()}
+            await entity_candidate_db.commit()
+
+    candidate_ids = sorted(set(vector_candidate_scores) | entity_candidate_ids)
+    candidate_duration_ms = round((perf_counter() - candidate_started) * 1000)
+
+    existing_profiles: list[tuple[int, list[float]]] = []
+    if candidate_ids:
+        async with AsyncSessionLocal() as profile_db:
+            profile_result = await profile_db.execute(
+                select(KbDocumentProfile.document_id, KbDocumentProfile.profile_embedding).where(
+                    KbDocumentProfile.owner_id == owner_id,
+                    KbDocumentProfile.document_id.in_(candidate_ids),
+                    KbDocumentProfile.profile_embedding.isnot(None),
+                )
+            )
+            existing_profiles = [
+                (int(row[0]), list(row[1] or []))
+                for row in profile_result.all()
+                if row[1]
+            ]
+            await profile_db.commit()
+
+    async with AsyncSessionLocal() as entity_db:
         entity_rows = []
         if candidate_ids:
-            entity_result = await read_db.execute(
+            entity_result = await entity_db.execute(
                 select(KbChunkEntity.document_id, KbChunkEntity.entity_id).where(
                     KbChunkEntity.owner_id == owner_id,
                     KbChunkEntity.document_id.in_([document_id, *candidate_ids]),
@@ -116,28 +222,14 @@ async def compute_file_relations(
             )
             entity_rows = entity_result.all()
         else:
-            entity_result = await read_db.execute(
+            entity_result = await entity_db.execute(
                 select(KbChunkEntity.document_id, KbChunkEntity.entity_id).where(
                     KbChunkEntity.owner_id == owner_id,
                     KbChunkEntity.document_id == document_id,
                 )
             )
             entity_rows = entity_result.all()
-        await read_db.commit()
-
-    if not new_profile or not new_profile.profile_embedding:
-        logger.warning("No profile/embedding for document_id=%d, skipping relations", document_id)
-        return {
-            "document_id": document_id,
-            "relations_created": 0,
-            "timing": {
-                "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
-                "snapshot_ms": round((perf_counter() - snapshot_started) * 1000),
-                "candidate_documents": 0,
-                "relations_created": 0,
-                "reason": "missing_profile_embedding",
-            },
-        }
+        await entity_db.commit()
 
     doc_entities: dict[int, set[int]] = {}
     for row_doc_id, row_entity_id in entity_rows:
@@ -150,25 +242,26 @@ async def compute_file_relations(
     below_threshold = 0
     db_commit_duration_ms = 0
     score_duration_ms = 0
+    write_batches = 0
     planned_relations: list[dict] = []
     all_shared_entity_ids: set[int] = set()
     score_started = perf_counter()
-    for existing in existing_profiles:
-        if not existing.profile_embedding:
+    for existing_document_id, existing_embedding in existing_profiles:
+        if not existing_embedding:
             continue
 
         # 幂等：双向边成对创建,正向已存在即跳过整对
-        fwd_edge = (document_id, existing.document_id)
-        rev_edge = (existing.document_id, document_id)
+        fwd_edge = (document_id, existing_document_id)
+        rev_edge = (existing_document_id, document_id)
         if fwd_edge in existing_edges or rev_edge in existing_edges:
             skipped_existing_edges += 1
             continue
 
         # 向量相似度
-        vec_sim = _cosine_similarity(new_profile.profile_embedding, existing.profile_embedding)
+        vec_sim = _cosine_similarity(new_embedding, existing_embedding)
 
         # 实体共现度
-        existing_entities = doc_entities.get(int(existing.document_id), set())
+        existing_entities = doc_entities.get(int(existing_document_id), set())
         entity_sim = _entity_overlap_score(new_entities, existing_entities)
 
         # 综合分数（向量 0.6 + 实体 0.4）
@@ -191,7 +284,7 @@ async def compute_file_relations(
         common_entities = list(new_entities & existing_entities)[:10] if new_entities and existing_entities else []
         all_shared_entity_ids.update(common_entities)
         planned_relations.append({
-            "target_document_id": int(existing.document_id),
+            "target_document_id": int(existing_document_id),
             "relation_type": relation_type,
             "combined_score": combined_score,
             "vec_sim": vec_sim,
@@ -214,53 +307,67 @@ async def compute_file_relations(
             await name_db.commit()
         db_commit_duration_ms += round((perf_counter() - name_started) * 1000)
 
-    for planned in planned_relations:
-        existing_document_id = int(planned["target_document_id"])
-        shared_entity_names = [
-            entity_names[entity_id]
-            for entity_id in planned["shared_entity_ids"]
-            if entity_id in entity_names
-        ]
-        # 创建双向边
+    relation_write_batch = resolve_knowledge_concurrency(
+        "relation_write_batch",
+        RELATION_WRITE_BATCH,
+        minimum=1,
+        maximum=1000,
+    )
+    for planned_batch in _batched(planned_relations, relation_write_batch):
+        target_ids = [int(planned["target_document_id"]) for planned in planned_batch]
         write_started = perf_counter()
         try:
             async with AsyncSessionLocal() as write_db:
                 edge_check = await write_db.execute(
-                    select(KbFileRelation.id).where(
+                    select(KbFileRelation.source_document_id, KbFileRelation.target_document_id).where(
                         KbFileRelation.owner_id == owner_id,
                         (
                             (
                                 (KbFileRelation.source_document_id == document_id)
-                                & (KbFileRelation.target_document_id == existing_document_id)
+                                & (KbFileRelation.target_document_id.in_(target_ids))
                             )
                             | (
-                                (KbFileRelation.source_document_id == existing_document_id)
-                                & (KbFileRelation.target_document_id == document_id)
+                                (KbFileRelation.target_document_id == document_id)
+                                & (KbFileRelation.source_document_id.in_(target_ids))
                             )
                         ),
-                    ).limit(1)
-                )
-                if edge_check.scalar_one_or_none() is not None:
-                    skipped_existing_edges += 1
-                    await write_db.commit()
-                    continue
-                for (src_id, tgt_id) in [(document_id, existing_document_id), (existing_document_id, document_id)]:
-                    relation = KbFileRelation(
-                        owner_id=owner_id,
-                        source_document_id=src_id,
-                        target_document_id=tgt_id,
-                        relation_type=planned["relation_type"],
-                        similarity_score=planned["combined_score"],
-                        shared_entities=shared_entity_names if src_id == document_id else None,
-                        evidence=(
-                            f"向量相似度={planned['vec_sim']:.3f}, 实体共现={planned['entity_sim']:.3f}"
-                            if src_id == document_id else None
-                        ),
-                        weight=planned["combined_score"],
                     )
-                    write_db.add(relation)
-                    relations_created += 1
+                )
+                existing_target_ids: set[int] = set()
+                for src_id, tgt_id in edge_check.all():
+                    if int(src_id) == document_id:
+                        existing_target_ids.add(int(tgt_id))
+                    elif int(tgt_id) == document_id:
+                        existing_target_ids.add(int(src_id))
+
+                for planned in planned_batch:
+                    existing_document_id = int(planned["target_document_id"])
+                    if existing_document_id in existing_target_ids:
+                        skipped_existing_edges += 1
+                        continue
+                    shared_entity_names = [
+                        entity_names[entity_id]
+                        for entity_id in planned["shared_entity_ids"]
+                        if entity_id in entity_names
+                    ]
+                    for src_id, tgt_id in [(document_id, existing_document_id), (existing_document_id, document_id)]:
+                        relation = KbFileRelation(
+                            owner_id=owner_id,
+                            source_document_id=src_id,
+                            target_document_id=tgt_id,
+                            relation_type=planned["relation_type"],
+                            similarity_score=planned["combined_score"],
+                            shared_entities=shared_entity_names if src_id == document_id else None,
+                            evidence=(
+                                f"向量相似度={planned['vec_sim']:.3f}, 实体共现={planned['entity_sim']:.3f}"
+                                if src_id == document_id else None
+                            ),
+                            weight=planned["combined_score"],
+                        )
+                        write_db.add(relation)
+                        relations_created += 1
                 await write_db.commit()
+                write_batches += 1
         except Exception:
             raise
         finally:
@@ -272,13 +379,21 @@ async def compute_file_relations(
         "relations_created": relations_created,
         "timing": {
             "stage_wall_ms": round((perf_counter() - stage_started) * 1000),
-            "snapshot_ms": round((perf_counter() - snapshot_started) * 1000),
+            "snapshot_ms": snapshot_duration_ms,
+            "candidate_ms": candidate_duration_ms,
             "score_ms": score_duration_ms,
             "candidate_documents": len(existing_profiles),
+            "vector_candidates": len(vector_candidate_scores),
+            "entity_candidates": len(entity_candidate_ids),
+            "merged_candidates": len(candidate_ids),
+            "vector_candidate_limit": vector_candidate_limit,
+            "entity_candidate_limit": entity_candidate_limit,
             "scored_documents": scored_documents,
             "skipped_existing_edges": skipped_existing_edges,
             "below_threshold": below_threshold,
             "relations_created": relations_created,
+            "relation_write_batch": relation_write_batch,
+            "write_batches": write_batches,
             "db_commit_ms": db_commit_duration_ms,
         },
     }

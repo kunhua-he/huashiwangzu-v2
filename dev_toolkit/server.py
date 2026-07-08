@@ -52,6 +52,9 @@ try:
     from dev_toolkit.edit_tools import handle_tool as edit_handle_tool
     from dev_toolkit.edit_tools import handles_tool as edit_handles_tool
     from dev_toolkit.edit_tools import tool_definitions as edit_tool_definitions
+    from dev_toolkit.git_workflow_tools import handle_tool as git_workflow_handle_tool
+    from dev_toolkit.git_workflow_tools import handles_tool as git_workflow_handles_tool
+    from dev_toolkit.git_workflow_tools import tool_definitions as git_workflow_tool_definitions
     from dev_toolkit.insight_tools import handle_tool as insight_handle_tool
     from dev_toolkit.insight_tools import handles_tool as insight_handles_tool
     from dev_toolkit.insight_tools import tool_definitions as insight_tool_definitions
@@ -125,6 +128,9 @@ except ModuleNotFoundError:
     from edit_tools import handle_tool as edit_handle_tool
     from edit_tools import handles_tool as edit_handles_tool
     from edit_tools import tool_definitions as edit_tool_definitions
+    from git_workflow_tools import handle_tool as git_workflow_handle_tool
+    from git_workflow_tools import handles_tool as git_workflow_handles_tool
+    from git_workflow_tools import tool_definitions as git_workflow_tool_definitions
     from insight_tools import handle_tool as insight_handle_tool
     from insight_tools import handles_tool as insight_handles_tool
     from insight_tools import tool_definitions as insight_tool_definitions
@@ -1776,6 +1782,7 @@ async def list_tools() -> list[Tool]:
         *docs_sync_tool_definitions(),
         *code_tool_definitions(),
         *edit_tool_definitions(),
+        *git_workflow_tool_definitions(),
         *db_reverse_tool_definitions(),
         *insight_tool_definitions(),
         *knowledge_tool_definitions(),
@@ -1818,6 +1825,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await code_handle_tool(_run_command_json, REPO_ROOT, _CODEGRAPH_CLI, _RUFF_CLI, name, arguments)
         elif edit_handles_tool(name):
             result = await edit_handle_tool(_run_command_json, REPO_ROOT, _RUFF_CLI, name, arguments)
+        elif git_workflow_handles_tool(name):
+            result = await git_workflow_handle_tool(_run_command_json, REPO_ROOT, name, arguments)
         elif db_reverse_handles_tool(name):
             result = await db_reverse_handle_tool(REPO_ROOT, name, arguments)
         elif insight_handles_tool(name):

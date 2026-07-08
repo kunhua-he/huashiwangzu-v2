@@ -27,6 +27,7 @@ brief -> plan_task -> worktree_guard -> evidence -> edit -> verify -> docs_audit
 | Verification | `lint`, `run_test`, `probe`, `call_capability`, `tail_log` |
 | Docs guard | `docs_snapshot`, `docs_audit`, `docs_sync` |
 | Release | `smoke_all`, `release_gate`, `module_sandbox_matrix` |
+| Git workflow | `git_sync_plan`, `git_sync_workflow` |
 | Finish | `finish_task` |
 
 ## Docs Guard
@@ -88,6 +89,7 @@ Do not add large schemas or business implementation blocks directly to `server.p
 - `sql` is read-only by design.
 - `probe` and `call_capability` hit the live backend.
 - `docs_sync` writes Markdown generated sections.
+- `git_sync_workflow` stages local changes, commits, pushes a branch, fast-forwards the target branch, and pushes the target branch. It never force-pushes, rebases, or resets; use `git_sync_plan` first when unsure.
 
 ## Release Gate Modes
 

@@ -38,6 +38,26 @@ def test_internal_knowledge_routes_to_internal_retrieval() -> None:
     assert result.task_category == "internal_knowledge"
     assert result.evidence_policy.needs_internal_knowledge is True
     assert "internal_retrieval" in result.tool_strategy.first_actions
+    assert "same_meaning_internal_retrieval" in result.tool_strategy.avoid_actions
+
+
+@pytest.mark.asyncio
+async def test_internal_knowledge_injection_contains_stop_condition() -> None:
+    policy = RuntimePolicy.default()
+    runner = IntentPreflightRunner(
+        conversation_id=1,
+        owner_id=1,
+        profile_key="deepseek-v4-flash",
+        policy=policy,
+        match_experience_fn=_fake_match_experience,
+    )
+    result = _rule_classify("娇薇诗有什么产品")
+
+    injection = await runner.build_injection(result)
+
+    assert "停止条件" in injection
+    assert "已有相关内部知识或知识库结果" in injection
+    assert "不要用同义查询重复检索同一知识库结果" in injection
 
 
 def test_too_vague_request_is_clarification_shape() -> None:

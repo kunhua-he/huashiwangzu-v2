@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .._utils import references_from_tool_events
 from ..engine.event_store import record_event as _record_event
 from ..engine.failure_diagnostics import record_failure as _record_failure
+from ..engine.path_trace import build_path_trace_summary
 from ..runtime.content_gate import (
     extract_inline_references,
     extract_success_path,
@@ -122,6 +123,7 @@ class RuntimeTaskSink:
         profile_key: str = "deepseek-v4-flash",
         user_input: str = "",
         intent_preflight: dict | None = None,
+        route_diagnostics: dict | None = None,
         workflow_link: WorkflowRuntimeLink | None = None,
     ) -> None:
         self.conversation_id = conversation_id
@@ -129,6 +131,7 @@ class RuntimeTaskSink:
         self.profile_key = profile_key
         self.user_input = user_input
         self.intent_preflight = intent_preflight or {}
+        self.route_diagnostics = route_diagnostics or {}
         self.workflow_link = workflow_link
 
     @property
@@ -329,6 +332,26 @@ class RuntimeTaskSink:
             msg.id, len(timeline), len(full_content),
             json.dumps(usage) if usage else "None",
         )
+        try:
+            await _record_event(
+                db,
+                self.conversation_id,
+                "path_trace_summary",
+                build_path_trace_summary(
+                    user_input=self.user_input,
+                    assistant_text=clean_content,
+                    intent_preflight=self.intent_preflight,
+                    route_diagnostics=self.route_diagnostics,
+                    tool_events=safe_events,
+                    timeline=safe_timeline,
+                    usage=usage,
+                    message_id=msg.id,
+                    sync_success_path_save_possible=bool(success_path),
+                ),
+                llm_response_id=None,
+            )
+        except Exception as exc:
+            logger.warning("path trace summary record failed (non-fatal): %s", exc)
         return msg.id
 
     def _experience_trigger(self, clean_content: str) -> str:

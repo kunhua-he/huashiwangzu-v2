@@ -135,6 +135,12 @@ class IntentPreflightRunner:
         ]
         if result.tool_strategy.first_actions:
             hints.append("建议动作：" + " → ".join(result.tool_strategy.first_actions[:4]))
+        stop_hint = _stop_condition_hint(result)
+        if stop_hint:
+            hints.append("停止条件：" + stop_hint)
+        avoid_hint = _avoid_redundant_exploration_hint(result)
+        if avoid_hint:
+            hints.append("避免：" + avoid_hint)
         if result.risk_policy.must_not_overclaim:
             hints.append("边界：无证据时避免过度断言，可带不确定性说明。")
         if result.matched_experiences:
@@ -276,7 +282,11 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             terms,
             confidence=0.8,
             evidence_policy=EvidencePolicy(needs_internal_knowledge=True, can_answer_from_general_knowledge=False),
-            tool_strategy=ToolStrategy(first_actions=["match_experience", "internal_retrieval"], suggested_queries=_queries(text, terms)),
+            tool_strategy=ToolStrategy(
+                first_actions=["match_experience", "internal_retrieval"],
+                avoid_actions=["duplicate_skill_discovery", "same_meaning_internal_retrieval"],
+                suggested_queries=_queries(text, terms),
+            ),
             risk_policy=RiskPolicy(hallucination_risk="medium", requires_citation=True, must_not_overclaim=True, if_no_evidence="say_uncertain"),
         )
     if _SUMMARY_RE.search(text):
@@ -306,6 +316,37 @@ def _should_use_llm_fallback(result: IntentPreflightResult, policy: RuntimePolic
     if policy.intent_preflight_mode == "llm":
         return True
     return result.task_category in {"other"} and result.confidence < policy.intent_preflight_min_confidence
+
+
+def _stop_condition_hint(result: IntentPreflightResult) -> str:
+    """Return a concise, generic stop condition for this route."""
+    evidence = result.evidence_policy
+    if result.answer_shape == "clarification":
+        return "缺少必要输入时先问清楚，不进入工具探索。"
+    if evidence.needs_internal_knowledge:
+        return (
+            "已有相关内部知识或知识库结果，且能覆盖答案形态时，立即基于证据回答；"
+            "需要来源时保留引用，不继续做锦上添花探索。"
+        )
+    if evidence.needs_file_context:
+        return "文件内容已覆盖用户要求的范围时立即总结或回答，不重复读取同一材料。"
+    if evidence.needs_external_web:
+        return "已有足够公开来源支持核心结论时立即回答并列出来源，不为同一未知点反复搜索。"
+    if result.tool_strategy.first_actions == ["direct_answer"]:
+        return "无需外部证据即可完成时直接回答。"
+    return "当前未知点已被验证且可以形成答案时立即回答。"
+
+
+def _avoid_redundant_exploration_hint(result: IntentPreflightResult) -> str:
+    actions = set(result.tool_strategy.avoid_actions)
+    hints: list[str] = []
+    if "duplicate_skill_discovery" in actions:
+        hints.append("已知道可用能力后不要重复 skill_list/skill_describe")
+    if "same_meaning_internal_retrieval" in actions:
+        hints.append("不要用同义查询重复检索同一知识库结果")
+    if "do_not_overclaim_specific_paths_without_evidence" in actions:
+        hints.append("没有证据时不要断言具体入口或路径")
+    return "；".join(hints)
 
 
 def _extract_domain_terms(text: str) -> list[str]:

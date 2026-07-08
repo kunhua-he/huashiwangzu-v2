@@ -251,6 +251,7 @@ class ConversationRuntime:
                 profile_key=profile_key,
                 user_input=payload.content,
                 intent_preflight=stream_preflight.to_dict() if stream_preflight else None,
+                route_diagnostics=engine_diag if not channel_values else None,
                 workflow_link=workflow_link,
             )
             if self._should_preflight_clarify(stream_preflight):
@@ -438,6 +439,7 @@ class ConversationRuntime:
                 profile_key=profile_key,
                 user_input=content,
                 intent_preflight=stream_preflight.to_dict() if stream_preflight else None,
+                route_diagnostics=engine_diag,
                 workflow_link=workflow_link,
             )
             if self._should_preflight_clarify(stream_preflight):

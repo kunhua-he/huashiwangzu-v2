@@ -23,26 +23,22 @@ def _recipe(intent: str, tools: list[str] | None = None, confidence: float = 0.8
     )
 
 
-def test_desktop_file_paraphrases_match_same_recipe():
-    recipe = _recipe("查看桌面文件")
+def test_similar_text_matches_same_recipe():
+    recipe = _recipe("查看资料文件")
 
-    assert recipe_match_score("我桌面有什么文件？", recipe) > 0.2
-    assert recipe_match_score("帮我打开桌面的文件", recipe) > 0.2
-    assert recipe_match_score("看一下桌面里的 xlsx", recipe) > 0.2
-    assert recipe_match_score("桌面上那个 word 文档打开看看", recipe) > 0.2
+    assert recipe_match_score("查看资料文件", recipe) > 0.7
+    assert recipe_match_score("资料文件查看", recipe) > 0.2
 
 
-def test_excel_generation_paraphrases_match_excel_recipe():
-    recipe = _recipe("生成 Excel 摘要表格", ["office-gen__xlsx", "desktop-tools__replace_file"])
+def test_recipe_tool_names_can_contribute_to_match():
+    recipe = _recipe("生成摘要表", ["generic-report__create_summary_table"])
 
-    assert recipe_match_score("把总结输出成 excel", recipe) > 0.2
-    assert recipe_match_score("帮我生成 xlsx 表格", recipe) > 0.2
-    assert recipe_match_score("导出一份摘要表", recipe) > 0.2
-    assert recipe_match_score("重新覆盖旧的表格文件", recipe) > 0.2
+    assert recipe_match_score("生成摘要表", recipe) > 0.7
+    assert recipe_match_score("create_summary_table", recipe) > 0.2
 
 
 def test_unrelated_query_scores_low():
-    recipe = _recipe("查看桌面文件")
+    recipe = _recipe("查看资料文件")
 
     assert recipe_match_score("今天销售额怎么样", recipe) < 0.25
     assert recipe_match_score("分析加盟方案价格", recipe) < 0.25

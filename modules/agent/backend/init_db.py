@@ -18,6 +18,16 @@ DEFAULT_SYSTEM_PROMPT = SYSTEM_BASE_PROMPT
 
 DEFAULT_ENTERPRISE_PROMPT = ENTERPRISE_PROMPT
 
+_LEGACY_SYSTEM_PROMPT_MARKERS = (
+    "你是华世王镞（Huashi Wangzu）桌面 AI 助手。",
+    "知识库使用规则：",
+    "产品/成分/品牌/规格资料",
+)
+
+
+def _looks_like_legacy_system_prompt(content: str) -> bool:
+    return all(marker in (content or "") for marker in _LEGACY_SYSTEM_PROMPT_MARKERS)
+
 
 async def ensure_default_prompts(db: AsyncSession) -> None:
     """确保系统提示词和企业提示词各至少有一条默认记录。"""
@@ -79,6 +89,10 @@ async def ensure_default_agent_prompts(db: AsyncSession) -> None:
             prompt.is_active = bool(prompt.is_active if prompt.is_active is not None else seed.is_active)
             prompt.status = prompt.status or seed.status
             prompt.version = prompt.version or 1
+            if seed.key == "agent.system.base" and _looks_like_legacy_system_prompt(prompt.content):
+                prompt.content = SYSTEM_BASE_PROMPT
+                prompt.version = (prompt.version or 1) + 1
+                logger.info("Migrated legacy system prompt seed to open protocol")
             continue
         db.add(AgentPrompt(
             owner_id=None,

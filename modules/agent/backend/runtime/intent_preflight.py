@@ -29,7 +29,7 @@ EVIDENCE_SENSITIVE_SHAPES = {
 _SMALLTALK_RE = re.compile(r"^(hi|hello|你好|在吗|谢谢|再见|bye|ok|好的)[。！？!?.\s]*$", re.I)
 _CREATION_RE = re.compile(r"写|改写|润色|生成|起草|文案|标题|脚本|邮件|方案文案")
 _EXTERNAL_RE = re.compile(r"最新|新闻|官网|网上|联网|查一下|搜索|外部|公开资料|行情|今天|现在")
-_INTERNAL_RE = re.compile(r"公司|内部|产品|品牌|成分|规格|制度|流程|知识库|企业")
+_INTERNAL_RE = re.compile(r"公司|内部|企业|组织|团队|私有|知识库|制度|流程")
 _OPERATION_RE = re.compile(r"在哪|哪里|哪个页面|什么页面|入口|菜单|后台|路径|怎么打开|怎么看|查看")
 _TROUBLESHOOT_RE = re.compile(r"报错|失败|不生效|异常|卡住|打不开|崩溃|修复|排查")
 _CODING_RE = re.compile(r"代码|函数|接口|类|bug|堆栈|traceback|typescript|python|sql|api")
@@ -284,7 +284,7 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             evidence_policy=EvidencePolicy(needs_internal_knowledge=True, can_answer_from_general_knowledge=False),
             tool_strategy=ToolStrategy(
                 first_actions=["match_experience", "internal_retrieval"],
-                avoid_actions=["duplicate_skill_discovery", "same_meaning_internal_retrieval"],
+                avoid_actions=["duplicate_skill_discovery", "same_meaning_retrieval"],
                 suggested_queries=_queries(text, terms),
             ),
             risk_policy=RiskPolicy(hallucination_risk="medium", requires_citation=True, must_not_overclaim=True, if_no_evidence="say_uncertain"),
@@ -325,7 +325,7 @@ def _stop_condition_hint(result: IntentPreflightResult) -> str:
         return "缺少必要输入时先问清楚，不进入工具探索。"
     if evidence.needs_internal_knowledge:
         return (
-            "已有相关内部知识或知识库结果，且能覆盖答案形态时，立即基于证据回答；"
+            "已有与请求相关的证据结果，且能覆盖答案形态时，立即基于证据回答；"
             "需要来源时保留引用，不继续做锦上添花探索。"
         )
     if evidence.needs_file_context:
@@ -342,8 +342,8 @@ def _avoid_redundant_exploration_hint(result: IntentPreflightResult) -> str:
     hints: list[str] = []
     if "duplicate_skill_discovery" in actions:
         hints.append("已知道可用能力后不要重复 skill_list/skill_describe")
-    if "same_meaning_internal_retrieval" in actions:
-        hints.append("不要用同义查询重复检索同一知识库结果")
+    if "same_meaning_retrieval" in actions:
+        hints.append("不要用同义查询重复检索同一证据源")
     if "do_not_overclaim_specific_paths_without_evidence" in actions:
         hints.append("没有证据时不要断言具体入口或路径")
     return "；".join(hints)

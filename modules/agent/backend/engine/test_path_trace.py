@@ -5,14 +5,14 @@ from .path_trace import build_path_trace_summary
 
 def test_path_trace_records_recipe_and_tool_usage() -> None:
     payload = build_path_trace_summary(
-        user_input="娇薇诗有什么产品",
-        assistant_text="根据知识库资料，娇薇诗产品包括娇韵皓芙霜，来源 42。",
+        user_input="这个对象有哪些条目",
+        assistant_text="根据证据资料，这个对象包含条目 A，来源 42。",
         intent_preflight={
             "task_category": "internal_knowledge",
             "answer_shape": "fact",
             "intent_summary": "用户需要内部知识或企业资料",
             "confidence": 0.8,
-            "domain_terms": ["娇薇诗", "产品"],
+            "domain_terms": ["对象", "条目"],
             "tool_strategy": {"first_actions": ["match_experience", "internal_retrieval"]},
             "evidence_policy": {"needs_internal_knowledge": True},
             "risk_policy": {"requires_citation": True},
@@ -20,7 +20,7 @@ def test_path_trace_records_recipe_and_tool_usage() -> None:
         },
         route_diagnostics={
             "recipe_injected": 1,
-            "recipe_labels": ["知识库产品问答"],
+            "recipe_labels": ["证据条目问答"],
             "experience_injected": [9],
         },
         tool_events=[
@@ -28,7 +28,7 @@ def test_path_trace_records_recipe_and_tool_usage() -> None:
                 "type": "tool_call",
                 "name": "skill_use",
                 "tool_call_id": "call_1",
-                "arguments": {"name": "knowledge__search", "args": {"query": "娇薇诗 产品"}},
+                "arguments": {"name": "knowledge__search", "args": {"query": "对象 条目"}},
             },
             {
                 "type": "tool_result",
@@ -40,7 +40,7 @@ def test_path_trace_records_recipe_and_tool_usage() -> None:
                     "success": True,
                     "data": {
                         "query_context_id": 42,
-                        "results": [{"document_name": "娇薇诗 价目表", "chunk_id": 7}],
+                        "results": [{"document_name": "证据资料", "chunk_id": 7}],
                     },
                 },
             },
@@ -52,7 +52,7 @@ def test_path_trace_records_recipe_and_tool_usage() -> None:
 
     assert payload["intent"]["task_category"] == "internal_knowledge"
     assert payload["recipe_match"]["matched"] is True
-    assert payload["recipe_match"]["labels"] == ["知识库产品问答"]
+    assert payload["recipe_match"]["labels"] == ["证据条目问答"]
     assert payload["experience_match"]["matched"] is True
     assert payload["stop_condition"]["reason"] == "final_answer_after_tools"
     assert payload["tool_path"]["call_count"] == 1

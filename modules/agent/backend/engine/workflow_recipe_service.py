@@ -25,22 +25,6 @@ _SUCCESS_WEIGHT_SCALE = 20      # max success_weight before lowering boost
 _CONFIDENCE_MIN = 0.3            # below this: do not inject
 _TOP_N_INJECT = 2                # max recipes to inject per turn
 
-# Domain intent aliases for intranet/desktop agent tasks.
-# These are intentionally compact and rule-based. Embedding recall can be added later.
-_INTENT_ALIASES: dict[str, set[str]] = {
-    "desktop_file": {"桌面", "文件", "列表", "有什么", "打开", "查看", "xlsx", "docx", "excel", "word"},
-    "open_file": {"打开", "查看", "读取", "内容", "文件", "文档", "桌面", "预览"},
-    "generate_excel": {"excel", "xlsx", "表格", "生成", "导出", "输出", "汇总", "摘要"},
-    "replace_file": {"替换", "覆盖", "更新", "旧文件", "新文件", "桌面", "文件"},
-    "refresh_desktop": {"刷新", "桌面", "列表", "显示", "更新"},
-    "summarize_doc": {"总结", "摘要", "提炼", "概括", "文档", "内容", "分析"},
-    "search_knowledge": {"搜索", "查询", "知识库", "资料", "找一下", "检索"},
-    "create_doc": {"生成", "创建", "写", "文档", "docx", "word", "报告"},
-    "edit_doc": {"修改", "编辑", "改", "润色", "更新", "文档", "内容"},
-    "run_code": {"运行", "执行", "python", "脚本", "命令", "terminal", "终端"},
-}
-
-
 def _normalize_text(text: str) -> str:
     return (text or "").lower().replace(" ", "").replace("　", "")
 
@@ -72,26 +56,12 @@ def _keyword_score(query: str, target: str) -> float:
     return min(score, 1.0)
 
 
-def _intent_alias_score(query: str, target: str) -> float:
-    text = _normalize_text(query + target)
-    best = 0.0
-    for words in _INTENT_ALIASES.values():
-        q_hits = sum(1 for w in words if w in _normalize_text(query))
-        t_hits = sum(1 for w in words if w in _normalize_text(target))
-        if q_hits and t_hits:
-            best = max(best, min(1.0, (q_hits + t_hits) / (len(words) + 1)))
-        elif q_hits >= 2 and any(w in text for w in words):
-            best = max(best, min(0.6, q_hits / max(len(words), 1)))
-    return best
-
-
 def recipe_match_score(current_input: str, recipe: AgentWorkflowRecipe) -> float:
     """Hybrid match score for workflow recipes.
 
     Combines:
       - exact/substring similarity
       - Chinese character n-gram Jaccard
-      - domain alias overlap
       - tool-name hints
     """
     targets = [
@@ -106,7 +76,6 @@ def recipe_match_score(current_input: str, recipe: AgentWorkflowRecipe) -> float
         if not target:
             continue
         best = max(best, _keyword_score(current_input, target))
-        best = max(best, _intent_alias_score(current_input, target))
     return round(min(best, 1.0), 4)
 
 
@@ -353,13 +322,11 @@ def format_recipe_for_injection(recipes: list[AgentWorkflowRecipe]) -> str:
 def _text_intent_similarity(text_a: str, text_b: str) -> float:
     """Pure text-to-text intent similarity for grouping trajectories.
 
-    Uses keyword scoring + char n-gram Jaccard + intent alias overlap.
+    Uses keyword scoring + char n-gram Jaccard.
     This is separate from ``recipe_match_score()`` which compares
     input text to a ``AgentWorkflowRecipe`` model instance.
     """
-    score = _keyword_score(text_a, text_b)
-    score = max(score, _intent_alias_score(text_a, text_b))
-    return round(min(score, 1.0), 4)
+    return round(min(_keyword_score(text_a, text_b), 1.0), 4)
 
 
 async def run_mining_job(
@@ -386,7 +353,7 @@ async def run_mining_job(
     if not trajectories:
         return {"mined": 0, "reason": "no_successful_trajectories"}
 
-    # Group by semantic intent similarity using keyword + alias scoring
+    # Group by semantic intent similarity using generic text similarity.
     # Note: we compare text-to-text here (not a TrajectoryRecord to a Recipe).
     groups: dict[str, list[AgentTrajectoryRecord]] = {}
     _assigned: set[int] = set()

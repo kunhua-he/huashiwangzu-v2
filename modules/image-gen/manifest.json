@@ -67,6 +67,61 @@
       "min_role": "editor"
     },
     {
+      "action": "transform",
+      "description": "图生图：读取已有图片file_id作为参考图，按提示词编辑、变体或风格化生成新图片",
+      "parameters": {
+        "source_file_id": {
+          "type": "integer",
+          "description": "源图片文件ID，必须是当前用户可访问的图片文件"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "图生图提示词，说明要保留、修改或增强的内容"
+        },
+        "size": {
+          "type": "string",
+          "description": "输出尺寸，格式如 1024x1024",
+          "default": "1024x1024"
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "description": "输出宽高比，可选 square/portrait/landscape 或 16:9；传入时优先于 size",
+          "default": ""
+        },
+        "count": {
+          "type": "integer",
+          "description": "生成数量，范围 1-4",
+          "default": 1
+        },
+        "steps": {
+          "type": "integer",
+          "description": "采样步数，部分服务商可能忽略",
+          "default": 30
+        },
+        "template": {
+          "type": "string",
+          "description": "模板key，缺省优先使用支持图生图的GPTStore模板",
+          "default": ""
+        },
+        "mode": {
+          "type": "string",
+          "description": "模式，如 edit/variation/style_transfer/product_render",
+          "default": "edit"
+        },
+        "strength": {
+          "type": "number",
+          "description": "修改强度，0到1，值越大改动越明显",
+          "default": 0.7
+        },
+        "preserve_subject": {
+          "type": "boolean",
+          "description": "是否尽量保留主体、产品形态和可读标签",
+          "default": true
+        }
+      },
+      "min_role": "editor"
+    },
+    {
       "action": "list_templates",
       "description": "列出可用生图模板（服务商+模型），含凭据是否齐全标识",
       "parameters": {},

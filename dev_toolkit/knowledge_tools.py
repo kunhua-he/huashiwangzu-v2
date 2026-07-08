@@ -65,6 +65,7 @@ NAMES = {
     "raw_vision": "VLM 看图理解",
     "fusion": "LLM 融合交叉印证",
     "profile": "文档画像/标签",
+    "cognitive_index": "V3 认知派生索引",
     "graph": "实体图谱抽取",
     "relations": "关系/联动构建",
 }

@@ -410,6 +410,21 @@
       "min_role": "admin"
     },
     {
+      "action": "reflect_retrieval_feedback",
+      "description": "根据后续对话片段复盘一次知识库检索的隐式反馈",
+      "parameters": {
+        "query_context_id": {
+          "type": "integer",
+          "description": "已持久化的 kb_query_contexts ID"
+        },
+        "conversation_excerpt": {
+          "type": "string",
+          "description": "检索之后的用户/助手对话片段"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
       "action": "enqueue_incomplete_documents",
       "description": "预览或补排未完成深层知识分析的文档",
       "parameters": {

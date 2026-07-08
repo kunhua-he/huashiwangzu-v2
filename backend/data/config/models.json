@@ -240,8 +240,9 @@
   },
   "module_routing": {
     "knowledge": {
-      "default_profile": "gpt-5.5-knowledge",
-      "fallback_profile": "deepseek-v4-flash",
+      "default_profile": "deepseek-v4-flash",
+      "default_vision_profile": "qwen3-vl",
+      "fallback_profile": "deepseek-v4-pro",
       "pause_after_fallback": true,
       "pipeline_concurrency": {
         "raw_collect": 8,
@@ -255,6 +256,8 @@
         "profile": 20,
         "graph": 32,
         "relations": 24,
+        "cognitive_index": 2,
+        "cognitive_terms_per_document": 200,
         "entity_extract": 32,
         "relation_vector_candidates": 2000,
         "relation_entity_candidates": 1000,
@@ -277,16 +280,17 @@
         "raw_vision": 12,
         "fusion": 11,
         "profile": 10,
+        "cognitive_index": 9,
         "graph": 10,
         "relations": 8
       },
       "stages": {
-        "raw_ocr": "gpt-5.5-vision",
-        "raw_vision": "gpt-5.5-vision",
-        "fusion": "gpt-5.5-knowledge",
-        "profile": "gpt-5.5-knowledge",
-        "entity": "gpt-5.5-knowledge",
-        "legacy_page_fusion": "gpt-5.5-knowledge"
+        "raw_ocr": "qwen3-vl",
+        "raw_vision": "qwen3-vl",
+        "fusion": "deepseek-v4-flash",
+        "profile": "deepseek-v4-flash",
+        "entity": "deepseek-v4-flash",
+        "legacy_page_fusion": "deepseek-v4-flash"
       }
     }
   },

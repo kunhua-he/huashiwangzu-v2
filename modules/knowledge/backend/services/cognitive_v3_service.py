@@ -7,6 +7,7 @@ derived indexes can be rebuilt from canonical knowledge artifacts.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from typing import Any
 from app.models.file import File
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import (
@@ -366,25 +368,51 @@ async def upsert_term(
     confidence: float = 0.6,
 ) -> KbTerm:
     parts = term_hash_parts(term)
-    existing = await db.scalar(
-        select(KbTerm).where(
-            KbTerm.owner_id == owner_id,
-            KbTerm.normalized == parts["normalized"],
-            KbTerm.term_type == term_type,
-        ).limit(1)
+    result = await db.execute(
+        sa_text(
+            """
+            INSERT INTO kb_terms (
+                owner_id, term, normalized, term_type, language,
+                semantic_bucket, category_bucket, exact_hash,
+                source, status, confidence
+            )
+            VALUES (
+                :owner_id, :term, :normalized, :term_type, :language,
+                :semantic_bucket, :category_bucket, :exact_hash,
+                :source, 'active', :confidence
+            )
+            ON CONFLICT (owner_id, normalized, term_type)
+            DO NOTHING
+            RETURNING id
+            """
+        ),
+        {
+            "owner_id": owner_id,
+            "term": term,
+            "normalized": parts["normalized"],
+            "term_type": term_type,
+            "language": parts["language"],
+            "semantic_bucket": parts["semantic_bucket"],
+            "category_bucket": parts["category_bucket"],
+            "exact_hash": parts["exact_hash"],
+            "source": source,
+            "confidence": confidence,
+        },
     )
-    item = existing or KbTerm(owner_id=owner_id, term=term, normalized=parts["normalized"], term_type=term_type)
-    if existing is None:
-        db.add(item)
-    item.term = term
-    item.language = parts["language"]
-    item.semantic_bucket = parts["semantic_bucket"]
-    item.category_bucket = parts["category_bucket"]
-    item.exact_hash = parts["exact_hash"]
-    item.source = source
-    item.status = "active"
-    item.confidence = confidence
-    await db.flush()
+    item_id = result.scalar_one_or_none()
+    if item_id is None:
+        item_id = await db.scalar(
+            select(KbTerm.id).where(
+                KbTerm.owner_id == owner_id,
+                KbTerm.normalized == parts["normalized"],
+                KbTerm.term_type == term_type,
+            ).limit(1)
+        )
+    if item_id is None:
+        raise RuntimeError(f"Failed to upsert term {term!r}")
+    item = await db.get(KbTerm, int(item_id))
+    if item is None:
+        raise RuntimeError(f"Failed to upsert term {term!r}")
     return item
 
 
@@ -448,67 +476,124 @@ async def derive_document_cognitive_index(
         ])
         source_texts.append((profile_text, None, None, "document_profile"))
 
-    term_seen: dict[str, KbTerm] = {}
-    occurrence_count = 0
+    occurrence_inputs: list[dict[str, Any]] = []
+    term_inputs: dict[str, dict[str, Any]] = {}
+    term_order: list[str] = []
     for text_value, page, fusion_id, source_type in source_texts:
         for position, term in enumerate(extract_terms(text_value, limit=limit)):
             normalized = normalize_term(term)
-            if normalized not in term_seen:
-                term_seen[normalized] = await upsert_term(
-                    db,
-                    owner_id=owner_id,
-                    term=term,
-                    source=source_type,
-                    confidence=0.65,
+            if normalized not in term_inputs:
+                term_inputs[normalized] = {
+                    "term": term,
+                    "source_type": source_type,
+                }
+                term_order.append(normalized)
+            occurrence_inputs.append({
+                "normalized": normalized,
+                "page": page,
+                "fusion_id": fusion_id,
+                "source_type": source_type,
+                "position": position,
+                "context": text_value[:500],
+            })
+
+    term_id_map: dict[str, int] = {}
+    for normalized in sorted(term_inputs):
+        item = await upsert_term(
+            db,
+            owner_id=owner_id,
+            term=str(term_inputs[normalized]["term"]),
+            source=str(term_inputs[normalized]["source_type"]),
+            confidence=0.65,
+        )
+        term_id_map[normalized] = int(item.id)
+
+    occurrence_count = 0
+    for item in occurrence_inputs:
+        normalized = str(item["normalized"])
+        term_id = term_id_map.get(normalized)
+        if term_id is None:
+            continue
+        page = item["page"]
+        fusion_id = item["fusion_id"]
+        source_type = str(item["source_type"])
+        position = int(item["position"])
+        context = str(item["context"])
+        source_hash = _source_hash(
+            "term_occurrence",
+            {
+                "term": normalized,
+                "document_id": document_id,
+                "page": page,
+                "fusion_id": fusion_id,
+                "source": source_type,
+                "position": position,
+            },
+        )
+        result = await db.execute(
+            sa_text(
+                """
+                INSERT INTO kb_term_occurrences (
+                    owner_id, term_id, document_id, page_fusion_id, page,
+                    source_type, position, weight, context, source_hash
                 )
-            occurrence = KbTermOccurrence(
-                owner_id=owner_id,
-                term_id=int(term_seen[normalized].id),
-                document_id=document_id,
-                page_fusion_id=fusion_id,
-                page=page,
-                source_type=source_type,
-                position=position,
-                weight=1.0,
-                context=text_value[:500],
-                source_hash=_source_hash(
-                    "term_occurrence",
-                    {
-                        "term": normalized,
-                        "document_id": document_id,
-                        "page": page,
-                        "fusion_id": fusion_id,
-                        "source": source_type,
-                        "position": position,
-                    },
-                ),
-            )
-            db.add(occurrence)
+                VALUES (
+                    :owner_id, :term_id, :document_id, :page_fusion_id, :page,
+                    :source_type, :position, 1.0, :context, :source_hash
+                )
+                ON CONFLICT (owner_id, source_hash)
+                DO NOTHING
+                RETURNING id
+                """
+            ),
+            {
+                "owner_id": owner_id,
+                "term_id": term_id,
+                "document_id": document_id,
+                "page_fusion_id": fusion_id,
+                "page": page,
+                "source_type": source_type,
+                "position": position,
+                "context": context,
+                "source_hash": source_hash,
+            },
+        )
+        if result.scalar_one_or_none() is not None:
             occurrence_count += 1
 
-    terms = list(term_seen.values())
     edge_count = 0
-    for left, right in zip(terms, terms[1:]):
-        if int(left.id) == int(right.id):
+    ordered_term_ids = [term_id_map[normalized] for normalized in term_order if normalized in term_id_map]
+    for left_id, right_id in zip(ordered_term_ids, ordered_term_ids[1:]):
+        if int(left_id) == int(right_id):
             continue
-        source_id, target_id = sorted((int(left.id), int(right.id)))
-        edge = await db.scalar(
-            select(KbTermEdge).where(
-                KbTermEdge.owner_id == owner_id,
-                KbTermEdge.source_term_id == source_id,
-                KbTermEdge.target_term_id == target_id,
-                KbTermEdge.edge_type == "co_occurs",
-            ).limit(1)
+        source_id, target_id = sorted((int(left_id), int(right_id)))
+        result = await db.execute(
+            sa_text(
+                """
+                INSERT INTO kb_term_edges (
+                    owner_id, source_term_id, target_term_id, edge_type,
+                    weight, decision_json, status
+                )
+                VALUES (
+                    :owner_id, :source_term_id, :target_term_id, 'co_occurs',
+                    0.5, CAST(:decision_json AS json), 'active'
+                )
+                ON CONFLICT (owner_id, source_term_id, target_term_id, edge_type)
+                DO NOTHING
+                RETURNING id
+                """
+            ),
+            {
+                "owner_id": owner_id,
+                "source_term_id": source_id,
+                "target_term_id": target_id,
+                "decision_json": json.dumps(
+                    {"schema_version": TERM_SCHEMA_VERSION, "source": "document_order"},
+                    ensure_ascii=False,
+                ),
+            },
         )
-        if edge is None:
-            db.add(KbTermEdge(
-                owner_id=owner_id,
-                source_term_id=source_id,
-                target_term_id=target_id,
-                edge_type="co_occurs",
-                weight=0.5,
-                decision_json={"schema_version": TERM_SCHEMA_VERSION, "source": "document_order"},
-            ))
+        if result.scalar_one_or_none() is not None:
             edge_count += 1
 
     fact_count = 0
@@ -529,19 +614,41 @@ async def derive_document_cognitive_index(
                         "source": "document_profile",
                     },
                 )
-                db.add(KbFactCandidate(
-                    owner_id=owner_id,
-                    document_id=document_id,
-                    subject=doc.filename,
-                    predicate=label,
-                    object_value=str(claim)[:2000],
-                    claim_text=str(claim)[:4000],
-                    source_type="document_profile",
-                    source_hash=source_hash,
-                    confidence=profile.confidence or 0.65,
-                    diagnostics_json={"schema_version": "kb_fact_candidate_v1", "source_hash": source_hash},
-                ))
-                fact_count += 1
+                result = await db.execute(
+                    sa_text(
+                        """
+                        INSERT INTO kb_fact_candidates (
+                            owner_id, document_id, subject, predicate, object_value,
+                            claim_text, source_type, source_hash, confidence,
+                            status, diagnostics_json
+                        )
+                        VALUES (
+                            :owner_id, :document_id, :subject, :predicate, :object_value,
+                            :claim_text, 'document_profile', :source_hash, :confidence,
+                            'candidate', CAST(:diagnostics_json AS json)
+                        )
+                        ON CONFLICT (owner_id, source_hash)
+                        DO NOTHING
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "owner_id": owner_id,
+                        "document_id": document_id,
+                        "subject": doc.filename,
+                        "predicate": label,
+                        "object_value": str(claim)[:2000],
+                        "claim_text": str(claim)[:4000],
+                        "source_hash": source_hash,
+                        "confidence": profile.confidence or 0.65,
+                        "diagnostics_json": json.dumps(
+                            {"schema_version": "kb_fact_candidate_v1", "source_hash": source_hash},
+                            ensure_ascii=False,
+                        ),
+                    },
+                )
+                if result.scalar_one_or_none() is not None:
+                    fact_count += 1
 
     causal_count = 0
     for text_value, page, fusion_id, source_type in source_texts:
@@ -564,29 +671,49 @@ async def derive_document_cognitive_index(
                         "context": sentence,
                     },
                 )
-                db.add(KbCausalCandidate(
-                    owner_id=owner_id,
-                    document_id=document_id,
-                    page=page,
-                    cause=cause[:500],
-                    effect=effect[:500],
-                    relation="causal_candidate",
-                    context=sentence[:1000],
-                    source_hash=source_hash,
-                    confidence=0.55,
-                    diagnostics_json={
-                        "schema_version": "kb_causal_candidate_v1",
-                        "source_type": source_type,
-                        "page_fusion_id": fusion_id,
+                result = await db.execute(
+                    sa_text(
+                        """
+                        INSERT INTO kb_causal_candidates (
+                            owner_id, document_id, page, cause, effect, relation,
+                            context, source_hash, confidence, status, diagnostics_json
+                        )
+                        VALUES (
+                            :owner_id, :document_id, :page, :cause, :effect, 'causal_candidate',
+                            :context, :source_hash, 0.55, 'candidate',
+                            CAST(:diagnostics_json AS json)
+                        )
+                        ON CONFLICT (owner_id, source_hash)
+                        DO NOTHING
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "owner_id": owner_id,
+                        "document_id": document_id,
+                        "page": page,
+                        "cause": cause[:500],
+                        "effect": effect[:500],
+                        "context": sentence[:1000],
                         "source_hash": source_hash,
+                        "diagnostics_json": json.dumps(
+                            {
+                                "schema_version": "kb_causal_candidate_v1",
+                                "source_type": source_type,
+                                "page_fusion_id": fusion_id,
+                                "source_hash": source_hash,
+                            },
+                            ensure_ascii=False,
+                        ),
                     },
-                ))
-                causal_count += 1
+                )
+                if result.scalar_one_or_none() is not None:
+                    causal_count += 1
                 break
 
     await db.flush()
     return {
-        "terms": len(term_seen),
+        "terms": len(term_id_map),
         "term_occurrences": occurrence_count,
         "term_edges": edge_count,
         "fact_candidates": fact_count,
@@ -628,8 +755,12 @@ async def record_artifact_lineage(
     return lineage
 
 
-def build_query_context_payload(query: str, results: list[dict]) -> dict:
+def build_query_context_payload(query: str, results: list[dict], query_plan: dict | None = None) -> dict:
     expanded_terms = extract_terms(query, limit=24)
+    result_query_plan = query_plan or next(
+        (item.get("query_plan") for item in results if isinstance(item.get("query_plan"), dict)),
+        None,
+    )
     document_ids = sorted({
         int(item.get("document_id"))
         for item in results
@@ -654,6 +785,39 @@ def build_query_context_payload(query: str, results: list[dict]) -> dict:
         for item in results[:5]
         if item.get("text")
     ]
+    score_breakdowns = [
+        {
+            "document_id": item.get("document_id"),
+            "chunk_id": item.get("chunk_id"),
+            "retrieval_source": item.get("source") or item.get("retrieval_source") or "hybrid",
+            "final_rank": item.get("final_rank"),
+            "retrieval_score": item.get("retrieval_score"),
+            "score_breakdown": item.get("score_breakdown"),
+        }
+        for item in results[:20]
+        if item.get("score_breakdown")
+    ]
+    candidate_snapshots = []
+    for item in results[:20]:
+        document_meta = item.get("document_candidate") if isinstance(item.get("document_candidate"), dict) else {}
+        structured_meta = item.get("structured_signal") if isinstance(item.get("structured_signal"), dict) else {}
+        candidate_snapshots.append({
+            "document_id": item.get("document_id"),
+            "chunk_id": item.get("chunk_id"),
+            "page": item.get("page"),
+            "rank": item.get("final_rank") or item.get("rank"),
+            "source": item.get("source") or item.get("retrieval_source") or "hybrid",
+            "filename": item.get("filename") or document_meta.get("filename") or structured_meta.get("filename"),
+            "extension": item.get("extension") or document_meta.get("extension"),
+            "block_type": item.get("block_type"),
+            "text": str(item.get("text") or "")[:700],
+            "score": item.get("score"),
+        })
+    retrieval_channels = sorted({
+        str(item.get("source") or item.get("retrieval_source") or "hybrid")
+        for item in results
+        if item.get("source") or item.get("retrieval_source")
+    })
     return {
         "expanded_terms": expanded_terms,
         "related_terms": [],
@@ -663,8 +827,34 @@ def build_query_context_payload(query: str, results: list[dict]) -> dict:
         "result_document_ids": document_ids,
         "diagnostics": {
             "schema_version": "kb_query_context_v1",
-            "strategy": "keyword_vector_term_context",
+            "strategy": "query_plan_keyword_vector_term_context",
             "result_count": len(results),
+            "query_plan": result_query_plan or {},
+            "query_plan_source": (result_query_plan or {}).get("source"),
+            "retrieval_score_version": (
+                score_breakdowns[0]["score_breakdown"].get("version")
+                if score_breakdowns and isinstance(score_breakdowns[0].get("score_breakdown"), dict)
+                else None
+            ),
+            "retrieval_channels": retrieval_channels,
+            "candidate_snapshots": candidate_snapshots,
+            "score_breakdowns": score_breakdowns,
+            "nodes": [
+                {
+                    "node_type": "query_intent_plan",
+                    "status": "done" if result_query_plan else "missing",
+                    "source": (result_query_plan or {}).get("source"),
+                    "intent": (result_query_plan or {}).get("intent"),
+                    "answer_shape": (result_query_plan or {}).get("answer_shape"),
+                    "need_document_level_results": (result_query_plan or {}).get(
+                        "need_document_level_results"
+                    ),
+                    "terms": (result_query_plan or {}).get("terms", []),
+                    "entities": (result_query_plan or {}).get("entities", []),
+                    "document_types": (result_query_plan or {}).get("document_types", []),
+                    "constraints": (result_query_plan or {}).get("constraints", []),
+                }
+            ],
         },
     }
 
@@ -782,8 +972,9 @@ async def persist_query_context(
     owner_id: int,
     query: str,
     results: list[dict],
+    query_plan: dict | None = None,
 ) -> dict:
-    payload = build_query_context_payload(query, results)
+    payload = build_query_context_payload(query, results, query_plan=query_plan)
     await _enrich_query_context(db, owner_id=owner_id, payload=payload)
     normalized = normalize_term(query)
     row = KbQueryContext(

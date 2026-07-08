@@ -45,6 +45,23 @@ IMAGE_PARSE_TEXT_MAX_CHARS = 2000
 PARSE_LOCK_STALE_AFTER_SECONDS = 30 * 60
 
 
+def _clean_text_for_postgres(value: object) -> str:
+    """Remove characters PostgreSQL text fields reject while preserving content."""
+    return str(value or "").replace("\x00", "").strip()
+
+
+def _sanitize_parse_blocks(blocks: list[dict]) -> list[dict]:
+    sanitized: list[dict] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        text = _clean_text_for_postgres(block.get("text"))
+        if not text:
+            continue
+        sanitized.append({**block, "text": text})
+    return sanitized
+
+
 def document_source_unavailable_reason(doc) -> str | None:
     """Return the durable source-unavailable reason stored on a document."""
     reason = (doc.parse_error or "").strip()
@@ -108,7 +125,7 @@ def _sanitize_image_parse_blocks(blocks: list[dict], doc) -> list[dict]:
     for block in blocks:
         if remaining <= 0:
             break
-        text = str(block.get("text") or "").strip()
+        text = _clean_text_for_postgres(block.get("text"))
         if not text:
             continue
         next_text = text[:remaining]
@@ -863,7 +880,7 @@ async def create_page_fusions(db: AsyncSession, document_id: int, owner_id: int,
     page_texts: dict[int, list[str]] = {}
     for block in blocks:
         page = block.get("page") or 1
-        text = (block.get("text") or "").strip()
+        text = _clean_text_for_postgres(block.get("text"))
         if not text:
             continue
         page_texts.setdefault(page, []).append(text)
@@ -995,6 +1012,8 @@ async def parse_and_index_document(
             blocks = parsed.get("blocks", [])
         if is_image_source:
             blocks = _sanitize_image_parse_blocks(blocks, doc)
+        else:
+            blocks = _sanitize_parse_blocks(blocks)
 
         if not blocks:
             reason = PARSER_NO_CONTENT_MARKER

@@ -36,6 +36,11 @@
         </div>
         <div v-else class="msg-text">{{ message.content }}</div>
       </div>
+      <GeneratedImageStrip
+        v-if="contentImages.length"
+        :images="contentImages"
+        class="msg-generated-images"
+      />
 
       <div class="msg-footer">
         <time class="msg-time">{{ formatTime(message.created_at) }}</time>
@@ -88,6 +93,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
+import GeneratedImageStrip, { type GeneratedImageEntry } from './GeneratedImageStrip.vue'
 
 interface RefItem {
   type: string
@@ -214,16 +220,65 @@ const sourceLinks = computed(() => {
   return links.slice(0, 6)
 })
 
+const contentImages = computed<GeneratedImageEntry[]>(() => extractGeneratedImages(props.message.content))
+
+const displayContent = computed(() => {
+  if (!contentImages.value.length) return props.message.content
+  return stripGeneratedImageJson(props.message.content)
+})
+
 const renderedContent = computed(() => {
-  if (!props.message.content) return ''
+  if (!displayContent.value) return ''
   try {
-    const raw = marked.parse(props.message.content, { async: false }) as string
+    const raw = marked.parse(displayContent.value, { async: false }) as string
     // 保留 target="_blank" 和 rel 属性，避免壳拦截
     return DOMPurify.sanitize(raw, { ADD_ATTR: ['target', 'rel'] })
   } catch {
-    return props.message.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    return displayContent.value.replace(/</g, '&lt;').replace(/>/g, '&gt;')
   }
 })
+
+function extractGeneratedImages(content: string): GeneratedImageEntry[] {
+  const parsed = parseEmbeddedResultJson(content)
+  const payload = resultPayload(parsed)
+  if (!isRecord(payload)) return []
+  if (Array.isArray(payload.images)) return payload.images.filter(isImageEntry)
+  return isImageEntry(payload) ? [payload] : []
+}
+
+function stripGeneratedImageJson(content: string): string {
+  const marker = '结果：'
+  const markerIndex = content.indexOf(marker)
+  if (markerIndex === -1) return content
+  const head = content.slice(0, markerIndex).trim()
+  return head || content
+}
+
+function parseEmbeddedResultJson(content: string): unknown {
+  const start = content.indexOf('{')
+  const end = content.lastIndexOf('}')
+  if (start === -1 || end <= start) return null
+  try {
+    return JSON.parse(content.slice(start, end + 1))
+  } catch {
+    return null
+  }
+}
+
+function resultPayload(result: unknown): unknown {
+  if (!isRecord(result)) return result
+  return isRecord(result.data) ? result.data : result
+}
+
+function isImageEntry(value: unknown): value is GeneratedImageEntry {
+  if (!isRecord(value)) return false
+  if (value.type !== undefined && value.type !== 'image') return false
+  return typeof value.file_id === 'number'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
 
 function openExternalLink(url: string) {
   window.open(url, '_blank')
@@ -292,6 +347,10 @@ function formatTime(iso?: string | null): string {
   font-size: var(--ag-font-size-md);
   word-break: break-word;
   overflow-wrap: break-word;
+}
+
+.msg-generated-images {
+  margin-top: var(--ag-space-sm);
 }
 .msg-bubble.user {
   background: var(--ag-bg-user-msg);

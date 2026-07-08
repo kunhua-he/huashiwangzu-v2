@@ -589,6 +589,31 @@ class KbQueryContext(Base, TimestampMixin):
     diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class KbRetrievalLearningEvent(Base, TimestampMixin):
+    """Implicit retrieval feedback inferred from later conversation and tool use."""
+    __tablename__ = "kb_retrieval_learning_events"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_hash", name="uq_kb_retrieval_learning_owner_source"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    query_context_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    query_hash: Mapped[str] = mapped_column(String(64), default="")
+    normalized_query: Mapped[str] = mapped_column(Text, default="")
+    document_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    chunk_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    signal_type: Mapped[str] = mapped_column(String(64), default="implicit_feedback")
+    signal_score: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    source: Mapped[str] = mapped_column(String(64), default="llm_reflection")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    source_hash: Mapped[str] = mapped_column(String(64), default="")
+
+
 class KbPipelineRun(Base, TimestampMixin):
     """一次知识库全链路运行的持久诊断账本。"""
     __tablename__ = "kb_pipeline_runs"

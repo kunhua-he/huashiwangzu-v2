@@ -24,6 +24,21 @@ class PlaceholderProvider(ImageProvider):
         logger.info("Generated %d placeholder images for prompt=%r", spec.count, spec.prompt[:80])
         return results
 
+    async def transform(self, spec: GenSpec) -> list[GenResult]:
+        source = spec.extra.get("source_image") or {}
+        source_bytes = source.get("bytes")
+        results: list[GenResult] = []
+        for _ in range(spec.count):
+            buf = io.BytesIO()
+            img = self._make_transform_placeholder(spec.prompt, source_bytes, spec.width, spec.height)
+            img.save(buf, format="PNG")
+            results.append(GenResult(
+                image_bytes=buf.getvalue(),
+                meta={"placeholder": True},
+            ))
+        logger.info("Generated %d transform placeholder images for prompt=%r", spec.count, spec.prompt[:80])
+        return results
+
     @staticmethod
     def _make_placeholder(prompt: str, width: int, height: int) -> Image.Image:
         img = Image.new("RGB", (width, height), (245, 245, 245))
@@ -61,5 +76,63 @@ class PlaceholderProvider(ImageProvider):
         wx = (width - ww) // 2
         wy = ty + th + 40
         draw.text((wx, wy), watermark_text, fill=(160, 160, 160), font=font_small)
+
+        return img
+
+    @staticmethod
+    def _make_transform_placeholder(
+        prompt: str,
+        source_bytes: bytes | None,
+        width: int,
+        height: int,
+    ) -> Image.Image:
+        img = Image.new("RGB", (width, height), (245, 245, 245))
+        draw = ImageDraw.Draw(img)
+
+        font_large = None
+        font_small = None
+        for font_path in (
+            "/System/Library/Fonts/PingFang.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        ):
+            try:
+                font_large = ImageFont.truetype(font_path, 30)
+                font_small = ImageFont.truetype(font_path, 20)
+                break
+            except (OSError, IOError):
+                continue
+        if font_large is None:
+            font_large = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+
+        if source_bytes:
+            try:
+                with Image.open(io.BytesIO(source_bytes)) as source_img:
+                    thumb = source_img.convert("RGB")
+                    max_thumb = (max(1, int(width * 0.72)), max(1, int(height * 0.58)))
+                    thumb.thumbnail(max_thumb)
+                    x = (width - thumb.width) // 2
+                    y = max(24, int(height * 0.12))
+                    img.paste(thumb, (x, y))
+                    draw.rectangle(
+                        (x, y, x + thumb.width - 1, y + thumb.height - 1),
+                        outline=(180, 180, 180),
+                        width=2,
+                    )
+            except Exception:
+                pass
+
+        title = "图生图功能开发中"
+        prompt_display = prompt if len(prompt) <= 56 else prompt[:53] + "..."
+        title_bbox = draw.textbbox((0, 0), title, font=font_large)
+        title_x = (width - (title_bbox[2] - title_bbox[0])) // 2
+        title_y = int(height * 0.74)
+        draw.text((title_x, title_y), title, fill=(60, 60, 60), font=font_large)
+
+        prompt_bbox = draw.textbbox((0, 0), prompt_display, font=font_small)
+        prompt_x = (width - (prompt_bbox[2] - prompt_bbox[0])) // 2
+        prompt_y = title_y + 46
+        draw.text((prompt_x, prompt_y), prompt_display, fill=(120, 120, 120), font=font_small)
 
         return img

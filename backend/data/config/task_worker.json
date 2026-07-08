@@ -24,6 +24,7 @@
       "raw_vision": 8,
       "fusion": 64,
       "profile": 24,
+      "cognitive_index": 2,
       "graph": 48,
       "relations": 24
     }
@@ -32,6 +33,7 @@
     "kb_pipeline_stage": {
       "local_preprocess": 72,
       "model_analysis": 128,
+      "derived_index": 2,
       "relation_build": 24
     }
   },

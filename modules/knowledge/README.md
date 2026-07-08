@@ -55,7 +55,7 @@ Backend HTTP prefix: `/api/knowledge`
 <!-- DOCS-SYNC: section=public_actions -->
 Runtime authority: backend `register_capability(...)`. Discovery metadata: `manifest.public_actions`.
 
-Total public actions: 23
+Total public actions: 24
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
@@ -81,6 +81,7 @@ Total public actions: 23
 | `reconcile_orphan_pipeline_runs` | `admin` | `dry_run`, `limit`, `run_ids` | dry-run 或 guarded apply 收口无 task_id 的 orphan running 诊断运行 |
 | `reconcile_pending_pipeline_queue` | `admin` | `categories`, `category`, `category_limits`, `dry_run`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 或归档已不可执行的 pending 知识库管道队列任务，保留仍可执行的 live pending |
 | `reconcile_running_pipeline_queue` | `admin` | `categories`, `category`, `category_limits`, `dry_run`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 或恢复中断的 running 知识库管道队列任务，live 任务回 pending，obsolete 任务归档 skipped |
+| `reflect_retrieval_feedback` | `admin` | `conversation_excerpt`, `query_context_id` | 根据后续对话片段复盘一次知识库检索的隐式反馈 |
 | `search` | `viewer` | `query`, `top_k` | 按关键词搜索知识库，返回相关块 |
 <!-- /DOCS-SYNC -->
 
@@ -120,6 +121,7 @@ Total public actions: 23
 | `kb_pipeline_stale` | Owned by `knowledge` module |
 | `kb_query_contexts` | Owned by `knowledge` module |
 | `kb_raw_data` | Owned by `knowledge` module |
+| `kb_retrieval_learning_events` | Owned by `knowledge` module |
 | `kb_term_edges` | Owned by `knowledge` module |
 | `kb_term_occurrences` | Owned by `knowledge` module |
 | `kb_terms` | Owned by `knowledge` module |
@@ -142,6 +144,8 @@ Use `db_schema()` for live database details. This module must not directly read 
 - `kb_ingest_batches` and `kb_validation_reports` record batch-level coverage, duplicate counts, missing canonical mappings, and validation findings for enterprise imports.
 - `kb_document_profile_vectors` is the indexed document-profile vector sidecar for relation candidate recall. `relations` first combines pgvector semantic TopK and entity-inverted candidates, then keeps the existing exact cosine/Jaccard scoring before writing `kb_file_relations`.
 - `kb_terms`, `kb_term_occurrences`, `kb_term_edges`, `kb_fact_candidates`, `kb_causal_candidates`, and `kb_query_contexts` are rebuildable derived indexes. They preserve chaotic model/business signals for later governance instead of freezing a premature taxonomy.
+- `kb_retrieval_learning_events` stores implicit retrieval feedback inferred from later conversation excerpts. Search uses it as a bounded ranking prior, while hard evidence, graph signals, source quality, and fusion verification remain the main scoring signals.
+- `cognitive_index` is the durable per-document DAG stage that fills the rebuildable V3 term, occurrence, co-occurrence, fact-candidate, and causal-candidate indexes from existing page fusion and document profile outputs.
 - `backfill_cognitive_v3` is dry-run by default. `derive_cognitive_index` can rebuild one document's V3 derived layer from existing page fusion and document profile outputs without rerunning raw/VLM/LLM stages.
 
 ## Queue Governance

@@ -4,6 +4,7 @@ Registered by bootstrap.register_agent_tasks():
   - profile_evolve: handle_profile_evolve (from profile_evolve module)
   - memory_dream: _handle_memory_dream
   - memory_distill: _handle_memory_distill
+  - knowledge_retrieval_reflect: _handle_knowledge_retrieval_reflect
   - agent_execute_slow_tool: _handle_slow_tool
   - workflow_mine: _handle_workflow_mine
   - agent_context_compact: _handle_context_compact
@@ -74,6 +75,82 @@ async def _handle_memory_distill(params: dict) -> dict:
     except Exception as e:
         logger.warning("Memory distill handler failed: %s", e)
         return {"error": str(e)}
+
+
+# ── Knowledge retrieval feedback ──
+
+async def _handle_knowledge_retrieval_reflect(params: dict) -> dict:
+    """Reflect post-turn conversation into durable knowledge retrieval feedback."""
+    owner_id = params.get("owner_id")
+    query_context_ids = params.get("query_context_ids") or []
+    conversation_excerpt = str(params.get("conversation_excerpt") or "").strip()
+    if not owner_id:
+        return {"error": "Missing owner_id"}
+    if not conversation_excerpt:
+        return {"status": "skipped", "reason": "empty conversation_excerpt"}
+    if not isinstance(query_context_ids, list):
+        query_context_ids = [query_context_ids]
+
+    unique_context_ids: list[int] = []
+    seen: set[int] = set()
+    for raw_context_id in query_context_ids:
+        try:
+            context_id = int(raw_context_id)
+        except (TypeError, ValueError):
+            continue
+        if context_id > 0 and context_id not in seen:
+            seen.add(context_id)
+            unique_context_ids.append(context_id)
+        if len(unique_context_ids) >= 8:
+            break
+    if not unique_context_ids:
+        return {"status": "skipped", "reason": "no query_context_ids"}
+
+    results = []
+    inserted = 0
+    updated = 0
+    errors = 0
+    for query_context_id in unique_context_ids:
+        try:
+            result = await call_capability(
+                "knowledge",
+                "reflect_retrieval_feedback",
+                {
+                    "query_context_id": query_context_id,
+                    "conversation_excerpt": conversation_excerpt,
+                },
+                caller=f"user:{int(owner_id)}",
+                caller_role="admin",
+            )
+            inserted += int(result.get("inserted") or 0)
+            updated += int(result.get("updated") or 0)
+            if result.get("error"):
+                errors += 1
+            results.append({
+                "query_context_id": query_context_id,
+                "inserted": result.get("inserted", 0),
+                "updated": result.get("updated", 0),
+                "skipped": result.get("skipped", 0),
+                "error": result.get("error"),
+            })
+        except Exception as exc:
+            errors += 1
+            logger.warning(
+                "Knowledge retrieval reflection failed context=%s owner=%s: %s",
+                query_context_id, owner_id, exc,
+            )
+            results.append({"query_context_id": query_context_id, "error": str(exc)})
+
+    return {
+        "status": "ok" if errors == 0 else "degraded",
+        "owner_id": owner_id,
+        "conversation_id": params.get("conversation_id"),
+        "processed": len(unique_context_ids),
+        "inserted": inserted,
+        "updated": updated,
+        "errors": errors,
+        "results": results,
+    }
 
 
 # ── Slow tool execution ──
@@ -179,22 +256,50 @@ async def _handle_slow_tool(params: dict) -> dict:
             error_detail=failed_error or None,
         )
 
+    safe_tool_result = json.loads(json.dumps(tool_result, ensure_ascii=False, default=str))
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    tool_event = {
+        "type": "tool_result",
+        "name": usage_skill_name or tool_name,
+        "result": safe_tool_result,
+        "status": "failed" if failed_error else "success",
+        "error": failed_error or None,
+        "duration_ms": duration_ms,
+        "background": True,
+    }
+    timeline = [
+        {
+            "type": "work_summary",
+            "duration_ms": duration_ms,
+            "background": True,
+        },
+        tool_event,
+    ]
+
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         try:
             from ..services import conversation_service as conv_svc2
-            result_text = json.dumps(tool_result, ensure_ascii=False, default=str)
+            result_text = json.dumps(safe_tool_result, ensure_ascii=False, default=str)
             is_failed = bool(failed_error)
             if is_failed:
-                await conv_svc2.add_message(
+                msg = await conv_svc2.add_message(
                     db, owner_id, conversation_id, "assistant",
                     f"⚠️ 后台任务 [{tool_name}] 执行失败：{failed_error}",
                 )
             else:
-                await conv_svc2.add_message(
+                msg = await conv_svc2.add_message(
                     db, owner_id, conversation_id, "assistant",
-                    f"✅ 后台任务 [{tool_name}] 已完成。结果：\n{result_text[:2000]}",
+                    f"✅ 后台任务 [{tool_name}] 已完成。",
                 )
+            await conv_svc2.add_message_meta(
+                db,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                message_id=int(msg.id),
+                tool_events=[tool_event],
+                timeline=timeline,
+            )
 
             try:
                 notify_title = "后台任务失败" if is_failed else "后台任务完成"

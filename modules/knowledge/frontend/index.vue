@@ -188,10 +188,10 @@
         <section v-if="hasResult && tab === 'search'" class="pane">
           <div class="search-bar"><input v-model="query" class="search-input" placeholder="搜索全库知识内容…" @keyup.enter="runSearch" /><button class="primary-btn" :disabled="searching" @click="runSearch">{{ searching?'搜索中':'搜索' }}</button></div>
           <div v-if="searched" class="search-hint">在 {{ analyzedDocCount }} 个已分析文件中检索「{{ query }}」</div>
-          <article v-for="item in searchResults" :key="item.chunk_id" class="result-card" @click="jumpToSearchResult(item)">
+          <article v-for="item in searchResults" :key="item.chunk_id ?? `doc:${item.document_id}`" class="result-card" @click="jumpToSearchResult(item)">
             <div class="result-head">
               <span class="result-doc">{{ item.document_name || docName(item.document_id) }}</span>
-              <span class="result-page">第 {{ item.page||'·' }} 页</span>
+              <span class="result-page">{{ item.page ? `第 ${item.page} 页` : '文档命中' }}</span>
             </div>
             <div class="result-meta">
               <span>{{ item.source_file || item.document_name || ('文档 #' + item.document_id) }}</span>

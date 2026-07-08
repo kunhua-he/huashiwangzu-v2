@@ -28,6 +28,7 @@ STAGE_SCHEMA_VERSIONS: dict[str, str] = {
     "raw_vision": "raw_vision_v1",
     "fusion": "fusion_v1",
     "profile": "profile_v1",
+    "cognitive_index": "cognitive_index_v1",
     "graph": "entity_graph_v1",
     "relations": "relations_v1",
     "image_similarity": "image_similarity_v1",

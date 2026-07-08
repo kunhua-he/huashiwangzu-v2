@@ -31,6 +31,79 @@ from .workflow_link import WorkflowRuntimeLink
 logger = logging.getLogger("v2.agent").getChild("runtime.task_sink")
 
 
+def _coerce_json_like(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or text[0] not in "{[":
+        return value
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return value
+
+
+def extract_query_context_ids(value: object, *, limit: int = 8) -> list[int]:
+    """Extract persisted knowledge query_context_id values from tool payloads."""
+    found: list[int] = []
+    seen: set[int] = set()
+
+    def _walk(node: object, depth: int = 0) -> None:
+        if len(found) >= limit or depth > 10:
+            return
+        node = _coerce_json_like(node)
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if key == "query_context_id":
+                    try:
+                        context_id = int(child)
+                    except (TypeError, ValueError):
+                        context_id = 0
+                    if context_id > 0 and context_id not in seen:
+                        seen.add(context_id)
+                        found.append(context_id)
+                        if len(found) >= limit:
+                            return
+                _walk(child, depth + 1)
+        elif isinstance(node, list):
+            for child in node:
+                _walk(child, depth + 1)
+                if len(found) >= limit:
+                    return
+
+    _walk(value)
+    return found
+
+
+def build_retrieval_reflection_excerpt(
+    *,
+    user_input: str,
+    assistant_text: str,
+    messages: list[dict],
+    max_chars: int = 6000,
+) -> str:
+    """Build a compact turn excerpt for retrieval feedback reflection."""
+    parts = []
+    user_input = str(user_input or "").strip()
+    assistant_text = str(assistant_text or "").strip()
+    if user_input:
+        parts.append(f"用户本轮问题:\n{user_input[:1800]}")
+    if assistant_text:
+        parts.append(f"助手本轮回答:\n{assistant_text[:3600]}")
+
+    if not parts:
+        recent = []
+        for message in messages[-4:]:
+            role = str(message.get("role") or "unknown")
+            content = str(message.get("content") or "").strip()
+            if content:
+                recent.append(f"{role}: {content[:1200]}")
+        if recent:
+            parts.append("最近对话:\n" + "\n\n".join(recent))
+
+    return "\n\n".join(parts)[:max_chars]
+
+
 class RuntimeTaskSink:
     """One-stop persistence gateway for a single conversation turn.
 
@@ -435,6 +508,24 @@ class RuntimeTaskSink:
                     "workflow_mine",
                     {"owner_id": self.owner_id, "conversation_id": self.conversation_id,
                      "trajectory_id": trajectory_id, "turn_index": turn_index},
+                )
+
+            query_context_ids = extract_query_context_ids(tool_events)
+            if query_context_ids:
+                await self.submit_background_task(
+                    "knowledge_retrieval_reflect",
+                    {
+                        "owner_id": self.owner_id,
+                        "conversation_id": self.conversation_id,
+                        "query_context_ids": query_context_ids,
+                        "conversation_excerpt": build_retrieval_reflection_excerpt(
+                            user_input=self.user_input,
+                            assistant_text=assistant_text,
+                            messages=messages,
+                        ),
+                        "trajectory_id": trajectory_id,
+                        "turn_index": turn_index,
+                    },
                 )
 
             await self._enqueue_context_compact()

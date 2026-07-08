@@ -18,21 +18,24 @@ _PROVIDERS: dict[str, type[ImageProvider]] = {
 
 _TEMPLATES: dict = {}
 _DEFAULT_TEMPLATE: str = ""
+_DEFAULT_TRANSFORM_TEMPLATE: str = ""
 
 _TEMPLATES_PATH = Path(__file__).resolve().parent.parent / "image_templates.json"
 
 
 def _load_templates():
-    global _TEMPLATES, _DEFAULT_TEMPLATE
+    global _TEMPLATES, _DEFAULT_TEMPLATE, _DEFAULT_TRANSFORM_TEMPLATE
     if not _TEMPLATES_PATH.exists():
         logger.warning("image_templates.json not found at %s", _TEMPLATES_PATH)
         _TEMPLATES = {}
         _DEFAULT_TEMPLATE = ""
+        _DEFAULT_TRANSFORM_TEMPLATE = ""
         return
     with open(_TEMPLATES_PATH, "r") as f:
         cfg = json.load(f)
     _TEMPLATES = cfg.get("templates", {})
     _DEFAULT_TEMPLATE = cfg.get("default_template", "")
+    _DEFAULT_TRANSFORM_TEMPLATE = cfg.get("default_transform_template", _DEFAULT_TEMPLATE)
 
 
 def get_template_config(template_key: str) -> dict | None:
@@ -47,6 +50,12 @@ def get_default_template() -> str:
     return _DEFAULT_TEMPLATE
 
 
+def get_default_transform_template() -> str:
+    if not _TEMPLATES:
+        _load_templates()
+    return _DEFAULT_TRANSFORM_TEMPLATE or _DEFAULT_TEMPLATE
+
+
 def list_templates() -> list[dict]:
     if not _TEMPLATES:
         _load_templates()
@@ -55,8 +64,10 @@ def list_templates() -> list[dict]:
         provider_type = tpl.get("provider", "")
         provider_cls = _PROVIDERS.get(provider_type)
         configured = False
+        supports_transform = False
         if provider_cls is not None:
             configured = _check_provider_credentials(tpl)
+            supports_transform = provider_cls.transform is not ImageProvider.transform
         fallback = None
         if provider_type != "placeholder" and not configured:
             fallback = "placeholder"
@@ -67,6 +78,7 @@ def list_templates() -> list[dict]:
             "configured": configured,
             "available": configured,
             "can_generate": configured or fallback == "placeholder",
+            "can_transform": supports_transform and (configured or fallback == "placeholder"),
             "fallback": fallback,
             "prompt_language": tpl.get("prompt_language", "any"),
             "cost_tracking": provider_type in {"liblib", "gptstore"},

@@ -3,6 +3,7 @@
     "生图服务商模板配置。新增服务商=加一个适配器文件+这里加一个模板。key在.env,地址/模板id在此。"
   ],
   "default_template": "liblib-star3",
+  "default_transform_template": "gptstore-gpt5.5",
   "templates": {
     "liblib-star3": {
       "provider": "liblib",

@@ -22,16 +22,7 @@
 	      <div v-if="errorText" class="tool-error">{{ errorText }}</div>
 	      <EvidenceReferenceList v-if="referenceList.length" :references="referenceList" dense class="tool-refs" />
 	      <template v-if="hasImage(message.toolResult)">
-	        <div class="tool-images">
-          <img
-            v-for="img in extractImages(message.toolResult)"
-            :key="img.file_id"
-            :src="`/api/files/download/${img.file_id}`"
-            class="tool-image"
-            :alt="img.name || '生成图片'"
-            @click="openImage(img.file_id)"
-          />
-        </div>
+        <GeneratedImageStrip :images="extractImages(message.toolResult)" />
       </template>
       <pre v-else>{{ formatResult(message.toolResult) }}</pre>
     </div>
@@ -39,9 +30,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { apiFetchRaw } from '../api'
+import { ref, computed, watch } from 'vue'
 import EvidenceReferenceList from './EvidenceReferenceList.vue'
+import GeneratedImageStrip from './GeneratedImageStrip.vue'
 import {
   collectEvidenceReferences,
   type EvidenceReference,
@@ -59,7 +50,7 @@ const props = defineProps<{
 	  }
 	}>()
 
-const isOpen = ref(false)
+const isOpen = ref(hasImage(props.message.toolResult))
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   skill_list: '查看技能列表',
@@ -98,16 +89,18 @@ interface ImageEntry {
 }
 
 function hasImage(r: unknown): boolean {
-  if (!r || typeof r !== 'object') return false
-  const obj = r as Record<string, unknown>
+  const payload = resultPayload(r)
+  if (!payload || typeof payload !== 'object') return false
+  const obj = payload as Record<string, unknown>
   if (Array.isArray(obj.images) && obj.images.some(isImageEntry)) return true
   if (isImageEntry(obj)) return true
   return false
 }
 
 function extractImages(r: unknown): ImageEntry[] {
-  if (!r || typeof r !== 'object') return []
-  const obj = r as Record<string, unknown>
+  const payload = resultPayload(r)
+  if (!payload || typeof payload !== 'object') return []
+  const obj = payload as Record<string, unknown>
   if (Array.isArray(obj.images)) {
     return obj.images.filter(isImageEntry)
   }
@@ -146,6 +139,14 @@ const toolState = computed(() => {
   return isFailureResult(props.message.toolResult) ? 'failed' : 'done'
 })
 
+watch(
+  () => props.message.toolResult,
+  result => {
+    if (hasImage(result)) isOpen.value = true
+  },
+  { immediate: true },
+)
+
 const statusText = computed(() => {
   if (props.message.eventType === 'tool_call') return '正在调用'
   return toolState.value === 'failed' ? '工具失败' : '工具完成'
@@ -174,18 +175,6 @@ function formatResult(r: unknown): string {
   try { return JSON.stringify(r, null, 2) } catch { return String(r) }
 }
 
-async function openImage(fileId: number) {
-  try {
-    const response = await apiFetchRaw(`/files/download/${fileId}`)
-    if (!response.ok) throw new Error(`文件下载接口返回 ${response.status}`)
-    const blob = await response.blob()
-    const objectUrl = URL.createObjectURL(blob)
-    window.open(objectUrl, '_blank', 'noopener')
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
-  } catch (error: unknown) {
-    console.warn('[agent] open image failed', error)
-  }
-}
 </script>
 
 <style scoped>
@@ -291,25 +280,4 @@ async function openImage(fileId: number) {
   margin: 0;
 }
 
-.tool-images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tool-image {
-  max-width: 320px;
-  max-height: 240px;
-  border-radius: 6px;
-  cursor: pointer;
-  border: 1px solid var(--ag-border-light, #e5e5e5);
-  transition: transform 0.15s ease;
-  object-fit: contain;
-  background: #f8f8f8;
-}
-
-.tool-image:hover {
-  transform: scale(1.03);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-}
 </style>

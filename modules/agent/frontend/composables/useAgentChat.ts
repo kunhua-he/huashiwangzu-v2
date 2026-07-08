@@ -218,12 +218,13 @@ export function useAgentChat(props: AgentEntryProps) {
         if (item.eventType === 'thinking') { item.running = false; item.collapsed = true }
       }
 
+      const hasImageResult = items.some(item => hasImageToolResult(item.toolResult))
       if (items.length > 0) {
         out.push({
           id: 0, role: '', content: '',
           eventType: 'work_group',
           running: false,
-          collapsed: true,
+          collapsed: !hasImageResult,
           durationMs: workDurationMs,
           items,
         } as MsgItem)
@@ -238,6 +239,28 @@ export function useAgentChat(props: AgentEntryProps) {
       }
     }
     return out
+  }
+
+  function hasImageToolResult(result: unknown): boolean {
+    const payload = resultPayload(result)
+    if (!isRecord(payload)) return false
+    if (isImageEntry(payload)) return true
+    return Array.isArray(payload.images) && payload.images.some(isImageEntry)
+  }
+
+  function isImageEntry(value: unknown): value is { file_id: number; type?: string } {
+    if (!isRecord(value)) return false
+    if (value.type !== undefined && value.type !== 'image') return false
+    return typeof value.file_id === 'number'
+  }
+
+  function resultPayload(result: unknown): unknown {
+    if (!isRecord(result)) return result
+    return isRecord(result.data) ? result.data : result
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value)
   }
 
   // ── Metadata ──

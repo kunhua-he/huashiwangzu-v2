@@ -333,7 +333,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
     const payload = [
       item.source_module || 'knowledge',
       `document_id=${item.document_id}`,
-      `chunk_id=${item.chunk_id}`,
+      item.chunk_id ? `chunk_id=${item.chunk_id}` : '',
       item.source_file_id ? `source_file_id=${item.source_file_id}` : '',
       item.content_package_id ? `package_id=${item.content_package_id}` : '',
       item.page ? `page=${item.page}` : '',
@@ -358,6 +358,7 @@ export function useKnowledgeWorkspace(props: KnowledgeEntryProps) {
       paragraph: item.paragraph,
       score: item.score,
       source_file: item.source_file,
+      query_plan: item.query_plan,
       explain: item.explain,
     }, null, 2)
   }

@@ -75,6 +75,7 @@ from .services.progress_service import get_document_progress, list_documents_pro
 from .services.raw_collection_service import get_ocr_words, get_raw_data
 from .services.relation_service import get_file_relations, get_relation_graph
 from .services.rerun_planner_service import plan_pipeline_rerun
+from .services.retrieval_learning_service import reflect_retrieval_feedback
 from .services.search_service import get_document_chunks, hybrid_search
 from .services.source_file_state import get_live_document_or_raise
 
@@ -171,8 +172,14 @@ async def _enrich_search_results(
                 "retrieval_source": retrieval_source,
                 "score": item.get("score"),
                 "rrf_score": item.get("rrf_score"),
+                "doc_score": item.get("doc_score"),
+                "structured_score": item.get("structured_score"),
                 "kw_score": item.get("kw_score"),
                 "vec_score": item.get("vec_score"),
+                "retrieval_score": item.get("retrieval_score"),
+                "score_breakdown": item.get("score_breakdown"),
+                "doc_rank": item.get("doc_rank"),
+                "structured_rank": item.get("structured_rank"),
                 "kw_rank": item.get("kw_rank"),
                 "vec_rank": item.get("vec_rank"),
                 "final_rank": item.get("final_rank"),
@@ -181,6 +188,7 @@ async def _enrich_search_results(
                 "page": page,
                 "section": chunk_info.get("section"),
                 "paragraph": chunk_info.get("paragraph"),
+                "query_plan": item.get("query_plan"),
             },
         })
         if include_page_fusion and doc_id and page:
@@ -295,6 +303,11 @@ class V3BackfillRequest(BaseModel):
 class V3DeriveDocumentRequest(BaseModel):
     document_id: int
     limit: int = Field(default=200, ge=1, le=1000)
+
+
+class RetrievalFeedbackReflectRequest(BaseModel):
+    query_context_id: int = Field(..., gt=0)
+    conversation_excerpt: str = Field(..., min_length=1, max_length=16000)
 
 @router.get("/health")
 async def health():
@@ -646,6 +659,7 @@ async def api_search(
         owner_id=user.id,
         query=payload.query,
         results=enriched,
+        query_plan=getattr(results, "query_plan", None),
     )
     await db.commit()
     return ApiResponse(data={
@@ -655,6 +669,7 @@ async def api_search(
             **context_data,
             "top_k": payload.top_k,
             "use_rerank": payload.use_rerank,
+            "query_plan": getattr(results, "query_plan", None),
             "query_context": query_context,
         },
     })
@@ -940,6 +955,23 @@ async def api_cognitive_v3_derive_document(
     await db.commit()
     return ApiResponse(data=result)
 
+
+@router.post("/governance/retrieval-feedback/reflect")
+async def api_reflect_retrieval_feedback(
+    payload: RetrievalFeedbackReflectRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    result = await reflect_retrieval_feedback(
+        db,
+        owner_id=user.id,
+        query_context_id=payload.query_context_id,
+        conversation_excerpt=payload.conversation_excerpt,
+    )
+    await db.commit()
+    return ApiResponse(data=result)
+
+
 # ── Cross-module capabilities ───────────────────────────────
 
 async def _enqueue_task(db, stage: str, document_id: int, user_id: int) -> ApiResponse:
@@ -987,6 +1019,7 @@ async def _cap_search(params: dict, caller: str) -> dict:
             owner_id=owner_id,
             query=query,
             results=enriched,
+            query_plan=getattr(results, "query_plan", None),
         )
         await db.commit()
         return {
@@ -996,6 +1029,7 @@ async def _cap_search(params: dict, caller: str) -> dict:
                 **context_data,
                 "top_k": top_k,
                 "use_rerank": False,
+                "query_plan": getattr(results, "query_plan", None),
                 "query_context": query_context,
             },
         }
@@ -1135,6 +1169,26 @@ async def _cap_derive_cognitive_index(params: dict, caller: str) -> dict:
         )
         await db.commit()
         return result
+
+
+async def _cap_reflect_retrieval_feedback(params: dict, caller: str) -> dict:
+    owner_id = resolve_user_id(caller)
+    query_context_id = int(params.get("query_context_id", 0) or 0)
+    if query_context_id <= 0:
+        raise ValueError("query_context_id must be positive")
+    conversation_excerpt = str(params.get("conversation_excerpt", "") or "").strip()
+    if not conversation_excerpt:
+        raise ValueError("conversation_excerpt is required")
+    async with AsyncSessionLocal() as db:
+        result = await reflect_retrieval_feedback(
+            db,
+            owner_id=owner_id,
+            query_context_id=query_context_id,
+            conversation_excerpt=conversation_excerpt,
+        )
+        await db.commit()
+        return result
+
 
 async def _cap_enqueue_incomplete_documents(params: dict, caller: str) -> dict:
     owner_id = resolve_user_id(caller)
@@ -1382,6 +1436,16 @@ register_capability(
     parameters={
         "document_id": {"type": "integer", "description": "Document ID"},
         "limit": {"type": "integer", "description": "Maximum terms per source text, default 200"},
+    },
+    min_role="admin",
+)
+register_capability(
+    "knowledge", "reflect_retrieval_feedback", _cap_reflect_retrieval_feedback,
+    description="Use later conversation excerpts to infer implicit feedback for a persisted knowledge search query context",
+    brief="复盘知识库检索反馈",
+    parameters={
+        "query_context_id": {"type": "integer", "description": "Persisted kb_query_contexts ID"},
+        "conversation_excerpt": {"type": "string", "description": "Later conversation excerpt after the search"},
     },
     min_role="admin",
 )

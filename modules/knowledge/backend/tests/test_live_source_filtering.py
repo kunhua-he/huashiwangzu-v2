@@ -32,12 +32,102 @@ from modules.knowledge.backend.services.search_service import (
     get_document_chunks,
     hybrid_search,
     keyword_search,
+    rrf_fusion,
     vector_search,
 )
 
 OWNER_ID = 1
 VECTOR_SIZE = 1024
 _FRAMEWORK_READY = False
+
+
+def test_rrf_fusion_prioritizes_document_candidates_for_list_queries() -> None:
+    query_plan = {
+        "intent": "document_inventory",
+        "need_document_level_results": True,
+        "answer_shape": "list",
+        "terms": ["Acme", "Report"],
+        "entities": ["Acme"],
+        "document_types": ["Report"],
+        "constraints": [],
+        "source": "test",
+    }
+    document_results = [
+        {
+            "chunk_id": None,
+            "document_id": 101,
+            "text": "Acme Safety Report\nDocument profile",
+            "score": 18.0,
+            "rank": 1,
+            "source": "document_profile",
+        }
+    ]
+    vector_results = [
+        {
+            "chunk_id": 9001,
+            "document_id": 202,
+            "text": "Acme customer survey",
+            "score": 0.99,
+            "rank": 1,
+            "source": "vector",
+        }
+    ]
+
+    results = rrf_fusion(
+        [],
+        vector_results,
+        top_k=2,
+        document_results=document_results,
+        dedupe_by_document=True,
+        query_plan=query_plan,
+    )
+
+    assert results[0]["document_id"] == 101
+    assert results[0]["source"] == "document_profile"
+    assert results[1]["document_id"] == 202
+    assert results[1]["query_plan_matched"] is False
+
+
+@pytest.mark.asyncio
+async def test_brand_product_query_uses_local_fast_plan() -> None:
+    plan = await search_service.plan_query("娇薇诗有什么产品")
+
+    assert plan["source"] == "local_fast_product_query"
+    assert plan["intent"] == "brand_product_lookup"
+    assert plan["answer_shape"] == "list"
+    assert plan["need_document_level_results"] is False
+    assert plan["entities"] == ["娇薇诗"]
+    assert "产品" not in plan["terms"]
+
+
+@pytest.mark.asyncio
+async def test_fast_brand_product_query_skips_heavy_recall(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    async def fail_document_candidate(*_args, **_kwargs):
+        raise AssertionError("fast product lookup must not run document_candidate_search")
+
+    async def fail_structured_signal(*_args, **_kwargs):
+        raise AssertionError("fast product lookup must not run structured_signal_search")
+
+    async def fake_keyword(_db, query: str, _owner_id: int, top_k: int = 20):
+        calls["keyword_query"] = query
+        calls["keyword_top_k"] = top_k
+        return []
+
+    async def fake_vector(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(search_service, "document_candidate_search", fail_document_candidate)
+    monkeypatch.setattr(search_service, "structured_signal_search", fail_structured_signal)
+    monkeypatch.setattr(search_service, "keyword_search", fake_keyword)
+    monkeypatch.setattr(search_service, "vector_search", fake_vector)
+
+    results = await hybrid_search(object(), "娇薇诗有什么产品", OWNER_ID, top_k=10)
+
+    assert results == []
+    assert calls["keyword_query"] == "娇薇诗 娇薇"
+    assert calls["keyword_top_k"] == 20
 
 
 def _upload_path(storage_path: str) -> Path:
@@ -206,7 +296,20 @@ async def test_search_filters_deleted_doc_and_unavailable_source(monkeypatch: py
         async def fake_embedding(_query: str) -> list[float]:
             return [1.0] + [0.0] * (VECTOR_SIZE - 1)
 
+        async def fake_query_plan(query: str) -> dict:
+            return {
+                "intent": "test_search",
+                "need_document_level_results": False,
+                "answer_shape": "mixed",
+                "terms": [query],
+                "entities": [],
+                "document_types": [],
+                "constraints": [],
+                "source": "test",
+            }
+
         monkeypatch.setattr(search_service, "get_embedding", fake_embedding)
+        monkeypatch.setattr(search_service, "plan_query", fake_query_plan)
         async with AsyncSessionLocal() as db:
             keyword_results = await keyword_search(db, marker, OWNER_ID, top_k=10)
             vector_results = await vector_search(db, marker, OWNER_ID, top_k=10)

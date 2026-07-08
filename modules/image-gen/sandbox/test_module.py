@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import io
 import json
 import os
 import sys
@@ -44,8 +45,9 @@ def test_manifest_public_actions_match_runtime_contract() -> None:
     manifest = _load_json(MODULE_DIR / "manifest.json")
     actions = {item["action"]: item for item in manifest["public_actions"]}
 
-    assert set(actions) == {"generate", "list_templates", "usage_history"}
+    assert set(actions) == {"generate", "transform", "list_templates", "usage_history"}
     assert actions["generate"]["min_role"] == "editor"
+    assert actions["transform"]["min_role"] == "editor"
     assert actions["list_templates"]["min_role"] == "viewer"
     assert actions["usage_history"]["min_role"] == "editor"
 
@@ -58,6 +60,18 @@ def test_manifest_public_actions_match_runtime_contract() -> None:
     assert params["steps"]["default"] == 30
     assert params["template"]["default"] == ""
 
+    transform_params = actions["transform"]["parameters"]
+    assert transform_params["source_file_id"]["type"] == "integer"
+    assert transform_params["prompt"]["type"] == "string"
+    assert transform_params["size"]["default"] == "1024x1024"
+    assert transform_params["aspect_ratio"]["default"] == ""
+    assert transform_params["count"]["default"] == 1
+    assert transform_params["steps"]["default"] == 30
+    assert transform_params["template"]["default"] == ""
+    assert transform_params["mode"]["default"] == "edit"
+    assert transform_params["strength"]["default"] == 0.7
+    assert transform_params["preserve_subject"]["default"] is True
+
     usage_params = actions["usage_history"]["parameters"]
     assert usage_params["limit"]["type"] == "integer"
     assert usage_params["limit"]["default"] == 20
@@ -67,9 +81,12 @@ def test_template_config_has_registered_provider_and_default() -> None:
     template_config = _load_json(BACKEND_DIR / "image_templates.json")
     templates = template_config["templates"]
     default_template = template_config["default_template"]
+    default_transform_template = template_config["default_transform_template"]
     providers = _load_providers_module()
 
     assert default_template in templates
+    assert default_transform_template == "gptstore-gpt5.5"
+    assert default_transform_template in templates
     assert "placeholder" in templates
 
     for key, template in templates.items():
@@ -89,13 +106,18 @@ def test_list_templates_exposes_productized_provider_state() -> None:
     placeholder = templates["placeholder"]
 
     assert liblib["provider"] == "liblib"
-    assert liblib["configured"] is False
-    assert liblib["available"] is False
     assert liblib["can_generate"] is True
-    assert liblib["fallback"] == "placeholder"
+    assert liblib["can_transform"] is False
+    if liblib["configured"]:
+        assert liblib["available"] is True
+        assert liblib["fallback"] is None
+    else:
+        assert liblib["available"] is False
+        assert liblib["fallback"] == "placeholder"
     assert liblib["cost_tracking"] is True
     assert placeholder["configured"] is True
     assert placeholder["can_generate"] is True
+    assert placeholder["can_transform"] is True
     assert placeholder["fallback"] is None
 
 
@@ -128,15 +150,45 @@ def test_placeholder_provider_generates_requested_dimensions() -> None:
         assert result.meta["placeholder"] is True
 
 
+def test_placeholder_provider_transforms_with_source_bytes() -> None:
+    from PIL import Image
+    from providers.base import GenSpec
+
+    providers = _load_providers_module()
+    provider = providers.get_provider("placeholder")
+    buf = io.BytesIO()
+    Image.new("RGB", (160, 120), (210, 180, 150)).save(buf, format="PNG")
+    spec = GenSpec(
+        prompt="make a cleaner product photo",
+        width=512,
+        height=512,
+        count=1,
+        extra={"source_image": {"bytes": buf.getvalue(), "mime_type": "image/png"}},
+    )
+
+    results = asyncio.run(provider.transform(spec))
+    assert len(results) == 1
+    assert results[0].image_bytes
+    assert results[0].meta["placeholder"] is True
+
+
 def test_unconfigured_provider_resolves_to_placeholder() -> None:
     _clear_provider_credentials()
     providers = _load_providers_module()
+    template_state = {
+        item["key"]: item
+        for item in providers.list_templates()
+    }["liblib-star3"]
 
     provider, template_cfg, is_placeholder = providers.resolve_provider("liblib-star3")
 
-    assert provider.provider_key == "placeholder"
     assert template_cfg["provider"] == "liblib"
-    assert is_placeholder is True
+    if template_state["configured"]:
+        assert provider.provider_key == "liblib"
+        assert is_placeholder is False
+    else:
+        assert provider.provider_key == "placeholder"
+        assert is_placeholder is True
 
 
 def test_generate_response_contract_uses_framework_files() -> None:
@@ -171,12 +223,45 @@ def test_generate_response_contract_uses_framework_files() -> None:
     assert result["images"][0]["type"] == "image"
 
 
+def test_transform_response_contract_uses_framework_files() -> None:
+    result = {
+        "task": {"request_id": "abc123", "record_id": 1},
+        "images": [
+            {
+                "type": "image",
+                "file_id": 124,
+                "name": "image-transform_1.png",
+                "size": 2048,
+                "placeholder": False,
+            }
+        ],
+        "placeholder": False,
+        "degraded": False,
+        "status": "success",
+        "template": "gptstore-gpt5.5",
+        "provider": "gptstore",
+        "requested_provider": "gptstore",
+        "degraded_reason": None,
+        "points_cost": None,
+        "balance": None,
+        "source_file_id": 123,
+        "mode": "edit",
+        "strength": 0.7,
+    }
+
+    assert "images" in result
+    assert result["source_file_id"] > 0
+    assert result["images"][0]["file_id"] > 0
+    assert result["images"][0]["type"] == "image"
+
+
 def test_router_uses_provider_placeholder_meta_and_record_shape() -> None:
     router_src = (BACKEND_DIR / "router.py").read_text(encoding="utf-8")
     assert "result_placeholder = is_placeholder or bool(gen_result.meta.get(\"placeholder\"))" in router_src
     assert '"placeholder": generated_placeholder' in router_src
     assert '"degraded": generated_placeholder' in router_src
     assert '"provider": provider_key' in router_src
+    assert '"source_file_id": source_file_id' in router_src
     assert '"request_id": r.request_id' in router_src
     assert '"file_ids": file_ids' in router_src
     assert '"degraded_reason": r.degraded_reason' in router_src
@@ -200,8 +285,10 @@ def main() -> None:
     test_list_templates_exposes_productized_provider_state()
     test_liblib_template_declares_polling_and_credentials()
     test_placeholder_provider_generates_requested_dimensions()
+    test_placeholder_provider_transforms_with_source_bytes()
     test_unconfigured_provider_resolves_to_placeholder()
     test_generate_response_contract_uses_framework_files()
+    test_transform_response_contract_uses_framework_files()
     test_router_uses_provider_placeholder_meta_and_record_shape()
     test_router_declares_clear_parameter_validation()
     print("=" * 60)

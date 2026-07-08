@@ -28,3 +28,6 @@ class ImageProvider(ABC):
     @abstractmethod
     async def generate(self, spec: GenSpec) -> list[GenResult]:
         ...
+
+    async def transform(self, spec: GenSpec) -> list[GenResult]:
+        raise NotImplementedError(f"{self.provider_key} does not support image-to-image generation")

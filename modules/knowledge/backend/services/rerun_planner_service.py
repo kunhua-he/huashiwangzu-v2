@@ -7,16 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbAnalysisArtifact, KbDocument
 
-STAGE_ORDER = ("raw", "fusion", "profile", "graph", "relations")
+STAGE_ORDER = ("raw", "fusion", "profile", "cognitive_index", "graph", "relations")
 STAGE_ALIASES = {
     "entity": "graph",
     "entities": "graph",
     "relation": "relations",
+    "cognitive": "cognitive_index",
+    "terms": "cognitive_index",
 }
 STAGE_DEPS = {
     "raw": ("source_file",),
     "fusion": ("raw",),
     "profile": ("fusion",),
+    "cognitive_index": ("profile",),
     "graph": ("fusion",),
     "relations": ("profile", "graph"),
 }
@@ -118,10 +121,11 @@ def _first_failed_stage(latest_artifacts: dict[str, KbAnalysisArtifact], doc: Kb
         artifact = latest_artifacts.get(stage)
         if artifact is not None and artifact.status in FAILED_ARTIFACT_STATUSES:
             return stage
-        status_field = "relation_status" if stage == "relations" else f"{stage}_status"
-        status = str(getattr(doc, status_field, "") or "").lower()
-        if status in FAILED_ARTIFACT_STATUSES:
-            return stage
+        if stage != "cognitive_index":
+            status_field = "relation_status" if stage == "relations" else f"{stage}_status"
+            status = str(getattr(doc, status_field, "") or "").lower()
+            if status in FAILED_ARTIFACT_STATUSES:
+                return stage
     return None
 
 
@@ -162,7 +166,11 @@ async def plan_pipeline_rerun(
             "reason": normalized_reason,
             "requires_model": planned_stage in MODEL_CALL_STAGES,
             "dependencies": list(STAGE_DEPS[planned_stage]),
-            "current_status": str(getattr(doc, status_field, "pending") or "pending"),
+            "current_status": (
+                "artifact_driven"
+                if planned_stage == "cognitive_index"
+                else str(getattr(doc, status_field, "pending") or "pending")
+            ),
             "latest_artifact_id": int(artifact.id) if artifact is not None else None,
             "latest_artifact_status": artifact.status if artifact is not None else None,
             "latest_input_hash": artifact.input_hash if artifact is not None else None,

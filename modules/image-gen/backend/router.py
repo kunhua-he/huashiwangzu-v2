@@ -23,11 +23,12 @@ from sqlalchemy.orm import declarative_base
 
 from .providers import (
     get_default_template,
+    get_default_transform_template,
     get_provider,
     list_templates,
     resolve_provider,
 )
-from .providers.base import GenSpec
+from .providers.base import GenResult, GenSpec
 
 logger = logging.getLogger("v2.image-gen").getChild("router")
 
@@ -143,6 +144,26 @@ def _parse_bounded_int(value: object, field_name: str, minimum: int, maximum: in
     return parsed
 
 
+def _parse_bounded_float(value: object, field_name: str, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"{field_name} must be a number") from exc
+    if parsed < minimum or parsed > maximum:
+        raise ValidationError(f"{field_name} must be between {minimum} and {maximum}")
+    return parsed
+
+
+def _parse_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(value)
+
+
 def _dimensions_from_aspect_ratio(aspect_ratio: str) -> tuple[int, int]:
     normalized = aspect_ratio.strip().lower()
     aspect_map = {
@@ -175,6 +196,97 @@ def _dimensions_from_aspect_ratio(aspect_ratio: str) -> tuple[int, int]:
     width = max(MIN_IMAGE_DIMENSION, min(MAX_IMAGE_DIMENSION, width))
     height = max(MIN_IMAGE_DIMENSION, min(MAX_IMAGE_DIMENSION, height))
     return width, height
+
+
+async def _load_source_image(source_file_id: int, user_id: int) -> dict:
+    from app.services.file_service import check_file_access
+    from app.services.file_upload_service import UPLOAD_ROOT
+
+    async with AsyncSessionLocal() as db:
+        file = await check_file_access(db, source_file_id, user_id)
+        ext = (file.extension or "").lower()
+        mime_type = file.mime_type or f"image/{ext or 'png'}"
+        if not (mime_type.startswith("image/") or ext in {"png", "jpg", "jpeg", "webp"}):
+            raise ValidationError("source_file_id must point to an image file")
+        source_path = (UPLOAD_ROOT / file.storage_path).resolve()
+        upload_root = UPLOAD_ROOT.resolve()
+        if not source_path.is_relative_to(upload_root) or not source_path.is_file():
+            raise ValidationError("source image file is unavailable")
+        image_bytes = source_path.read_bytes()
+        if not image_bytes:
+            raise ValidationError("source image file is empty")
+        filename = f"{file.name}.{ext}" if ext else file.name
+        return {
+            "file_id": source_file_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "bytes": image_bytes,
+            "size": len(image_bytes),
+        }
+
+
+async def _persist_provider_results(
+    gen_results: list[GenResult],
+    user_id: int,
+    is_placeholder: bool,
+    filename_prefix: str = "image-gen",
+    placeholder_explanation: str = "占位图，真实生成待接入",
+) -> tuple[list[dict], list[int], list[str], bool]:
+    from app.services.file_upload_service import upload_file
+
+    ts = int(time.time() * 1000)
+    request_suffix = uuid.uuid4().hex[:8]
+    results = []
+    file_ids: list[int] = []
+    persist_errors: list[str] = []
+    generated_placeholder = is_placeholder
+    async with AsyncSessionLocal() as db:
+        for idx, gen_result in enumerate(gen_results):
+            image_bytes = gen_result.image_bytes
+            result_placeholder = is_placeholder or bool(gen_result.meta.get("placeholder"))
+            generated_placeholder = generated_placeholder or result_placeholder
+
+            if image_bytes is None and gen_result.image_url:
+                import httpx
+                try:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                        resp = await client.get(gen_result.image_url)
+                        resp.raise_for_status()
+                        image_bytes = resp.content
+                except Exception as e:
+                    err = f"download failed for image {idx + 1}: {e}"
+                    persist_errors.append(err)
+                    logger.warning("Failed to download image from URL %s: %s", gen_result.image_url, e)
+                    continue
+
+            if image_bytes is None:
+                persist_errors.append(f"image {idx + 1} returned no bytes or URL")
+                continue
+
+            filename = f"{filename_prefix}_{ts}_{request_suffix}_{idx + 1}.png"
+            file_obj = io.BytesIO(image_bytes)
+            try:
+                upload_result = await upload_file(
+                    db, file_obj, filename, user_id, folder_id=None,
+                )
+            except Exception as e:
+                err = f"save failed for image {idx + 1}: {e}"
+                persist_errors.append(err)
+                logger.warning("Failed to save generated image %d: %s", idx + 1, e)
+                continue
+            file_ids.append(upload_result["id"])
+            entry: dict = {
+                "type": "image",
+                "file_id": upload_result["id"],
+                "name": upload_result["name"],
+                "size": upload_result["size"],
+                "placeholder": result_placeholder,
+            }
+            if result_placeholder:
+                entry["explanation"] = placeholder_explanation
+            results.append(entry)
+
+    return results, file_ids, persist_errors, generated_placeholder
 
 
 def _resolve_dimensions(size: str, aspect_ratio: str | None) -> tuple[int, int]:
@@ -283,59 +395,13 @@ async def _generate(params: dict, caller: str) -> dict:
         )
         raise ValidationError("生图异常，请稍后重试") from e
 
-    from app.services.file_upload_service import upload_file
-
-    ts = int(time.time() * 1000)
-    request_suffix = uuid.uuid4().hex[:8]
-    results = []
-    file_ids: list[int] = []
-    persist_errors: list[str] = []
-    generated_placeholder = is_placeholder
-    async with AsyncSessionLocal() as db:
-        for idx, gen_result in enumerate(gen_results):
-            image_bytes = gen_result.image_bytes
-            result_placeholder = is_placeholder or bool(gen_result.meta.get("placeholder"))
-            generated_placeholder = generated_placeholder or result_placeholder
-
-            if image_bytes is None and gen_result.image_url:
-                import httpx
-                try:
-                    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-                        resp = await client.get(gen_result.image_url)
-                        resp.raise_for_status()
-                        image_bytes = resp.content
-                except Exception as e:
-                    err = f"download failed for image {idx + 1}: {e}"
-                    persist_errors.append(err)
-                    logger.warning("Failed to download image from URL %s: %s", gen_result.image_url, e)
-                    continue
-
-            if image_bytes is None:
-                persist_errors.append(f"image {idx + 1} returned no bytes or URL")
-                continue
-
-            filename = f"image-gen_{ts}_{request_suffix}_{idx + 1}.png"
-            file_obj = io.BytesIO(image_bytes)
-            try:
-                upload_result = await upload_file(
-                    db, file_obj, filename, user_id, folder_id=None,
-                )
-            except Exception as e:
-                err = f"save failed for image {idx + 1}: {e}"
-                persist_errors.append(err)
-                logger.warning("Failed to save generated image %d: %s", idx + 1, e)
-                continue
-            file_ids.append(upload_result["id"])
-            entry: dict = {
-                "type": "image",
-                "file_id": upload_result["id"],
-                "name": upload_result["name"],
-                "size": upload_result["size"],
-                "placeholder": result_placeholder,
-            }
-            if result_placeholder:
-                entry["explanation"] = "占位图，真实生成待接入"
-            results.append(entry)
+    results, file_ids, persist_errors, generated_placeholder = await _persist_provider_results(
+        gen_results,
+        user_id,
+        is_placeholder,
+        filename_prefix="image-gen",
+        placeholder_explanation="占位图，真实生成待接入",
+    )
 
     if not results:
         error_msg = "; ".join(persist_errors) or "image generation produced no downloadable images"
@@ -376,6 +442,164 @@ async def _generate(params: dict, caller: str) -> dict:
         "degraded_reason": degraded_reason,
         "points_cost": points_cost,
         "balance": balance,
+    }
+    if persist_errors:
+        response["error"] = "部分图片保存失败，已返回可用结果"
+        response["detail"] = "; ".join(persist_errors)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Core capability: transform (image-to-image)
+# ---------------------------------------------------------------------------
+
+async def _transform(params: dict, caller: str) -> dict:
+    source_raw = params.get("source_file_id")
+    if source_raw is None:
+        source_raw = params.get("image_file_id")
+    if source_raw is None:
+        source_raw = params.get("file_id")
+    source_file_id = _parse_bounded_int(source_raw, "source_file_id", 1, 2_147_483_647)
+    prompt = str(params.get("prompt", "")).strip()
+    size = str(params.get("size", "1024x1024")).strip()
+    aspect_ratio = str(params.get("aspect_ratio", "")).strip() or None
+    count = _parse_bounded_int(params.get("count", 1), "count", 1, MAX_IMAGE_COUNT)
+    steps = _parse_bounded_int(params.get("steps", 30), "steps", MIN_STEPS, MAX_STEPS)
+    strength = _parse_bounded_float(params.get("strength", 0.7), "strength", 0.0, 1.0)
+    mode = str(params.get("mode", "edit")).strip() or "edit"
+    preserve_subject = _parse_bool(params.get("preserve_subject"), default=True)
+    template_key = str(params.get("template", "")).strip() or get_default_transform_template()
+    request_id = uuid.uuid4().hex
+
+    if not prompt:
+        raise ValidationError("prompt is required")
+
+    user_id = resolve_caller_user_id(caller)
+    width, height = _resolve_dimensions(size, aspect_ratio)
+    source_image = await _load_source_image(source_file_id, user_id)
+
+    try:
+        provider, template_cfg, is_placeholder = resolve_provider(template_key)
+    except ValueError:
+        raise ValidationError(f"Unknown template: {template_key}")
+    requested_provider = str(template_cfg.get("provider", ""))
+    provider_key = provider.provider_key
+    degraded_reason = None
+    if is_placeholder and requested_provider != "placeholder":
+        degraded_reason = f"{requested_provider} provider is not configured; downgraded to placeholder"
+    elif is_placeholder:
+        degraded_reason = "placeholder template selected"
+
+    if not is_placeholder:
+        prompt_language = template_cfg.get("prompt_language", "any")
+        if prompt_language == "en" and any(ord(c) > 127 for c in prompt):
+            translated = await _translate_to_english(prompt)
+            if translated != prompt:
+                logger.info("Transform prompt auto-translated from Chinese to English")
+            prompt = translated
+
+    spec = GenSpec(
+        prompt=prompt,
+        width=width,
+        height=height,
+        count=count,
+        steps=steps,
+        aspect_ratio=aspect_ratio,
+        template_config=template_cfg,
+        extra={
+            "source_image": source_image,
+            "mode": mode,
+            "strength": strength,
+            "preserve_subject": preserve_subject,
+        },
+    )
+
+    try:
+        gen_results = await provider.transform(spec)
+    except NotImplementedError:
+        fallback_provider = get_provider("placeholder")
+        gen_results = await fallback_provider.transform(spec)
+        is_placeholder = True
+        provider_key = fallback_provider.provider_key
+        degraded_reason = f"{requested_provider} provider does not support image-to-image; downgraded to placeholder"
+        logger.info("Fell back to placeholder transform for template=%s", template_key)
+    except RuntimeError as e:
+        error_msg = str(e)
+        logger.error("Image transform failed for template=%s: %s", template_key, error_msg)
+        friendly = "图生图失败，请稍后重试"
+        if any(kw in error_msg.lower() for kw in ("timeout", "timed out", "time out")):
+            friendly = "图生图超时，请稍后重试"
+        elif any(kw in error_msg.lower() for kw in ("rate limit", "rate_limit", "too many")):
+            friendly = "图生图请求过于频繁，请稍后重试"
+        elif any(kw in error_msg.lower() for kw in ("auth", "key", "credential", "unauthorized")):
+            friendly = "图生图服务认证失败，请联系管理员"
+
+        await _save_record(
+            owner_id=user_id, template=template_key, prompt=spec.prompt,
+            image_count=0, file_ids=None, status="failed", error_msg=error_msg,
+            provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
+        )
+        raise ValidationError(friendly) from e
+    except Exception as e:
+        error_msg = str(e)
+        logger.exception("Unexpected error in image transform: %s", error_msg)
+        await _save_record(
+            owner_id=user_id, template=template_key, prompt=spec.prompt,
+            image_count=0, file_ids=None, status="failed", error_msg=error_msg,
+            provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
+        )
+        raise ValidationError("图生图异常，请稍后重试") from e
+
+    results, file_ids, persist_errors, generated_placeholder = await _persist_provider_results(
+        gen_results,
+        user_id,
+        is_placeholder,
+        filename_prefix="image-transform",
+        placeholder_explanation="占位图，真实图生图待接入",
+    )
+
+    if not results:
+        error_msg = "; ".join(persist_errors) or "image transform produced no downloadable images"
+        await _save_record(
+            owner_id=user_id, template=template_key, prompt=spec.prompt,
+            image_count=0, file_ids=None, status="failed", error_msg=error_msg,
+            provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
+        )
+        raise ValidationError("图生图失败：未生成可用图片")
+
+    points_cost = None
+    balance = None
+    if gen_results and gen_results[0].meta:
+        points_cost = gen_results[0].meta.get("points_cost")
+        balance = gen_results[0].meta.get("balance")
+
+    if generated_placeholder and degraded_reason is None:
+        degraded_reason = "placeholder transform path"
+    status = "partial" if persist_errors else ("degraded" if generated_placeholder else "success")
+    record_id = await _save_record(
+        owner_id=user_id, template=template_key, prompt=spec.prompt,
+        image_count=len(results), file_ids=file_ids,
+        status=status,
+        error_msg="; ".join(persist_errors) if persist_errors else None,
+        points_cost=points_cost, balance_after=balance,
+        provider=provider_key, request_id=request_id, degraded_reason=degraded_reason,
+    )
+
+    response = {
+        "task": {"request_id": request_id, "record_id": record_id},
+        "images": results,
+        "placeholder": generated_placeholder,
+        "degraded": generated_placeholder,
+        "status": status,
+        "template": template_key,
+        "provider": provider_key,
+        "requested_provider": requested_provider,
+        "degraded_reason": degraded_reason,
+        "points_cost": points_cost,
+        "balance": balance,
+        "source_file_id": source_file_id,
+        "mode": mode,
+        "strength": strength,
     }
     if persist_errors:
         response["error"] = "部分图片保存失败，已返回可用结果"
@@ -486,6 +710,19 @@ class GenerateRequest(BaseModel):
     template: str = ""
 
 
+class TransformRequest(BaseModel):
+    source_file_id: int
+    prompt: str
+    size: str = "1024x1024"
+    aspect_ratio: str | None = None
+    count: int = 1
+    steps: int = 30
+    template: str = ""
+    mode: str = "edit"
+    strength: float = 0.7
+    preserve_subject: bool = True
+
+
 @router.get("/health")
 async def health():
     return ApiResponse(data={"module": "image-gen", "status": "ok"})
@@ -497,6 +734,15 @@ async def call_generate(
     user: User = Depends(require_permission("editor")),
 ):
     result = await _generate(payload.model_dump(), f"user:{user.id}")
+    return ApiResponse(data=result)
+
+
+@router.post("/transform")
+async def call_transform(
+    payload: TransformRequest,
+    user: User = Depends(require_permission("editor")),
+):
+    result = await _transform(payload.model_dump(), f"user:{user.id}")
     return ApiResponse(data=result)
 
 
@@ -532,6 +778,25 @@ register_capability(
         "count": {"type": "integer", "description": "生成数量（1-4）", "default": 1},
         "steps": {"type": "integer", "description": "采样步数", "default": 30},
         "template": {"type": "string", "description": "模板key，可选值由list_templates给出，缺省用默认模板", "default": ""},
+    },
+    min_role="editor",
+)
+
+register_capability(
+    "image-gen", "transform", _transform,
+    description="图生图：读取已有图片file_id作为参考图，按提示词编辑、变体或风格化生成新图片",
+    brief="按参考图生成新图片",
+    parameters={
+        "source_file_id": {"type": "integer", "description": "源图片文件ID，必须是当前用户可访问的图片文件"},
+        "prompt": {"type": "string", "description": "图生图提示词，说明要保留、修改或增强的内容"},
+        "size": {"type": "string", "description": "输出尺寸，格式如 1024x1024", "default": "1024x1024"},
+        "aspect_ratio": {"type": "string", "description": "输出宽高比，可选 square/portrait/landscape 或如 16:9, 3:4", "default": ""},
+        "count": {"type": "integer", "description": "生成数量（1-4）", "default": 1},
+        "steps": {"type": "integer", "description": "采样步数，部分服务商可能忽略", "default": 30},
+        "template": {"type": "string", "description": "模板key，缺省优先使用支持图生图的GPTStore模板", "default": ""},
+        "mode": {"type": "string", "description": "模式，如 edit/variation/style_transfer/product_render", "default": "edit"},
+        "strength": {"type": "number", "description": "修改强度，0到1，值越大改动越明显", "default": 0.7},
+        "preserve_subject": {"type": "boolean", "description": "是否尽量保留主体、产品形态和可读标签", "default": True},
     },
     min_role="editor",
 )

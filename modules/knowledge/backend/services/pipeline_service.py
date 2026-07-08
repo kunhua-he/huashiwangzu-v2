@@ -18,7 +18,13 @@ from app.services.task_worker import register_task_handler
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import KbDocument, KbPipelineRun, KbPipelineStageRun, KbRawData
+from ..models import (
+    KbDocument,
+    KbPipelineRun,
+    KbPipelineStageRun,
+    KbRawData,
+    KbTermOccurrence,
+)
 from .analysis_artifact_service import (
     build_input_hash,
     build_output_hash,
@@ -28,6 +34,7 @@ from .analysis_artifact_service import (
     resolve_stage_prompt_hash,
     stage_schema_version,
 )
+from .cognitive_v3_service import derive_document_cognitive_index
 from .document_service import (
     SOURCE_UNAVAILABLE_REASONS,
     document_deep_pipeline_complete,
@@ -38,7 +45,11 @@ from .document_service import (
 )
 from .entity_service import process_document_entities_from_fusions
 from .fusion_service import fuse_all_pages
-from .model_routing import resolve_knowledge_pipeline_priority, should_pause_after_result
+from .model_routing import (
+    resolve_knowledge_concurrency,
+    resolve_knowledge_pipeline_priority,
+    should_pause_after_result,
+)
 from .page_asset_service import materialize_page_assets_stage, page_assets_complete
 from .profile_service import generate_document_profile
 from .raw_collection_service import collect_raw_stage
@@ -59,6 +70,7 @@ PIPELINE_STAGES = {
     "raw_vision",
     "fusion",
     "profile",
+    "cognitive_index",
     "graph",
     "relations",
 }
@@ -77,6 +89,7 @@ STAGE_LANE_KEYS = {
     "raw_vision": "model_analysis",
     "fusion": "model_analysis",
     "profile": "model_analysis",
+    "cognitive_index": "derived_index",
     "graph": "model_analysis",
     "relations": "relation_build",
 }
@@ -392,6 +405,25 @@ def _ready_for_relations(doc: KbDocument) -> bool:
     )
 
 
+def _ready_for_cognitive_index(doc: KbDocument) -> bool:
+    return (
+        str(getattr(doc, "fusion_status", "pending") or "pending") == "done"
+        and str(getattr(doc, "profile_status", "pending") or "pending") == "done"
+    )
+
+
+async def _cognitive_index_complete(db: AsyncSession, doc: KbDocument) -> bool:
+    existing = await db.scalar(
+        select(KbTermOccurrence.id)
+        .where(
+            KbTermOccurrence.owner_id == int(doc.owner_id),
+            KbTermOccurrence.document_id == int(doc.id),
+        )
+        .limit(1)
+    )
+    return existing is not None
+
+
 def _stage_needs_work(status: str | None) -> bool:
     return str(status or "pending").lower() in {"", "pending", "running", "collecting", "parsing", "fusing"}
 
@@ -452,12 +484,17 @@ async def _enqueue_successors(
         return enqueued
 
     if completed_stage in {"profile", "graph"}:
+        if completed_stage == "profile" and _ready_for_cognitive_index(doc) and not await _cognitive_index_complete(db, doc):
+            enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "cognitive_index", priority=5, pipeline_run_id=pipeline_run_id))
         if _ready_for_relations(doc):
             enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "relations", priority=5, pipeline_run_id=pipeline_run_id))
         elif _stage_needs_work(getattr(doc, "profile_status", "pending")):
             enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "profile", priority=6, pipeline_run_id=pipeline_run_id))
         elif _stage_needs_work(getattr(doc, "graph_status", "pending")):
             enqueued.append(await enqueue_pipeline_stage_task(db, doc, user_id, "graph", priority=6, pipeline_run_id=pipeline_run_id))
+        return enqueued
+
+    if completed_stage == "cognitive_index":
         return enqueued
 
     return enqueued
@@ -527,6 +564,25 @@ async def _run_stage(
         await db.refresh(doc)
         doc.graph_status = "degraded" if result.get("status") == "degraded" else "done"
         return {"status": doc.graph_status, **result}
+
+    if stage == "cognitive_index":
+        if await _cognitive_index_complete(db, doc):
+            return {"document_id": int(doc.id), "status": "skipped", "reason": "already done"}
+        if not _ready_for_cognitive_index(doc):
+            return {"document_id": int(doc.id), "status": "blocked", "reason": "upstream_not_ready"}
+        limit = resolve_knowledge_concurrency(
+            "cognitive_terms_per_document",
+            200,
+            minimum=20,
+            maximum=1000,
+        )
+        result = await derive_document_cognitive_index(
+            db,
+            owner_id=int(doc.owner_id),
+            document_id=int(doc.id),
+            limit=limit,
+        )
+        return {"status": "done", "document_id": int(doc.id), "limit": limit, **result}
 
     if stage == "relations":
         if str(getattr(doc, "relation_status", "pending") or "pending") == "done":

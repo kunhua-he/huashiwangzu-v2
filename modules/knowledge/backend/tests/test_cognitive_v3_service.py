@@ -31,6 +31,7 @@ from modules.knowledge.backend.models import (
     KbFileKnowledgeLink,
     KbPageFusion,
     KbQueryContext,
+    KbRetrievalLearningEvent,
     KbTermOccurrence,
 )
 from modules.knowledge.backend.services.cognitive_v3_service import (
@@ -42,6 +43,10 @@ from modules.knowledge.backend.services.cognitive_v3_service import (
     persist_query_context,
     term_hash_parts,
     upsert_file_knowledge_link,
+)
+from modules.knowledge.backend.services.retrieval_learning_service import (
+    get_learning_priors_for_documents,
+    record_retrieval_learning_events,
 )
 
 OWNER_ID = 910_000_300
@@ -59,6 +64,7 @@ async def _ensure_schema() -> None:
 
 async def _cleanup_owner(db) -> None:
     for table in (
+        "kb_retrieval_learning_events",
         "kb_query_contexts",
         "kb_causal_candidates",
         "kb_fact_candidates",
@@ -94,7 +100,14 @@ def test_query_context_payload_keeps_evidence_refs() -> None:
         "精华水 备案报告",
         [
             {"document_id": 1, "chunk_id": 10, "page": 1, "text": "备案报告正文", "score": 0.9},
-            {"document_id": 2, "chunk_id": 11, "page": 2, "text": "精华水说明", "score": 0.8},
+            {
+                "document_id": 2,
+                "chunk_id": 11,
+                "page": 2,
+                "text": "精华水说明",
+                "score": 0.8,
+                "document_candidate": {"filename": "精华水检测报告.pdf", "extension": "pdf"},
+            },
         ],
     )
 
@@ -102,6 +115,9 @@ def test_query_context_payload_keeps_evidence_refs() -> None:
     assert payload["evidence_refs"][0]["chunk_id"] == 10
     assert payload["facts"][0]["text"] == "备案报告正文"
     assert payload["diagnostics"]["schema_version"] == "kb_query_context_v1"
+    snapshots = payload["diagnostics"]["candidate_snapshots"]
+    assert snapshots[1]["filename"] == "精华水检测报告.pdf"
+    assert snapshots[1]["text"] == "精华水说明"
 
 
 @pytest.mark.asyncio
@@ -248,6 +264,88 @@ async def test_persist_query_context_records_enrichment() -> None:
     assert payload["query_context_id"] > 0
     assert payload["result_document_ids"] == [1]
     assert row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retrieval_learning_events_feed_document_priors() -> None:
+    await _ensure_schema()
+    async with AsyncSessionLocal() as db:
+        payload = await persist_query_context(
+            db,
+            owner_id=OWNER_ID,
+            query="苏蜜雅 检测报告",
+            results=[
+                {"document_id": 101, "chunk_id": 201, "page": 1, "text": "苏蜜雅检测报告", "score": 0.9},
+                {"document_id": 102, "chunk_id": 202, "page": 1, "text": "苏蜜雅宣传图", "score": 0.7},
+            ],
+            query_plan={
+                "query": "苏蜜雅 检测报告",
+                "terms": ["苏蜜雅", "检测报告"],
+                "entities": ["苏蜜雅"],
+                "document_types": ["检测报告"],
+                "constraints": [],
+            },
+        )
+        first = await record_retrieval_learning_events(
+            db,
+            owner_id=OWNER_ID,
+            query_context_id=payload["query_context_id"],
+            query="苏蜜雅 检测报告",
+            events=[
+                {
+                    "document_id": 101,
+                    "chunk_id": 201,
+                    "signal_type": "helpful",
+                    "signal_score": 0.9,
+                    "confidence": 0.8,
+                    "reason": "用户继续沿用该检测报告名单",
+                    "evidence": {"excerpt": "这个名单可以"},
+                },
+                {
+                    "document_id": 102,
+                    "chunk_id": 202,
+                    "signal_type": "wrong_result",
+                    "signal_score": -0.6,
+                    "confidence": 0.7,
+                    "reason": "用户要求不要混入宣传图",
+                    "evidence": {"excerpt": "不是宣传图"},
+                },
+            ],
+        )
+        second = await record_retrieval_learning_events(
+            db,
+            owner_id=OWNER_ID,
+            query_context_id=payload["query_context_id"],
+            query="苏蜜雅 检测报告",
+            events=[
+                {
+                    "document_id": 101,
+                    "chunk_id": 201,
+                    "signal_type": "helpful",
+                    "signal_score": 0.9,
+                    "confidence": 0.8,
+                    "reason": "用户继续沿用该检测报告名单",
+                    "evidence": {"excerpt": "这个名单可以"},
+                },
+            ],
+        )
+        priors = await get_learning_priors_for_documents(
+            db,
+            owner_id=OWNER_ID,
+            query_plan={"query": "苏蜜雅 检测报告", "terms": ["苏蜜雅", "检测报告"]},
+            document_ids=[101, 102],
+        )
+        event_count = await db.scalar(
+            select(func.count(KbRetrievalLearningEvent.id)).where(
+                KbRetrievalLearningEvent.owner_id == OWNER_ID
+            )
+        )
+
+    assert first["inserted"] == 2
+    assert second["updated"] == 1
+    assert event_count == 2
+    assert priors[101]["prior"] > 0
+    assert priors[102]["prior"] < 0
 
 
 @pytest.mark.asyncio

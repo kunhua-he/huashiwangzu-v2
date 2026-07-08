@@ -203,7 +203,7 @@ export interface ChunkItem {
 }
 
 export interface SearchResult {
-  chunk_id: number
+  chunk_id: number | null
   document_id: number
   file_id?: number | null
   source_file_id?: number | null
@@ -219,6 +219,7 @@ export interface SearchResult {
   source_module?: string
   source_type?: string
   retrieval_source?: string
+  query_plan?: Record<string, unknown>
   mime_type?: string
   extension?: string
   content_package_id?: number | null
@@ -229,6 +230,8 @@ export interface SearchResult {
     rrf_score?: number
     kw_score?: number
     vec_score?: number
+    doc_score?: number | null
+    doc_rank?: number | null
     kw_rank?: number | null
     vec_rank?: number | null
     final_rank?: number

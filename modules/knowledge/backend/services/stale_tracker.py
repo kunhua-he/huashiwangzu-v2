@@ -27,13 +27,14 @@ STAGE_DEPENDS_ON: dict[str, list[str]] = {
     "raw":        ["source_file"],
     "fusion":     ["raw"],
     "profile":    ["fusion"],
+    "cognitive_index": ["profile"],
     "graph":      ["fusion"],
     "relations":  ["profile", "graph"],
 }
 
 STAGE_ORDER = [
     "parse", "vector", "raw", "fusion",
-    "profile", "graph", "relations",
+    "profile", "cognitive_index", "graph", "relations",
 ]
 
 

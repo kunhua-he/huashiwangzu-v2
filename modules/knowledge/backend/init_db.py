@@ -21,7 +21,7 @@ KB_TABLES = [
     "kb_content_objects", "kb_file_knowledge_links", "kb_ingest_batches",
     "kb_validation_reports", "kb_artifact_lineage", "kb_terms",
     "kb_term_occurrences", "kb_term_edges", "kb_fact_candidates",
-    "kb_causal_candidates", "kb_query_contexts",
+    "kb_causal_candidates", "kb_query_contexts", "kb_retrieval_learning_events",
 ]
 
 # 关键索引语句（幂等，CREATE INDEX IF NOT EXISTS）
@@ -111,6 +111,10 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_kb_causal_candidates_source_hash ON kb_causal_candidates(owner_id, source_hash)",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_causal_candidates_owner_source ON kb_causal_candidates(owner_id, source_hash) WHERE source_hash IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_kb_query_contexts_owner_hash ON kb_query_contexts(owner_id, query_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_retrieval_learning_owner_hash ON kb_retrieval_learning_events(owner_id, query_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_retrieval_learning_doc ON kb_retrieval_learning_events(owner_id, document_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_retrieval_learning_context ON kb_retrieval_learning_events(query_context_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_retrieval_learning_owner_source ON kb_retrieval_learning_events(owner_id, source_hash)",
 ]
 
 # ALTER 列补齐语句（幂等，ADD COLUMN IF NOT EXISTS）。
@@ -328,6 +332,7 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
         KbPipelineStale,
         KbQueryContext,
         KbRawData,
+        KbRetrievalLearningEvent,
         KbTerm,
         KbTermEdge,
         KbTermOccurrence,

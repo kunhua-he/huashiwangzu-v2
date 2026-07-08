@@ -44,18 +44,20 @@ Backend HTTP prefix: `/api/image-gen`
 | `health` | GET | Endpoint family under `/api/image-gen` |
 | `history` | GET | Endpoint family under `/api/image-gen` |
 | `templates` | GET | Endpoint family under `/api/image-gen` |
+| `transform` | POST | Endpoint family under `/api/image-gen` |
 
 ## Public Actions / Capability Contract
 
 <!-- DOCS-SYNC: section=public_actions -->
 Runtime authority: backend `register_capability(...)`. Discovery metadata: `manifest.public_actions`.
 
-Total public actions: 3
+Total public actions: 4
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
 | `generate` | `editor` | `aspect_ratio`, `count`, `prompt`, `size`, `steps`, `template` | 生成图片：根据提示词生成产品图、海报、配图等（多服务商模板，支持LiblibAI星流/GPTStore/占位图降级） |
 | `list_templates` | `viewer` | none | 列出可用生图模板（服务商+模型），含凭据是否齐全标识 |
+| `transform` | `editor` | `aspect_ratio`, `count`, `mode`, `preserve_subject`, `prompt`, `size`, `source_file_id`, `steps`, `strength`, `template` | 图生图：读取已有图片file_id作为参考图，按提示词编辑、变体或风格化生成新图片 |
 | `usage_history` | `editor` | `limit` | 查询本人的生图历史记录，含积分消耗 |
 <!-- /DOCS-SYNC -->
 

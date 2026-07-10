@@ -33,6 +33,7 @@ Thumbs.db
 
 # V2 specific
 data/uploads/
+data/.tmp_exports/
 backend/db/*.sqlite3
 backend/_废弃/
 backend/脚本/

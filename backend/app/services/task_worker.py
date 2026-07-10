@@ -33,6 +33,10 @@ WORKER_LEADER_LOCK_KEY = 94022025
 WORKER_CLAIM_LOCK_KEY = 94022026
 WORKER_PROCESS_SLOT_LOCK_BASE = 94022100
 WORKER_STAGE_CLAIM_LOCK_BASE = 94022200
+DEFAULT_POOL_LANE_FILTERS: dict[str, frozenset[str]] = {
+    "local": frozenset({"local_preprocess", "derived_index", "relation_build"}),
+    "cloud": frozenset({"vision_analysis", "llm_analysis"}),
+}
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,7 @@ class WorkerConfig:
     paused_task_types: set[str] | None = None
     paused_stages: dict[str, set[str]] | None = None
     paused_lanes: dict[str, set[str]] | None = None
+    allowed_lane_keys: frozenset[str] | None = None
     pause_active_check_seconds: float = 1.0
     pause_active_cancel_timeout_seconds: float = 10.0
     worker_total_memory_limit_mb: int = 0
@@ -324,6 +329,42 @@ def _parse_paused_dimension(raw: object) -> dict[str, set[str]]:
     return rules
 
 
+def _parse_lane_key_set(raw: object) -> frozenset[str] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        values = raw.replace(";", ",").split(",")
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        values = list(raw)
+    else:
+        values = [raw]
+    parsed = frozenset(
+        str(item or "").strip()
+        for item in values
+        if str(item or "").strip()
+    )
+    return parsed or None
+
+
+def _parse_allowed_lane_keys(raw: dict) -> frozenset[str] | None:
+    env_lane_filter = os.getenv("TASK_WORKER_LANE_FILTER")
+    if env_lane_filter is not None:
+        return _parse_lane_key_set(env_lane_filter)
+
+    configured = _parse_lane_key_set(raw.get("allowed_lane_keys") or raw.get("lane_filter"))
+    if configured is not None:
+        return configured
+
+    pool_name = str(os.getenv("TASK_WORKER_POOL") or raw.get("worker_pool") or "").strip().lower()
+    return DEFAULT_POOL_LANE_FILTERS.get(pool_name)
+
+
+def _lane_filter_sql_conditions(config: WorkerConfig) -> list:
+    if not config.allowed_lane_keys:
+        return []
+    return [SystemTaskQueue.lane_key.in_(tuple(sorted(config.allowed_lane_keys)))]
+
+
 def _parse_worker_config(raw: dict | None) -> WorkerConfig:
     raw = raw or {}
     max_lanes_per_process = _clamp_int(
@@ -421,6 +462,7 @@ def _parse_worker_config(raw: dict | None) -> WorkerConfig:
         paused_task_types=_parse_paused_task_types(raw.get("paused_task_types")),
         paused_stages=_parse_paused_dimension(raw.get("paused_stages")),
         paused_lanes=_parse_paused_dimension(raw.get("paused_lanes")),
+        allowed_lane_keys=_parse_allowed_lane_keys(raw),
         pause_active_check_seconds=_clamp_float(
             raw.get("pause_active_check_seconds"),
             WorkerConfig.pause_active_check_seconds,
@@ -1080,6 +1122,7 @@ async def _select_stage_fair_task_id(
             SystemTaskQueue.scheduled_at <= now,
         ),
     )
+    lane_filter_conditions = _lane_filter_sql_conditions(config)
     pending_counts: dict[tuple[str, str, str], int] = {}
     stage_pending_counts: dict[tuple[str, str], int] = {}
     lane_pending_counts: dict[tuple[str, str], int] = {}
@@ -1096,6 +1139,7 @@ async def _select_stage_fair_task_id(
             .where(
                 ready_filter,
                 SystemTaskQueue.task_type.in_(managed_task_types),
+                *lane_filter_conditions,
                 *(
                     [SystemTaskQueue.task_type.in_(allowed_task_types)]
                     if allowed_task_types is not None
@@ -1134,6 +1178,7 @@ async def _select_stage_fair_task_id(
             .where(
                 SystemTaskQueue.status == "running",
                 SystemTaskQueue.task_type.in_(managed_task_types),
+                *lane_filter_conditions,
                 *(
                     [SystemTaskQueue.task_type.in_(allowed_task_types)]
                     if allowed_task_types is not None
@@ -1176,6 +1221,7 @@ async def _select_stage_fair_task_id(
                     ready_filter,
                     SystemTaskQueue.task_type == task_type,
                     SystemTaskQueue.stage_key == stage_key,
+                    *lane_filter_conditions,
                     *(
                         [SystemTaskQueue.task_type.in_(allowed_task_types)]
                         if allowed_task_types is not None
@@ -1244,6 +1290,7 @@ async def _select_stage_fair_task_id(
             ready_filter,
             SystemTaskQueue.task_type.not_in(tuple(rules.keys())),
             SystemTaskQueue.task_type.not_in(tuple(config.paused_task_types or set())),
+            *lane_filter_conditions,
             *(
                 [SystemTaskQueue.task_type.in_(allowed_task_types)]
                 if allowed_task_types is not None
@@ -1309,6 +1356,7 @@ async def _claim_one_task(
         lane_running_counts: dict[tuple[str, str], int] = {}
         rules = config.stage_concurrency or {}
         lane_rules = config.lane_concurrency or {}
+        lane_filter_conditions = _lane_filter_sql_conditions(config)
         allowed_task_types = tuple(sorted(_HANDLERS.keys())) if require_registered_handler else None
         if require_registered_handler and not allowed_task_types:
             await db.rollback()
@@ -1325,6 +1373,7 @@ async def _claim_one_task(
                 .where(
                     SystemTaskQueue.status == "running",
                     SystemTaskQueue.task_type.in_(counted_task_types),
+                    *lane_filter_conditions,
                     *(
                         [SystemTaskQueue.task_type.in_(allowed_task_types)]
                         if allowed_task_types is not None
@@ -1383,6 +1432,7 @@ async def _claim_one_task(
                             else []
                         ),
                         *concurrency_filters,
+                        *lane_filter_conditions,
                         *(
                             [SystemTaskQueue.task_type.in_(allowed_task_types)]
                             if allowed_task_types is not None
@@ -1882,6 +1932,7 @@ def worker_health() -> dict:
         "paused_task_types": sorted(_runtime_config.paused_task_types or set()),
         "paused_stages": paused_stages,
         "paused_lanes": paused_lanes,
+        "allowed_lane_keys": sorted(_runtime_config.allowed_lane_keys or []),
         "pause_active_check_seconds": _runtime_config.pause_active_check_seconds,
         "pause_active_cancel_timeout_seconds": _runtime_config.pause_active_cancel_timeout_seconds,
         "worker_total_memory_limit_mb": _runtime_config.worker_total_memory_limit_mb,

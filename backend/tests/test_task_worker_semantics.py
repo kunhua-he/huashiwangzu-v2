@@ -89,6 +89,7 @@ def test_task_worker_config_defaults_are_safe() -> None:
     assert config.paused_task_types == set()
     assert config.paused_stages == {}
     assert config.paused_lanes == {}
+    assert config.allowed_lane_keys is None
     assert config.pause_active_check_seconds == 1.0
     assert config.pause_active_cancel_timeout_seconds == 10.0
     assert config.worker_total_memory_limit_mb == 0
@@ -142,6 +143,29 @@ def test_task_worker_config_allows_zero_lanes_for_hot_pause() -> None:
     config = task_worker._parse_worker_config({"worker_lanes_per_process": 0})
 
     assert config.worker_lanes_per_process == 0
+
+
+def test_task_worker_config_parses_allowed_lane_keys() -> None:
+    config = task_worker._parse_worker_config({"allowed_lane_keys": ["llm_analysis", "vision_analysis"]})
+
+    assert config.allowed_lane_keys == frozenset({"llm_analysis", "vision_analysis"})
+
+
+def test_task_worker_config_maps_cloud_pool_to_lane_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TASK_WORKER_POOL", "cloud")
+
+    config = task_worker._parse_worker_config({})
+
+    assert config.allowed_lane_keys == frozenset({"llm_analysis", "vision_analysis"})
+
+
+def test_task_worker_config_env_lane_filter_overrides_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TASK_WORKER_POOL", "cloud")
+    monkeypatch.setenv("TASK_WORKER_LANE_FILTER", "local_preprocess,derived_index")
+
+    config = task_worker._parse_worker_config({})
+
+    assert config.allowed_lane_keys == frozenset({"local_preprocess", "derived_index"})
 
 
 def test_task_worker_config_derives_no_claim_lock_when_claims_not_serialized() -> None:
@@ -702,6 +726,122 @@ async def test_task_worker_resource_pool_plans_by_pending_backlog() -> None:
             assert claimed.stage_key == model_stage
             assert claimed.lane_key == "llm_analysis"
             assert claimed.id == expected.id
+        finally:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_task_worker_lane_filter_claims_only_cloud_lane() -> None:
+    task_type = f"test_lane_filter_cloud_{uuid4().hex}"
+    local_stage = "source_validate"
+    model_stage = "profile"
+    config = task_worker._parse_worker_config({
+        "claim_lock_scope": "process",
+        "allowed_lane_keys": ["llm_analysis"],
+        "paused_task_types": ["kb_pipeline_stage"],
+        "stage_concurrency": {
+            task_type: {
+                local_stage: 40,
+                model_stage: 40,
+            },
+        },
+        "lane_concurrency": {
+            task_type: {
+                "local_preprocess": 40,
+                "llm_analysis": 40,
+            },
+        },
+    })
+
+    async with AsyncSessionLocal() as db:
+        try:
+            db.add(SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=99,
+                parameters=json.dumps({"stage": local_stage}),
+                stage_key=local_stage,
+                lane_key="local_preprocess",
+                ready_status="ready",
+            ))
+            expected = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=1,
+                parameters=json.dumps({"stage": model_stage}),
+                stage_key=model_stage,
+                lane_key="llm_analysis",
+                ready_status="ready",
+            )
+            db.add(expected)
+            await db.commit()
+
+            claimed = await task_worker._claim_one_task(db, config)
+
+            assert claimed is not None
+            assert claimed.id == expected.id
+            assert claimed.lane_key == "llm_analysis"
+        finally:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_task_worker_lane_filter_claims_only_local_lane() -> None:
+    task_type = f"test_lane_filter_local_{uuid4().hex}"
+    local_stage = "parse_index"
+    model_stage = "graph"
+    config = task_worker._parse_worker_config({
+        "claim_lock_scope": "process",
+        "allowed_lane_keys": ["local_preprocess"],
+        "paused_task_types": ["kb_pipeline_stage"],
+        "stage_concurrency": {
+            task_type: {
+                local_stage: 40,
+                model_stage: 40,
+            },
+        },
+        "lane_concurrency": {
+            task_type: {
+                "local_preprocess": 40,
+                "llm_analysis": 40,
+            },
+        },
+    })
+
+    async with AsyncSessionLocal() as db:
+        try:
+            db.add(SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=99,
+                parameters=json.dumps({"stage": model_stage}),
+                stage_key=model_stage,
+                lane_key="llm_analysis",
+                ready_status="ready",
+            ))
+            expected = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=1,
+                parameters=json.dumps({"stage": local_stage}),
+                stage_key=local_stage,
+                lane_key="local_preprocess",
+                ready_status="ready",
+            )
+            db.add(expected)
+            await db.commit()
+
+            claimed = await task_worker._claim_one_task(db, config)
+
+            assert claimed is not None
+            assert claimed.id == expected.id
+            assert claimed.lane_key == "local_preprocess"
         finally:
             await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
             await db.commit()

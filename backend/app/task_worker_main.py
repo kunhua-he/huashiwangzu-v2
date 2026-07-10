@@ -5,8 +5,10 @@ registered once, then runs the framework task worker without serving HTTP.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
+import os
 import signal
 
 from fastapi import FastAPI
@@ -31,6 +33,38 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("v2.task_worker_main")
+
+POOL_LANE_FILTERS: dict[str, str] = {
+    "local": "local_preprocess,derived_index,relation_build",
+    "cloud": "vision_analysis,llm_analysis",
+}
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run a standalone Huashi task worker")
+    parser.add_argument(
+        "--pool",
+        choices=("all", "local", "cloud"),
+        default=os.getenv("TASK_WORKER_POOL", "all"),
+        help="Restrict this process to a resource pool; all keeps legacy behavior.",
+    )
+    parser.add_argument(
+        "--lane-filter",
+        default=os.getenv("TASK_WORKER_LANE_FILTER", ""),
+        help="Comma-separated lane_key allowlist for this process.",
+    )
+    return parser.parse_args()
+
+
+def _apply_worker_process_filter(args: argparse.Namespace) -> None:
+    pool = str(args.pool or "all").strip().lower()
+    lane_filter = str(args.lane_filter or "").strip()
+    if pool and pool != "all":
+        os.environ["TASK_WORKER_POOL"] = pool
+    if lane_filter:
+        os.environ["TASK_WORKER_LANE_FILTER"] = lane_filter
+    elif pool in POOL_LANE_FILTERS:
+        os.environ["TASK_WORKER_LANE_FILTER"] = POOL_LANE_FILTERS[pool]
 
 
 async def _startup() -> None:
@@ -104,6 +138,7 @@ async def _run_forever() -> None:
 
 
 def main() -> None:
+    _apply_worker_process_filter(_parse_args())
     asyncio.run(_run_forever())
 
 

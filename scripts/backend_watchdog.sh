@@ -12,14 +12,28 @@ LOG="$BACKEND_DIR/logs/backend.log"
 PORT_FILE="$BACKEND_DIR/logs/.backend.port"
 MAX_LOG_BYTES=52428800   # 50MB，超过就归档清空
 TASK_WORKER_PROCESSES="${TASK_WORKER_PROCESSES:-}"
+TASK_WORKER_MIN_PROCESSES="${TASK_WORKER_MIN_PROCESSES:-}"
+TASK_WORKER_IDLE_EXIT_SECONDS="${TASK_WORKER_IDLE_EXIT_SECONDS:-}"
+TASK_WORKER_SCALE_PENDING_PER_PROCESS="${TASK_WORKER_SCALE_PENDING_PER_PROCESS:-}"
 TASK_WORKER_MEMORY_LIMIT_MB="${TASK_WORKER_MEMORY_LIMIT_MB:-}"
 TASK_WORKER_MEMORY_CHECK_SECONDS="${TASK_WORKER_MEMORY_CHECK_SECONDS:-}"
+TASK_WORKER_PROCESSES_OVERRIDE="$TASK_WORKER_PROCESSES"
+TASK_WORKER_MIN_PROCESSES_OVERRIDE="$TASK_WORKER_MIN_PROCESSES"
+TASK_WORKER_IDLE_EXIT_SECONDS_OVERRIDE="$TASK_WORKER_IDLE_EXIT_SECONDS"
+TASK_WORKER_SCALE_PENDING_PER_PROCESS_OVERRIDE="$TASK_WORKER_SCALE_PENDING_PER_PROCESS"
 
 cd "$BACKEND_DIR"
 if [ -f ".venv/bin/activate" ]; then
   source .venv/bin/activate
 elif [ -f "venv/bin/activate" ]; then
   source venv/bin/activate
+fi
+PYTHON_BIN="$BACKEND_DIR/.venv/bin/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="$BACKEND_DIR/venv/bin/python"
+fi
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="python3"
 fi
 
 mkdir -p "$BACKEND_DIR/logs"
@@ -30,6 +44,7 @@ LOCKDIR="$BACKEND_DIR/logs/.watchdog.lock"
 EXISTING_BACKEND_PID=""
 WEB_PID=""
 WORKER_PIDS=""
+WORKER_IDLE_SINCE=0
 SAFE_RESTART_GATE="$PROJECT_ROOT/scripts/safe_restart_gate.py"
 
 acquire_lock() {
@@ -97,33 +112,70 @@ port_listener_pid() {
   lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | head -1
 }
 
-normalize_worker_process_count() {
-  if [ -z "$TASK_WORKER_PROCESSES" ]; then
-    TASK_WORKER_PROCESSES=$(python3 - <<'PY'
+normalize_worker_scaling_config() {
+  local cfg max_proc min_proc idle_seconds scale_pending
+  cfg=$("$PYTHON_BIN" - <<'PY'
 import json
 from pathlib import Path
 path = Path("data/config/task_worker.json")
 try:
     data = json.loads(path.read_text(encoding="utf-8"))
-    print(int(data.get("worker_process_slots") or 4))
+    max_proc = int(data.get("worker_process_slots") or 4)
+    min_proc = int(data.get("worker_min_processes") or 0)
+    idle_seconds = int(data.get("worker_idle_exit_seconds") or 30)
+    scale_pending = int(data.get("worker_scale_pending_per_process") or data.get("worker_lanes_per_process") or 10)
 except Exception:
-    print(4)
+    max_proc, min_proc, idle_seconds, scale_pending = 4, 1, 30, 10
+print(max_proc, min_proc, idle_seconds, scale_pending)
 PY
 )
-  fi
+  read max_proc min_proc idle_seconds scale_pending <<< "$cfg"
+
+  TASK_WORKER_PROCESSES="${TASK_WORKER_PROCESSES_OVERRIDE:-$max_proc}"
+  TASK_WORKER_MIN_PROCESSES="${TASK_WORKER_MIN_PROCESSES_OVERRIDE:-$min_proc}"
+  TASK_WORKER_IDLE_EXIT_SECONDS="${TASK_WORKER_IDLE_EXIT_SECONDS_OVERRIDE:-$idle_seconds}"
+  TASK_WORKER_SCALE_PENDING_PER_PROCESS="${TASK_WORKER_SCALE_PENDING_PER_PROCESS_OVERRIDE:-$scale_pending}"
+
   case "$TASK_WORKER_PROCESSES" in
     ''|*[!0-9]*)
       TASK_WORKER_PROCESSES=4
       ;;
   esac
-  if [ "$TASK_WORKER_PROCESSES" -lt 1 ]; then
-    TASK_WORKER_PROCESSES=1
+  case "$TASK_WORKER_MIN_PROCESSES" in
+    ''|*[!0-9]*)
+      TASK_WORKER_MIN_PROCESSES=0
+      ;;
+  esac
+  case "$TASK_WORKER_IDLE_EXIT_SECONDS" in
+    ''|*[!0-9]*)
+      TASK_WORKER_IDLE_EXIT_SECONDS=30
+      ;;
+  esac
+  case "$TASK_WORKER_SCALE_PENDING_PER_PROCESS" in
+    ''|*[!0-9]*)
+      TASK_WORKER_SCALE_PENDING_PER_PROCESS=10
+      ;;
+  esac
+  if [ "$TASK_WORKER_PROCESSES" -lt 0 ]; then
+    TASK_WORKER_PROCESSES=0
+  fi
+  if [ "$TASK_WORKER_MIN_PROCESSES" -lt 0 ]; then
+    TASK_WORKER_MIN_PROCESSES=0
+  fi
+  if [ "$TASK_WORKER_MIN_PROCESSES" -gt "$TASK_WORKER_PROCESSES" ]; then
+    TASK_WORKER_MIN_PROCESSES="$TASK_WORKER_PROCESSES"
+  fi
+  if [ "$TASK_WORKER_IDLE_EXIT_SECONDS" -lt 0 ]; then
+    TASK_WORKER_IDLE_EXIT_SECONDS=0
+  fi
+  if [ "$TASK_WORKER_SCALE_PENDING_PER_PROCESS" -lt 1 ]; then
+    TASK_WORKER_SCALE_PENDING_PER_PROCESS=1
   fi
 }
 
 normalize_worker_memory_limits() {
   if [ -z "$TASK_WORKER_MEMORY_LIMIT_MB" ]; then
-    TASK_WORKER_MEMORY_LIMIT_MB=$(python3 - <<'PY'
+    TASK_WORKER_MEMORY_LIMIT_MB=$("$PYTHON_BIN" - <<'PY'
 import json
 from pathlib import Path
 path = Path("data/config/task_worker.json")
@@ -136,7 +188,7 @@ PY
 )
   fi
   if [ -z "$TASK_WORKER_MEMORY_CHECK_SECONDS" ]; then
-    TASK_WORKER_MEMORY_CHECK_SECONDS=$(python3 - <<'PY'
+    TASK_WORKER_MEMORY_CHECK_SECONDS=$("$PYTHON_BIN" - <<'PY'
 import json
 from pathlib import Path
 path = Path("data/config/task_worker.json")
@@ -180,16 +232,137 @@ worker_group_rss_kb() {
   echo "$total"
 }
 
-start_worker_group() {
-  local idx
-  normalize_worker_process_count
-  WORKER_PIDS=""
-  for idx in $(seq 1 "$TASK_WORKER_PROCESSES"); do
-    echo "[watchdog] $(date '+%F %T') starting task worker idx=$idx/$TASK_WORKER_PROCESSES cwd=$BACKEND_DIR" >> "$LOG"
-    python3 -m app.task_worker_main >> "$LOG" 2>&1 &
+prune_worker_pids() {
+  local pid next
+  next=""
+  for pid in $(echo "$WORKER_PIDS"); do
+    if kill -0 "$pid" 2>/dev/null; then
+      next="$next $pid"
+    else
+      echo "[watchdog] $(date '+%F %T') task worker pid=$pid exited; removed from active set" >> "$LOG"
+      wait "$pid" 2>/dev/null
+    fi
+  done
+  WORKER_PIDS="$next"
+}
+
+worker_process_count() {
+  local pid count
+  count=0
+  for pid in $(echo "$WORKER_PIDS"); do
+    if kill -0 "$pid" 2>/dev/null; then
+      count=$((count + 1))
+    fi
+  done
+  echo "$count"
+}
+
+worker_queue_snapshot() {
+  "$PYTHON_BIN" - <<'PY'
+import asyncio
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+from sqlalchemy import text
+
+from app.database import AsyncSessionLocal
+
+
+def _paused(task_type: str, stage: str, lane: str, config: dict) -> bool:
+    if task_type in set(config.get("paused_task_types") or []):
+        return True
+    paused_stages = config.get("paused_stages") or {}
+    if stage and stage in set(paused_stages.get(task_type) or []):
+        return True
+    paused_lanes = config.get("paused_lanes") or {}
+    return bool(lane and lane in set(paused_lanes.get(task_type) or []))
+
+
+async def main() -> None:
+    config_path = Path("data/config/task_worker.json")
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            config = {}
+    except Exception:
+        config = {}
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(text(
+            """
+            SELECT status, task_type, COALESCE(stage_key, '') AS stage_key,
+                   COALESCE(lane_key, '') AS lane_key, COUNT(*) AS count
+            FROM framework_system_task_queues
+            WHERE status IN ('pending', 'running')
+              AND (status = 'running' OR ready_status IS NULL OR ready_status = 'ready')
+              AND (status = 'running' OR scheduled_at IS NULL OR scheduled_at <= :now)
+            GROUP BY status, task_type, stage_key, lane_key
+            """
+        ), {"now": now})
+        eligible_pending = 0
+        running = 0
+        for row in rows.mappings():
+            count = int(row["count"] or 0)
+            if row["status"] == "running":
+                running += count
+                continue
+            if not _paused(str(row["task_type"] or ""), str(row["stage_key"] or ""), str(row["lane_key"] or ""), config):
+                eligible_pending += count
+    print(eligible_pending, running)
+
+
+asyncio.run(main())
+PY
+}
+
+start_worker_processes() {
+  local count idx
+  count="$1"
+  if [ "$count" -le 0 ]; then
+    return 0
+  fi
+  for idx in $(seq 1 "$count"); do
+    echo "[watchdog] $(date '+%F %T') starting task worker idx=$idx/$count cwd=$BACKEND_DIR" >> "$LOG"
+    "$PYTHON_BIN" -m app.task_worker_main >> "$LOG" 2>&1 &
     WORKER_PIDS="$WORKER_PIDS $!"
   done
   echo "[watchdog] $(date '+%F %T') task worker pids=$WORKER_PIDS" >> "$LOG"
+}
+
+stop_worker_processes() {
+  local count reason pid stopped
+  count="$1"
+  reason="$2"
+  stopped=0
+  for pid in $(echo "$WORKER_PIDS"); do
+    if [ "$stopped" -lt "$count" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "[watchdog] $(date '+%F %T') stopping task worker pid=$pid reason=$reason" >> "$LOG"
+      kill "$pid" 2>/dev/null
+      stopped=$((stopped + 1))
+    fi
+  done
+}
+
+stop_worker_group() {
+  local reason="$1"
+  local pid
+  for pid in $(echo "$WORKER_PIDS"); do
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "[watchdog] $(date '+%F %T') stopping task worker pid=$pid reason=$reason" >> "$LOG"
+      kill "$pid" 2>/dev/null
+    fi
+  done
+}
+
+force_stop_worker_group() {
+  local pid
+  for pid in $(echo "$WORKER_PIDS"); do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null
+    fi
+  done
+  WORKER_PIDS=""
 }
 
 stop_process_group() {
@@ -220,7 +393,7 @@ force_stop_process_group() {
 }
 
 monitor_process_group() {
-  local pid rss_kb limit_kb restart_result restart_status
+  local rss_kb limit_kb restart_result restart_status snapshot eligible_pending running current desired now scale_base
   normalize_worker_memory_limits
   limit_kb=$((TASK_WORKER_MEMORY_LIMIT_MB * 1024))
   while true; do
@@ -228,21 +401,60 @@ monitor_process_group() {
       echo "[watchdog] $(date '+%F %T') uvicorn pid=${WEB_PID:-unknown} exited; restarting process group" >> "$LOG"
       return 1
     fi
-    for pid in $(echo "$WORKER_PIDS"); do
-      if ! kill -0 "$pid" 2>/dev/null; then
-        echo "[watchdog] $(date '+%F %T') task worker pid=$pid exited; restarting process group" >> "$LOG"
-        return 1
+    normalize_worker_scaling_config
+    prune_worker_pids
+    snapshot=$(worker_queue_snapshot 2>>"$LOG")
+    read eligible_pending running <<< "$snapshot"
+    eligible_pending="${eligible_pending:-0}"
+    running="${running:-0}"
+    current=$(worker_process_count)
+
+    desired="$TASK_WORKER_MIN_PROCESSES"
+    if [ "$eligible_pending" -gt 0 ]; then
+      scale_base=$((eligible_pending + running))
+      desired=$(((scale_base + TASK_WORKER_SCALE_PENDING_PER_PROCESS - 1) / TASK_WORKER_SCALE_PENDING_PER_PROCESS))
+      if [ "$desired" -lt 1 ]; then
+        desired=1
       fi
-    done
+      WORKER_IDLE_SINCE=0
+    elif [ "$running" -gt 0 ]; then
+      desired="$current"
+      WORKER_IDLE_SINCE=0
+    else
+      now=$(date +%s)
+      if [ "$WORKER_IDLE_SINCE" -eq 0 ]; then
+        WORKER_IDLE_SINCE="$now"
+      fi
+      if [ "$((now - WORKER_IDLE_SINCE))" -lt "$TASK_WORKER_IDLE_EXIT_SECONDS" ]; then
+        desired="$current"
+      fi
+    fi
+    if [ "$desired" -gt "$TASK_WORKER_PROCESSES" ]; then
+      desired="$TASK_WORKER_PROCESSES"
+    fi
+    if [ "$desired" -lt "$TASK_WORKER_MIN_PROCESSES" ]; then
+      desired="$TASK_WORKER_MIN_PROCESSES"
+    fi
+    if [ "$desired" -gt "$current" ]; then
+      echo "[watchdog] $(date '+%F %T') scaling task workers up current=$current desired=$desired eligible_pending=$eligible_pending running=$running" >> "$LOG"
+      start_worker_processes "$((desired - current))"
+    elif [ "$desired" -lt "$current" ] && [ "$running" -eq 0 ]; then
+      echo "[watchdog] $(date '+%F %T') scaling task workers down current=$current desired=$desired eligible_pending=$eligible_pending running=$running" >> "$LOG"
+      stop_worker_processes "$((current - desired))" "idle scaling eligible_pending=$eligible_pending running=$running"
+    fi
+
     if [ "$TASK_WORKER_MEMORY_LIMIT_MB" -gt 0 ]; then
       rss_kb=$(worker_group_rss_kb)
       if [ "$rss_kb" -gt "$limit_kb" ]; then
-        echo "[watchdog] $(date '+%F %T') task worker RSS ${rss_kb}KB exceeded limit ${limit_kb}KB (${TASK_WORKER_MEMORY_LIMIT_MB}MB); restarting process group to release memory" >> "$LOG"
-        return 1
+        echo "[watchdog] $(date '+%F %T') task worker RSS ${rss_kb}KB exceeded limit ${limit_kb}KB (${TASK_WORKER_MEMORY_LIMIT_MB}MB); restarting worker group to release memory" >> "$LOG"
+        stop_worker_group "worker memory limit"
+        sleep 5
+        force_stop_worker_group
+        WORKER_IDLE_SINCE=0
       fi
     fi
     if [ -f "$BACKEND_DIR/logs/.safe_restart_requested" ]; then
-      restart_result=$(python3 "$SAFE_RESTART_GATE" 2>&1)
+      restart_result=$("$PYTHON_BIN" "$SAFE_RESTART_GATE" 2>&1)
       restart_status=$?
       echo "[watchdog] $(date '+%F %T') safe restart gate status=$restart_status result=$restart_result" >> "$LOG"
       if [ "$restart_status" -eq 0 ]; then
@@ -282,10 +494,21 @@ while true; do
   check_port
   PORT_STATUS=$?
   if [ "$PORT_STATUS" -eq 1 ]; then
-    while [ -n "$EXISTING_BACKEND_PID" ] && kill -0 "$EXISTING_BACKEND_PID" 2>/dev/null; do
-      sleep 3
+    WEB_PID="$EXISTING_BACKEND_PID"
+    normalize_worker_scaling_config
+    WORKER_PIDS=""
+    WORKER_IDLE_SINCE=0
+    if [ "$TASK_WORKER_MIN_PROCESSES" -gt 0 ]; then
+      start_worker_processes "$TASK_WORKER_MIN_PROCESSES"
+    fi
+    monitor_process_group
+    stop_worker_group "existing backend monitor restart"
+    for pid in $(echo "$WORKER_PIDS"); do
+      wait "$pid" 2>/dev/null
     done
-    echo "[watchdog] $(date '+%F %T') observed backend pid=${EXISTING_BACKEND_PID:-unknown} exit; restarting" >> "$LOG"
+    WEB_PID=""
+    WORKER_PIDS=""
+    echo "[watchdog] $(date '+%F %T') observed backend pid=${EXISTING_BACKEND_PID:-unknown} exit or restart requested; restarting" >> "$LOG"
     continue
   elif [ "$PORT_STATUS" -ne 0 ]; then
     sleep 5
@@ -294,14 +517,19 @@ while true; do
 
   echo "$PORT" > "$PORT_FILE"
   echo "[watchdog] $(date '+%F %T') starting uvicorn host=$HOST port=$PORT cwd=$BACKEND_DIR watchdog_pid=$$ task_worker_autostart=0" >> "$LOG"
-  TASK_WORKER_AUTOSTART=0 python3 -m uvicorn app.main:app \
+  TASK_WORKER_AUTOSTART=0 "$PYTHON_BIN" -m uvicorn app.main:app \
     --host "$HOST" \
     --port "$PORT" \
     --workers 3 \
     --log-level info >> "$LOG" 2>&1 &
   WEB_PID=$!
   echo "[watchdog] $(date '+%F %T') uvicorn child pid=$WEB_PID port=$PORT" >> "$LOG"
-  start_worker_group
+  normalize_worker_scaling_config
+  WORKER_PIDS=""
+  WORKER_IDLE_SINCE=0
+  if [ "$TASK_WORKER_MIN_PROCESSES" -gt 0 ]; then
+    start_worker_processes "$TASK_WORKER_MIN_PROCESSES"
+  fi
   monitor_process_group
   stop_process_group "process group restart"
   sleep 5

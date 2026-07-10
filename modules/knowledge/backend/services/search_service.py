@@ -1524,7 +1524,7 @@ async def structured_signal_search(
             "page": row["page"],
             "block_type": "结构化证据",
             "index_layer": "structured_signal",
-            "source_stage": "cognitive_v3",
+            "source_stage": "cognitive_index",
             "text": text[:500],
             "keywords": ", ".join(needles),
             "score": round(float(row["score"] or 0.0), 4),

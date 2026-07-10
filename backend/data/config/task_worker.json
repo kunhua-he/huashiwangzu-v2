@@ -3,9 +3,12 @@
   "max_lanes_per_process": 256,
   "worker_process_mode": "all",
   "worker_process_slots": 20,
-  "claim_lock_scope": "database",
+  "worker_min_processes": 0,
+  "worker_idle_exit_seconds": 30,
+  "worker_scale_pending_per_process": 10,
+  "claim_lock_scope": "group",
   "claim_candidate_scan_limit": 600,
-  "serialize_claims": true,
+  "serialize_claims": false,
   "poll_interval_seconds": 2.0,
   "running_timeout_seconds": 1200,
   "stale_recovery_interval_seconds": 30.0,
@@ -16,31 +19,31 @@
   "startup_reclaim_min_age_seconds": 10,
   "stage_concurrency": {
     "kb_pipeline_stage": {
-      "source_validate": 160,
-      "parse_index": 160,
-      "raw_text": 160,
-      "page_render": 160,
+      "source_validate": 4,
+      "parse_index": 6,
+      "raw_text": 4,
+      "page_render": 2,
       "raw_ocr": 200,
       "raw_vision": 200,
-      "fusion": 40,
-      "profile": 40,
+      "fusion": 60,
+      "profile": 60,
       "cognitive_index": 1,
-      "graph": 40,
+      "graph": 60,
       "relations": 2
     }
   },
   "stage_dispatch_order": {
     "kb_pipeline_stage": [
+      "source_validate",
+      "parse_index",
+      "raw_text",
+      "page_render",
+      "raw_ocr",
       "raw_vision",
       "fusion",
       "profile",
-      "graph",
-      "raw_ocr",
-      "page_render",
-      "parse_index",
-      "raw_text",
-      "source_validate",
       "cognitive_index",
+      "graph",
       "relations"
     ]
   },
@@ -55,14 +58,14 @@
   },
   "lane_concurrency": {
     "kb_pipeline_stage": {
-      "local_preprocess": 240,
-      "vision_analysis": 40,
-      "llm_analysis": 40,
+      "local_preprocess": 16,
+      "vision_analysis": 50,
+      "llm_analysis": 50,
       "derived_index": 2,
       "relation_build": 2
     }
   },
-  "config_note": "Knowledge tasks dispatch by explicit stage_key columns. Uvicorn web processes run with TASK_WORKER_AUTOSTART=0, and scripts/backend_watchdog.sh starts standalone task_worker_main processes. worker_process_slots caps the standalone worker process count unless TASK_WORKER_PROCESSES overrides it; each process hot-reloads this JSON every 5s. worker_lanes_per_process=10 with 20 slots gives 200 knowledge execution entrances. worker_total_memory_limit_mb=73728 lets the worker group use up to about 72GB RSS before watchdog restart. claim_lock_scope=database serializes only the short DB claim section across worker processes; task execution remains concurrent. lane_concurrency is the resource-pool budget: local_preprocess is local CPU/disk/conversion work, vision_analysis is VLM/OCR cloud vision work, llm_analysis is LLM fusion/profile/graph work, derived_index and relation_build are downstream DB work. dynamic_stage_concurrency redistributes a lane budget across only the active stages in that lane by fair share plus backlog weight. stage_dispatch_order chooses which node queue to drain first inside those resource constraints. Changing TASK_WORKER_PROCESSES, worker_process_slots, worker_total_memory_limit_mb, or DB pool env values requires backend restart.",
+  "config_note": "Knowledge tasks dispatch by explicit stage_key columns. Uvicorn web processes run with TASK_WORKER_AUTOSTART=0. scripts/backend_watchdog.sh dynamically starts standalone task_worker_main processes only when there are executable, non-paused pending tasks. worker_process_slots is the max worker process count unless TASK_WORKER_PROCESSES overrides it; worker_min_processes=0 lets idle workers exit after worker_idle_exit_seconds. worker_scale_pending_per_process controls scale-out pressure, so 10 pending executable tasks request about 1 worker process. Each worker still hot-reloads this JSON every 5s. worker_total_memory_limit_mb=73728 lets the worker group use up to about 72GB RSS before watchdog restarts only the worker group. claim_lock_scope=group avoids one global DB claim lock; workers claim through row locks plus short stage-group locks so different resource pools can fill in parallel. lane_concurrency is the resource-pool budget: local_preprocess is local CPU/disk/conversion work capped near local CPU capacity, vision_analysis is VLM/OCR cloud vision work, llm_analysis is LLM fusion/profile/graph work, derived_index and relation_build are downstream DB work. The worker scheduler chooses the most underfilled resource pool first, then applies stage_dispatch_order only inside that pool, so entry/local/VLM/LLM/relation lanes cannot starve each other. dynamic_stage_concurrency redistributes a lane budget across only the active stages in that lane by fair share plus backlog weight. Changing DB pool env values still requires backend restart; worker scaling config is read by the watchdog loop.",
   "model_auto_pause": {
     "enabled": false,
     "stage": "graph",
@@ -77,13 +80,13 @@
       "vision_analysis": {
         "enabled": true,
         "min_per_stage": 1,
-        "max_per_stage": 40,
+        "max_per_stage": 50,
         "fair_share_ratio": 0.6
       },
       "llm_analysis": {
         "enabled": true,
         "min_per_stage": 1,
-        "max_per_stage": 40,
+        "max_per_stage": 50,
         "fair_share_ratio": 0.6
       }
     }

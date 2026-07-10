@@ -376,8 +376,8 @@
       "min_role": "admin"
     },
     {
-      "action": "backfill_cognitive_v3",
-      "description": "回填知识库 V3 内容复用链路、批次验收报告和可选认知派生索引",
+      "action": "backfill_cognitive_index",
+      "description": "回填知识库内容复用链路、批次验收报告和可选认知派生索引",
       "parameters": {
         "dry_run": {
           "type": "boolean",
@@ -400,7 +400,7 @@
     },
     {
       "action": "derive_cognitive_index",
-      "description": "按单文档重建 V3 词项、事实和因果候选派生索引",
+      "description": "按单文档重建词项、事实和因果候选派生索引",
       "parameters": {
         "document_id": {
           "type": "integer",

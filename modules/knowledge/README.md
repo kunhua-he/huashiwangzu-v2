@@ -78,10 +78,10 @@ Total public actions: 32
 | `archive_source_unavailable_documents` | `admin` | `audit_reason`, `confirm`, `dry_run`, `limit`, `reason` | dry-run 或确认归档源文件不可用的知识库文档 |
 | `audit_lifecycle_debt` | `admin` | `limit`, `reason` | 审计源文件已删除、缺失、路径异常或磁盘文件缺失的 active 知识库文档 |
 | `backfill_chunk_embeddings` | `admin` | `batch_size`, `dry_run`, `embedding_profile`, `limit` | dry-run 或补跑版本化块向量到边车向量表 |
-| `backfill_cognitive_v3` | `admin` | `build_terms`, `dry_run`, `limit`, `source_root` | 回填知识库 V3 内容复用链路、批次验收报告和可选认知派生索引 |
+| `backfill_cognitive_index` | `admin` | `build_terms`, `dry_run`, `limit`, `source_root` | 回填知识库内容复用链路、批次验收报告和可选认知派生索引 |
 | `backfill_derived_governance` | `admin` | `dry_run`, `include_conclusion_evidence`, `include_disambiguation`, `include_entity_aliases`, `include_lineage`, `limit` | 从已有分析产物、事实候选和实体词典回填知识库派生治理索引 |
 | `classify_pipeline_debt` | `admin` | `categories`, `category`, `category_limits`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 分类历史知识库管道债，不修改队列 |
-| `derive_cognitive_index` | `admin` | `document_id`, `limit` | 按单文档重建 V3 词项、事实和因果候选派生索引 |
+| `derive_cognitive_index` | `admin` | `document_id`, `limit` | 按单文档重建词项、事实和因果候选派生索引 |
 | `enqueue_enterprise_source_import` | `admin` | `batch_size`, `extensions`, `priority`, `skip_existing_md5`, `source_root`, `target_root_name` | 将企业源目录扫描投递到后台队列，按文件任务导入并触发知识库分析 |
 | `enqueue_source_manifest_import` | `admin` | `extensions`, `limit`, `priority`, `skip_existing_md5`, `source_root`, `target_root_name` | 从外部源清单中投递尚未进入导入队列的文件 |
 | `enqueue_incomplete_documents` | `admin` | `dry_run`, `extensions`, `include_search_incomplete`, `limit`, `priority` | 预览或补排未完成深层知识分析的文档 |
@@ -162,16 +162,16 @@ Use `db_schema()` for live database details. This module must not directly read 
 - Image similarity is a sidecar stage for PDF page renders and image files. It stores perceptual hashes, suspected/high pairs, and groups, but it does not skip VLM analysis or reuse representative-image VLM output.
 - Chaotic model-returned tags, entity types, and relation types are preserved as raw business signals until a later governance phase.
 
-## V3 Cognitive Substrate
+## Cognitive Substrate
 
-- V3 is additive on PostgreSQL/pgvector and the current `kb_*` pipeline; it does not replace the storage engine, vector index, parser, or model gateway.
+- The cognitive substrate is additive on PostgreSQL/pgvector and the current `kb_*` pipeline; it does not replace the storage engine, vector index, parser, or model gateway.
 - `kb_content_objects` and `kb_file_knowledge_links` make duplicate-file reuse explicit. Multiple file records may point to one canonical knowledge document without copying chunks, raw data, fusion pages, or profile rows.
 - `kb_ingest_batches` and `kb_validation_reports` record batch-level coverage, duplicate counts, missing canonical mappings, and validation findings for enterprise imports.
 - `kb_document_profile_vectors` is the indexed document-profile vector sidecar for relation candidate recall. `relations` first combines pgvector semantic TopK and entity-inverted candidates, then keeps the existing exact cosine/Jaccard scoring before writing `kb_file_relations`.
 - `kb_terms`, `kb_term_occurrences`, `kb_term_edges`, `kb_fact_candidates`, `kb_causal_candidates`, and `kb_query_contexts` are rebuildable derived indexes. They preserve chaotic model/business signals for later governance instead of freezing a premature taxonomy.
 - `kb_retrieval_learning_events` stores implicit retrieval feedback inferred from later conversation excerpts. Search uses it as a bounded ranking prior, while hard evidence, graph signals, source quality, and fusion verification remain the main scoring signals.
-- `cognitive_index` is the durable per-document DAG stage that fills the rebuildable V3 term, occurrence, co-occurrence, fact-candidate, and causal-candidate indexes from existing page fusion and document profile outputs.
-- `backfill_cognitive_v3` is dry-run by default. `derive_cognitive_index` can rebuild one document's V3 derived layer from existing page fusion and document profile outputs without rerunning raw/VLM/LLM stages.
+- `cognitive_index` is the durable per-document DAG stage that fills the rebuildable term, occurrence, co-occurrence, fact-candidate, and causal-candidate indexes from existing page fusion and document profile outputs.
+- `backfill_cognitive_index` is dry-run by default. `derive_cognitive_index` can rebuild one document's derived cognitive layer from existing page fusion and document profile outputs without rerunning raw/VLM/LLM stages.
 
 ## Queue Governance
 

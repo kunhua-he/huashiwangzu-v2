@@ -71,6 +71,8 @@ class _ClaimCandidate:
     running_limit: int
     lane_running_count: int = 0
     lane_running_limit: int = 0
+    stage_pending_count: int = 0
+    lane_pending_count: int = 0
     dispatch_rank: int = 1_000_000
 
 
@@ -96,6 +98,19 @@ class WorkerConfig:
     paused_task_types: set[str] | None = None
     paused_stages: dict[str, set[str]] | None = None
     paused_lanes: dict[str, set[str]] | None = None
+    pause_active_check_seconds: float = 1.0
+    pause_active_cancel_timeout_seconds: float = 10.0
+    worker_total_memory_limit_mb: int = 0
+    worker_process_memory_soft_limit_mb: int = 0
+
+
+@dataclass(frozen=True)
+class HandlerRunOutcome:
+    ok: bool
+    result: dict | None = None
+    error: str | None = None
+    released: bool = False
+    release_reason: str | None = None
 
 # task_type -> async handler(parameters: dict) -> dict | None
 TaskHandler = Callable[[dict], Awaitable[dict | None]]
@@ -114,6 +129,7 @@ _worker_is_leader = False
 _claim_lock = asyncio.Lock()
 _stale_recovery_lock = asyncio.Lock()
 _last_stale_recovery_at: datetime | None = None
+_process_retire_requested = False
 
 
 def register_task_handler(task_type: str, handler: TaskHandler) -> None:
@@ -320,10 +336,25 @@ def _parse_worker_config(raw: dict | None) -> WorkerConfig:
         raw.get("serialize_claims"),
         WorkerConfig.serialize_claims,
     )
+    worker_process_slots = _clamp_int(
+        raw.get("worker_process_slots"),
+        WorkerConfig.worker_process_slots,
+        1,
+        64,
+    )
+    worker_total_memory_limit_mb = _clamp_int(
+        raw.get("worker_total_memory_limit_mb"),
+        WorkerConfig.worker_total_memory_limit_mb,
+        0,
+        1024 * 1024,
+    )
+    derived_process_memory_limit_mb = 0
+    if worker_total_memory_limit_mb > 0:
+        derived_process_memory_limit_mb = max(512, worker_total_memory_limit_mb // max(1, worker_process_slots))
     claim_lock_scope = _coerce_choice(
         raw.get("claim_lock_scope"),
         "process" if serialize_claims else "none",
-        {"none", "process", "database"},
+        {"none", "process", "database", "group"},
     )
     return WorkerConfig(
         worker_lanes_per_process=_clamp_int(
@@ -338,12 +369,7 @@ def _parse_worker_config(raw: dict | None) -> WorkerConfig:
             WorkerConfig.worker_process_mode,
             {"leader", "all"},
         ),
-        worker_process_slots=_clamp_int(
-            raw.get("worker_process_slots"),
-            WorkerConfig.worker_process_slots,
-            1,
-            64,
-        ),
+        worker_process_slots=worker_process_slots,
         claim_lock_scope=claim_lock_scope,
         claim_candidate_scan_limit=_clamp_int(
             raw.get("claim_candidate_scan_limit"),
@@ -395,6 +421,25 @@ def _parse_worker_config(raw: dict | None) -> WorkerConfig:
         paused_task_types=_parse_paused_task_types(raw.get("paused_task_types")),
         paused_stages=_parse_paused_dimension(raw.get("paused_stages")),
         paused_lanes=_parse_paused_dimension(raw.get("paused_lanes")),
+        pause_active_check_seconds=_clamp_float(
+            raw.get("pause_active_check_seconds"),
+            WorkerConfig.pause_active_check_seconds,
+            0.2,
+            30.0,
+        ),
+        pause_active_cancel_timeout_seconds=_clamp_float(
+            raw.get("pause_active_cancel_timeout_seconds"),
+            WorkerConfig.pause_active_cancel_timeout_seconds,
+            0.2,
+            120.0,
+        ),
+        worker_total_memory_limit_mb=worker_total_memory_limit_mb,
+        worker_process_memory_soft_limit_mb=_clamp_int(
+            raw.get("worker_process_memory_soft_limit_mb"),
+            derived_process_memory_limit_mb,
+            0,
+            1024 * 1024,
+        ),
     )
 
 
@@ -854,25 +899,68 @@ def _concurrency_sql_filters(
     return filters
 
 
-def _choose_stage_fair_candidate(candidates: list[_ClaimCandidate]) -> _ClaimCandidate | None:
-    if not candidates:
+def _planned_available_score(
+    *,
+    limit: int,
+    pending_count: int,
+    running_count: int,
+) -> tuple[int, int, float]:
+    pending = max(0, int(pending_count or 0))
+    running = max(0, int(running_count or 0))
+    if pending <= 0:
+        return 0, 0, 0.0
+
+    if limit > 0:
+        desired_running = min(max(1, int(limit)), running + pending)
+    else:
+        desired_running = running + pending
+    available_slots = max(0, desired_running - running)
+    available_ratio = available_slots / max(1, desired_running)
+    return available_slots, desired_running, available_ratio
+
+
+def _claim_candidate_score(candidate: _ClaimCandidate) -> tuple[float, int, float, int, int, float, int] | None:
+    stage_slots, _stage_desired, stage_available_ratio = _planned_available_score(
+        limit=int(candidate.running_limit or 0),
+        pending_count=int(candidate.stage_pending_count or 0),
+        running_count=int(candidate.running_count or 0),
+    )
+    if stage_slots <= 0:
         return None
 
-    def score(candidate: _ClaimCandidate) -> tuple[float, int, int, float, int]:
-        running_limit = max(1, int(candidate.running_limit or 1))
-        available_slots = max(0, running_limit - int(candidate.running_count or 0))
-        available_ratio = available_slots / running_limit
-        if candidate.lane_running_limit > 0:
-            lane_limit = max(1, int(candidate.lane_running_limit))
-            lane_available_slots = max(0, lane_limit - int(candidate.lane_running_count or 0))
-            lane_available_ratio = lane_available_slots / lane_limit
-            available_ratio = min(available_ratio, lane_available_ratio)
-            available_slots = min(available_slots, lane_available_slots)
-        created_at = candidate.created_at
-        created_ts = created_at.timestamp() if created_at is not None else 0.0
-        return (-int(candidate.dispatch_rank), available_ratio, available_slots, -created_ts, -candidate.id)
+    lane_available_ratio = stage_available_ratio
+    lane_slots = stage_slots
+    if candidate.lane_running_limit > 0:
+        lane_slots, _lane_desired, lane_available_ratio = _planned_available_score(
+            limit=int(candidate.lane_running_limit or 0),
+            pending_count=int(candidate.lane_pending_count or 0),
+            running_count=int(candidate.lane_running_count or 0),
+        )
+        if lane_slots <= 0:
+            return None
 
-    return max(candidates, key=score)
+    created_at = candidate.created_at
+    created_ts = created_at.timestamp() if created_at is not None else 0.0
+    return (
+        lane_available_ratio,
+        min(lane_slots, stage_slots),
+        stage_available_ratio,
+        stage_slots,
+        -int(candidate.dispatch_rank),
+        -created_ts,
+        -candidate.id,
+    )
+
+
+def _choose_stage_fair_candidate(candidates: list[_ClaimCandidate]) -> _ClaimCandidate | None:
+    scored_candidates = [
+        (score, candidate)
+        for candidate in candidates
+        if (score := _claim_candidate_score(candidate)) is not None
+    ]
+    if not scored_candidates:
+        return None
+    return max(scored_candidates, key=lambda item: item[0])[1]
 
 
 def _claim_group_lock_key(task_type: str, stage_key: str, lane_key: str = "") -> int:
@@ -905,6 +993,70 @@ def _task_paused(task_type: str, stage_key: str = "", lane_key: str = "", config
     return bool(lane and lane in (paused_lanes.get(task_type_key) or set()))
 
 
+def _task_pause_reason(task: SystemTaskQueue | ClaimedTask, config: WorkerConfig | None = None) -> str | None:
+    config = config or _runtime_config
+    task_type = str(task.task_type or "")
+    stage = str(task.stage_key or "")
+    lane = str(task.lane_key or "")
+    if task_type in (config.paused_task_types or set()):
+        return f"task_type:{task_type}"
+    if stage and stage in ((config.paused_stages or {}).get(task_type) or set()):
+        return f"stage:{stage}"
+    if lane and lane in ((config.paused_lanes or {}).get(task_type) or set()):
+        return f"lane:{lane}"
+    return None
+
+
+def _current_process_rss_mb() -> float:
+    try:
+        import psutil
+
+        return float(psutil.Process(os.getpid()).memory_info().rss) / 1024 / 1024
+    except Exception:
+        try:
+            import resource
+
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            # macOS reports bytes, Linux reports KB. The fallback is only used
+            # for retire/no-retire decisions, so prefer a conservative value.
+            rss = float(usage.ru_maxrss)
+            if rss > 1024 * 1024 * 1024:
+                return rss / 1024 / 1024
+            return rss / 1024
+        except Exception:
+            return 0.0
+
+
+def _request_process_retire(reason: str) -> None:
+    global _process_retire_requested, _stop_flag
+    if _process_retire_requested:
+        return
+    _process_retire_requested = True
+    _stop_flag = True
+    logger.warning("Task worker process retirement requested: %s", reason)
+
+
+def _retire_process_if_memory_exceeded(config: WorkerConfig) -> None:
+    limit_mb = int(config.worker_process_memory_soft_limit_mb or 0)
+    if limit_mb <= 0:
+        return
+    rss_mb = _current_process_rss_mb()
+    if rss_mb <= 0 or rss_mb <= limit_mb:
+        return
+    _request_process_retire(
+        f"rss_mb={rss_mb:.1f} exceeded worker_process_memory_soft_limit_mb={limit_mb}",
+    )
+
+
+def process_retire_requested() -> bool:
+    return _process_retire_requested
+
+
+async def wait_for_process_retire_request(poll_interval_seconds: float = 1.0) -> None:
+    while not _process_retire_requested:
+        await asyncio.sleep(max(0.2, float(poll_interval_seconds or 1.0)))
+
+
 async def _select_stage_fair_task_id(
     db,
     *,
@@ -913,6 +1065,7 @@ async def _select_stage_fair_task_id(
     running_counts: dict[tuple[str, str], int],
     lane_running_counts: dict[tuple[str, str], int],
     config: WorkerConfig,
+    allowed_task_types: tuple[str, ...] | None = None,
 ) -> int | None:
     candidates: list[_ClaimCandidate] = []
     dispatch_order = config.stage_dispatch_order or {}
@@ -928,13 +1081,11 @@ async def _select_stage_fair_task_id(
         ),
     )
     pending_counts: dict[tuple[str, str, str], int] = {}
+    stage_pending_counts: dict[tuple[str, str], int] = {}
+    lane_pending_counts: dict[tuple[str, str], int] = {}
     stage_lane_running_counts: dict[tuple[str, str, str], int] = {}
-    dynamic_task_types = {
-        task_type
-        for task_type, lane_rules in (config.dynamic_stage_concurrency or {}).items()
-        if any(rule.enabled for rule in lane_rules.values())
-    }
-    if dynamic_task_types:
+    managed_task_types = tuple(sorted(rules.keys()))
+    if managed_task_types:
         pending_rows = await db.execute(
             select(
                 SystemTaskQueue.task_type,
@@ -944,7 +1095,12 @@ async def _select_stage_fair_task_id(
             )
             .where(
                 ready_filter,
-                SystemTaskQueue.task_type.in_(tuple(sorted(dynamic_task_types))),
+                SystemTaskQueue.task_type.in_(managed_task_types),
+                *(
+                    [SystemTaskQueue.task_type.in_(allowed_task_types)]
+                    if allowed_task_types is not None
+                    else []
+                ),
             )
             .group_by(
                 SystemTaskQueue.task_type,
@@ -953,8 +1109,20 @@ async def _select_stage_fair_task_id(
             )
         )
         for task_type, stage_key, lane_key, count in pending_rows.all():
+            task_type_key = str(task_type or "")
+            stage = str(stage_key or "")
+            lane = str(lane_key or "")
+            parsed_count = int(count or 0)
+            if stage:
+                stage_pending_counts[(task_type_key, stage)] = (
+                    stage_pending_counts.get((task_type_key, stage), 0) + parsed_count
+                )
+            if lane:
+                lane_pending_counts[(task_type_key, lane)] = (
+                    lane_pending_counts.get((task_type_key, lane), 0) + parsed_count
+                )
             if stage_key and lane_key:
-                pending_counts[(str(task_type or ""), str(stage_key or ""), str(lane_key or ""))] = int(count or 0)
+                pending_counts[(task_type_key, stage, lane)] = parsed_count
 
         running_rows = await db.execute(
             select(
@@ -965,7 +1133,12 @@ async def _select_stage_fair_task_id(
             )
             .where(
                 SystemTaskQueue.status == "running",
-                SystemTaskQueue.task_type.in_(tuple(sorted(dynamic_task_types))),
+                SystemTaskQueue.task_type.in_(managed_task_types),
+                *(
+                    [SystemTaskQueue.task_type.in_(allowed_task_types)]
+                    if allowed_task_types is not None
+                    else []
+                ),
             )
             .group_by(
                 SystemTaskQueue.task_type,
@@ -978,11 +1151,13 @@ async def _select_stage_fair_task_id(
                 stage_lane_running_counts[(str(task_type or ""), str(stage_key or ""), str(lane_key or ""))] = int(count or 0)
 
     for task_type, rule in sorted(rules.items()):
+        if allowed_task_types is not None and task_type not in allowed_task_types:
+            continue
         stage_limits = rule.stage_max_running or {}
         for stage_key, limit in sorted(stage_limits.items()):
             if _task_paused(task_type, stage_key, config=config):
                 continue
-            if config.claim_lock_scope == "none" and not await _try_claim_group_lock(db, task_type, stage_key):
+            if config.claim_lock_scope in {"none", "group"} and not await _try_claim_group_lock(db, task_type, stage_key):
                 continue
             running_count = running_counts.get((task_type, stage_key), 0)
             stage_has_dynamic_rule = bool((config.dynamic_stage_concurrency or {}).get(task_type))
@@ -1001,37 +1176,44 @@ async def _select_stage_fair_task_id(
                     ready_filter,
                     SystemTaskQueue.task_type == task_type,
                     SystemTaskQueue.stage_key == stage_key,
+                    *(
+                        [SystemTaskQueue.task_type.in_(allowed_task_types)]
+                        if allowed_task_types is not None
+                        else []
+                    ),
                 )
                 .order_by(SystemTaskQueue.priority.desc(), SystemTaskQueue.id)
-                .limit(1)
+                .limit(config.claim_candidate_scan_limit)
                 .with_for_update(skip_locked=True)
             )
-            candidate = row.first()
-            if candidate is None:
-                continue
-            lane_key = str(candidate.lane_key or "")
-            if _task_paused(str(candidate.task_type or ""), stage_key, lane_key, config=config):
-                continue
-            lane_rules = (config.lane_concurrency or {}).get(str(candidate.task_type or "")) or {}
-            lane_limit = int(lane_rules.get(lane_key) or 0)
-            lane_running_count = lane_running_counts.get((str(candidate.task_type or ""), lane_key), 0)
-            if lane_limit > 0 and lane_running_count >= lane_limit:
-                continue
-            effective_limit = _effective_stage_running_limit(
-                task_type=str(candidate.task_type or ""),
-                stage_key=stage_key,
-                lane_key=lane_key,
-                configured_limit=int(limit),
-                pending_counts=pending_counts,
-                stage_lane_running_counts=stage_lane_running_counts,
-                config=config,
-            )
-            if running_count >= effective_limit:
-                continue
-            candidates.append(
-                _ClaimCandidate(
+            seen_stage_lanes: set[tuple[str, str, str]] = set()
+            for candidate in row.all():
+                candidate_task_type = str(candidate.task_type or "")
+                lane_key = str(candidate.lane_key or "")
+                stage_lane_key = (candidate_task_type, stage_key, lane_key)
+                if stage_lane_key in seen_stage_lanes:
+                    continue
+                if _task_paused(candidate_task_type, stage_key, lane_key, config=config):
+                    continue
+                lane_rules = (config.lane_concurrency or {}).get(candidate_task_type) or {}
+                lane_limit = int(lane_rules.get(lane_key) or 0)
+                lane_running_count = lane_running_counts.get((candidate_task_type, lane_key), 0)
+                if lane_limit > 0 and lane_running_count >= lane_limit:
+                    continue
+                effective_limit = _effective_stage_running_limit(
+                    task_type=candidate_task_type,
+                    stage_key=stage_key,
+                    lane_key=lane_key,
+                    configured_limit=int(limit),
+                    pending_counts=pending_counts,
+                    stage_lane_running_counts=stage_lane_running_counts,
+                    config=config,
+                )
+                if running_count >= effective_limit:
+                    continue
+                candidate_budget = _ClaimCandidate(
                     id=int(candidate.id),
-                    task_type=str(candidate.task_type or ""),
+                    task_type=candidate_task_type,
                     stage_key=str(candidate.stage_key or ""),
                     lane_key=lane_key,
                     priority=int(candidate.priority or 0),
@@ -1040,9 +1222,14 @@ async def _select_stage_fair_task_id(
                     running_limit=effective_limit,
                     lane_running_count=lane_running_count,
                     lane_running_limit=lane_limit,
-                    dispatch_rank=(dispatch_order.get(str(candidate.task_type or "")) or {}).get(stage_key, 1_000_000),
+                    stage_pending_count=max(1, stage_pending_counts.get((candidate_task_type, stage_key), 0)),
+                    lane_pending_count=max(1, lane_pending_counts.get((candidate_task_type, lane_key), 0)),
+                    dispatch_rank=(dispatch_order.get(candidate_task_type) or {}).get(stage_key, 1_000_000),
                 )
-            )
+                if _claim_candidate_score(candidate_budget) is None:
+                    continue
+                candidates.append(candidate_budget)
+                seen_stage_lanes.add(stage_lane_key)
 
     unmanaged_row = await db.execute(
         select(
@@ -1057,6 +1244,11 @@ async def _select_stage_fair_task_id(
             ready_filter,
             SystemTaskQueue.task_type.not_in(tuple(rules.keys())),
             SystemTaskQueue.task_type.not_in(tuple(config.paused_task_types or set())),
+            *(
+                [SystemTaskQueue.task_type.in_(allowed_task_types)]
+                if allowed_task_types is not None
+                else []
+            ),
         )
         .order_by(SystemTaskQueue.priority.desc(), SystemTaskQueue.id)
         .limit(config.claim_candidate_scan_limit)
@@ -1082,6 +1274,8 @@ async def _select_stage_fair_task_id(
                 created_at=unmanaged_candidate.created_at,
                 running_count=0,
                 running_limit=max(1, min(config.worker_lanes_per_process or 1, 8)),
+                stage_pending_count=1,
+                lane_pending_count=1,
                 dispatch_rank=(dispatch_order.get(str(unmanaged_candidate.task_type or "")) or {}).get(
                     str(unmanaged_candidate.stage_key or ""),
                     1_000_000,
@@ -1093,7 +1287,12 @@ async def _select_stage_fair_task_id(
     return chosen.id if chosen is not None else None
 
 
-async def _claim_one_task(db, config: WorkerConfig | None = None) -> ClaimedTask | None:
+async def _claim_one_task(
+    db,
+    config: WorkerConfig | None = None,
+    *,
+    require_registered_handler: bool = False,
+) -> ClaimedTask | None:
     """原子抢占一条 pending 任务（FOR UPDATE SKIP LOCKED 防多 worker 抢同一条）。
 
     即时任务(scheduled_at IS NULL)照旧立即执行；
@@ -1110,6 +1309,10 @@ async def _claim_one_task(db, config: WorkerConfig | None = None) -> ClaimedTask
         lane_running_counts: dict[tuple[str, str], int] = {}
         rules = config.stage_concurrency or {}
         lane_rules = config.lane_concurrency or {}
+        allowed_task_types = tuple(sorted(_HANDLERS.keys())) if require_registered_handler else None
+        if require_registered_handler and not allowed_task_types:
+            await db.rollback()
+            return None
         counted_task_types = tuple(sorted(set(rules.keys()) | set(lane_rules.keys())))
         if counted_task_types:
             running_result = await db.execute(
@@ -1122,6 +1325,11 @@ async def _claim_one_task(db, config: WorkerConfig | None = None) -> ClaimedTask
                 .where(
                     SystemTaskQueue.status == "running",
                     SystemTaskQueue.task_type.in_(counted_task_types),
+                    *(
+                        [SystemTaskQueue.task_type.in_(allowed_task_types)]
+                        if allowed_task_types is not None
+                        else []
+                    ),
                 )
                 .group_by(
                     SystemTaskQueue.task_type,
@@ -1146,6 +1354,7 @@ async def _claim_one_task(db, config: WorkerConfig | None = None) -> ClaimedTask
                 running_counts=running_counts,
                 lane_running_counts=lane_running_counts,
                 config=config,
+                allowed_task_types=allowed_task_types,
             )
         else:
             concurrency_filters = _concurrency_sql_filters(rules=rules, running_counts=running_counts)
@@ -1174,6 +1383,11 @@ async def _claim_one_task(db, config: WorkerConfig | None = None) -> ClaimedTask
                             else []
                         ),
                         *concurrency_filters,
+                        *(
+                            [SystemTaskQueue.task_type.in_(allowed_task_types)]
+                            if allowed_task_types is not None
+                            else []
+                        ),
                     ),
                 )
                 .order_by(SystemTaskQueue.priority.desc(), SystemTaskQueue.id)
@@ -1284,6 +1498,73 @@ async def _run_handler(task: SystemTaskQueue | ClaimedTask) -> tuple[bool, dict 
         return False, None, str(exc)
 
 
+async def _release_task_for_pause(task: SystemTaskQueue | ClaimedTask, reason: str) -> bool:
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(SystemTaskQueue)
+            .where(
+                SystemTaskQueue.id == int(task.id),
+                SystemTaskQueue.status == "running",
+            )
+            .values(
+                status="pending",
+                started_at=None,
+                completed_at=None,
+                result=None,
+                error_message=f"Task paused by config ({reason}); released for retry",
+                blocked_reason="paused_by_config",
+                updated_at=now,
+            )
+        )
+        await db.commit()
+        released = int(result.rowcount or 0) > 0
+        if released:
+            logger.info("Released task %s because it is now paused by config: %s", task.id, reason)
+        return released
+
+
+async def _run_handler_with_pause_monitor(
+    task: SystemTaskQueue | ClaimedTask,
+    config: WorkerConfig,
+) -> HandlerRunOutcome:
+    handler_task = asyncio.create_task(_run_handler(task))
+    check_seconds = max(0.2, float(config.pause_active_check_seconds or 1.0))
+    cancel_timeout = max(0.2, float(config.pause_active_cancel_timeout_seconds or 10.0))
+    while True:
+        done, _ = await asyncio.wait({handler_task}, timeout=check_seconds)
+        if handler_task in done:
+            ok, result, error = await handler_task
+            return HandlerRunOutcome(ok=ok, result=result, error=error)
+
+        live_config = _load_worker_config()
+        reason = _task_pause_reason(task, live_config) or _task_pause_reason(task, config)
+        if reason is None:
+            continue
+
+        handler_task.cancel()
+        done, pending = await asyncio.wait({handler_task}, timeout=cancel_timeout)
+        if pending:
+            _request_process_retire(
+                f"task_id={task.id} ignored pause cancellation after {cancel_timeout:g}s ({reason})",
+            )
+            return HandlerRunOutcome(
+                ok=False,
+                error=f"Task pause cancellation timed out ({reason})",
+            )
+        try:
+            await handler_task
+        except asyncio.CancelledError:
+            pass
+        released = await _release_task_for_pause(task, reason)
+        return HandlerRunOutcome(
+            ok=False,
+            released=released,
+            release_reason=reason,
+            error=None if released else f"Task pause release lost race ({reason})",
+        )
+
+
 def _compute_next_recur(recur: str, ref_time: datetime) -> datetime | None:
     """根据周期表达计算下一次运行时间。"""
     ref = ref_time.astimezone(timezone.utc)
@@ -1312,6 +1593,9 @@ def _serialize_task_result(result: dict | None) -> str | None:
 async def _finish_task(db, task_id: int, ok: bool, result: dict | None, error: str | None) -> None:
     task = await db.get(SystemTaskQueue, task_id)
     if not task:
+        return
+    if task.status != "running":
+        logger.info("Skip finishing task %s because status is %s", task_id, task.status)
         return
     now = datetime.now(timezone.utc)
     if ok:
@@ -1357,6 +1641,7 @@ async def _release_active_tasks_on_shutdown(task_ids: list[int] | None = None) -
     if not task_ids:
         return
 
+    now = datetime.now(timezone.utc)
     try:
         async with AsyncSessionLocal() as db:
             result = await db.execute(
@@ -1368,7 +1653,10 @@ async def _release_active_tasks_on_shutdown(task_ids: list[int] | None = None) -
                 .values(
                     status="pending",
                     started_at=None,
+                    completed_at=None,
+                    result=None,
                     error_message="Task interrupted by worker shutdown; released for retry",
+                    updated_at=now,
                 )
             )
             await db.commit()
@@ -1396,7 +1684,7 @@ async def _worker_lane_loop(lane_id: int) -> None:
         try:
             async with AsyncSessionLocal() as db:
                 await _recover_stale_tasks_if_due(db, config)
-                task = await _claim_one_task(db, config)
+                task = await _claim_one_task(db, config, require_registered_handler=True)
                 await _rollback_idle_worker_transaction(db)
             if task is None:
                 await asyncio.sleep(config.poll_interval_seconds)
@@ -1404,11 +1692,13 @@ async def _worker_lane_loop(lane_id: int) -> None:
             _last_active = datetime.now(timezone.utc)
             _lane_current_task_ids[lane_id] = int(task.id)
             try:
-                ok, result, error = await _run_handler(task)
-                async with AsyncSessionLocal() as db:
-                    await _finish_task(db, task.id, ok, result, error)
+                outcome = await _run_handler_with_pause_monitor(task, config)
+                if not outcome.released:
+                    async with AsyncSessionLocal() as db:
+                        await _finish_task(db, task.id, outcome.ok, outcome.result, outcome.error)
             finally:
                 _lane_current_task_ids.pop(lane_id, None)
+                _retire_process_if_memory_exceeded(config)
         except Exception as exc:
             logger.error("Task worker lane %s error: %r", lane_id, exc, exc_info=True)
             await asyncio.sleep(config.poll_interval_seconds)
@@ -1509,10 +1799,11 @@ async def _worker_supervisor_loop() -> None:
 
 
 def start_worker() -> None:
-    global _worker_task, _stop_flag
+    global _process_retire_requested, _worker_task, _stop_flag
     if _worker_task is not None and not _worker_task.done():
         return
     _stop_flag = False
+    _process_retire_requested = False
     _worker_task = asyncio.create_task(_worker_supervisor_loop())
 
 
@@ -1591,6 +1882,12 @@ def worker_health() -> dict:
         "paused_task_types": sorted(_runtime_config.paused_task_types or set()),
         "paused_stages": paused_stages,
         "paused_lanes": paused_lanes,
+        "pause_active_check_seconds": _runtime_config.pause_active_check_seconds,
+        "pause_active_cancel_timeout_seconds": _runtime_config.pause_active_cancel_timeout_seconds,
+        "worker_total_memory_limit_mb": _runtime_config.worker_total_memory_limit_mb,
+        "worker_process_memory_soft_limit_mb": _runtime_config.worker_process_memory_soft_limit_mb,
+        "process_retire_requested": _process_retire_requested,
+        "process_rss_mb": round(_current_process_rss_mb(), 1),
         "last_active": _last_active.isoformat() if _last_active else None,
         "process_local": True,
         "pid": os.getpid(),

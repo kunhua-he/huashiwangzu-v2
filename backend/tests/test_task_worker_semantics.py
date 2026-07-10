@@ -89,6 +89,10 @@ def test_task_worker_config_defaults_are_safe() -> None:
     assert config.paused_task_types == set()
     assert config.paused_stages == {}
     assert config.paused_lanes == {}
+    assert config.pause_active_check_seconds == 1.0
+    assert config.pause_active_cancel_timeout_seconds == 10.0
+    assert config.worker_total_memory_limit_mb == 0
+    assert config.worker_process_memory_soft_limit_mb == 0
 
 
 def test_task_worker_config_clamps_lane_count() -> None:
@@ -103,6 +107,7 @@ def test_task_worker_config_clamps_lane_count() -> None:
         "config_reload_seconds": 0,
         "reclaim_running_on_startup": "true",
         "startup_reclaim_min_age_seconds": -1,
+        "worker_total_memory_limit_mb": 73728,
     })
 
     assert config.worker_lanes_per_process == 24
@@ -115,6 +120,22 @@ def test_task_worker_config_clamps_lane_count() -> None:
     assert config.config_reload_seconds == 1.0
     assert config.reclaim_running_on_startup is True
     assert config.startup_reclaim_min_age_seconds == 0
+    assert config.worker_total_memory_limit_mb == 73728
+    assert config.worker_process_memory_soft_limit_mb == 24576
+
+
+def test_task_worker_config_allows_explicit_process_memory_limit() -> None:
+    config = task_worker._parse_worker_config({
+        "worker_process_slots": 20,
+        "worker_total_memory_limit_mb": 73728,
+        "worker_process_memory_soft_limit_mb": 8192,
+        "pause_active_check_seconds": 0,
+        "pause_active_cancel_timeout_seconds": 0,
+    })
+
+    assert config.worker_process_memory_soft_limit_mb == 8192
+    assert config.pause_active_check_seconds == 0.2
+    assert config.pause_active_cancel_timeout_seconds == 0.2
 
 
 def test_task_worker_config_allows_zero_lanes_for_hot_pause() -> None:
@@ -128,6 +149,16 @@ def test_task_worker_config_derives_no_claim_lock_when_claims_not_serialized() -
 
     assert config.serialize_claims is False
     assert config.claim_lock_scope == "none"
+
+
+def test_task_worker_config_accepts_group_claim_lock() -> None:
+    config = task_worker._parse_worker_config({
+        "serialize_claims": False,
+        "claim_lock_scope": "group",
+    })
+
+    assert config.serialize_claims is False
+    assert config.claim_lock_scope == "group"
 
 
 def test_task_worker_config_rejects_unknown_process_and_claim_modes() -> None:
@@ -354,6 +385,7 @@ async def test_task_worker_stage_concurrency_claims_fair_stage_not_global_priori
     config = task_worker._parse_worker_config({
         "claim_lock_scope": "process",
         "claim_candidate_scan_limit": 1,
+        "paused_task_types": ["kb_pipeline_stage"],
         "stage_concurrency": {
             task_type: {
                 hot_stage: 40,
@@ -460,27 +492,26 @@ async def test_task_worker_stage_dispatch_order_claims_fast_root_first() -> None
 
 
 @pytest.mark.asyncio
-async def test_task_worker_stage_dispatch_order_beats_empty_slot_ratio() -> None:
+async def test_task_worker_stage_dispatch_order_applies_within_same_resource_lane() -> None:
     task_type = f"test_stage_dispatch_ratio_{uuid4().hex}"
-    model_stage = "fusion"
-    local_stage = "source_validate"
+    root_stage = "source_validate"
+    parse_stage = "parse_index"
     config = task_worker._parse_worker_config({
         "claim_lock_scope": "process",
         "paused_task_types": ["kb_pipeline_stage"],
         "stage_concurrency": {
             task_type: {
-                model_stage: 40,
-                local_stage: 160,
+                root_stage: 160,
+                parse_stage: 160,
             },
         },
         "lane_concurrency": {
             task_type: {
-                "llm_analysis": 40,
                 "local_preprocess": 240,
             },
         },
         "stage_dispatch_order": {
-            task_type: [model_stage, local_stage],
+            task_type: [root_stage, parse_stage],
         },
     })
 
@@ -492,9 +523,9 @@ async def test_task_worker_stage_dispatch_order_beats_empty_slot_ratio() -> None
                     module="test",
                     status="running",
                     priority=1,
-                    parameters=json.dumps({"stage": model_stage}),
-                    stage_key=model_stage,
-                    lane_key="llm_analysis",
+                    parameters=json.dumps({"stage": parse_stage}),
+                    stage_key=parse_stage,
+                    lane_key="local_preprocess",
                     ready_status="ready",
                     started_at=datetime.now(timezone.utc),
                 ))
@@ -503,11 +534,133 @@ async def test_task_worker_stage_dispatch_order_beats_empty_slot_ratio() -> None
                 module="test",
                 status="pending",
                 priority=1,
+                parameters=json.dumps({"stage": root_stage}),
+                stage_key=root_stage,
+                lane_key="local_preprocess",
+                ready_status="ready",
+            )
+            parse_task = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=99,
+                parameters=json.dumps({"stage": parse_stage}),
+                stage_key=parse_stage,
+                lane_key="local_preprocess",
+                ready_status="ready",
+            )
+            db.add_all([expected, parse_task])
+            await db.commit()
+
+            claimed = await task_worker._claim_one_task(db, config)
+
+            assert claimed is not None
+            assert claimed.stage_key == root_stage
+            assert claimed.id == expected.id
+        finally:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_task_worker_resource_pool_deficit_beats_global_stage_order() -> None:
+    task_type = f"test_resource_pool_deficit_{uuid4().hex}"
+    model_stage = "graph"
+    local_stage = "source_validate"
+    config = task_worker._parse_worker_config({
+        "claim_lock_scope": "process",
+        "paused_task_types": ["kb_pipeline_stage"],
+        "stage_concurrency": {
+            task_type: {
+                model_stage: 60,
+                local_stage: 160,
+            },
+        },
+        "lane_concurrency": {
+            task_type: {
+                "llm_analysis": 60,
+                "local_preprocess": 240,
+            },
+        },
+        "stage_dispatch_order": {
+            task_type: [model_stage, local_stage],
+        },
+    })
+
+    async with AsyncSessionLocal() as db:
+        try:
+            for _ in range(30):
+                db.add(SystemTaskQueue(
+                    task_type=task_type,
+                    module="test",
+                    status="running",
+                    priority=99,
+                    parameters=json.dumps({"stage": model_stage}),
+                    stage_key=model_stage,
+                    lane_key="llm_analysis",
+                    ready_status="ready",
+                    started_at=datetime.now(timezone.utc),
+                ))
+            model_task = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=99,
                 parameters=json.dumps({"stage": model_stage}),
                 stage_key=model_stage,
                 lane_key="llm_analysis",
                 ready_status="ready",
             )
+            expected = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=1,
+                parameters=json.dumps({"stage": local_stage}),
+                stage_key=local_stage,
+                lane_key="local_preprocess",
+                ready_status="ready",
+            )
+            db.add_all([model_task, expected])
+            await db.commit()
+
+            claimed = await task_worker._claim_one_task(db, config)
+
+            assert claimed is not None
+            assert claimed.stage_key == local_stage
+            assert claimed.id == expected.id
+        finally:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_task_worker_resource_pool_plans_by_pending_backlog() -> None:
+    task_type = f"test_resource_pool_backlog_{uuid4().hex}"
+    local_stage = "source_validate"
+    model_stage = "graph"
+    config = task_worker._parse_worker_config({
+        "claim_lock_scope": "process",
+        "paused_task_types": ["kb_pipeline_stage"],
+        "stage_concurrency": {
+            task_type: {
+                local_stage: 160,
+                model_stage: 60,
+            },
+        },
+        "lane_concurrency": {
+            task_type: {
+                "local_preprocess": 240,
+                "llm_analysis": 60,
+            },
+        },
+        "stage_dispatch_order": {
+            task_type: [local_stage, model_stage],
+        },
+    })
+
+    async with AsyncSessionLocal() as db:
+        try:
             local_task = SystemTaskQueue(
                 task_type=task_type,
                 module="test",
@@ -518,14 +671,104 @@ async def test_task_worker_stage_dispatch_order_beats_empty_slot_ratio() -> None
                 lane_key="local_preprocess",
                 ready_status="ready",
             )
-            db.add_all([expected, local_task])
+            db.add(local_task)
+            expected = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=1,
+                parameters=json.dumps({"stage": model_stage}),
+                stage_key=model_stage,
+                lane_key="llm_analysis",
+                ready_status="ready",
+            )
+            db.add(expected)
+            for _ in range(19):
+                db.add(SystemTaskQueue(
+                    task_type=task_type,
+                    module="test",
+                    status="pending",
+                    priority=1,
+                    parameters=json.dumps({"stage": model_stage}),
+                    stage_key=model_stage,
+                    lane_key="llm_analysis",
+                    ready_status="ready",
+                ))
             await db.commit()
 
             claimed = await task_worker._claim_one_task(db, config)
 
             assert claimed is not None
             assert claimed.stage_key == model_stage
+            assert claimed.lane_key == "llm_analysis"
             assert claimed.id == expected.id
+        finally:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_task_worker_stage_scan_skips_full_lane_and_claims_budgeted_lane() -> None:
+    task_type = f"test_stage_lane_scan_{uuid4().hex}"
+    stage = "shared_stage"
+    config = task_worker._parse_worker_config({
+        "claim_lock_scope": "process",
+        "paused_task_types": ["kb_pipeline_stage"],
+        "claim_candidate_scan_limit": 20,
+        "stage_concurrency": {
+            task_type: {
+                stage: 10,
+            },
+        },
+        "lane_concurrency": {
+            task_type: {
+                "full_lane": 1,
+                "free_lane": 4,
+            },
+        },
+    })
+
+    async with AsyncSessionLocal() as db:
+        try:
+            db.add(SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="running",
+                priority=99,
+                parameters=json.dumps({"stage": stage}),
+                stage_key=stage,
+                lane_key="full_lane",
+                ready_status="ready",
+                started_at=datetime.now(timezone.utc),
+            ))
+            db.add(SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=99,
+                parameters=json.dumps({"stage": stage}),
+                stage_key=stage,
+                lane_key="full_lane",
+                ready_status="ready",
+            ))
+            expected = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=1,
+                parameters=json.dumps({"stage": stage}),
+                stage_key=stage,
+                lane_key="free_lane",
+                ready_status="ready",
+            )
+            db.add(expected)
+            await db.commit()
+
+            claimed = await task_worker._claim_one_task(db, config)
+
+            assert claimed is not None
+            assert claimed.id == expected.id
+            assert claimed.lane_key == "free_lane"
         finally:
             await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
             await db.commit()
@@ -738,6 +981,43 @@ async def test_task_worker_pause_stage_skips_vlm_but_claims_local_stage() -> Non
 
 
 @pytest.mark.asyncio
+async def test_task_worker_lane_claim_requires_registered_handler_when_enabled() -> None:
+    task_type = f"test_unregistered_claim_{uuid4().hex}"
+    config = task_worker._parse_worker_config({
+        "claim_lock_scope": "process",
+        "paused_task_types": ["kb_pipeline_stage"],
+    })
+
+    async with AsyncSessionLocal() as db:
+        try:
+            task = SystemTaskQueue(
+                task_type=task_type,
+                module="test",
+                status="pending",
+                priority=1,
+                parameters=json.dumps({}),
+                ready_status="ready",
+            )
+            db.add(task)
+            await db.commit()
+            task_id = int(task.id)
+
+            claimed = await task_worker._claim_one_task(
+                db,
+                config,
+                require_registered_handler=True,
+            )
+
+            assert claimed is None
+            refreshed = await db.get(SystemTaskQueue, task_id)
+            assert refreshed is not None
+            assert refreshed.status == "pending"
+        finally:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_task_worker_lane_concurrency_claims_model_when_local_lane_is_full() -> None:
     task_type = f"test_lane_fair_{uuid4().hex}"
     local_stage = "parse_index"
@@ -845,6 +1125,103 @@ def test_task_worker_handler_uses_explicit_queue_fields_over_parameters() -> Non
     finally:
         task_worker._HANDLERS.clear()
         task_worker._HANDLERS.update(original)
+
+
+@pytest.mark.asyncio
+async def test_task_worker_active_pause_cancels_and_releases_running_task() -> None:
+    task_type = f"test_active_pause_{uuid4().hex}"
+    stage = "model_stage"
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    config = task_worker._parse_worker_config({
+        "pause_active_check_seconds": 0.2,
+        "pause_active_cancel_timeout_seconds": 0.2,
+        "paused_stages": {
+            task_type: [stage],
+        },
+    })
+
+    async def handler(_params: dict) -> dict:
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    original = dict(task_worker._HANDLERS)
+    async with AsyncSessionLocal() as db:
+        task = SystemTaskQueue(
+            task_type=task_type,
+            module="test",
+            status="running",
+            priority=1,
+            parameters=json.dumps({"stage": stage}),
+            stage_key=stage,
+            lane_key="llm_analysis",
+            ready_status="ready",
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(task)
+        await db.commit()
+        task_id = int(task.id)
+    try:
+        task_worker.register_task_handler(task_type, handler)
+        claimed = task_worker.ClaimedTask(
+            id=task_id,
+            task_type=task_type,
+            parameters=json.dumps({"stage": stage}),
+            stage_key=stage,
+            lane_key="llm_analysis",
+        )
+
+        outcome = await task_worker._run_handler_with_pause_monitor(claimed, config)
+
+        assert started.is_set() is True
+        assert cancelled.is_set() is True
+        assert outcome.released is True
+        assert outcome.release_reason == f"stage:{stage}"
+        async with AsyncSessionLocal() as db:
+            refreshed = await db.get(SystemTaskQueue, task_id)
+            assert refreshed is not None
+            assert refreshed.status == "pending"
+            assert refreshed.started_at is None
+            assert refreshed.retry_count == 0
+            assert refreshed.blocked_reason == "paused_by_config"
+    finally:
+        task_worker._HANDLERS.clear()
+        task_worker._HANDLERS.update(original)
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_task_worker_finish_skips_released_task() -> None:
+    task_type = f"test_finish_released_{uuid4().hex}"
+    async with AsyncSessionLocal() as db:
+        task = SystemTaskQueue(
+            task_type=task_type,
+            module="test",
+            status="pending",
+            priority=1,
+            parameters=json.dumps({}),
+            ready_status="ready",
+            error_message="Task paused by config; released for retry",
+        )
+        db.add(task)
+        await db.commit()
+        task_id = int(task.id)
+        try:
+            await task_worker._finish_task(db, task_id, True, {"status": "done"}, None)
+            refreshed = await db.get(SystemTaskQueue, task_id)
+            assert refreshed is not None
+            assert refreshed.status == "pending"
+            assert refreshed.result is None
+            assert refreshed.error_message == "Task paused by config; released for retry"
+        finally:
+            await db.execute(delete(SystemTaskQueue).where(SystemTaskQueue.task_type == task_type))
+            await db.commit()
 
 
 def test_task_worker_result_serializer_handles_datetime() -> None:

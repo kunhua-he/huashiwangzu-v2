@@ -34,7 +34,7 @@ from .analysis_artifact_service import (
     resolve_stage_prompt_hash,
     stage_schema_version,
 )
-from .cognitive_v3_service import derive_document_cognitive_index
+from .cognitive_index_service import derive_document_cognitive_index
 from .document_service import (
     NON_CONTENT_FILE_REASONS,
     SOURCE_UNAVAILABLE_REASONS,
@@ -65,6 +65,7 @@ from .stage_result_cache_service import delete_stage_result_cache, write_stage_r
 logger = logging.getLogger("v2.knowledge").getChild("pipeline")
 
 PIPELINE_TASK_TYPE = "kb_pipeline_stage"
+PIPELINE_MAX_RETRIES = 5
 ROOT_STAGE = "source_validate"
 PIPELINE_STAGES = {
     "source_validate",
@@ -197,6 +198,7 @@ async def enqueue_pipeline_stage_task(
         priority=resolved_priority,
         status="pending",
         creator_id=user_id,
+        max_retries=PIPELINE_MAX_RETRIES,
         document_id=int(doc.id),
         stage_key=stage,
         lane_key=STAGE_LANE_KEYS.get(stage, "knowledge"),

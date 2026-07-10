@@ -44,6 +44,11 @@ Rules:
 - `/api/health` is the backend health entry.
 - `/api/system/status` and release tools must use the same worker health semantics.
 - Worker/task handlers must treat `{error: ...}` or `success=false` as failure, not completed.
+- Worker 领取任务前必须确认本进程已注册对应 `task_type` handler；不会处理的任务保持 `pending`，不能抢占后制造失败。
+- 受控队列先按 `lane_key` 计算资源池预算，再领取任务；本地、VLM、LLM、派生索引、关系构建互不挤占，`stage_dispatch_order` 只在同资源池内决定先后。
+- Pause is a queue contract: paused task/stage/lane must not be newly claimed; active cancellable tasks are cancelled and released back to `pending` with `blocked_reason=paused_by_config`.
+- Long-lived worker processes may retire after memory pressure. Retirement stops new claims, releases active tasks through shutdown recovery, and lets the watchdog start a fresh process.
+- Standalone task workers are scaled by the watchdog from executable queue pressure. Paused pending tasks do not keep workers resident; with `worker_min_processes=0`, an idle queue can drop to zero worker processes and wake workers when eligible tasks appear.
 - Release validation must distinguish historical debt from new active failures.
 - Multi-worker shared state must be persisted in DB or atomically written files.
 

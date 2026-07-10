@@ -1,4 +1,4 @@
-"""Tests for Knowledge V3 cognitive substrate helpers."""
+"""Tests for Knowledge cognitive substrate helpers."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select, text
 
-os.environ.setdefault("JWT_SECRET", "test-secret-for-knowledge-cognitive-v3")
+os.environ.setdefault("JWT_SECRET", "test-secret-for-knowledge-cognitive-index")
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BACKEND_ROOT = REPO_ROOT / "backend"
@@ -41,8 +41,8 @@ from modules.knowledge.backend.models import (
     KbRetrievalLearningEvent,
     KbTermOccurrence,
 )
-from modules.knowledge.backend.services.cognitive_v3_service import (
-    backfill_cognitive_v3,
+from modules.knowledge.backend.services.cognitive_index_service import (
+    backfill_cognitive_index,
     build_query_context_payload,
     derive_document_cognitive_index,
     extract_terms,
@@ -167,7 +167,7 @@ async def test_file_knowledge_link_marks_duplicate_reuse() -> None:
         doc = KbDocument(
             owner_id=OWNER_ID,
             file_id=910_000_301,
-            filename=f"cognitive-v3-{marker}.pdf",
+            filename=f"cognitive-index-{marker}.pdf",
             extension="pdf",
             file_size=100,
             mime_type="application/pdf",
@@ -183,7 +183,7 @@ async def test_file_knowledge_link_marks_duplicate_reuse() -> None:
         await db.flush()
         duplicate_file = SimpleNamespace(
             id=910_000_302,
-            name=f"cognitive-v3-copy-{marker}",
+            name=f"cognitive-index-copy-{marker}",
             extension="pdf",
             folder_id=123,
             storage_path=f"test/{marker}/copy.pdf",
@@ -224,7 +224,7 @@ async def test_derive_document_cognitive_index_is_rerunnable() -> None:
         doc = KbDocument(
             owner_id=OWNER_ID,
             file_id=910_000_303,
-            filename=f"cognitive-v3-{marker}.txt",
+            filename=f"cognitive-index-{marker}.txt",
             extension="txt",
             file_size=1,
             mime_type="text/plain",
@@ -396,13 +396,13 @@ async def test_retrieval_learning_events_feed_document_priors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_backfill_cognitive_v3_dry_run_does_not_mutate() -> None:
+async def test_backfill_cognitive_index_dry_run_does_not_mutate() -> None:
     await _ensure_schema()
     async with AsyncSessionLocal() as db:
         before_links = await db.scalar(
             select(func.count(KbFileKnowledgeLink.id)).where(KbFileKnowledgeLink.owner_id == OWNER_ID)
         )
-        result = await backfill_cognitive_v3(db, owner_id=OWNER_ID, dry_run=True, limit=5)
+        result = await backfill_cognitive_index(db, owner_id=OWNER_ID, dry_run=True, limit=5)
         after_links = await db.scalar(
             select(func.count(KbFileKnowledgeLink.id)).where(KbFileKnowledgeLink.owner_id == OWNER_ID)
         )

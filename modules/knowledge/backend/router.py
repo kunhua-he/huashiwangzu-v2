@@ -25,8 +25,8 @@ from .services.chunk_embedding_service import (
     get_chunk_embedding_counts,
 )
 from .services.chunk_rebuild_service import rebuild_document_chunks
-from .services.cognitive_v3_service import (
-    backfill_cognitive_v3,
+from .services.cognitive_index_service import (
+    backfill_cognitive_index,
     derive_document_cognitive_index,
     persist_query_context,
 )
@@ -39,8 +39,8 @@ from .services.document_service import (
     enqueue_incomplete_documents,
     enqueue_pipeline_task,
     get_document,
-    list_documents_by_file_ids,
     list_documents,
+    list_documents_by_file_ids,
     parse_and_index_document,
     register_document,
     resolve_user_id,
@@ -328,12 +328,12 @@ class RerunPlanRequest(BaseModel):
         "manual_failed_retry",
     ]
     stage: str | None = None
-class V3BackfillRequest(BaseModel):
+class CognitiveBackfillRequest(BaseModel):
     dry_run: bool = True
     limit: int = Field(default=1000, ge=1, le=10000)
     source_root: str = ""
     build_terms: bool = True
-class V3DeriveDocumentRequest(BaseModel):
+class CognitiveDeriveDocumentRequest(BaseModel):
     document_id: int
     limit: int = Field(default=200, ge=1, le=1000)
 
@@ -991,15 +991,15 @@ async def api_rerun_plan_dry_run(
     )
     return ApiResponse(data=result)
 
-@router.post("/governance/v3/backfill")
-async def api_cognitive_v3_backfill(
-    payload: V3BackfillRequest,
+@router.post("/governance/cognitive-index/backfill")
+async def api_cognitive_index_backfill(
+    payload: CognitiveBackfillRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
     if not payload.dry_run:
         await ensure_accepting_new_work(db, "knowledge backfill")
-    result = await backfill_cognitive_v3(
+    result = await backfill_cognitive_index(
         db,
         owner_id=user.id,
         dry_run=payload.dry_run,
@@ -1009,9 +1009,9 @@ async def api_cognitive_v3_backfill(
     )
     return ApiResponse(data=result)
 
-@router.post("/governance/v3/derive-document")
-async def api_cognitive_v3_derive_document(
-    payload: V3DeriveDocumentRequest,
+@router.post("/governance/cognitive-index/derive-document")
+async def api_cognitive_index_derive_document(
+    payload: CognitiveDeriveDocumentRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
@@ -1286,7 +1286,7 @@ async def _cap_plan_pipeline_rerun(params: dict, caller: str) -> dict:
             stage=str(stage) if stage else None,
         )
 
-async def _cap_backfill_cognitive_v3(params: dict, caller: str) -> dict:
+async def _cap_backfill_cognitive_index(params: dict, caller: str) -> dict:
     owner_id = resolve_user_id(caller)
     dry_run = bool(params.get("dry_run", True))
     limit = int(params.get("limit", 1000) or 1000)
@@ -1295,7 +1295,7 @@ async def _cap_backfill_cognitive_v3(params: dict, caller: str) -> dict:
     async with AsyncSessionLocal() as db:
         if not dry_run:
             await ensure_accepting_new_work(db, "knowledge backfill")
-        return await backfill_cognitive_v3(
+        return await backfill_cognitive_index(
             db,
             owner_id=owner_id,
             dry_run=dry_run,
@@ -1719,9 +1719,9 @@ register_capability(
     min_role="admin",
 )
 register_capability(
-    "knowledge", "backfill_cognitive_v3", _cap_backfill_cognitive_v3,
-    description="Backfill Knowledge V3 content links, validation batch report, and optional derived cognitive indexes",
-    brief="回填知识库V3认知账本",
+    "knowledge", "backfill_cognitive_index", _cap_backfill_cognitive_index,
+    description="Backfill Knowledge content links, validation batch report, and optional derived cognitive indexes",
+    brief="回填知识库认知账本",
     parameters={
         "dry_run": {"type": "boolean", "description": "Preview only when true, default true"},
         "limit": {"type": "integer", "description": "Maximum files to inspect, default 1000"},
@@ -1732,8 +1732,8 @@ register_capability(
 )
 register_capability(
     "knowledge", "derive_cognitive_index", _cap_derive_cognitive_index,
-    description="Rebuild V3 derived term, fact, and causal candidates for one knowledge document",
-    brief="重建文档V3认知索引",
+    description="Rebuild derived term, fact, and causal candidates for one knowledge document",
+    brief="重建文档认知索引",
     parameters={
         "document_id": {"type": "integer", "description": "Document ID"},
         "limit": {"type": "integer", "description": "Maximum terms per source text, default 200"},

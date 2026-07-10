@@ -386,7 +386,7 @@ class KbFileRelation(Base, TimestampMixin):
 
 
 class KbContentObject(Base, TimestampMixin):
-    """V3 内容对象：同一份物理内容只对应一个 canonical 知识对象。"""
+    """内容对象：同一份物理内容只对应一个 canonical 知识对象。"""
     __tablename__ = "kb_content_objects"
     __table_args__ = (
         UniqueConstraint("owner_id", "md5_hash", name="uq_kb_content_objects_owner_md5"),
@@ -407,7 +407,7 @@ class KbContentObject(Base, TimestampMixin):
 
 
 class KbFileKnowledgeLink(Base, TimestampMixin):
-    """V3 文件实例到 canonical 知识对象的显式血缘链接。"""
+    """文件实例到 canonical 知识对象的显式血缘链接。"""
     __tablename__ = "kb_file_knowledge_links"
     __table_args__ = (
         UniqueConstraint("owner_id", "file_id", name="uq_kb_file_links_owner_file"),
@@ -433,7 +433,7 @@ class KbFileKnowledgeLink(Base, TimestampMixin):
 
 
 class KbIngestBatch(Base, TimestampMixin):
-    """V3 导入批次账本，用于企业微盘批量验收和回滚说明。"""
+    """导入批次账本，用于企业微盘批量验收和回滚说明。"""
     __tablename__ = "kb_ingest_batches"
     __table_args__ = KB_TABLE_ARGS_EXTEND
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -484,13 +484,13 @@ class KbSourceFileManifest(Base, TimestampMixin):
 
 
 class KbValidationReport(Base, TimestampMixin):
-    """V3 验收报告：保存批次覆盖、重复复用、失败项和抽检结论。"""
+    """验收报告：保存批次覆盖、重复复用、失败项和抽检结论。"""
     __tablename__ = "kb_validation_reports"
     __table_args__ = KB_TABLE_ARGS_EXTEND
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     batch_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    scope: Mapped[str] = mapped_column(String(128), default="knowledge_v3")
+    scope: Mapped[str] = mapped_column(String(128), default="knowledge_index")
     report_type: Mapped[str] = mapped_column(String(64), default="batch_validation")
     status: Mapped[str] = mapped_column(String(32), default="done")
     metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -500,7 +500,7 @@ class KbValidationReport(Base, TimestampMixin):
 
 
 class KbArtifactLineage(Base, TimestampMixin):
-    """V3 产物血缘：说明一个 artifact 是新跑、复用还是派生。"""
+    """产物血缘：说明一个 artifact 是新跑、复用还是派生。"""
     __tablename__ = "kb_artifact_lineage"
     __table_args__ = (
         UniqueConstraint("artifact_id", name="uq_kb_artifact_lineage_artifact"),
@@ -523,7 +523,7 @@ class KbArtifactLineage(Base, TimestampMixin):
 
 
 class KbTerm(Base, TimestampMixin):
-    """V3 词项节点：品牌、产品、成分、备案号、别名和自由业务标签。"""
+    """词项节点：品牌、产品、成分、备案号、别名和自由业务标签。"""
     __tablename__ = "kb_terms"
     __table_args__ = (
         UniqueConstraint("owner_id", "normalized", "term_type", name="uq_kb_terms_owner_norm_type"),
@@ -544,7 +544,7 @@ class KbTerm(Base, TimestampMixin):
 
 
 class KbTermOccurrence(Base, TimestampMixin):
-    """V3 词项出现位置，用于可解释召回和后续治理。"""
+    """词项出现位置，用于可解释召回和后续治理。"""
     __tablename__ = "kb_term_occurrences"
     __table_args__ = (
         UniqueConstraint("owner_id", "source_hash", name="uq_kb_term_occurrences_owner_source"),
@@ -567,7 +567,7 @@ class KbTermOccurrence(Base, TimestampMixin):
 
 
 class KbTermEdge(Base, TimestampMixin):
-    """V3 词项边：别名、共现、上下位、近义和业务关联。"""
+    """词项边：别名、共现、上下位、近义和业务关联。"""
     __tablename__ = "kb_term_edges"
     __table_args__ = (
         UniqueConstraint("owner_id", "source_term_id", "target_term_id", "edge_type", name="uq_kb_term_edges_owner_pair_type"),
@@ -586,7 +586,7 @@ class KbTermEdge(Base, TimestampMixin):
 
 
 class KbFactCandidate(Base, TimestampMixin):
-    """V3 候选事实：先沉淀混沌结果，后治理，不硬编码业务枚举。"""
+    """候选事实：先沉淀混沌结果，后治理，不硬编码业务枚举。"""
     __tablename__ = "kb_fact_candidates"
     __table_args__ = (
         UniqueConstraint("owner_id", "source_hash", name="uq_kb_fact_candidates_owner_source"),
@@ -610,7 +610,7 @@ class KbFactCandidate(Base, TimestampMixin):
 
 
 class KbCausalCandidate(Base, TimestampMixin):
-    """V3 因果候选：必须保留上下文和证据，不能直接当作已确认事实。"""
+    """因果候选：必须保留上下文和证据，不能直接当作已确认事实。"""
     __tablename__ = "kb_causal_candidates"
     __table_args__ = (
         UniqueConstraint("owner_id", "source_hash", name="uq_kb_causal_candidates_owner_source"),
@@ -633,7 +633,7 @@ class KbCausalCandidate(Base, TimestampMixin):
 
 
 class KbQueryContext(Base, TimestampMixin):
-    """V3 查询上下文：记录一次查询如何被词项图、证据和因果候选增强。"""
+    """查询上下文：记录一次查询如何被词项图、证据和因果候选增强。"""
     __tablename__ = "kb_query_contexts"
     __table_args__ = KB_TABLE_ARGS_EXTEND
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

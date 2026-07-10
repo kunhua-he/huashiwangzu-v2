@@ -1,4 +1,4 @@
-"""V3 cognitive substrate helpers for knowledge provenance and recall.
+"""Cognitive substrate helpers for knowledge provenance and recall.
 
 This layer is intentionally additive: PostgreSQL remains the source of truth,
 existing kb_documents/kb_chunks/kb_raw_data rows are not duplicated, and all
@@ -154,7 +154,7 @@ async def upsert_content_object(
     content.status = "active"
     content.diagnostics_json = {
         "schema_version": "kb_content_object_v1",
-        "source": "knowledge_v3",
+        "source": "knowledge_index",
         "has_md5": bool(md5_hash),
     }
     await db.flush()
@@ -202,7 +202,7 @@ async def upsert_file_knowledge_link(
     link.status = "active"
     link.diagnostics_json = {
         "schema_version": "kb_file_knowledge_link_v1",
-        "source": "register_document" if ingest_batch_id is None else "v3_backfill",
+        "source": "register_document" if ingest_batch_id is None else "cognitive_index_backfill",
     }
     await db.flush()
     return link
@@ -235,7 +235,7 @@ async def _canonical_doc_for_file(db: AsyncSession, owner_id: int, file: File) -
     )
 
 
-async def backfill_cognitive_v3(
+async def backfill_cognitive_index(
     db: AsyncSession,
     *,
     owner_id: int,
@@ -244,7 +244,7 @@ async def backfill_cognitive_v3(
     source_root: str = "",
     build_terms: bool = True,
 ) -> dict:
-    """Backfill V3 provenance and optional derived indexes from existing rows."""
+    """Backfill provenance and optional derived indexes from existing rows."""
     limit = max(1, min(int(limit or 1000), 10000))
     files_result = await db.execute(
         select(File)
@@ -279,9 +279,9 @@ async def backfill_cognitive_v3(
 
     batch = KbIngestBatch(
         owner_id=owner_id,
-        name="knowledge_v3_backfill",
+        name="knowledge_index_backfill",
         source_root=source_root or None,
-        source_kind="v3_backfill",
+        source_kind="cognitive_index_backfill",
         total_files=len(files),
         distinct_content_count=len(distinct_md5),
         duplicate_file_count=duplicate_count,
@@ -332,7 +332,7 @@ async def backfill_cognitive_v3(
     report = KbValidationReport(
         owner_id=owner_id,
         batch_id=int(batch.id),
-        scope="knowledge_v3_backfill",
+        scope="knowledge_index_backfill",
         report_type="batch_validation",
         status="done" if counts["missing_canonical"] == 0 else "degraded",
         metrics_json=counts,
@@ -424,7 +424,7 @@ async def derive_document_cognitive_index(
     document_id: int,
     limit: int = 200,
 ) -> dict:
-    """Build lightweight V3 term/fact/causal candidates from existing artifacts."""
+    """Build lightweight term/fact/causal candidates from existing artifacts."""
     doc = await db.scalar(
         select(KbDocument).where(
             KbDocument.id == document_id,

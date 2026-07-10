@@ -320,8 +320,8 @@ def test_ingest_status_shape() -> None:
     print("  [INGEST-STATUS] Shape valid")
 
 
-def test_cognitive_v3_registration_link_shape() -> None:
-    """V3 registration payload must expose canonical/duplicate reuse links."""
+def test_cognitive_index_registration_link_shape() -> None:
+    """Registration payload must expose canonical/duplicate reuse links."""
     payload = {
         "document_id": 1,
         "status": "existing",
@@ -346,11 +346,11 @@ def test_cognitive_v3_registration_link_shape() -> None:
     assert link["link_role"] in {"canonical", "duplicate"}
     assert link["canonical_document_id"] == payload["document_id"]
     assert link["reuse_reason"]
-    print("  [COGNITIVE-V3] Registration link shape valid")
+    print("  [COGNITIVE-INDEX] Registration link shape valid")
 
 
-def test_cognitive_v3_query_context_shape() -> None:
-    """Search context should include persisted V3 query enrichment metadata."""
+def test_cognitive_index_query_context_shape() -> None:
+    """Search context should include persisted query enrichment metadata."""
     context_data = {
         "query_context": {
             "query_context_id": 99,
@@ -369,11 +369,11 @@ def test_cognitive_v3_query_context_shape() -> None:
     assert query_context["diagnostics"]["schema_version"] == "kb_query_context_v1"
     assert query_context["result_document_ids"] == [1]
     assert query_context["evidence_refs"][0]["chunk_id"] == 10
-    print("  [COGNITIVE-V3] Query context shape valid")
+    print("  [COGNITIVE-INDEX] Query context shape valid")
 
 
-def test_cognitive_v3_capability_params() -> None:
-    """V3 admin capabilities must stay dry-run friendly and document scoped."""
+def test_cognitive_index_capability_params() -> None:
+    """Cognitive admin capabilities must stay dry-run friendly and document scoped."""
     backfill = {"dry_run": True, "limit": 1000, "source_root": "企业微盘导入", "build_terms": True}
     derive = {"document_id": 1, "limit": 200}
 
@@ -381,7 +381,7 @@ def test_cognitive_v3_capability_params() -> None:
     assert 1 <= backfill["limit"] <= 10000
     assert derive["document_id"] > 0
     assert 1 <= derive["limit"] <= 1000
-    print("  [COGNITIVE-V3] Capability params valid")
+    print("  [COGNITIVE-INDEX] Capability params valid")
 
 
 def test_export_format_contract() -> None:
@@ -452,9 +452,9 @@ def main() -> None:
     test_response_shape()
     test_ingest_capability_params()
     test_ingest_status_shape()
-    test_cognitive_v3_registration_link_shape()
-    test_cognitive_v3_query_context_shape()
-    test_cognitive_v3_capability_params()
+    test_cognitive_index_registration_link_shape()
+    test_cognitive_index_query_context_shape()
+    test_cognitive_index_capability_params()
     test_export_format_contract()
     test_export_uses_single_canonical_source()
     test_export_metadata_shape()

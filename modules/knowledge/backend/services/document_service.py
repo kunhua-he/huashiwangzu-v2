@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..ir_models import to_legacy_dict
-from .cognitive_v3_service import link_payload, upsert_file_knowledge_link
+from .cognitive_index_service import link_payload, upsert_file_knowledge_link
 from .embedding_service import chunk_and_embed, store_chunks
 from .entity_service import process_document_entities
 from .model_routing import resolve_knowledge_pipeline_priority
@@ -48,6 +48,7 @@ PARSER_NO_CONTENT_MARKER = "Parser returned no content blocks"
 IMAGE_VECTOR_SKIPPED_MARKER = "Image base vectorization skipped; use OCR/VLM raw outputs"
 IMAGE_PARSE_TEXT_MAX_CHARS = 2000
 PARSE_LOCK_STALE_AFTER_SECONDS = 30 * 60
+KNOWLEDGE_PIPELINE_MAX_RETRIES = 5
 
 
 def _clean_text_for_postgres(value: object) -> str:
@@ -329,6 +330,7 @@ async def enqueue_pipeline_task(
         priority=resolve_knowledge_pipeline_priority("source_validate", priority),
         status="pending",
         creator_id=user_id,
+        max_retries=KNOWLEDGE_PIPELINE_MAX_RETRIES,
         document_id=int(doc.id),
         stage_key="source_validate",
         lane_key="local_preprocess",
@@ -376,7 +378,7 @@ async def enqueue_incomplete_documents(
         if str(ext or "").strip()
     }
     bounded_limit = max(1, min(int(limit or 20), 500))
-    scan_limit = max(bounded_limit, min(max(bounded_limit * 20, 1000), 10000))
+    scan_limit = max(bounded_limit, min(max(bounded_limit * 50, 1000), 100000))
     expected_page_count = func.greatest(func.coalesce(KbDocument.total_pages, 1), 1)
     active_page_asset_count = (
         select(func.count(KbImageAsset.id))
@@ -427,6 +429,26 @@ async def enqueue_incomplete_documents(
     inflight_document_ids = {
         int(document_id)
         for document_id in inflight_result.scalars().all()
+        if document_id is not None
+    }
+    terminal_failed_result = await db.execute(
+        select(SystemTaskQueue.document_id).where(
+            SystemTaskQueue.module == "knowledge",
+            SystemTaskQueue.task_type == "kb_pipeline_stage",
+            SystemTaskQueue.status == "failed",
+            SystemTaskQueue.document_id.is_not(None),
+            or_(
+                SystemTaskQueue.retry_count >= KNOWLEDGE_PIPELINE_MAX_RETRIES,
+                and_(
+                    SystemTaskQueue.max_retries >= KNOWLEDGE_PIPELINE_MAX_RETRIES,
+                    SystemTaskQueue.retry_count >= SystemTaskQueue.max_retries,
+                ),
+            ),
+        )
+    )
+    terminal_failed_document_ids = {
+        int(document_id)
+        for document_id in terminal_failed_result.scalars().all()
         if document_id is not None
     }
 
@@ -490,6 +512,9 @@ async def enqueue_incomplete_documents(
         if int(doc.id) in inflight_document_ids:
             already_in_flight += 1
             skipped.append({**item, "reason": "already_in_flight"})
+            continue
+        if int(doc.id) in terminal_failed_document_ids:
+            skipped.append({**item, "reason": "failed_max_retries"})
             continue
         candidates.append(item)
         if not dry_run:

@@ -18,7 +18,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbChunk, KbDocument, KbDocumentProfile, KbQueryContext, KbRetrievalLearningEvent
-from .cognitive_v3_service import normalize_term
+from .cognitive_index_service import normalize_term
 
 logger = logging.getLogger("v2.knowledge").getChild("retrieval_learning")
 

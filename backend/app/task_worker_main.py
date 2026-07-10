@@ -17,7 +17,13 @@ from app.models.system import ensure_framework_scheduling_columns
 from app.routers.registry import register_routers
 from app.services.module_logger import setup_module_logging, setup_v2_loggers_for_modules
 from app.services.private_module_service import set_app_instance
-from app.services.task_worker import start_worker, stop_worker, worker_health
+from app.services.task_worker import (
+    process_retire_requested,
+    start_worker,
+    stop_worker,
+    wait_for_process_retire_request,
+    worker_health,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,9 +85,19 @@ async def _run_forever() -> None:
             pass
 
     await _startup()
+    stop_task = asyncio.create_task(stop_event.wait())
+    retire_task = asyncio.create_task(wait_for_process_retire_request())
     try:
-        await stop_event.wait()
+        await asyncio.wait(
+            {stop_task, retire_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
     finally:
+        stop_task.cancel()
+        retire_task.cancel()
+        await asyncio.gather(stop_task, retire_task, return_exceptions=True)
+        if process_retire_requested():
+            logger.warning("Standalone task worker retiring after memory/cancellation guard")
         logger.info("Standalone task worker stopping")
         await stop_worker()
         await dispose_db()

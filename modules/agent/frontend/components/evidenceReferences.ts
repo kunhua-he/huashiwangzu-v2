@@ -142,6 +142,7 @@ export function collectEvidenceReferences(
   if (directRef) refs.push(directRef)
   for (const [key, child] of Object.entries(value)) {
     if (KNOWN_REF_KEYS.has(key)) {
+      if ((key === 'page' || key === 'section') && !hasReferenceAnchor(value)) continue
       const refId = scalarToString(child)
       if (refId) {
         refs.push(withContext({
@@ -170,6 +171,16 @@ export function collectEvidenceReferences(
     refs.push(...collectEvidenceReferences(child, context, depth + 1))
   }
   return dedupeReferences(refs)
+}
+
+function hasReferenceAnchor(record: Record<string, unknown>): boolean {
+  if (stringField(record, 'ref_key') || stringField(record, 'refKey')) return true
+  if (stringField(record, 'open_url') || stringField(record, 'openUrl')) return true
+  if (stringField(record, 'download_url') || stringField(record, 'downloadUrl')) return true
+  return ['file_id', 'source_file_id', 'package_id', 'artifact_id', 'document_id', 'chunk_id'].some(key => {
+    const value = record[key]
+    return scalarToString(value) !== null
+  })
 }
 
 export function evidenceReferencesFromIds(

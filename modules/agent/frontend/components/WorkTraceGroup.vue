@@ -31,15 +31,12 @@
           :message="item"
         />
         <div v-else-if="item.eventType === 'assistant_draft'" class="work-draft-row">
-          <button class="work-draft-toggle" @click="toggleDraft(index)">
-            <span class="work-draft-icon">💬</span>
-            <span class="work-draft-title">{{ item.title || '回复用户' }}</span>
-            <span v-if="item.reason" class="work-draft-reason">{{ item.reason }}</span>
-            <svg class="work-draft-chevron" :class="{ rotated: draftOpen[index] }" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" width="10" height="10">
-              <path d="M4 3l4 3-4 3" />
-            </svg>
-          </button>
-          <div v-show="draftOpen[index]" class="work-draft-body">
+          <div class="work-draft-label">
+            <span class="work-draft-label-icon" aria-hidden="true"></span>
+            <span>{{ item.title || '回复用户' }}</span>
+            <span v-if="item.reason" class="work-draft-reason">{{ draftReasonText(item.reason) }}</span>
+          </div>
+          <div class="work-draft-bubble">
             <div class="work-draft-content">{{ item.content }}</div>
           </div>
         </div>
@@ -91,11 +88,6 @@ const props = defineProps<{
 }>()
 
 const isOpen = ref(!props.message.collapsed)
-const draftOpen = ref<Record<number, boolean>>({})
-
-function toggleDraft(index: number) {
-  draftOpen.value[index] = !draftOpen.value[index]
-}
 
 watch(
   () => props.message.collapsed,
@@ -114,6 +106,13 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(sec / 60)
   const rest = Math.round(sec % 60)
   return `${minutes}分${rest}秒`
+}
+
+function draftReasonText(reason: string): string {
+  if (reason === 'tool_call_detected') return '工具调用前回复'
+  if (reason === 'rollback') return '回退前草稿'
+  if (reason === 'replace') return '被后续回复替换'
+  return reason
 }
 </script>
 
@@ -188,46 +187,44 @@ function formatDuration(ms: number): string {
 .work-overhead-time { margin-left: auto; font-size: 11px; }
 
 .work-draft-row {
-  padding: 2px 0;
+  display: grid;
+  gap: var(--ag-space-xs);
+  padding: var(--ag-space-xs) 0 var(--ag-space-sm);
 }
-.work-draft-toggle {
-  display: flex;
+.work-draft-label {
+  display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: var(--ag-font-size-sm);
+  width: fit-content;
   color: var(--ag-text-tertiary);
-  padding: 2px 0;
-  transition: color var(--ag-transition-fast);
-  width: 100%;
-  text-align: left;
+  font-size: var(--ag-font-size-xs);
 }
-.work-draft-toggle:hover { color: var(--ag-text-secondary); }
-.work-draft-icon { flex-shrink: 0; font-size: 12px; }
-.work-draft-title { font-weight: 500; }
+.work-draft-label-icon {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--ag-radius-full);
+  background: var(--ag-primary);
+  opacity: 0.75;
+}
 .work-draft-reason {
   font-size: 11px;
   color: var(--ag-text-disabled);
-  margin-left: auto;
 }
-.work-draft-chevron {
-  flex-shrink: 0;
-  transition: transform var(--ag-transition-base);
-}
-.work-draft-chevron.rotated { transform: rotate(90deg); }
-.work-draft-body {
-  padding: 4px 0 4px 18px;
+.work-draft-bubble {
+  max-width: min(560px, 100%);
+  width: fit-content;
+  padding: var(--ag-space-md) var(--ag-space-lg);
+  border: 1px solid var(--ag-border-light);
+  border-radius: var(--ag-radius-sm) var(--ag-radius-xl) var(--ag-radius-xl) var(--ag-radius-xl);
+  background: var(--ag-bg-assistant-msg);
+  box-shadow: var(--ag-shadow-sm);
 }
 .work-draft-content {
-  font-size: var(--ag-font-size-sm);
-  color: var(--ag-text-secondary);
-  line-height: 1.5;
+  font-size: var(--ag-font-size-md);
+  color: var(--ag-text-primary);
+  line-height: var(--ag-line-height-relaxed);
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--ag-bg-secondary);
-  border-radius: var(--ag-radius-sm);
-  padding: 6px 8px;
+  overflow-wrap: anywhere;
 }
 </style>

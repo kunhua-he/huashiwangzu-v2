@@ -170,6 +170,15 @@ If this module consumes `file_id`, it must validate file access through framewor
 | `sandbox/test_module.py` | present |
 | `sandbox/package.json` | present |
 
+## Frontend Trace Display Contract
+
+- `work_group` is a user-facing work timeline, not a raw debug log.
+- `assistant_draft` renders as an assistant-style bubble inside the work timeline; it must not be hidden behind a collapsed tool card.
+- `tool_progress` shows one semantic row per meaningful tool step. Low-level nodes such as `tool_execution` and `policy_check` stay available only in a collapsible detail view.
+- `tool_result` keeps the raw JSON contract internally, but the visible card renders semantic summaries first: tool lists as compact tables, tool schemas as parameter tables, file-open results as lightweight status text, and generic objects as short key/value summaries.
+- Evidence references in the work timeline are summarized by default. Full open/download/copy/metadata controls belong behind an explicit details expander or in final answer/source surfaces, not as the primary process view.
+- `page` and `section` fields are evidence only when attached to a real reference anchor such as `file_id`, `document_id`, `chunk_id`, `artifact_id`, `open_url`, or an explicit `ref_key/ref_id` pair.
+
 ## Acceptance
 
 <!-- DOCS-SYNC: section=sandbox -->

@@ -9,26 +9,43 @@
       </svg>
     </button>
     <div v-show="isOpen" class="tool-progress-body">
-      <div v-if="tools.length" class="tool-progress-tools">
-        <div v-for="tool in tools" :key="tool.tool_call_id || tool.effective_tool_name || tool.name" class="tool-progress-tool">
-          <span class="tool-progress-tool-name" :title="displayToolName(tool)">{{ displayToolName(tool) }}</span>
+      <div v-if="steps.length" class="tool-progress-steps">
+        <div v-for="step in steps" :key="step.key" class="tool-progress-step">
+          <span class="tool-progress-step-dot" :class="step.status"></span>
+          <span class="tool-progress-step-name" :title="step.rawName">{{ step.name }}</span>
+          <span class="tool-progress-step-status">{{ step.statusLabel }}</span>
+          <span v-if="step.elapsedMs" class="tool-progress-step-time">{{ formatDuration(step.elapsedMs) }}</span>
         </div>
       </div>
-      <div v-if="nodes.length" class="tool-progress-nodes">
-        <div v-for="(node, index) in nodes" :key="`${node.toolCallId || node.toolName || index}-${node.node}-${node.status}`" class="tool-progress-node">
+      <div v-else class="tool-progress-empty">等待工具节点返回</div>
+      <button v-if="nodes.length" type="button" class="tool-progress-detail-toggle" @click="detailsOpen = !detailsOpen">
+        <span>{{ detailsOpen ? '收起底层事件' : `查看底层事件 ${nodes.length} 条` }}</span>
+        <svg class="tool-progress-chevron" :class="{ rotated: detailsOpen }" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" width="10" height="10">
+          <path d="M4 3l4 3-4 3" />
+        </svg>
+      </button>
+      <div v-show="detailsOpen" class="tool-progress-nodes">
+        <div v-for="(node, index) in nodes" :key="`${node.toolCallId || node.toolName || index}-${node.node}-${node.status}`" class="tool-progress-node" :class="{ muted: isLowLevelNode(node) }">
           <span class="tool-progress-node-dot" :class="node.status"></span>
-          <span class="tool-progress-node-name">{{ nodeTitle(node) }}</span>
+          <span class="tool-progress-node-name">{{ rawNodeTitle(node) }}</span>
           <span class="tool-progress-node-status">{{ statusText(node.status) }}</span>
           <span v-if="node.elapsedMs" class="tool-progress-node-time">{{ formatDuration(node.elapsedMs) }}</span>
         </div>
       </div>
-      <div v-if="!tools.length && !nodes.length" class="tool-progress-empty">等待工具节点返回</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import {
+  displayToolName,
+  effectiveToolName,
+  formatDuration,
+  isLowLevelNode,
+  semanticNodeName,
+  statusText,
+} from './toolDisplay'
 
 type ToolInfo = {
   name?: string
@@ -52,31 +69,63 @@ type ToolProgressMessage = {
   tools?: ToolInfo[]
 }
 
+type StepInfo = {
+  key: string
+  name: string
+  rawName: string
+  status: string
+  statusLabel: string
+  elapsedMs: number
+}
+
 const props = defineProps<{
   message: ToolProgressMessage
 }>()
 
 const isOpen = ref(true)
-
-const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  skill_list: '查看技能列表',
-  skill_describe: '查看技能说明',
-  skill_use: '调用技能',
-  knowledge__search: '检索知识库',
-  knowledge__get_block: '读取知识块',
-  web_tools__search: '联网搜索',
-}
+const detailsOpen = ref(false)
 
 const tools = computed<ToolInfo[]>(() => props.message.tools || [])
 const nodes = computed<ToolProgressMessage[]>(() => props.message.toolNodes || [])
+const meaningfulNodes = computed(() => nodes.value.filter(node => !isLowLevelNode(node)))
+
+const steps = computed<StepInfo[]>(() => {
+  const latestByKey = new Map<string, StepInfo>()
+  for (const node of meaningfulNodes.value) {
+    const rawName = semanticNodeName(node)
+    const status = node.status || 'started'
+    latestByKey.set(`${node.toolCallId || rawName}:${rawName}`, {
+      key: `${node.toolCallId || rawName}:${rawName}`,
+      name: displayToolName(rawName),
+      rawName,
+      status,
+      statusLabel: statusText(status),
+      elapsedMs: Number(node.elapsedMs) || 0,
+    })
+  }
+  if (latestByKey.size) return [...latestByKey.values()]
+  return tools.value.map((tool, index) => {
+    const rawName = effectiveToolName(tool)
+    const status = stateClass.value === 'running' ? 'started' : stateClass.value === 'failed' ? 'failed' : 'completed'
+    return {
+      key: tool.tool_call_id || `${rawName}:${index}`,
+      name: displayToolName(rawName),
+      rawName,
+      status,
+      statusLabel: statusText(status),
+      elapsedMs: 0,
+    }
+  })
+})
 
 const title = computed(() => {
-  const mode = props.message.executionMode === 'parallel' ? '并行工具组' : '串行工具组'
+  const mode = props.message.executionMode === 'parallel' ? '并行执行' : '工具执行'
   const count = props.message.toolCount || tools.value.length || 1
-  const indexText = props.message.groupIndex && props.message.groupCount
+  const state = stateClass.value === 'running' ? '进行中' : stateClass.value === 'failed' ? '有异常' : '已完成'
+  const indexText = props.message.groupIndex && props.message.groupCount && props.message.groupCount > 1
     ? ` ${props.message.groupIndex}/${props.message.groupCount}`
     : ''
-  return `${mode}${indexText} · ${count} 个工具`
+  return `${mode}${indexText} · ${state} · ${count} 个工具`
 })
 
 const stateClass = computed(() => {
@@ -91,39 +140,16 @@ const durationText = computed(() => {
 })
 
 watch(
-  () => props.message.executionMode,
-  mode => { isOpen.value = mode === 'parallel' || nodes.value.length > 0 },
+  () => [props.message.executionMode, nodes.value.length, stateClass.value, steps.value.length],
+  () => { isOpen.value = props.message.executionMode === 'parallel' || stateClass.value === 'failed' || steps.value.length > 0 },
   { immediate: true },
 )
 
-function displayToolName(tool: ToolInfo): string {
-  const name = tool.effective_tool_name || tool.name || 'unknown'
-  return TOOL_DISPLAY_NAMES[name] || name
-}
-
-function nodeTitle(node: ToolProgressMessage): string {
+function rawNodeTitle(node: ToolProgressMessage): string {
   const toolName = node.targetTool || node.toolName || ''
   const nodeName = node.node || 'tool_node'
   if (toolName && toolName !== node.toolName) return `${nodeName} · ${toolName}`
   return nodeName
-}
-
-function statusText(status?: string): string {
-  if (status === 'started') return '开始'
-  if (status === 'completed') return '完成'
-  if (status === 'timeout') return '超时'
-  if (status === 'failed') return '失败'
-  if (status === 'blocked') return '已拦截'
-  return status || '处理中'
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
-  const sec = ms / 1000
-  if (sec < 60) return `${Number(sec.toFixed(sec < 10 ? 1 : 0))}秒`
-  const minutes = Math.floor(sec / 60)
-  const rest = Math.round(sec % 60)
-  return `${minutes}分${rest}秒`
 }
 </script>
 
@@ -150,6 +176,7 @@ function formatDuration(ms: number): string {
 .tool-progress-toggle:hover { color: var(--ag-text-secondary); }
 
 .tool-progress-dot,
+.tool-progress-step-dot,
 .tool-progress-node-dot {
   width: 6px;
   height: 6px;
@@ -173,6 +200,7 @@ function formatDuration(ms: number): string {
   font-weight: 500;
 }
 .tool-progress-duration,
+.tool-progress-step-time,
 .tool-progress-node-time {
   font-size: 11px;
   color: var(--ag-text-disabled);
@@ -188,13 +216,13 @@ function formatDuration(ms: number): string {
   padding: var(--ag-space-xs) 0 var(--ag-space-xs) var(--ag-space-md);
   border-left: 1px solid var(--ag-border-light);
 }
-.tool-progress-tools,
+.tool-progress-steps,
 .tool-progress-nodes {
   display: grid;
   gap: 4px;
 }
-.tool-progress-tools + .tool-progress-nodes { margin-top: var(--ag-space-xs); }
-.tool-progress-tool,
+.tool-progress-detail-toggle + .tool-progress-nodes { margin-top: var(--ag-space-xs); }
+.tool-progress-step,
 .tool-progress-node {
   display: flex;
   align-items: center;
@@ -203,13 +231,29 @@ function formatDuration(ms: number): string {
   font-size: var(--ag-font-size-sm);
   color: var(--ag-text-secondary);
 }
-.tool-progress-tool-name {
-  font-family: var(--ag-font-mono);
+.tool-progress-step-name {
+  color: var(--ag-text-primary);
+  font-weight: 500;
   max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.tool-progress-step-status {
+  flex-shrink: 0;
+  color: var(--ag-text-tertiary);
+}
+.tool-progress-step-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--ag-text-disabled);
+  opacity: 0.85;
+}
+.tool-progress-step-dot.started { background: var(--ag-primary); }
+.tool-progress-step-dot.completed { background: var(--ag-success); }
+.tool-progress-step-dot.timeout,
+.tool-progress-step-dot.failed,
+.tool-progress-step-dot.blocked { background: var(--ag-error); }
 .tool-progress-node-dot {
   width: 5px;
   height: 5px;
@@ -219,7 +263,8 @@ function formatDuration(ms: number): string {
 .tool-progress-node-dot.started { background: var(--ag-primary); }
 .tool-progress-node-dot.completed { background: var(--ag-success); }
 .tool-progress-node-dot.timeout,
-.tool-progress-node-dot.failed { background: var(--ag-error); }
+.tool-progress-node-dot.failed,
+.tool-progress-node-dot.blocked { background: var(--ag-error); }
 .tool-progress-node-name {
   font-family: var(--ag-font-mono);
   color: var(--ag-text-primary);
@@ -232,7 +277,25 @@ function formatDuration(ms: number): string {
   color: var(--ag-text-tertiary);
   flex-shrink: 0;
 }
+.tool-progress-node.muted {
+  opacity: 0.66;
+}
 .tool-progress-node-time { margin-left: auto; }
+.tool-progress-step-time { margin-left: auto; }
+.tool-progress-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  margin-top: var(--ag-space-xs);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ag-text-tertiary);
+  cursor: pointer;
+  font-size: var(--ag-font-size-xs);
+}
+.tool-progress-detail-toggle:hover { color: var(--ag-text-secondary); }
 .tool-progress-empty {
   font-size: var(--ag-font-size-sm);
   color: var(--ag-text-disabled);

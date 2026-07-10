@@ -47,7 +47,14 @@ tail_log(module="knowledge", lines=80)
 
 - 改后端、路由、能力注册、工具台后，先用 `restart_backend()`。
 - 重启后用 `probe(method="GET", path="/api/health")` 或目标接口验证。
+- `probe` / `call_capability` 返回 `_toolkit_auth`，可直接确认调用使用的 `user_id` 和角色。
+- `finish_task` 的 `lint_paths` 支持空格、逗号、换行和 JSON list；`test_env_json` 可传 pytest 环境变量，默认补 `JWT_SECRET=test-secret`。
 - 前端改动优先跑对应 build/UI 检查；后端改动优先跑聚焦 pytest。
+
+## 知识库巡检
+
+- `knowledge_pipeline_snapshot` 查看队列、DB 压力、最近失败、模型日志和最近 stage 指标。
+- `recent_stage_metrics.key_metrics` 会汇总 `vector_candidates`、`db_commit_ms`、`llm_ms` 等关键字段。
 
 ## 文档守卫
 

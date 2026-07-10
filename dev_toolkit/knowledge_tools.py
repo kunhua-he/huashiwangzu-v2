@@ -27,6 +27,26 @@ TOOL_NAMES = {
     "knowledge_source_manifest_enqueue",
 }
 
+_STAGE_METRIC_WINDOW = 500
+_KEY_STAGE_METRICS = {
+    "relation_vector_candidates",
+    "vector_candidates",
+    "entity_candidates",
+    "merged_candidates",
+    "vector_candidate_limit",
+    "entity_candidate_limit",
+    "db_commit_ms",
+    "candidate_ms",
+    "score_ms",
+    "stage_wall_ms",
+    "llm_ms",
+    "embedding_ms",
+    "db_write_ms",
+    "fusion_model_wall_ms",
+    "graph_write_ms",
+    "task_wall_ms",
+}
+
 
 def tool_definitions() -> list[Any]:
     from mcp.types import Tool
@@ -368,6 +388,44 @@ async def main():
             order by updated_at desc
             limit :limit
         '''), {"limit": FAILED_LIMIT})).mappings().all()
+        stage_metric_rows = (await db.execute(text('''
+            select source,
+                   stage,
+                   status,
+                   model_profile,
+                   model_used,
+                   duration_ms,
+                   metrics_json,
+                   completed_at,
+                   updated_at
+            from (
+                select 'stage_run' as source,
+                       stage,
+                       status,
+                       null::text as model_profile,
+                       null::text as model_used,
+                       duration_ms,
+                       metrics_json,
+                       completed_at,
+                       updated_at,
+                       id
+                from kb_pipeline_stage_runs
+                union all
+                select 'artifact' as source,
+                       stage,
+                       status,
+                       model_profile,
+                       model_used,
+                       duration_ms,
+                       metrics_json,
+                       completed_at,
+                       updated_at,
+                       id
+                from kb_analysis_artifacts
+            ) recent_metrics
+            order by coalesce(completed_at, updated_at) desc nulls last, source, id desc
+            limit :limit
+        '''), {"limit": STAGE_METRIC_WINDOW})).mappings().all()
 
     by_stage = {row["stage_key"]: row for row in rows}
     totals = {"pending": 0, "ready": 0, "running": 0, "failed": 0, "completed": 0, "total": 0}
@@ -413,10 +471,18 @@ async def main():
             "long_transactions": [dict(row) for row in long_transactions],
         },
         "recent_failures": [{**dict(row), "updated_at": str(row["updated_at"])} for row in failures],
+        "recent_stage_metric_rows": [
+            {
+                **dict(row),
+                "completed_at": str(row["completed_at"]) if row["completed_at"] else None,
+                "updated_at": str(row["updated_at"]) if row["updated_at"] else None,
+            }
+            for row in stage_metric_rows
+        ],
     }, ensure_ascii=False, default=str))
 
 asyncio.run(main())
-""".replace("FAILED_LIMIT", str(failed_limit))
+""".replace("FAILED_LIMIT", str(failed_limit)).replace("STAGE_METRIC_WINDOW", str(_STAGE_METRIC_WINDOW))
     env = os.environ.copy()
     env["PYTHONPATH"] = "backend"
     proc = await asyncio.create_subprocess_exec(
@@ -435,10 +501,109 @@ asyncio.run(main())
             "error": stderr.decode("utf-8", errors="replace")[-4000:],
         }
     snapshot = json.loads(stdout.decode("utf-8"))
+    metric_rows = snapshot.pop("recent_stage_metric_rows", [])
+    snapshot["recent_stage_metrics"] = _summarize_stage_metrics(metric_rows)
     worker_config = _load_worker_config(repo_root)
     snapshot["worker_config"] = worker_config
     _annotate_queue_limits(snapshot, worker_config)
     return snapshot
+
+
+def _summarize_stage_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    duration_by_stage: dict[str, list[float]] = {}
+    duration_by_model: dict[str, list[float]] = {}
+    key_values: dict[str, list[float]] = {}
+    status_counts: dict[str, int] = {}
+    model_counts: dict[str, int] = {}
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stage = str(row.get("stage") or "unknown")
+        status = str(row.get("status") or "unknown")
+        model = str(row.get("model_used") or row.get("model_profile") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        model_counts[model] = model_counts.get(model, 0) + 1
+
+        duration = _number(row.get("duration_ms"))
+        if duration is not None:
+            duration_by_stage.setdefault(stage, []).append(duration)
+            duration_by_model.setdefault(model, []).append(duration)
+
+        metrics = row.get("metrics_json")
+        if isinstance(metrics, dict):
+            for key, value in _flatten_metrics(metrics).items():
+                if key not in _KEY_STAGE_METRICS:
+                    continue
+                number = _number(value)
+                if number is not None:
+                    key_values.setdefault(key, []).append(number)
+
+    return {
+        "window_size": len(rows),
+        "status_counts": status_counts,
+        "model_counts": model_counts,
+        "duration_ms_by_stage": {
+            key: _number_summary(values)
+            for key, values in sorted(duration_by_stage.items())
+        },
+        "duration_ms_by_model": {
+            key: _number_summary(values)
+            for key, values in sorted(duration_by_model.items())
+        },
+        "key_metrics": {
+            key: _number_summary(values)
+            for key, values in sorted(key_values.items())
+        },
+    }
+
+
+def _flatten_metrics(value: Any, prefix: str = "") -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    flattened: dict[str, Any] = {}
+    for key, item in value.items():
+        clean_key = str(key)
+        nested_key = f"{prefix}.{clean_key}" if prefix else clean_key
+        flattened[nested_key] = item
+        flattened[clean_key] = item
+        if isinstance(item, dict):
+            flattened.update(_flatten_metrics(item, nested_key))
+    return flattened
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _number_summary(values: list[float]) -> dict[str, Any]:
+    ordered = sorted(values)
+    return {
+        "count": len(ordered),
+        "median": _round_number(median(ordered)) if ordered else None,
+        "p90": _round_number(_percentile_number(ordered, 0.9)) if ordered else None,
+        "max": _round_number(max(ordered)) if ordered else None,
+    }
+
+
+def _percentile_number(values: list[float], pct: float) -> float | None:
+    if not values:
+        return None
+    index = min(len(values) - 1, max(0, round((len(values) - 1) * pct)))
+    return sorted(values)[index]
+
+
+def _round_number(value: float | None) -> int | float | None:
+    if value is None:
+        return None
+    if float(value).is_integer():
+        return int(value)
+    return round(value, 2)
 
 
 def _load_worker_config(repo_root: Path) -> dict[str, Any]:

@@ -190,11 +190,10 @@ async def handle_admin_overview(db: AsyncSession, user) -> ApiResponse:
 
     # 1. 记忆 + 经验概览（跨模块走框架能力注册表，不直读 memory 的表）
     try:
-        from app.services.module_registry import call_capability
-        overview = await call_capability(
+        from app.services.module_registry import call_capability_as_system
+        overview = await call_capability_as_system(
             "memory", "overview_stats", {},
-            caller="system:agent-engine",
-            caller_role="admin",
+            principal="system:agent-engine",
         )
         result["memory"] = overview.get("memory", {})
         result["experience"] = overview.get("experience", {})

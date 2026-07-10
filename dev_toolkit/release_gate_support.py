@@ -15,9 +15,11 @@ from typing import Any
 
 try:
     from dev_toolkit.config_loader import load_config
+    from dev_toolkit.semantic_failure import semantic_failure_reason
     from dev_toolkit.sql_guard import readonly_psql_env
 except ModuleNotFoundError:
     from config_loader import load_config
+    from semantic_failure import semantic_failure_reason
     from sql_guard import readonly_psql_env
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -27,66 +29,6 @@ CONFIG = load_config(REPO_ROOT)
 DB_DSN = CONFIG.get("db_dsn", "")
 SEMANTIC_COMPLETED_SCAN_LIMIT = 500
 
-
-def _non_empty_error(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except TypeError:
-        return str(value)
-
-def _legacy_code_failure(value: Any) -> bool:
-    if value in (None, "", 0, "0"):
-        return False
-    if isinstance(value, bool):
-        return value is not False
-    if isinstance(value, int | float):
-        return value != 0
-    if isinstance(value, str):
-        try:
-            return float(value.strip()) != 0
-        except ValueError:
-            return False
-    return False
-
-def semantic_failure_reason(payload: Any, *, _depth: int = 0) -> str | None:
-    if _depth > 8:
-        return None
-    if isinstance(payload, str):
-        text = payload.strip()
-        if not text or text[0] not in "{[":
-            return None
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("success") is False:
-        return _non_empty_error(payload.get("error")) or "success=false"
-    error = _non_empty_error(payload.get("error"))
-    if error:
-        return error
-    status = payload.get("status")
-    if isinstance(status, str) and status.lower() in {"failed", "error"}:
-        return f"status={status}"
-    if "code" in payload and _legacy_code_failure(payload.get("code")):
-        return (
-            _non_empty_error(payload.get("message"))
-            or _non_empty_error(payload.get("msg"))
-            or f"code={payload.get('code')}"
-        )
-    for key in ("data", "result"):
-        inner = payload.get(key)
-        if isinstance(inner, (dict, str)):
-            reason = semantic_failure_reason(inner, _depth=_depth + 1)
-            if reason:
-                return reason
-    return None
 
 def ensure_envelope_success(payload: Any, label: str) -> None:
     reason = semantic_failure_reason(payload)
@@ -575,10 +517,13 @@ def classify_component_key_contracts(
     return level, detail, data
 
 def classify_sandbox_matrix(entries: list[dict[str, Any]], elapsed: float) -> tuple[str, str]:
+    if not isinstance(entries, list):
+        return "BLOCKER", f"invalid sandbox matrix payload: expected list ({elapsed:.0f}s)"
     total = len(entries)
     passed = sum(1 for e in entries if e.get("check") == "pass")
     failed = sum(1 for e in entries if e.get("check") == "fail")
     skipped = sum(1 for e in entries if e.get("check") == "skip")
+    unknown_entries = [e for e in entries if e.get("check") not in {"pass", "fail", "skip"}]
     chunk_warning_modules = [
         str(e.get("module"))
         for e in entries
@@ -586,18 +531,21 @@ def classify_sandbox_matrix(entries: list[dict[str, Any]], elapsed: float) -> tu
         or any(result.get("chunk_warnings") for result in e.get("command_results", []) if isinstance(result, dict))
     ]
 
+    if unknown_entries:
+        names = [str(e.get("module") or "<unknown>") for e in unknown_entries[:5]]
+        return "BLOCKER", f"{total} modules, unknown sandbox check values in {', '.join(names)} ({elapsed:.0f}s)"
     if failed > 0:
         fail_names = [e["module"] for e in entries if e.get("check") == "fail"]
         return (
             "BLOCKER",
             f"{total} modules, {passed} pass, {failed} fail ({', '.join(fail_names)}), {skipped} skip ({elapsed:.0f}s)",
         )
+    if skipped > 0:
+        return "DEBT", f"{total} modules, {passed} pass, {skipped} skip ({elapsed:.0f}s) — skipped is tracked debt"
     if chunk_warning_modules:
         return (
             "INFO",
             f"{total} modules, {passed} pass, {skipped} skip, non-blocking chunk warnings in "
             f"{len(chunk_warning_modules)} ({', '.join(chunk_warning_modules[:5])}) ({elapsed:.0f}s)",
         )
-    if skipped > 0:
-        return "DEBT", f"{total} modules, {passed} pass, {skipped} skip ({elapsed:.0f}s) — skipped is tracked debt"
     return "PASS", f"{total} modules, {passed} pass, 0 skip ({elapsed:.0f}s)"

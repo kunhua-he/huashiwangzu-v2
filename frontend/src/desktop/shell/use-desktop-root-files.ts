@@ -2,13 +2,9 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { fetchFileList } from '@/shared/api/desktop'
 import type { FileEntry } from '@/shared/api/types'
 import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
-import { openFileByRecord } from '@/desktop/app-registry/app-opener'
-import { windowManager } from '@/desktop/window-manager/window-manager'
+import { openAppById, openFileByRecord } from '@/desktop/app-registry/app-opener'
 import { formatFileDisplayName } from '@/shared/files/display-name'
 import { createLoadState, failLoading, finishLoading, startLoading } from '@/shared/composables/use-load-state'
-import { ElMessage } from 'element-plus'
-import { getApp } from '@/desktop/app-registry/app-registry'
-import { getOpenWindowFailureMessage } from '@/desktop/app-registry/app-visibility'
 
 function displayName(file: FileEntry) {
   return file.is_folder ? String(file.file_name || '') : formatFileDisplayName(file.file_name, file.format)
@@ -39,11 +35,10 @@ export function useDesktopRootFiles() {
 
   function openDesktopEntry(file: FileEntry) {
     if (file.is_folder || !file.format) {
-      const windowId = windowManager.openWindow('desktop', {
+      openAppById('desktop', {
         folderId: file.id,
         folderName: displayName(file),
       })
-      if (!windowId) ElMessage.info(getOpenWindowFailureMessage(getApp('desktop')))
       return
     }
     openFileByRecord({ fileId: file.id, fileName: displayName(file), format: file.format })

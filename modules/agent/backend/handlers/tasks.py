@@ -16,7 +16,7 @@ import json
 import logging
 import time
 
-from app.services.module_registry import call_capability
+from app.services.module_registry import call_capability, call_capability_as_system
 
 from ..services import tool_discovery
 
@@ -112,15 +112,15 @@ async def _handle_knowledge_retrieval_reflect(params: dict) -> dict:
     errors = 0
     for query_context_id in unique_context_ids:
         try:
-            result = await call_capability(
+            result = await call_capability_as_system(
                 "knowledge",
                 "reflect_retrieval_feedback",
                 {
                     "query_context_id": query_context_id,
                     "conversation_excerpt": conversation_excerpt,
                 },
-                caller=f"user:{int(owner_id)}",
-                caller_role="admin",
+                principal="system:agent-engine",
+                on_behalf_of_user_id=int(owner_id),
             )
             inserted += int(result.get("inserted") or 0)
             updated += int(result.get("updated") or 0)
@@ -234,12 +234,18 @@ async def _handle_slow_tool(params: dict) -> dict:
                 inner_args = {}
             tool_result = await call_capability(
                 *tool_discovery.parse_tool_name(inner_name),
-                inner_args, caller=caller, caller_role=caller_role,
+                inner_args,
+                caller=caller,
+                caller_role=caller_role,
+                trusted_user_role=caller.startswith("user:"),
             )
         else:
             tool_result = await call_capability(
                 *tool_discovery.parse_tool_name(tool_name),
-                skill_args, caller=caller, caller_role=caller_role,
+                skill_args,
+                caller=caller,
+                caller_role=caller_role,
+                trusted_user_role=caller.startswith("user:"),
             )
     except Exception as exc:
         tool_result = {"error": str(exc)}
@@ -308,15 +314,14 @@ async def _handle_slow_tool(params: dict) -> dict:
                     if is_failed
                     else f"✅ 你的后台任务 [{tool_name}] 已完成，请到 AI 助手对话中查看结果。"
                 )
-                notify_result = await call_capability(
+                notify_result = await call_capability_as_system(
                     "im", "notify",
                     {
                         "user_id": owner_id,
                         "content": notify_content,
                         "title": notify_title,
                     },
-                    caller="system:task-worker",
-                    caller_role="viewer",
+                    principal="system:task-worker",
                 )
                 logger.info("Slow tool notify result: %s", notify_result)
             except Exception as notify_exc:

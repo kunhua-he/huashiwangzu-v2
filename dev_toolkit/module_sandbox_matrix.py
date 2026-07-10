@@ -423,22 +423,58 @@ def format_markdown(results: list[dict], run_all: bool, passed: bool) -> str:
     return "\n".join(lines)
 
 
+def summarize_sandbox_matrix(results: list[dict], run_check: bool) -> dict:
+    total = len(results)
+    passed_count = sum(1 for entry in results if entry.get("check") == "pass")
+    failed_count = sum(1 for entry in results if entry.get("check") == "fail")
+    skipped_count = sum(1 for entry in results if entry.get("check") == "skip")
+    unknown_count = sum(1 for entry in results if entry.get("check") not in {"pass", "fail", "skip"})
+    chunk_warning_count = sum(
+        1
+        for entry in results
+        if entry.get("chunk_warnings")
+        or any(result.get("chunk_warnings") for result in entry.get("command_results", []) if isinstance(result, dict))
+    )
+    passed = failed_count == 0 and unknown_count == 0 if run_check else None
+    clean_success = bool(run_check and passed and skipped_count == 0)
+    return {
+        "total": total,
+        "passed": passed_count,
+        "failed": failed_count,
+        "skipped": skipped_count,
+        "unknown": unknown_count,
+        "chunk_warning_count": chunk_warning_count,
+        "has_debt": bool(not run_check or skipped_count > 0),
+        "passed_semantically": passed,
+        "clean_success": clean_success,
+    }
+
+
+def build_json_envelope(results: list[dict], run_check: bool, passed: bool | None) -> dict:
+    summary = summarize_sandbox_matrix(results, run_check)
+    return {
+        "check": run_check,
+        "passed": passed,
+        "clean_success": summary["clean_success"],
+        "has_debt": summary["has_debt"],
+        "summary": summary,
+        "entries": results,
+    }
+
+
 def run_sandbox_matrix(
     module_keys: list[str] | None = None,
     run_check: bool = False,
     quiet: bool = False,
     jobs: int = 1,
     frontend_jobs: int = 1,
-) -> tuple[list[dict], bool]:
+) -> tuple[list[dict], bool | None]:
     results = scan_sandbox_matrix(module_keys)
 
     if run_check:
         check_sandbox_matrix(results, quiet=quiet, jobs=jobs, frontend_jobs=frontend_jobs)
 
-    passed = all(
-        entry.get("check") == "pass" or entry.get("check") == "skip"
-        for entry in results
-    ) if run_check else True
+    passed = all(entry.get("check") in {"pass", "skip"} for entry in results) if run_check else None
     return results, passed
 
 
@@ -490,9 +526,9 @@ def main():
         parser.error(str(e))
 
     if args.json:
-        output = json.dumps(results, ensure_ascii=False, indent=2)
+        output = json.dumps(build_json_envelope(results, run_check, passed), ensure_ascii=False, indent=2)
     else:
-        output = format_markdown(results, run_check, passed)
+        output = format_markdown(results, run_check, bool(passed))
 
     print(output)
     sys.exit(0 if passed or not run_check else 1)

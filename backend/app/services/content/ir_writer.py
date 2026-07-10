@@ -23,7 +23,7 @@ from app.services.content.ir_normalizer import normalize_ir
 from app.services.content.ir_validator import validate_ir
 from app.services.content.resource_service import ResourceService
 from app.services.file_service import check_file_access
-from app.services.module_registry import call_capability
+from app.services.module_registry import call_capability_as_system
 
 logger = logging.getLogger("v2.content").getChild("ir_writer")
 
@@ -376,11 +376,11 @@ async def _write_to_excel_engine(
     sheet_name = ir.get("title", "Sheet1")
 
     # Create workbook in excel-engine
-    result = await call_capability(
+    result = await call_capability_as_system(
         "excel-engine", "create_workbook",
         {"name": sheet_name},
-        caller,
-        caller_role="editor",
+        principal="system:content-service",
+        on_behalf_of_user_id=owner_id,
     )
     state_key = result.get("state_key", "")
 
@@ -417,7 +417,7 @@ async def _write_to_excel_engine(
                         all_rows.extend(rows)
 
                     if all_rows:
-                        await call_capability(
+                        await call_capability_as_system(
                             "excel-engine", "update_range",
                             {
                                 "state_key": state_key,
@@ -426,8 +426,8 @@ async def _write_to_excel_engine(
                                 "start_col": start_col,
                                 "rows": all_rows,
                             },
-                            caller,
-                            caller_role="editor",
+                            principal="system:content-service",
+                            on_behalf_of_user_id=owner_id,
                         )
 
     return {
@@ -452,7 +452,7 @@ async def _write_to_resource(
     created_ids = []
     for res in resources:
         data_b64 = res.get("data_b64", "")
-        result = await call_capability(
+        result = await call_capability_as_system(
             "content", "store_resource",
             {
                 "data_b64": data_b64,
@@ -464,8 +464,8 @@ async def _write_to_resource(
                 "vlm_metadata": res.get("vlm_metadata"),
                 "file_id": source_file_id,
             },
-            f"user:{owner_id}",
-            caller_role="editor",
+            principal="system:content-service",
+            on_behalf_of_user_id=owner_id,
         )
         inner = result.get("data", result) if isinstance(result, dict) else {}
         if isinstance(inner, dict) and inner.get("id"):
@@ -496,11 +496,11 @@ async def _write_to_memory(
         from app.core.exceptions import ValidationError as AppVE
         raise AppVE("Memory IR must have text content")
 
-    result = await call_capability(
+    result = await call_capability_as_system(
         "memory", "save",
         {"text": full_text, "tags": str(ir.get("title", "")), "source": "content:write_ir"},
-        caller,
-        caller_role="editor",
+        principal="system:content-service",
+        on_behalf_of_user_id=owner_id,
     )
 
     return {

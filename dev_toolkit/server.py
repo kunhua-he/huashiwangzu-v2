@@ -979,12 +979,19 @@ async def _module_sandbox_matrix(check: bool = False) -> str:
         data = json.loads(output)
     except json.JSONDecodeError:
         data = {"raw_output": output}
+    entries = data.get("entries") if isinstance(data, dict) else data
+    command_completed = proc.returncode in {0, 1} and isinstance(entries, list)
+    clean_success = bool(isinstance(data, dict) and data.get("clean_success"))
     return json.dumps(
         {
-            "success": proc.returncode == 0 or proc.returncode == 1,
+            "success": clean_success,
+            "clean_success": clean_success,
+            "command_completed": command_completed,
+            "command_success": proc.returncode == 0,
             "returncode": proc.returncode,
             "check": check,
             "duration_seconds": round(time.time() - started, 3),
+            "has_debt": bool(isinstance(data, dict) and data.get("has_debt")),
             "data": data,
         },
         ensure_ascii=False,

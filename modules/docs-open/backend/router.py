@@ -205,7 +205,7 @@ async def create_document(
 
     if ext in ("docx", "xlsx", "pptx", "pdf"):
         try:
-            from app.services.module_registry import call_capability
+            from app.services.module_registry import call_capability_for_user
             gen_params = {
                 "filename": title,
                 "content": [{"type": "paragraph", "text": ""}],
@@ -220,11 +220,10 @@ async def create_document(
                     "filename": title,
                     "slides": [{"title": title, "bullets": [""]}],
                 }
-            result = await call_capability(
+            result = await call_capability_for_user(
                 "office-gen", ext,
                 gen_params,
-                caller=f"user:{user.id}",
-                caller_role=user.role,
+                user=user,
             )
             file_id = result.get("file_id") or result.get("id")
         except Exception as e:
@@ -318,12 +317,11 @@ async def export_document(
 
     if ext in ("docx", "xlsx", "pptx", "pdf") or target in ("pdf", "docx", "xlsx", "pptx"):
         try:
-            from app.services.module_registry import call_capability
-            result = await call_capability(
+            from app.services.module_registry import call_capability_for_user
+            result = await call_capability_for_user(
                 "office-gen", "convert",
                 {"file_id": file_id, "target_format": target},
-                caller=f"user:{user.id}",
-                caller_role=user.role,
+                user=user,
             )
             return ApiResponse(data=result)
         except Exception as e:

@@ -304,10 +304,14 @@ async def check_sandbox_matrix(sandbox_jobs: int = 1, frontend_jobs: int = 1) ->
             return
 
         try:
-            entries = json.loads(output)
+            matrix_payload = json.loads(output)
         except json.JSONDecodeError:
             add_result("Sandbox matrix", "DEBT",
                        f"bad JSON output (len={len(output)}), see stderr")
+            return
+        entries = matrix_payload.get("entries") if isinstance(matrix_payload, dict) else matrix_payload
+        if not isinstance(entries, list):
+            add_result("Sandbox matrix", "BLOCKER", "bad JSON shape: expected entries list")
             return
 
         level, detail = classify_sandbox_matrix(entries, elapsed)

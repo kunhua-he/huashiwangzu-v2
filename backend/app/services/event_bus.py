@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 from app.database import AsyncSessionLocal
+from app.services.semantic_failure import semantic_failure_reason
 
 logger = logging.getLogger("v2.event_bus")
 
@@ -30,27 +31,7 @@ PROCESSING_TIMEOUT_SECONDS = 1200
 
 def _semantic_failure(handler_result: object) -> str | None:
     """Return a stable error message when a handler result represents failure."""
-    if not isinstance(handler_result, dict):
-        return None
-
-    explicit_success = handler_result.get("success")
-    if explicit_success is False:
-        return str(handler_result.get("error") or "Handler returned success=false")
-
-    status = str(handler_result.get("status") or "").lower()
-    if status in {"failed", "error"}:
-        return str(handler_result.get("error") or f"Handler returned status={status}")
-
-    if "error" in handler_result and explicit_success is not True:
-        return str(handler_result.get("error") or "Handler returned error")
-
-    data = handler_result.get("data")
-    if isinstance(data, dict):
-        inner_error = _semantic_failure(data)
-        if inner_error:
-            return inner_error
-
-    return None
+    return semantic_failure_reason(handler_result)
 
 
 def _build_handler_result(module_key: str, handler_result: object) -> dict:

@@ -504,6 +504,10 @@ export const modules = {
   },
   /** 打开另一个模块的应用窗口（框架模式下可用） */
   openApp(appKey: string, params?: Record<string, unknown>): string | null {
+    const bridge = (window as unknown as {
+      platform?: { modules?: { openApp?: (appKey: string, payload?: Record<string, unknown>) => string | null } }
+    }).platform?.modules?.openApp
+    if (bridge) return bridge(appKey, params)
     const wm = (window as unknown as Record<string, unknown>).__HSWZ_WINDOW_MANAGER__ as {
       openWindow: (appKey: string, payload?: unknown) => string | null
     } | undefined

@@ -117,6 +117,29 @@ def test_sandbox_matrix_skips_are_debt_not_clean_pass() -> None:
     assert "skip" in detail
 
 
+def test_sandbox_matrix_skips_override_chunk_warnings_as_debt() -> None:
+    level, detail = release_gate.classify_sandbox_matrix(
+        [
+            {"module": "viewer", "check": "pass", "chunk_warnings": ["large chunk"]},
+            {"module": "missing-tests", "check": "skip"},
+        ],
+        elapsed=1.2,
+    )
+
+    assert level == "DEBT"
+    assert "skip" in detail
+
+
+def test_sandbox_matrix_unknown_check_is_blocker() -> None:
+    level, detail = release_gate.classify_sandbox_matrix(
+        [{"module": "agent", "check": "weird"}],
+        elapsed=1.2,
+    )
+
+    assert level == "BLOCKER"
+    assert "unknown sandbox check values" in detail
+
+
 def test_sandbox_matrix_chunk_warnings_are_info() -> None:
     level, detail = release_gate.classify_sandbox_matrix(
         [
@@ -594,7 +617,7 @@ def test_task_result_semantic_failure_contract() -> None:
     )
     assert release_gate._task_result_is_semantic_failure({"status": "failed"}) == (
         True,
-        "status=failed",
+        "result.status=failed",
     )
     assert release_gate._task_result_is_semantic_failure({"error": "bad"}) == (True, "bad")
     assert release_gate._task_result_is_semantic_failure({"code": 1, "msg": "legacy"}) == (

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.services.module_registry import call_capability
+from app.services.module_registry import call_capability_as_system
 
 from .file_state_lock import read_json_locked, update_json_locked
 
@@ -228,7 +228,7 @@ async def record(
 ) -> dict:
     """保存一条记忆到 memory 模块。走框架跨模块通路。"""
     try:
-        result = await call_capability(
+        result = await call_capability_as_system(
             "memory", "save",
             {
                 "text": text,
@@ -236,8 +236,8 @@ async def record(
                 "source": source,
                 "conversation_id": conversation_id,
             },
-            caller=f"user:{owner_id}",
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         return result
     except Exception as e:
@@ -258,15 +258,15 @@ async def recall(
     """
     _t0 = time.time()
     try:
-        result = await call_capability(
+        result = await call_capability_as_system(
             "memory", "recall",
             {
                 "query": query,
                 "limit": limit,
                 "expand_chain": expand_chain,
             },
-            caller=f"user:{owner_id}",
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         if result and result.get("success") and result.get("data"):
             items = result["data"]
@@ -302,11 +302,11 @@ async def fuse(
     if not memory_ids:
         return None
     try:
-        result = await call_capability(
+        result = await call_capability_as_system(
             "memory", "fuse",
             {"query": query, "ids": memory_ids},
-            caller=f"user:{owner_id}",
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         if result and result.get("success") and result.get("data"):
             fused = result["data"].get("fused", "")
@@ -323,11 +323,11 @@ async def trigger_dream(
 ) -> dict:
     """触发生 memory 模块的 dream 自优化。fire-and-forget。"""
     try:
-        result = await call_capability(
+        result = await call_capability_as_system(
             "memory", "dream",
             {},
-            caller=f"user:{owner_id}",
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         return result if result else {}
     except Exception as e:
@@ -355,11 +355,11 @@ async def recall_stable_rules(
     """
     _t0 = time.time()
     try:
-        result = await call_capability(
+        result = await call_capability_as_system(
             "memory", "recall_stable_rules",
             {"rule_types": rule_types or []},
-            caller=f"user:{owner_id}",
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         if result and result.get("success") and result.get("data"):
             items = result["data"]
@@ -403,11 +403,11 @@ async def recall_chunk(
     """
     _t0 = time.time()
     try:
-        result = await call_capability(
+        result = await call_capability_as_system(
             "memory", "recall_chunk",
             {"query": query, "limit": limit},
-            caller=f"user:{owner_id}",
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         if result and result.get("success") and result.get("data"):
             items = result["data"]
@@ -456,7 +456,7 @@ async def save_stable_rule(
         the new rule ``id``). Falls back to an error dict on failure.
     """
     try:
-        result = await call_capability(
+        result = await call_capability_as_system(
             "memory", "save_stable_rule",
             {
                 "rule_type": rule_type,
@@ -464,8 +464,8 @@ async def save_stable_rule(
                 "priority": priority,
                 "source": source,
             },
-            caller=f"user:{owner_id}",
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         return result
     except Exception as e:

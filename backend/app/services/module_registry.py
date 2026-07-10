@@ -1,12 +1,12 @@
 """Cross-module capability registry（带元数据，支持技能发现）。"""
-import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Protocol
 
 from app.core.exceptions import ConflictError, NotFound, PermissionDenied
+from app.services.semantic_failure import semantic_failure_reason as semantic_failure_reason
 
 logger = logging.getLogger("v2.module_registry")
 
@@ -24,96 +24,17 @@ _ROLE_ORDER = {"viewer": 0, "editor": 1, "admin": 2}
 _SERVICE_PRINCIPAL_ROLES = {
     "system:agent-engine": "admin",
     "system:app-loader": "admin",
+    "system:content-service": "admin",
+    "system:desktop-tools": "admin",
+    "system:docs-open": "admin",
+    "system:image-vision": "admin",
     "system:task-worker": "admin",
+    "system:tool-loop": "admin",
 }
 
 
 def _key(module_key: str, action: str) -> str:
     return f"{module_key}:{action}"
-
-
-def _non_empty_error(value: object) -> str | None:
-    if value in (None, ""):
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except TypeError:
-        return str(value)
-
-
-def _legacy_code_failure(value: object) -> bool:
-    if value in (None, "", 0, "0"):
-        return False
-    if isinstance(value, bool):
-        return value is not False
-    if isinstance(value, int | float):
-        return value != 0
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return False
-        try:
-            return float(text) != 0
-        except ValueError:
-            return False
-    return False
-
-
-def semantic_failure_reason(result: object, *, _path: str = "result", _depth: int = 0) -> str | None:
-    """Return a reason when a result payload is semantically failed.
-
-    This is the shared boundary rule for module calls and background task
-    results. It intentionally treats non-empty ``error`` as failure even when
-    an outer transport envelope says success=true.
-    """
-    if _depth > 8:
-        return None
-    if isinstance(result, str):
-        text = result.strip()
-        if not text or text[0] not in "{[":
-            return None
-        try:
-            result = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(result, dict):
-        return None
-
-    if result.get("success") is False:
-        return _non_empty_error(result.get("error")) or f"{_path}.success=false"
-
-    error = _non_empty_error(result.get("error"))
-    if error:
-        return error
-
-    status = result.get("status")
-    if isinstance(status, str) and status.lower() in {"failed", "error"}:
-        return (
-            _non_empty_error(result.get("error"))
-            or _non_empty_error(result.get("error_message"))
-            or _non_empty_error(result.get("reason"))
-            or _non_empty_error(result.get("message"))
-            or f"{_path}.status={status}"
-        )
-
-    if "code" in result and _legacy_code_failure(result.get("code")):
-        return (
-            _non_empty_error(result.get("message"))
-            or _non_empty_error(result.get("msg"))
-            or _non_empty_error(result.get("error"))
-            or f"{_path}.code={result.get('code')}"
-        )
-
-    for key in ("data", "result"):
-        inner = result.get(key)
-        if isinstance(inner, (dict, str)):
-            inner_reason = semantic_failure_reason(inner, _path=f"{_path}.{key}", _depth=_depth + 1)
-            if inner_reason:
-                return inner_reason
-    return None
 
 
 def _current_capability_keys() -> set[str]:
@@ -195,25 +116,35 @@ def unregister_capability(module_key: str, action: str | None = None) -> None:
         logger.info("Unregistered all capabilities for module: %s", module_key)
 
 
-def _resolve_caller_role(caller: str, caller_role: str) -> str:
+class AuthenticatedUser(Protocol):
+    id: int
+    role: str
+
+
+def _resolve_caller_role(
+    caller: str,
+    caller_role: str,
+    *,
+    actor: str | None = None,
+    trusted_user_role: bool = False,
+) -> str:
     """Resolve effective role from caller identity and caller_role parameter.
 
     - system:{principal}: role from _SERVICE_PRINCIPAL_ROLES whitelist
-    - user:{id}: caller_role is accepted but capped; admin is logged as warning
+    - user:{id}: role must come from a trusted auth context, not module input
     """
-    if caller.startswith("system:"):
-        principal_role = _SERVICE_PRINCIPAL_ROLES.get(caller)
+    principal = actor or caller
+    if principal.startswith("system:"):
+        principal_role = _SERVICE_PRINCIPAL_ROLES.get(principal)
         if principal_role is None:
             raise PermissionDenied(
-                f"Unknown system principal: {caller}"
+                f"Unknown system principal: {principal}"
             )
         return principal_role
     if caller.startswith("user:"):
-        if caller_role == "admin":
-            logger.warning(
-                "caller=%s passed caller_role='admin' — "
-                "user callers should not pass admin role",
-                caller,
+        if not trusted_user_role and caller_role != "viewer":
+            raise PermissionDenied(
+                "user caller role must be resolved by trusted authentication context"
             )
         return caller_role
     raise PermissionDenied(f"Invalid caller format: {caller}")
@@ -225,11 +156,16 @@ async def call_capability(
     params: dict,
     caller: str,
     caller_role: str = "viewer",
+    *,
+    actor: str | None = None,
+    trusted_user_role: bool = False,
 ) -> dict:
     """跨模块调用的唯一入口。target 未公开或角色不足则抛异常。
 
-    caller_role 对 user: 前缀的调用者不做严格审计（保持兼容），
-    对 system: 前缀的调用者从 _SERVICE_PRINCIPAL_ROLES 白名单获取角色。
+    user:* roles must be supplied through trusted auth helpers. For background
+    work on behalf of a user, pass actor=system:* and caller=user:{owner_id};
+    the handler receives the caller for data ownership while authorization uses
+    the whitelisted system actor.
 
     如果能力注册了 owner_id，则只有该 owner（user:{owner_id} 或 system: 白名单）可调用。
     """
@@ -249,17 +185,57 @@ async def call_capability(
         elif not caller.startswith("system:"):
             raise PermissionDenied(f"Invalid caller format: {caller}")
 
-    resolved_role = _resolve_caller_role(caller, caller_role)
+    resolved_role = _resolve_caller_role(
+        caller,
+        caller_role,
+        actor=actor,
+        trusted_user_role=trusted_user_role,
+    )
     min_role = entry.get("min_role", "viewer")
     if _ROLE_ORDER.get(resolved_role, -1) < _ROLE_ORDER.get(min_role, 0):
         raise PermissionDenied(
             f"Requires at least '{min_role}' role, got '{resolved_role}'"
         )
     logger.info(
-        "Cross-module call: caller=%s role=%s -> %s:%s",
-        caller, resolved_role, target_module, action,
+        "Cross-module call: actor=%s caller=%s role=%s -> %s:%s",
+        actor or caller, caller, resolved_role, target_module, action,
     )
     return await entry["handler"](params, caller)
+
+
+async def call_capability_for_user(
+    target_module: str,
+    action: str,
+    params: dict,
+    user: AuthenticatedUser,
+) -> dict:
+    return await call_capability(
+        target_module,
+        action,
+        params,
+        caller=f"user:{user.id}",
+        caller_role=user.role,
+        trusted_user_role=True,
+    )
+
+
+async def call_capability_as_system(
+    target_module: str,
+    action: str,
+    params: dict,
+    *,
+    principal: str,
+    on_behalf_of_user_id: int | None = None,
+) -> dict:
+    caller = f"user:{on_behalf_of_user_id}" if on_behalf_of_user_id is not None else principal
+    return await call_capability(
+        target_module,
+        action,
+        params,
+        caller=caller,
+        caller_role="viewer",
+        actor=principal,
+    )
 
 
 def _caller_owner_id(caller: str | None) -> int | None:

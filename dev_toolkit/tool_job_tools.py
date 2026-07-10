@@ -257,7 +257,37 @@ def _parse_result(tool_name: str, returncode: int, output: str) -> dict[str, Any
             data = json.loads(output)
         except json.JSONDecodeError:
             data = None
-        return {"success": returncode in {0, 1}, "data": data}
+        entries = data.get("entries") if isinstance(data, dict) else data
+        if not isinstance(entries, list):
+            return {
+                "success": False,
+                "clean_success": False,
+                "command_completed": False,
+                "command_success": returncode == 0,
+                "has_debt": True,
+                "data": data,
+            }
+        failed = sum(1 for entry in entries if entry.get("check") == "fail")
+        skipped = sum(1 for entry in entries if entry.get("check") == "skip")
+        unknown = sum(1 for entry in entries if entry.get("check") not in {"pass", "fail", "skip"})
+        command_completed = returncode in {0, 1}
+        clean_success = bool(command_completed and failed == 0 and skipped == 0 and unknown == 0)
+        return {
+            "success": clean_success,
+            "clean_success": clean_success,
+            "command_completed": command_completed,
+            "command_success": returncode == 0,
+            "passed": bool(command_completed and failed == 0 and unknown == 0),
+            "has_debt": bool(skipped > 0 or not command_completed),
+            "summary": data.get("summary") if isinstance(data, dict) else {
+                "total": len(entries),
+                "failed": failed,
+                "skipped": skipped,
+                "unknown": unknown,
+            },
+            "data": data,
+            "entries": entries,
+        }
     return {"success": returncode == 0}
 
 
@@ -287,10 +317,16 @@ def _status_flags(job: dict[str, Any]) -> dict[str, Any]:
     returncode = job.get("returncode")
     parsed = job.get("parsed_result")
     command_success = returncode == 0
-    clean_success = bool(parsed.get("success")) if isinstance(parsed, dict) else status == "completed"
+    command_completed = (
+        bool(parsed.get("command_completed"))
+        if isinstance(parsed, dict) and "command_completed" in parsed
+        else status == "completed"
+    )
+    clean_success = bool(parsed.get("clean_success", parsed.get("success"))) if isinstance(parsed, dict) else status == "completed"
     release_safe = parsed.get("release_safe") if isinstance(parsed, dict) and "release_safe" in parsed else None
     return {
         "job_success": status == "completed",
+        "command_completed": command_completed,
         "command_success": command_success,
         "clean_success": clean_success,
         "release_safe": release_safe,
@@ -383,7 +419,12 @@ def _run_job(repo_root: Path, job_id: str) -> None:
                 return
         output = _tail_file(log_path)
         parsed = _parse_result(tool_name, int(proc.returncode or 0), output)
-        status = "completed" if int(proc.returncode or 0) == 0 else "failed"
+        command_completed = (
+            bool(parsed.get("command_completed"))
+            if isinstance(parsed, dict) and "command_completed" in parsed
+            else int(proc.returncode or 0) == 0
+        )
+        status = "completed" if command_completed else "failed"
         _update_job(
             repo_root,
             job_id,

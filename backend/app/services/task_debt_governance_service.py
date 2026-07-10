@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.system import SystemTaskQueue
+from app.services.semantic_failure import semantic_failure_reason
 
 logger = logging.getLogger("v2.task_debt_governance")
 
@@ -42,16 +43,7 @@ def _parse_task_result(raw: str | None) -> dict | None:
 
 
 def _task_result_semantic_failure_reason(result: dict | None) -> str | None:
-    if not isinstance(result, dict):
-        return None
-    if result.get("success") is False:
-        return str(result.get("error") or "Task result success=false")
-    status = result.get("status")
-    if isinstance(status, str) and status.lower() in {"failed", "error"}:
-        return str(result.get("error") or f"Task result status={status}")
-    if result.get("error") not in (None, "") and result.get("success") is not True:
-        return str(result.get("error"))
-    return None
+    return semantic_failure_reason(result)
 
 
 def _task_sample(task: SystemTaskQueue, *, params: dict | None = None) -> dict:

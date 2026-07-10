@@ -51,8 +51,7 @@ export function useDesktopAppHandleV2() {
       ElMessage.warning(`无应用支持打开 ${format} 格式`)
       return null
     }
-    const windowId = windowManager.openWindow(association.appKey, { fileId, format })
-    if (!windowId) ElMessage.info(getOpenWindowFailureMessage(getApp(association.appKey)))
+    const windowId = openApp(association.appKey, { fileId, format })
     return windowId ? { windowId, appId: association.appKey } : null
   }
 

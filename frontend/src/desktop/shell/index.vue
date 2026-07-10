@@ -75,6 +75,7 @@ import { useContextMenu } from '@/desktop/context-menu/use-context-menu'
 import ContextMenu from '@/desktop/context-menu/context-menu.vue'
 import { useWindowManager } from '@/desktop/window-manager/window-manager'
 import { getApp } from '@/desktop/app-registry/app-registry'
+import { openAppById } from '@/desktop/app-registry/app-opener'
 import { usePermission } from '@/shared/composables/use-permission'
 import { useUserStore } from '@/platform/stores/user'
 import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
@@ -99,7 +100,6 @@ import type { FileEntry } from '@/shared/api/types'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { useFileOperations } from '@/shared/files/use-file-operations'
 import LoadStateBanner from '@/shared/components/load-state-banner.vue'
-import { getOpenWindowFailureMessage } from '@/desktop/app-registry/app-visibility'
 
 const desktopIconGrid = defineAsyncComponent(() => import('@/desktop/shell/desktop-icon-grid.vue'))
 const desktopWindowFrame = defineAsyncComponent(() => import('@/desktop/window-manager/desktop-window-frame.vue'))
@@ -177,11 +177,7 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
 })
 
 function handleOpenApp(appKey: string): string | null {
-  const windowId = windowManager.openWindow(appKey)
-  if (!windowId) {
-    ElMessage.info(getOpenWindowFailureMessage(getApp(appKey)))
-  }
-  return windowId
+  return openAppById(appKey)
 }
 function openSidebar(appKey = 'desktop') { rightSidebarAppKey.value = appKey; showRightSidebar.value = true }
 function handleLauncherOpen(appKey: string) {

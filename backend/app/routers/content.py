@@ -30,6 +30,7 @@ from app.services.content.pipeline_service import ContentPipelineService
 from app.services.content.resource_service import ResourceService
 from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
+from app.services.semantic_failure import semantic_failure_reason
 
 logger = logging.getLogger("v2.content")
 
@@ -42,19 +43,7 @@ resource_svc = ResourceService()
 
 
 def _pipeline_failure(result: object) -> str | None:
-    if not isinstance(result, dict):
-        return None
-    if result.get("success") is False:
-        return str(result.get("error") or "Content pipeline returned success=false")
-    status = str(result.get("status") or "").lower()
-    if status in {"failed", "error"}:
-        return str(result.get("error") or f"Content pipeline returned status={status}")
-    if "error" in result and result.get("success") is not True:
-        return str(result.get("error") or "Content pipeline returned error")
-    data = result.get("data")
-    if isinstance(data, dict):
-        return _pipeline_failure(data)
-    return None
+    return semantic_failure_reason(result)
 
 
 # ── Schemas ──────────────────────────────────────────────────────

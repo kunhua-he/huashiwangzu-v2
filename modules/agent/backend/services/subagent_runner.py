@@ -243,7 +243,12 @@ async def _execute_tool_loop(
                 from app.services.module_registry import call_capability
                 module_key, action = tool_discovery.parse_tool_name(name)
                 tool_result = await call_capability(
-                    module_key, action, args, caller=caller, caller_role=caller_role,
+                    module_key,
+                    action,
+                    args,
+                    caller=caller,
+                    caller_role=caller_role,
+                    trusted_user_role=caller.startswith("user:"),
                 )
             tool_result_trace.append({
                 "round": _round + 1,

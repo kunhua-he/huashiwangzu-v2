@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.config import get_settings
 from app.core.exceptions import AppException, NotFound
@@ -43,12 +44,11 @@ async def _read_content(
 
     if ext in ("xlsx", "xls"):
         try:
-            from app.services.module_registry import call_capability
-            result = await call_capability(
+            from app.services.module_registry import call_capability_for_user
+            result = await call_capability_for_user(
                 "excel-engine", "parse",
                 {"file_id": file.id},
-                caller=f"user:{user_id}",
-                caller_role=user_role,
+                user=SimpleNamespace(id=user_id, role=user_role),
             )
             return {"content": result, "format": "excel-json", "extension": ext}
         except Exception as e:
@@ -66,12 +66,11 @@ async def _read_content(
 
     if ext == "pdf":
         try:
-            from app.services.module_registry import call_capability
-            result = await call_capability(
+            from app.services.module_registry import call_capability_for_user
+            result = await call_capability_for_user(
                 "pdf-parser", "parse",
                 {"file_id": file.id},
-                caller=f"user:{user_id}",
-                caller_role=user_role,
+                user=SimpleNamespace(id=user_id, role=user_role),
             )
             return {"content": result, "format": "parsed-json", "extension": ext}
         except Exception as e:
@@ -79,12 +78,11 @@ async def _read_content(
 
     if ext == "docx":
         try:
-            from app.services.module_registry import call_capability
-            result = await call_capability(
+            from app.services.module_registry import call_capability_for_user
+            result = await call_capability_for_user(
                 "docx-parser", "parse",
                 {"file_id": file.id},
-                caller=f"user:{user_id}",
-                caller_role=user_role,
+                user=SimpleNamespace(id=user_id, role=user_role),
             )
             return {"content": result, "format": "parsed-json", "extension": ext}
         except Exception as e:
@@ -92,12 +90,11 @@ async def _read_content(
 
     if ext == "pptx":
         try:
-            from app.services.module_registry import call_capability
-            result = await call_capability(
+            from app.services.module_registry import call_capability_for_user
+            result = await call_capability_for_user(
                 "pptx-parser", "parse",
                 {"file_id": file.id},
-                caller=f"user:{user_id}",
-                caller_role=user_role,
+                user=SimpleNamespace(id=user_id, role=user_role),
             )
             return {"content": result, "format": "parsed-json", "extension": ext}
         except Exception as e:

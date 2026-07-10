@@ -3,9 +3,17 @@
 from types import SimpleNamespace
 
 import pytest
-from app.core.exceptions import ValidationError
+from app.core.exceptions import PermissionDenied, ValidationError
 from app.routers import modules as modules_router
-from app.services.module_registry import semantic_failure_reason
+from app.services.module_registry import (
+    call_capability,
+    call_capability_as_system,
+    call_capability_for_user,
+    register_capability,
+    semantic_failure_reason,
+    unregister_capability,
+)
+from app.services.semantic_failure import semantic_failure_reason as pure_semantic_failure_reason
 
 
 @pytest.mark.parametrize(
@@ -30,6 +38,7 @@ def test_semantic_failure_reason_covers_false_green_shapes(payload, expected) ->
 def test_semantic_failure_reason_allows_non_failure_status() -> None:
     assert semantic_failure_reason({"status": "skipped", "reason": "source_file_deleted"}) is None
     assert semantic_failure_reason({"status": "degraded", "reason": "partial"}) is None
+    assert semantic_failure_reason is pure_semantic_failure_reason
 
 
 @pytest.mark.asyncio
@@ -37,7 +46,7 @@ async def test_module_call_preserves_capability_failure_status(monkeypatch) -> N
     async def fake_call_capability(*args, **kwargs):
         return {"success": True, "data": {"error": "inner failure"}}
 
-    monkeypatch.setattr(modules_router, "call_capability", fake_call_capability)
+    monkeypatch.setattr(modules_router, "call_capability_for_user", fake_call_capability)
 
     with pytest.raises(ValidationError) as exc_info:
         await modules_router.module_call(
@@ -51,3 +60,75 @@ async def test_module_call_preserves_capability_failure_status(monkeypatch) -> N
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.message == "inner failure"
+
+
+@pytest.mark.asyncio
+async def test_user_cannot_self_report_privileged_role() -> None:
+    async def fake_handler(params: dict, caller: str) -> dict:
+        return {"caller": caller, "params": params}
+
+    register_capability(
+        "_test_auth_contract",
+        "admin_only",
+        fake_handler,
+        min_role="admin",
+    )
+    try:
+        with pytest.raises(PermissionDenied, match="trusted authentication context"):
+            await call_capability(
+                "_test_auth_contract",
+                "admin_only",
+                {},
+                caller="user:4",
+                caller_role="admin",
+            )
+    finally:
+        unregister_capability("_test_auth_contract", "admin_only")
+
+
+@pytest.mark.asyncio
+async def test_authenticated_helper_supplies_user_role() -> None:
+    async def fake_handler(params: dict, caller: str) -> dict:
+        return {"caller": caller, "params": params}
+
+    register_capability(
+        "_test_auth_contract",
+        "admin_only",
+        fake_handler,
+        min_role="admin",
+    )
+    try:
+        result = await call_capability_for_user(
+            "_test_auth_contract",
+            "admin_only",
+            {"ok": True},
+            user=SimpleNamespace(id=7, role="admin"),
+        )
+    finally:
+        unregister_capability("_test_auth_contract", "admin_only")
+
+    assert result == {"caller": "user:7", "params": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_unknown_system_principal_is_denied() -> None:
+    async def fake_handler(params: dict, caller: str) -> dict:
+        return {"caller": caller, "params": params}
+
+    register_capability(
+        "_test_auth_contract",
+        "admin_only",
+        fake_handler,
+        min_role="admin",
+    )
+    try:
+        with pytest.raises(PermissionDenied, match="Unknown system principal"):
+            await call_capability_as_system(
+                "_test_auth_contract",
+                "admin_only",
+                {},
+                principal="system:not-registered",
+                on_behalf_of_user_id=8,
+            )
+    finally:
+        unregister_capability("_test_auth_contract", "admin_only")

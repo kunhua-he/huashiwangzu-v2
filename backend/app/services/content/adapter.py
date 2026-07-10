@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.module_registry import call_capability
+from app.services.module_registry import call_capability_as_system
 
 logger = logging.getLogger("v2.content").getChild("adapter")
 
@@ -24,11 +24,11 @@ async def call_export_adapter(
         action = adapter_type
         logger.info("Export adapter: calling %s:%s", module_key, action)
         try:
-            result = await call_capability(
+            result = await call_capability_as_system(
                 module_key, action,
                 payload,
-                f"user:{owner_id}",
-                "editor",
+                principal="system:content-service",
+                on_behalf_of_user_id=owner_id,
             )
         except Exception as e:
             logger.warning("Export adapter %s failed: %s. Falling back to text.", adapter_type, e)

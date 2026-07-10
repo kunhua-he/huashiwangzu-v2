@@ -170,6 +170,40 @@ async def test_emit_marks_handler_semantic_failure_pending() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected_error"),
+    [
+        ({"success": True, "result": {"status": "failed", "error_message": "nested failed"}}, "nested failed"),
+        ({"success": True, "data": {"status": "error", "reason": "inner reason"}}, "inner reason"),
+    ],
+)
+async def test_emit_marks_nested_handler_semantic_failure_pending(payload: dict, expected_error: str) -> None:
+    event_name = f"test.emit.nested_semantic_failure.{uuid4().hex}"
+    await event_bus._ensure_event_log_table()
+    await _cleanup(event_name)
+
+    async def handler(_payload: dict, _caller: str, _caller_role: str) -> dict:
+        return payload
+
+    previous = event_bus._event_handlers.get(event_name)
+    event_bus._event_handlers[event_name] = [{"module_key": "semantic-module", "handler": handler}]
+    try:
+        await event_bus.emit_module_event(event_name, {"id": event_name}, "test", "admin")
+        logs = await event_bus.get_event_log(event_name=event_name, limit=1)
+
+        assert logs[0]["status"] == "pending"
+        assert logs[0]["last_error"] == expected_error
+        assert logs[0]["module_results"][0]["success"] is False
+        assert logs[0]["module_results"][0]["error"] == expected_error
+    finally:
+        if previous is None:
+            event_bus._event_handlers.pop(event_name, None)
+        else:
+            event_bus._event_handlers[event_name] = previous
+        await _cleanup(event_name)
+
+
+@pytest.mark.asyncio
 async def test_retry_preserves_semantic_failure_for_retry() -> None:
     event_name = f"test.retry.semantic_failure.{uuid4().hex}"
     await event_bus._ensure_event_log_table()

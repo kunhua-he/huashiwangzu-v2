@@ -48,7 +48,10 @@ def test_cli_single_module_json_smoke() -> None:
     r = _run(["--json", "--module", "agent"])
     assert r.returncode == 0, f"exit={r.returncode}, stderr={r.stderr[:500]}"
     data = json.loads(r.stdout)
-    assert [entry["module"] for entry in data] == ["agent"]
+    assert data["check"] is False
+    assert data["passed"] is None
+    assert data["clean_success"] is False
+    assert [entry["module"] for entry in data["entries"]] == ["agent"]
 
 
 def test_markdown_output(matrix_results: list[dict]) -> None:
@@ -200,6 +203,49 @@ def test_check_records_frontend_chunk_warnings_from_stderr(monkeypatch) -> None:
     assert module_sandbox_matrix.check_sandbox_matrix(entries, quiet=True)
     assert entries[0]["check"] == "pass"
     assert entries[0]["chunk_warnings"]
+
+
+def test_summarize_without_check_is_debt_not_clean_success() -> None:
+    summary = module_sandbox_matrix.summarize_sandbox_matrix(
+        [{"module": "agent", "check": "pass"}],
+        run_check=False,
+    )
+
+    assert summary["passed_semantically"] is None
+    assert summary["clean_success"] is False
+    assert summary["has_debt"] is True
+
+
+def test_summarize_skip_is_semantic_pass_with_debt() -> None:
+    summary = module_sandbox_matrix.summarize_sandbox_matrix(
+        [{"module": "agent", "check": "pass"}, {"module": "missing", "check": "skip"}],
+        run_check=True,
+    )
+
+    assert summary["passed_semantically"] is True
+    assert summary["clean_success"] is False
+    assert summary["has_debt"] is True
+
+
+def test_summarize_fail_is_not_passed() -> None:
+    summary = module_sandbox_matrix.summarize_sandbox_matrix(
+        [{"module": "agent", "check": "fail"}],
+        run_check=True,
+    )
+
+    assert summary["passed_semantically"] is False
+    assert summary["clean_success"] is False
+
+
+def test_summarize_all_pass_is_clean_success() -> None:
+    summary = module_sandbox_matrix.summarize_sandbox_matrix(
+        [{"module": "agent", "check": "pass"}],
+        run_check=True,
+    )
+
+    assert summary["passed_semantically"] is True
+    assert summary["clean_success"] is True
+    assert summary["has_debt"] is False
 
 
 def test_frontend_install_needed_when_vite_bin_missing(tmp_path: Path) -> None:

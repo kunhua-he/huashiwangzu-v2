@@ -195,7 +195,14 @@ async def handle_skill_use(params: dict, caller: str, caller_role: str) -> dict:
             return {"error": str(exc)}
 
     try:
-        result = await call_capability(module, action, args, caller=caller, caller_role=caller_role)
+        result = await call_capability(
+            module,
+            action,
+            args,
+            caller=caller,
+            caller_role=caller_role,
+            trusted_user_role=caller.startswith("user:"),
+        )
         await record_skill_invocation(
             name,
             success=_skill_result_succeeded(result),
@@ -286,7 +293,9 @@ async def _handle_write_ir_with_correction(args: dict, caller: str, caller_role:
     validation = await call_capability(
         "content", "validate_ir",
         {"content_ir": content_ir},
-        caller=caller, caller_role=caller_role,
+        caller=caller,
+        caller_role=caller_role,
+        trusted_user_role=caller.startswith("user:"),
     )
     inner = validation.get("data", validation) if isinstance(validation, dict) else {}
     errors = inner.get("errors", []) if isinstance(inner, dict) else []
@@ -321,7 +330,9 @@ async def _handle_write_ir_with_correction(args: dict, caller: str, caller_role:
 
         result = await call_capability(
             "content", "write_ir", write_args,
-            caller=caller, caller_role=caller_role,
+            caller=caller,
+            caller_role=caller_role,
+            trusted_user_role=caller.startswith("user:"),
         )
         return result
     except Exception as exc:

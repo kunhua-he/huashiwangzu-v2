@@ -3,7 +3,7 @@
 import json
 import logging
 
-from app.services.module_registry import call_capability
+from app.services.module_registry import call_capability_as_system
 
 logger = logging.getLogger("v2.agent").getChild("engine.experience_memory")
 
@@ -24,7 +24,8 @@ async def save_experience(
 ) -> dict:
     """保存一条成功经验到 memory 模块。走框架跨模块通路。"""
     try:
-        result = await call_capability(
+        owner_id = _owner_id_from_caller(caller)
+        result = await call_capability_as_system(
             "memory", "save_experience",
             {
                 "trigger_condition": trigger_condition,
@@ -32,8 +33,8 @@ async def save_experience(
                 "tools_used": tools_used,
                 "source_conversation_id": source_conversation_id,
             },
-            caller=caller,
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         return result
     except Exception as e:
@@ -50,11 +51,12 @@ async def match_experience(
     if not query or not query.strip():
         return []
     try:
-        result = await call_capability(
+        owner_id = _owner_id_from_caller(caller)
+        result = await call_capability_as_system(
             "memory", "match_experience",
             {"query": query, "limit": limit},
-            caller=caller,
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         if result and result.get("success") and result.get("data"):
             return result["data"]
@@ -72,20 +74,30 @@ async def experience_feedback(
 ) -> dict:
     """反馈经验执行结果：成功加权 / 失败降权+注释。"""
     try:
-        result = await call_capability(
+        owner_id = _owner_id_from_caller(caller)
+        result = await call_capability_as_system(
             "memory", "experience_feedback",
             {
                 "experience_id": experience_id,
                 "success": success,
                 "note": note,
             },
-            caller=caller,
-            caller_role="admin",
+            principal="system:agent-engine",
+            on_behalf_of_user_id=owner_id,
         )
         return result
     except Exception as e:
         logger.warning("经验反馈 failed (non-fatal): %s", e)
         return {"success": False, "error": str(e), "fallback": True}
+
+
+def _owner_id_from_caller(caller: str) -> int | None:
+    if not caller.startswith("user:"):
+        return None
+    try:
+        return int(caller.split(":", 1)[1])
+    except ValueError:
+        return None
 
 
 def format_injection(experiences: list[dict]) -> str | None:

@@ -13,8 +13,15 @@ declare global {
 
     /** Desktop platform bridge injected by the shell */
     platform?: {
+      api?: {
+        request?: <T = unknown>(config: Record<string, unknown>) => Promise<T>
+        get?: <T = unknown>(url: string, config?: Record<string, unknown>) => Promise<T>
+        post?: <T = unknown>(url: string, data?: unknown, config?: Record<string, unknown>) => Promise<T>
+      }
       modules?: {
-        openApp?: (appId: string, opts?: Record<string, unknown>) => void
+        call?: <T = unknown>(targetModule: string, action: string, parameters?: Record<string, unknown>) => Promise<T>
+        capabilities?: () => Promise<string[]>
+        openApp?: (appId: string, opts?: Record<string, unknown>) => string | null
       }
     }
 

@@ -186,6 +186,44 @@ def test_release_gate_pass_with_debt_notification_is_not_failure(tmp_path: Path)
     assert not any("failed" in message for message in messages)
 
 
+def test_module_sandbox_matrix_fail_is_completed_but_not_success() -> None:
+    output = json.dumps({
+        "check": True,
+        "passed": False,
+        "clean_success": False,
+        "has_debt": False,
+        "summary": {"total": 1, "failed": 1, "skipped": 0, "unknown": 0},
+        "entries": [{"module": "agent", "check": "fail"}],
+    })
+
+    result = tool_job_tools._parse_result("module_sandbox_matrix", 1, output)
+
+    assert result["command_completed"] is True
+    assert result["command_success"] is False
+    assert result["clean_success"] is False
+    assert result["success"] is False
+    assert result["passed"] is False
+
+
+def test_module_sandbox_matrix_skip_is_passed_with_debt_not_clean() -> None:
+    output = json.dumps({
+        "check": True,
+        "passed": True,
+        "clean_success": False,
+        "has_debt": True,
+        "summary": {"total": 1, "failed": 0, "skipped": 1, "unknown": 0},
+        "entries": [{"module": "missing-tests", "check": "skip"}],
+    })
+
+    result = tool_job_tools._parse_result("module_sandbox_matrix", 0, output)
+
+    assert result["command_completed"] is True
+    assert result["clean_success"] is False
+    assert result["success"] is False
+    assert result["passed"] is True
+    assert result["has_debt"] is True
+
+
 def test_update_job_preserves_existing_fields(tmp_path: Path) -> None:
     first = tool_job_tools._update_job(tmp_path, "job_merge", {"status": "queued", "title": "merge"})
     second = tool_job_tools._update_job(tmp_path, "job_merge", {"pid": 123})

@@ -823,6 +823,7 @@ class ToolLoopRuntime:
                                 module_key, action, tool.get("args") or tool.get("arguments", {}),
                                 caller=caller,
                                 caller_role=self.user_role,
+                                trusted_user_role=caller.startswith("user:"),
                             )
                             _queue_tool_node(
                                 tool,

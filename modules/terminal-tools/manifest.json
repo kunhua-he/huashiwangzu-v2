@@ -91,7 +91,7 @@
     },
     {
       "action": "run_python",
-      "description": "在用户工作区子进程执行 Python 数据分析代码。预置 pandas/numpy/matplotlib。",
+      "description": "在用户工作区子进程执行 Python 数据分析代码。预置 pandas/numpy/matplotlib；生成图片先留在工作区，需 publish 才桌面可见。",
       "parameters": {
         "code": "要执行的 Python 代码",
         "input_files": "输入文件 file_id 列表（可选）",
@@ -101,7 +101,7 @@
     },
     {
       "action": "chart",
-      "description": "傻瓜式出图，传入数据数组和图表类型，后端用 matplotlib 出图。",
+      "description": "傻瓜式出图，传入数据数组和图表类型，后端用 matplotlib 出图到工作区，需 publish 才桌面可见。",
       "parameters": {
         "data": "数据数组 [{x, y}, ...]",
         "chart_type": "line/bar/pie",

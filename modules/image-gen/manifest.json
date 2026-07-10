@@ -62,6 +62,11 @@
           "type": "string",
           "description": "模板key，可选值由list_templates给出，缺省用默认模板",
           "default": ""
+        },
+        "publish": {
+          "type": "boolean",
+          "description": "是否直接发布到桌面文件系统；Agent默认false，需显式publish才用户可见",
+          "default": false
         }
       },
       "min_role": "editor"
@@ -117,6 +122,11 @@
           "type": "boolean",
           "description": "是否尽量保留主体、产品形态和可读标签",
           "default": true
+        },
+        "publish": {
+          "type": "boolean",
+          "description": "是否直接发布到桌面文件系统；Agent默认false，需显式publish才用户可见",
+          "default": false
         }
       },
       "min_role": "editor"

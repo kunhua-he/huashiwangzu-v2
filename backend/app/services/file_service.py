@@ -1,11 +1,81 @@
+import hashlib
+from collections import defaultdict
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, NotFound, PermissionDenied
 from app.models.file import File, Folder
-from app.services.file_share_service import get_accessible_file_ids
+from app.models.file_share import FileShare
+from app.services.file_share_service import active_share_conditions, get_accessible_file_ids
+
+SHARED_ROOT_GROUP_OFFSET = 1_000_000_000_000
+
+
+async def _lock_folder_namespace(db: AsyncSession, owner_id: int, parent_id: int | None) -> None:
+    bind = db.get_bind()
+    if not bind or bind.dialect.name != "postgresql":
+        return
+    key = f"framework_file_folders:{owner_id}:{parent_id or 0}"
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
+
+
+async def _folder_name_exists(
+    db: AsyncSession,
+    *,
+    owner_id: int,
+    parent_id: int | None,
+    name: str,
+    exclude_id: int | None = None,
+) -> bool:
+    stmt = select(Folder.id).where(
+        Folder.name == name,
+        Folder.parent_id == parent_id,
+        Folder.owner_id == owner_id,
+        Folder.deleted.is_(False),
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(Folder.id != exclude_id)
+    return (await db.execute(stmt.limit(1))).scalar_one_or_none() is not None
+
+
+async def next_available_folder_name(
+    db: AsyncSession,
+    *,
+    owner_id: int,
+    parent_id: int | None,
+    requested_name: str,
+    exclude_id: int | None = None,
+) -> str:
+    base = requested_name.strip()
+    if not base:
+        raise AppException("Folder name cannot be empty", status_code=400)
+    if not await _folder_name_exists(
+        db,
+        owner_id=owner_id,
+        parent_id=parent_id,
+        name=base,
+        exclude_id=exclude_id,
+    ):
+        return base
+    index = 1
+    while True:
+        candidate = f"{base}({index})"
+        if not await _folder_name_exists(
+            db,
+            owner_id=owner_id,
+            parent_id=parent_id,
+            name=candidate,
+            exclude_id=exclude_id,
+        ):
+            return candidate
+        index += 1
+
+
+def _shared_group_token(owner_id: int, path: str) -> int:
+    digest = hashlib.sha1(f"{owner_id}:{path}".encode("utf-8")).hexdigest()[:12]
+    return SHARED_ROOT_GROUP_OFFSET + int(digest, 16)
 
 
 async def get_folder_tree(db: AsyncSession, owner_id: int) -> list[Folder]:
@@ -20,18 +90,14 @@ async def create_folder(db: AsyncSession, name: str, parent_id: int | None, owne
             raise NotFound("Parent folder not found")
         if parent.owner_id != owner_id:
             raise AppException("Access denied: target folder does not belong to current user", status_code=403)
-    # Check name conflict in same directory
-    existing = await db.execute(
-        select(Folder).where(
-            Folder.name == name,
-            Folder.parent_id == parent_id,
-            Folder.owner_id == owner_id,
-            Folder.deleted.is_(False),
-        )
+    await _lock_folder_namespace(db, owner_id, parent_id)
+    final_name = await next_available_folder_name(
+        db,
+        owner_id=owner_id,
+        parent_id=parent_id,
+        requested_name=name,
     )
-    if existing.scalar_one_or_none():
-        raise AppException("A folder with the same name already exists", status_code=409)
-    folder = Folder(name=name, parent_id=parent_id, owner_id=owner_id)
+    folder = Folder(name=final_name, parent_id=parent_id, owner_id=owner_id)
     db.add(folder)
     await db.commit()
     await db.refresh(folder)
@@ -39,6 +105,13 @@ async def create_folder(db: AsyncSession, name: str, parent_id: int | None, owne
 
 
 async def get_file_list(db: AsyncSession, folder_id: int, owner_id: int, page: int = 1, page_size: int = 50):
+    if folder_id < 0:
+        source_id = abs(folder_id)
+        if source_id >= SHARED_ROOT_GROUP_OFFSET:
+            source_ids = await _resolve_shared_root_group_source_ids(db, owner_id, source_id)
+            return await _get_shared_folder_file_list(db, source_ids, owner_id, page, page_size)
+        return await _get_shared_folder_file_list(db, [source_id], owner_id, page, page_size)
+
     if folder_id == 0:
         subfolders = await db.execute(select(Folder).where(Folder.parent_id.is_(None), Folder.owner_id == owner_id, Folder.deleted.is_(False)).order_by(Folder.name))
     else:
@@ -48,10 +121,216 @@ async def get_file_list(db: AsyncSession, folder_id: int, owner_id: int, page: i
             raise NotFound("Folder not found")
         subfolders = await db.execute(select(Folder).where(Folder.parent_id == folder_id, Folder.owner_id == owner_id, Folder.deleted.is_(False)).order_by(Folder.name))
     folder_list = [{"id": f.id, "name": f.name, "extension": None, "size": 0, "created_at": f.created_at, "storage_path": None, "is_folder": True, "parent_id": f.parent_id, "mime_type": None} for f in subfolders.scalars().all()]
+    if folder_id == 0:
+        folder_list.extend(await _get_shared_root_folders(db, owner_id))
     cond = File.folder_id.is_(None) if folder_id == 0 else File.folder_id == folder_id
     result = await db.execute(select(File).where(cond, File.owner_id == owner_id, File.deleted.is_(False)).order_by(File.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
     file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "created_at": f.created_at, "storage_path": f.storage_path, "is_folder": False, "parent_id": f.folder_id, "mime_type": f.mime_type} for f in result.scalars().all()]
     return {"items": folder_list + file_list, "total": len(folder_list) + len(file_list), "page": page, "page_size": page_size}
+
+
+async def _get_shared_root_folders(db: AsyncSession, user_id: int) -> list[dict]:
+    """Return top-level shared folders as virtual folders for the desktop root.
+
+    Shared folders are projected from file shares. The negative id keeps them
+    distinct from folders owned by the current user while preserving navigation.
+    """
+    rows = [row for row in await _shared_folder_path_rows(db, user_id) if row.parent_id is None]
+    groups: dict[tuple[int, str], list] = defaultdict(list)
+    for row in rows:
+        groups[(int(row.owner_id), str(row.path))].append(row)
+
+    folders: list[dict] = []
+    for (source_owner_id, path), group_rows in sorted(groups.items(), key=lambda item: (item[0][1], item[0][0], min(int(row.id) for row in item[1]))):
+        first = min(group_rows, key=lambda row: int(row.id))
+        created_values = [row.created_at for row in group_rows if row.created_at is not None]
+        folders.append({
+            "id": -_shared_group_token(source_owner_id, path),
+            "name": first.name,
+            "extension": None,
+            "size": 0,
+            "created_at": min(created_values) if created_values else first.created_at,
+            "storage_path": None,
+            "is_folder": True,
+            "parent_id": None,
+            "mime_type": None,
+            "source_folder_ids": [int(row.id) for row in group_rows],
+        })
+    return folders
+
+
+async def _shared_folder_path_rows(db: AsyncSession, user_id: int) -> list:
+    result = await db.execute(text("""
+        WITH RECURSIVE ancestors AS (
+            SELECT folder.id, folder.name, folder.parent_id, folder.owner_id, folder.created_at
+            FROM framework_file_folders folder
+            JOIN framework_file_items file ON file.folder_id = folder.id
+            JOIN framework_file_shares share ON share.file_id = file.id
+            WHERE share.shared_with_user_id = :user_id
+              AND file.deleted = false
+              AND folder.deleted = false
+              AND (share.expiry IS NULL OR share.expiry > now())
+
+            UNION
+
+            SELECT parent.id, parent.name, parent.parent_id, parent.owner_id, parent.created_at
+            FROM framework_file_folders parent
+            JOIN ancestors child ON child.parent_id = parent.id
+            WHERE parent.deleted = false
+        ),
+        paths AS (
+            SELECT
+                id,
+                name,
+                parent_id,
+                owner_id,
+                created_at,
+                name::text AS path
+            FROM ancestors
+            WHERE parent_id IS NULL AND owner_id != :user_id
+
+            UNION ALL
+
+            SELECT
+                child.id,
+                child.name,
+                child.parent_id,
+                child.owner_id,
+                child.created_at,
+                paths.path || '/' || child.name AS path
+            FROM ancestors child
+            JOIN paths ON child.parent_id = paths.id
+        )
+        SELECT DISTINCT id, name, parent_id, owner_id, created_at, path
+        FROM paths
+        ORDER BY path, id
+    """), {"user_id": user_id})
+    return list(result)
+
+
+async def _resolve_shared_root_group_source_ids(db: AsyncSession, user_id: int, group_token: int) -> list[int]:
+    rows = await _shared_folder_path_rows(db, user_id)
+    groups: dict[tuple[int, str], list] = defaultdict(list)
+    for row in rows:
+        groups[(int(row.owner_id), str(row.path))].append(row)
+    for (source_owner_id, path), group_rows in groups.items():
+        if _shared_group_token(source_owner_id, path) == group_token:
+            return [int(row.id) for row in group_rows]
+    raise NotFound("Folder not found")
+
+
+async def _get_shared_folder_file_list(
+    db: AsyncSession,
+    source_folder_ids: list[int],
+    user_id: int,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    source_folder_ids = [int(folder_id) for folder_id in source_folder_ids if int(folder_id) > 0]
+    if not source_folder_ids:
+        raise NotFound("Folder not found")
+    folder_rows = await db.execute(
+        select(Folder).where(
+            Folder.id.in_(source_folder_ids),
+            Folder.deleted.is_(False),
+        )
+    )
+    found_folder_ids = {int(folder.id) for folder in folder_rows.scalars().all()}
+    if found_folder_ids != set(source_folder_ids):
+        raise NotFound("Folder not found")
+
+    has_shared_file = await db.scalar(text("""
+        WITH RECURSIVE folder_tree AS (
+            SELECT id
+            FROM framework_file_folders
+            WHERE id = ANY(:folder_ids) AND deleted = false
+
+            UNION ALL
+
+            SELECT child.id
+            FROM framework_file_folders child
+            JOIN folder_tree parent ON child.parent_id = parent.id
+            WHERE child.deleted = false
+        )
+        SELECT EXISTS (
+            SELECT 1
+            FROM folder_tree tree
+            JOIN framework_file_items file ON file.folder_id = tree.id
+            JOIN framework_file_shares share ON share.file_id = file.id
+            WHERE share.shared_with_user_id = :user_id
+              AND file.deleted = false
+              AND (share.expiry IS NULL OR share.expiry > now())
+        )
+    """), {"folder_ids": source_folder_ids, "user_id": user_id})
+    if not has_shared_file:
+        raise NotFound("Folder not found")
+
+    child_groups: dict[tuple[int, str], list] = defaultdict(list)
+    for row in await _shared_folder_path_rows(db, user_id):
+        if row.parent_id and int(row.parent_id) in source_folder_ids:
+            child_groups[(int(row.owner_id), str(row.path))].append(row)
+    folder_list = [
+        {
+            "id": -_shared_group_token(source_owner_id, path),
+            "name": min(group_rows, key=lambda item: int(item.id)).name,
+            "extension": None,
+            "size": 0,
+            "created_at": min(
+                (row.created_at for row in group_rows if row.created_at is not None),
+                default=min(group_rows, key=lambda item: int(item.id)).created_at,
+            ),
+            "storage_path": None,
+            "is_folder": True,
+            "parent_id": None,
+            "mime_type": None,
+            "source_folder_ids": [int(row.id) for row in group_rows],
+        }
+        for (source_owner_id, path), group_rows in sorted(
+            child_groups.items(),
+            key=lambda item: (min(row.name for row in item[1]), min(int(row.id) for row in item[1])),
+        )
+    ]
+
+    offset = (page - 1) * page_size
+    folder_limit = max(0, min(page_size, len(folder_list) - offset))
+    paged_folders = folder_list[offset:offset + folder_limit]
+
+    file_offset = max(0, offset - len(folder_list))
+    file_limit = page_size - len(paged_folders)
+    file_total = await db.scalar(
+        select(func.count(File.id))
+        .select_from(FileShare)
+        .join(File, File.id == FileShare.file_id)
+        .where(
+            File.folder_id.in_(source_folder_ids),
+            File.deleted.is_(False),
+            FileShare.shared_with_user_id == user_id,
+            *active_share_conditions(),
+        )
+    ) or 0
+    files = []
+    if file_limit:
+        files_result = await db.execute(
+            select(File)
+            .join(FileShare, File.id == FileShare.file_id)
+            .where(
+                File.folder_id.in_(source_folder_ids),
+                File.deleted.is_(False),
+                FileShare.shared_with_user_id == user_id,
+                *active_share_conditions(),
+            )
+            .order_by(File.created_at.desc())
+            .offset(file_offset)
+            .limit(file_limit)
+        )
+        files = files_result.scalars().all()
+    file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "created_at": f.created_at, "storage_path": f.storage_path, "is_folder": False, "parent_id": -int(f.folder_id) if f.folder_id else None, "mime_type": f.mime_type} for f in files]
+    return {
+        "items": paged_folders + file_list,
+        "total": len(folder_list) + file_total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 async def rename_item(db: AsyncSession, item_type: str, item_id: int, new_name: str, owner_id: int):

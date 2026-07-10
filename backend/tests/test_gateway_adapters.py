@@ -221,6 +221,29 @@ class TestOpenAICompatAdapter:
         assert result.content == "14"
         assert result.thinking == ""
 
+    def test_adapt_responses_api_response(self):
+        raw = {
+            "id": "resp_123",
+            "object": "response",
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "summary": [{"text": "short reasoning"}]},
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "OK"},
+                    ],
+                },
+            ],
+            "usage": {"input_tokens": 3, "output_tokens": 2},
+        }
+        result = self.adapter.adapt_response(raw, provider="gptstore-text")
+        assert result.content == "OK"
+        assert result.thinking == "short reasoning"
+        assert result.usage is not None
+        assert result.usage.prompt_tokens == 3
+        assert result.usage.completion_tokens == 2
+
 
 class TestRegistry:
     def test_get_adapter_by_exact_name(self):

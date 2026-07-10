@@ -91,6 +91,29 @@ class OpenAICompatSuccessProvider:
         return {"choices": [{"message": {"content": self.content}, "finish_reason": "stop"}]}
 
 
+class ResponsesSuccessProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def chat(self, messages, model, temperature=0.7, max_tokens=4096, tools=None):
+        self.calls += 1
+        return {
+            "id": "resp_test",
+            "object": "response",
+            "status": "completed",
+            "error": None,
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": '{"ok":true}'},
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 3},
+        }
+
+
 @pytest.mark.asyncio
 async def test_retryable_provider_is_retried_once() -> None:
     provider = RetryableProvider()
@@ -105,6 +128,25 @@ async def test_retryable_provider_is_retried_once() -> None:
     assert isinstance(result, ModelResponse)
     assert result.content == "ok"
     assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_responses_null_error_is_not_provider_error() -> None:
+    provider = ResponsesSuccessProvider()
+    result = await _call_with_unified_retry(
+        provider=provider,
+        req=ModelRequest(messages=[], temperature=0.7, max_tokens=1),
+        model="gpt-5.5",
+        caller_module="test",
+        profile_key="gpt-5.5-knowledge",
+        provider_name="gptstore-text",
+    )
+
+    assert result.error is None
+    assert result.content == '{"ok":true}'
+    assert result.usage is not None
+    assert result.usage.prompt_tokens == 4
+    assert result.usage.completion_tokens == 3
 
 
 @pytest.mark.asyncio
@@ -237,6 +279,48 @@ def test_openai_provider_session_affinity_header_is_payload_scoped() -> None:
     assert headers_a1["X-Session-ID"].startswith("knowledge-gptstore:")
     assert headers_a1["X-Session-ID"] == headers_a2["X-Session-ID"]
     assert headers_a1["X-Session-ID"] != headers_b["X-Session-ID"]
+
+
+def test_openai_provider_builds_responses_payload() -> None:
+    provider = OpenAIProvider(
+        api_url="http://127.0.0.1:50936/v1/responses",
+        api_key="test-key",
+        provider_name="gptstore-text",
+        api_protocol="responses",
+    )
+
+    payload = provider._build_payload(
+        [
+            {"role": "system", "content": "Use concise Chinese."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,abc"}},
+                    {"type": "text", "text": "描述图片"},
+                ],
+            },
+        ],
+        "gpt-5.5",
+        0.2,
+        128,
+        False,
+        None,
+    )
+
+    assert payload["model"] == "gpt-5.5"
+    assert payload["instructions"] == "Use concise Chinese."
+    assert payload["max_output_tokens"] == 128
+    assert payload["store"] is False
+    assert "messages" not in payload
+    assert payload["input"][0]["role"] == "user"
+    assert payload["input"][0]["content"][0] == {
+        "type": "input_image",
+        "image_url": "data:image/jpeg;base64,abc",
+    }
+    assert payload["input"][0]["content"][1] == {
+        "type": "input_text",
+        "text": "描述图片",
+    }
 
 
 def test_openai_provider_session_affinity_can_be_request_scoped() -> None:

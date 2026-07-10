@@ -286,6 +286,7 @@ async def get_chunk_by_id(db: AsyncSession, chunk_id: int, owner_id: int | None 
     from app.models.file import File
 
     from ..models import KbChunk, KbDocument
+    from .source_file_state import accessible_document_clause
 
     stmt = (
         select(KbChunk)
@@ -298,7 +299,10 @@ async def get_chunk_by_id(db: AsyncSession, chunk_id: int, owner_id: int | None 
         )
     )
     if owner_id is not None:
-        stmt = stmt.where(KbChunk.owner_id == owner_id, KbDocument.owner_id == owner_id)
+        stmt = stmt.where(
+            KbChunk.owner_id == KbDocument.owner_id,
+            accessible_document_clause(owner_id),
+        )
     r = await db.execute(stmt)
     chunk = r.scalar_one_or_none()
     if not chunk:

@@ -242,7 +242,7 @@ async def _call_with_unified_retry(
             if raw is None:
                 continue
 
-            if "error" in raw:
+            if raw.get("error"):
                 error = str(raw.get("error"))
                 return ModelResponse(
                     content=f"(Provider error: {raw.get('error')})",
@@ -337,6 +337,7 @@ class ModelGatewayRouter:
                     extra_headers=cfg.get("headers") or {},
                     session_affinity=cfg.get("session_affinity") or {},
                     auth_recovery=cfg.get("auth_recovery") or {},
+                    api_protocol=cfg.get("api_protocol") or cfg.get("protocol") or "",
                 )
             elif ptype == "local":
                 self._providers[name] = LocalProvider(allow_echo=bool(cfg.get("allow_echo", False)))

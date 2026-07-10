@@ -184,14 +184,38 @@ def test_filename_safety_contract() -> None:
 
 
 def test_chart_fake_success_contract() -> None:
-    """chart must fail if run_python succeeds but no chart file is uploaded."""
+    """chart must fail if run_python succeeds but no workspace chart file exists."""
     result = {"success": True, "chart_count": 0, "charts": []}
     if result.get("success") and result.get("chart_count", 0) < 1:
         result["success"] = False
-        result["error"] = "Chart generation produced no uploaded chart file"
+        result["error"] = "Chart generation produced no workspace chart file"
     assert result["success"] is False
     assert "error" in result
     print("  [CHART] Fake-success guard contract valid")
+
+
+def test_chart_output_stays_in_workspace_until_publish() -> None:
+    """Generated charts are draft workspace files, not framework file records."""
+    result = {
+        "success": True,
+        "charts": [
+            {
+                "workspace_path": "outputs/run123_chart.png",
+                "name": "run123_chart.png",
+                "size": 2048,
+                "published": False,
+                "note": "Use terminal-tools:publish to deliver to desktop",
+            }
+        ],
+        "chart_count": 1,
+        "chart_errors": [],
+    }
+    chart = result["charts"][0]
+    assert "file_id" not in chart
+    assert chart["workspace_path"].startswith("outputs/")
+    assert chart["published"] is False
+    assert "publish" in chart["note"]
+    print("  [CHART] Output remains workspace draft until publish")
 
 
 def test_run_python_cleanup_error_contract() -> None:
@@ -253,6 +277,7 @@ def main() -> None:
     test_output_shape_contract()
     test_filename_safety_contract()
     test_chart_fake_success_contract()
+    test_chart_output_stays_in_workspace_until_publish()
     test_run_python_cleanup_error_contract()
     test_symlink_listing_does_not_follow_target()
     print("=" * 60)

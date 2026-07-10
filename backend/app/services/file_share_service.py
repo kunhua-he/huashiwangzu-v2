@@ -1,10 +1,20 @@
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, NotFound
 from app.models.file import File
 from app.models.file_share import FileShare
 from app.models.user import User
+
+
+def active_share_conditions(*, user_id: int | None = None, file_id=None) -> list:
+    """SQLAlchemy conditions for a share that is currently usable."""
+    conditions = [or_(FileShare.expiry.is_(None), FileShare.expiry > func.now())]
+    if user_id is not None:
+        conditions.append(FileShare.shared_with_user_id == user_id)
+    if file_id is not None:
+        conditions.append(FileShare.file_id == file_id)
+    return conditions
 
 
 async def check_file_access(db: AsyncSession, file_id: int, user_id: int) -> dict:
@@ -18,8 +28,7 @@ async def check_file_access(db: AsyncSession, file_id: int, user_id: int) -> dic
 
     share = await db.execute(
         select(FileShare).where(
-            FileShare.file_id == file_id,
-            FileShare.shared_with_user_id == user_id,
+            *active_share_conditions(user_id=user_id, file_id=file_id),
         )
     )
     share_record = share.scalar_one_or_none()
@@ -116,6 +125,7 @@ async def get_received_shares(
         .where(
             FileShare.shared_with_user_id == user_id,
             File.deleted.is_(False),
+            *active_share_conditions(),
         )
     )
     if keyword:
@@ -126,6 +136,7 @@ async def get_received_shares(
     count_q = select(FileShare).join(File, FileShare.file_id == File.id).where(
         FileShare.shared_with_user_id == user_id,
         File.deleted.is_(False),
+        *active_share_conditions(),
     )
     if keyword:
         count_q = count_q.where(File.name.ilike(f"%{keyword}%"))
@@ -163,6 +174,7 @@ async def get_sent_shares(
         .where(
             FileShare.shared_by_owner_id == user_id,
             File.deleted.is_(False),
+            *active_share_conditions(),
         )
         .order_by(FileShare.created_at.desc())
     )
@@ -170,6 +182,7 @@ async def get_sent_shares(
         select(FileShare).join(File, FileShare.file_id == File.id).where(
             FileShare.shared_by_owner_id == user_id,
             File.deleted.is_(False),
+            *active_share_conditions(),
         )
     )).scalars().all())
 
@@ -198,7 +211,7 @@ async def get_accessible_file_ids(db: AsyncSession, user_id: int) -> set[int]:
     owned_ids = set(r for (r,) in owned.all())
     shared = await db.execute(
         select(FileShare.file_id).where(
-            FileShare.shared_with_user_id == user_id,
+            *active_share_conditions(user_id=user_id),
         )
     )
     shared_ids = set(r for (r,) in shared.all())

@@ -18,7 +18,7 @@ from ..models import (
     KbPipelineRun,
     KbRawData,
 )
-from .source_file_state import get_source_file_availability
+from .source_file_state import accessible_document_clause, get_source_file_availability
 
 logger = logging.getLogger("v2.knowledge").getChild("progress")
 
@@ -57,7 +57,7 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
     dr = await db.execute(
         select(KbDocument).where(
             KbDocument.id == document_id,
-            KbDocument.owner_id == owner_id,
+            accessible_document_clause(owner_id),
             KbDocument.deleted.is_(False),
         )
     )
@@ -109,7 +109,7 @@ async def get_document_progress(db: AsyncSession, document_id: int, owner_id: in
 
     latest_run = (await db.execute(
         select(KbPipelineRun)
-        .where(KbPipelineRun.document_id == document_id, KbPipelineRun.owner_id == owner_id)
+        .where(KbPipelineRun.document_id == document_id, KbPipelineRun.owner_id == doc.owner_id)
         .order_by(KbPipelineRun.id.desc())
         .limit(1)
     )).scalar_one_or_none()

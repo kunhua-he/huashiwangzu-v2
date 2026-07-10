@@ -9,6 +9,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from app.config import get_settings
 from app.core.exceptions import ValidationError
 from app.database import AsyncSessionLocal
 from app.models.file import File, Folder
@@ -39,6 +40,29 @@ ENTERPRISE_IMPORT_SCAN_TASK = "kb_enterprise_import"
 ENTERPRISE_IMPORT_FILE_TASK = "kb_enterprise_import_file"
 
 
+def _allowed_source_roots() -> list[Path]:
+    settings = get_settings()
+    raw = str(getattr(settings, "ENTERPRISE_SOURCE_ALLOWED_ROOTS", "") or "~")
+    roots: list[Path] = []
+    for value in raw.split(os.pathsep):
+        value = value.strip()
+        if not value:
+            continue
+        roots.append(Path(value).expanduser().resolve())
+    return roots or [Path.home().resolve()]
+
+
+def resolve_enterprise_source_root(source_root: str) -> Path:
+    root = Path(source_root).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise ValidationError("source_root must be an existing directory")
+    allowed_roots = _allowed_source_roots()
+    if not any(root == allowed or root.is_relative_to(allowed) for allowed in allowed_roots):
+        allowed_text = ", ".join(str(path) for path in allowed_roots)
+        raise ValidationError(f"source_root is outside allowed roots: {allowed_text}")
+    return root
+
+
 def _normalize_extensions(values: list[str] | None) -> set[str]:
     if not values:
         return set(DEFAULT_IMPORT_EXTENSIONS)
@@ -57,6 +81,59 @@ def _file_md5(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _content_storage_path(md5_hash: str, extension: str) -> str:
+    clean_ext = extension.lower().strip().lstrip(".")
+    suffix = f".{clean_ext}" if clean_ext else ""
+    return f"{md5_hash[:2]}/{md5_hash[2:4]}/{md5_hash}{suffix}"
+
+
+def _resolve_upload_path(storage_path: str) -> Path:
+    upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+    full_path = (upload_root / storage_path).resolve()
+    if os.path.commonpath([str(upload_root), str(full_path)]) != str(upload_root):
+        raise ValidationError("invalid storage_path")
+    return full_path
+
+
+def _storage_file_missing(file: File) -> bool:
+    if not file.storage_path:
+        return True
+    return not _resolve_upload_path(file.storage_path).is_file()
+
+
+async def _repair_existing_target_storage(
+    db: AsyncSession,
+    *,
+    file: File,
+    source_path: Path,
+    md5_hash: str,
+) -> bool:
+    """Restore missing content-addressed bytes for an already imported file record."""
+    if not _storage_file_missing(file):
+        return False
+    extension = file.extension or source_path.suffix.lower().lstrip(".")
+    storage_path = file.storage_path or _content_storage_path(md5_hash, extension)
+    target_path = _resolve_upload_path(storage_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=str(target_path.parent),
+        prefix=f".repair-{target_path.name}-",
+        delete=False,
+    ) as tmp:
+        temp_path = Path(tmp.name)
+    try:
+        shutil.copyfile(source_path, temp_path)
+        temp_path.replace(target_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    file.storage_path = storage_path
+    file.size = source_path.stat().st_size
+    file.md5_hash = md5_hash
+    await db.commit()
+    return True
 
 
 def is_ignored_source_path(path: Path) -> bool:
@@ -79,7 +156,12 @@ def _iter_source_files(source_root: Path, extensions: set[str]) -> list[Path]:
     for path in source_root.rglob("*"):
         if is_ignored_source_path(path):
             continue
+        if path.is_symlink():
+            continue
         if not path.is_file():
+            continue
+        resolved_path = path.resolve()
+        if not resolved_path.is_relative_to(source_root):
             continue
         ext = path.suffix.lower().lstrip(".")
         if ext == "tif":
@@ -150,9 +232,7 @@ async def import_enterprise_source_batch(
     skip_existing_md5: bool = True,
 ) -> dict:
     """Dry-run or import a bounded batch from a local enterprise source folder."""
-    root = Path(source_root).expanduser().resolve()
-    if not root.exists() or not root.is_dir():
-        raise ValidationError("source_root must be an existing directory")
+    root = resolve_enterprise_source_root(source_root)
     clean_target_root = (target_root_name or "企业微盘导入").strip().strip("/") or "企业微盘导入"
     bounded_limit = max(1, min(int(limit or 20), 200))
     allowed_extensions = _normalize_extensions(extensions)
@@ -198,7 +278,22 @@ async def import_enterprise_source_batch(
                 if existing_target.md5_hash == md5_hash
                 else "target_name_conflict"
             )
-            skipped.append({"path": str(relative_path), "reason": reason})
+            repaired = False
+            if reason == "target_file_already_imported" and not dry_run:
+                repaired = await _repair_existing_target_storage(
+                    db,
+                    file=existing_target,
+                    source_path=source_path,
+                    md5_hash=md5_hash,
+                )
+                if repaired:
+                    reason = "target_file_repaired_from_source"
+            skipped.append({
+                "path": str(relative_path),
+                "reason": reason,
+                "file_id": int(existing_target.id),
+                "repaired_storage": repaired,
+            })
             continue
         selected.append(item)
 
@@ -260,9 +355,7 @@ async def enqueue_enterprise_source_import(
     batch_size: int = 1000,
     priority: int = 8,
 ) -> dict:
-    root = Path(source_root).expanduser().resolve()
-    if not root.exists() or not root.is_dir():
-        raise ValidationError("source_root must be an existing directory")
+    root = resolve_enterprise_source_root(source_root)
     bounded_batch_size = max(1, min(int(batch_size or 1000), 5000))
     parameters = {
         "owner_id": owner_id,
@@ -323,23 +416,23 @@ async def _import_one_enterprise_source_file(params: dict) -> dict:
     owner_id = int(params.get("owner_id") or params.get("creator_id") or 0)
     if owner_id <= 0:
         raise ValidationError("owner_id is required")
-    source_root = Path(str(params.get("source_root") or "")).expanduser().resolve()
+    source_root = resolve_enterprise_source_root(str(params.get("source_root") or ""))
     source_path = Path(str(params.get("source_path") or "")).expanduser().resolve()
     target_root_name = str(params.get("target_root_name") or "企业微盘导入")
     skip_existing_md5 = bool(params.get("skip_existing_md5", True))
     source_manifest_id = int(params.get("source_manifest_id") or 0)
 
-    if not source_root.exists() or not source_root.is_dir():
+    if source_path.is_symlink():
         if source_manifest_id > 0:
             async with AsyncSessionLocal() as db:
                 await _mark_source_manifest(
                     db,
                     source_manifest_id,
-                    status="error",
-                    error_message="source_root_unavailable",
+                    status="skipped",
+                    error_message="source_file_symlink",
                 )
                 await db.commit()
-        raise ValidationError("source_root must be an existing directory")
+        return {"skipped": True, "reason": "source_file_symlink", "source_path": str(source_path)}
     if not source_path.exists() or not source_path.is_file():
         if source_manifest_id > 0:
             async with AsyncSessionLocal() as db:
@@ -396,6 +489,16 @@ async def _import_one_enterprise_source_file(params: dict) -> dict:
                 if existing_target.md5_hash == md5_hash
                 else "target_name_conflict"
             )
+            repaired = False
+            if reason == "target_file_already_imported":
+                repaired = await _repair_existing_target_storage(
+                    db,
+                    file=existing_target,
+                    source_path=source_path,
+                    md5_hash=md5_hash,
+                )
+                if repaired:
+                    reason = "target_file_repaired_from_source"
             if source_manifest_id > 0:
                 await _mark_source_manifest(
                     db,
@@ -411,6 +514,7 @@ async def _import_one_enterprise_source_file(params: dict) -> dict:
                 "reason": reason,
                 "path": str(relative_path),
                 "file_id": int(existing_target.id),
+                "repaired_storage": repaired,
             }
 
         duplicate_content = False
@@ -483,9 +587,7 @@ async def _enterprise_import_task_handler(params: dict) -> dict:
     owner_id = int(params.get("owner_id") or params.get("creator_id") or 0)
     if owner_id <= 0:
         raise ValidationError("owner_id is required")
-    source_root = Path(str(params.get("source_root") or "")).expanduser().resolve()
-    if not source_root.exists() or not source_root.is_dir():
-        raise ValidationError("source_root must be an existing directory")
+    source_root = resolve_enterprise_source_root(str(params.get("source_root") or ""))
     target_root_name = str(params.get("target_root_name") or "企业微盘导入")
     extensions_param = params.get("extensions") or []
     extensions = [str(item).strip() for item in extensions_param if str(item).strip()]

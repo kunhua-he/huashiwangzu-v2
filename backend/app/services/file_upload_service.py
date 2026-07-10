@@ -128,9 +128,12 @@ async def upload_file(
 async def _ensure_folder_path(
     db: AsyncSession, relative_path: str, owner_id: int, parent_id: int | None
 ) -> int:
+    from app.services.file_service import _lock_folder_namespace
+
     parts = [p for p in relative_path.split("/") if p]
     current_parent = parent_id
     for part in parts:
+        await _lock_folder_namespace(db, owner_id, current_parent)
         existing = await db.execute(
             select(Folder)
             .where(

@@ -3,7 +3,10 @@
     "项目工具台": {
       "command": "python3.14",
       "args": ["dev_toolkit/server.py"],
-      "cwd": "/Users/hekunhua/Documents/Agent/PHP/华世王镞_v2"
+      "cwd": "/Users/hekunhua/Documents/Agent/PHP/华世王镞_v2",
+      "env": {
+        "PYTHONPATH": "."
+      }
     }
   }
 }

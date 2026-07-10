@@ -456,6 +456,8 @@ def _load_worker_config(repo_root: Path) -> dict[str, Any]:
         "poll_interval_seconds": data.get("poll_interval_seconds"),
         "stage_concurrency": (data.get("stage_concurrency") or {}).get("kb_pipeline_stage", {}),
         "lane_concurrency": (data.get("lane_concurrency") or {}).get("kb_pipeline_stage", {}),
+        "paused_stages": (data.get("paused_stages") or {}).get("kb_pipeline_stage", []),
+        "paused_lanes": (data.get("paused_lanes") or {}).get("kb_pipeline_stage", []),
     }
 
 
@@ -468,6 +470,16 @@ def _annotate_queue_limits(snapshot: dict[str, Any], worker_config: dict[str, An
     }
     stage_limits = worker_config.get("stage_concurrency") or {}
     lane_limits = worker_config.get("lane_concurrency") or {}
+    paused_stages = {
+        str(stage)
+        for stage in (worker_config.get("paused_stages") or [])
+        if str(stage).strip()
+    }
+    paused_lanes = {
+        str(lane)
+        for lane in (worker_config.get("paused_lanes") or [])
+        if str(lane).strip()
+    }
     reasons: dict[str, int] = {}
     for item in stages:
         if not isinstance(item, dict):
@@ -482,6 +494,10 @@ def _annotate_queue_limits(snapshot: dict[str, Any], worker_config: dict[str, An
         current_lane_running = lane_running.get(lane, 0)
         if pending <= 0:
             reason = "no_pending"
+        elif stage in paused_stages:
+            reason = "paused_by_config"
+        elif lane in paused_lanes:
+            reason = "lane_paused_by_config"
         elif ready <= 0:
             reason = "blocked_not_ready"
         elif stage_limit is not None and running >= stage_limit:

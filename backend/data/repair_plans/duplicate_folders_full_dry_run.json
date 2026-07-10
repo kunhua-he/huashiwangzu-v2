@@ -1,0 +1,8453 @@
+[
+  {
+    "owner_id": 4,
+    "parent_id": 1141,
+    "name": "图片清单",
+    "folder_ids": [
+      2198,
+      2204
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2205,
+        "from_parent_id": 2204,
+        "to_parent_id": 2198,
+        "old_name": "视频剪辑素材",
+        "new_name": "视频剪辑素材(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2204,
+        "canonical_folder_id": 2198,
+        "name": "图片清单"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1226,
+    "name": "视频剪辑素材",
+    "folder_ids": [
+      1381,
+      1386,
+      1388
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1387,
+        "from_parent_id": 1386,
+        "to_parent_id": 1381,
+        "old_name": "成片视频（娇薇诗和苏蜜雅账号）",
+        "new_name": "成片视频（娇薇诗和苏蜜雅账号）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1386,
+        "canonical_folder_id": 1381,
+        "name": "视频剪辑素材"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1390,
+        "from_parent_id": 1388,
+        "to_parent_id": 1381,
+        "old_name": "成片视频（娇薇诗和苏蜜雅账号）",
+        "new_name": "成片视频（娇薇诗和苏蜜雅账号）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1388,
+        "canonical_folder_id": 1381,
+        "name": "视频剪辑素材"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1227,
+    "name": "S-1-5-21-420413099-3245348016-3175881208-500",
+    "folder_ids": [
+      1447,
+      1450
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1451,
+        "from_parent_id": 1450,
+        "to_parent_id": 1447,
+        "old_name": "$RH442I7",
+        "new_name": "$RH442I7(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1450,
+        "canonical_folder_id": 1447,
+        "name": "S-1-5-21-420413099-3245348016-3175881208-500"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1229,
+    "name": "$RQQ9EP0",
+    "folder_ids": [
+      1428,
+      1429
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11553,
+        "from_folder_id": 1429,
+        "to_folder_id": 1428,
+        "old_name": "海南参会表",
+        "new_name": "海南参会表",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11557,
+        "from_folder_id": 1429,
+        "to_folder_id": 1428,
+        "old_name": "2022恩馨第一遍电话邀约话术",
+        "new_name": "2022恩馨第一遍电话邀约话术",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11563,
+        "from_folder_id": 1429,
+        "to_folder_id": 1428,
+        "old_name": "2022芮其可可第一遍电话邀约话术",
+        "new_name": "2022芮其可可第一遍电话邀约话术",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1429,
+        "canonical_folder_id": 1428,
+        "name": "$RQQ9EP0"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1229,
+    "name": "$RWI9ZXN",
+    "folder_ids": [
+      1432,
+      1433
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11576,
+        "from_folder_id": 1433,
+        "to_folder_id": 1432,
+        "old_name": "5月16-17号会议流程",
+        "new_name": "5月16-17号会议流程",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1433,
+        "canonical_folder_id": 1432,
+        "name": "$RWI9ZXN"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1267,
+    "name": "话术案例",
+    "folder_ids": [
+      1332,
+      1333
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11479,
+        "from_folder_id": 1333,
+        "to_folder_id": 1332,
+        "old_name": "回访话术",
+        "new_name": "回访话术",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1333,
+        "canonical_folder_id": 1332,
+        "name": "话术案例"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1268,
+    "name": "方案案例",
+    "folder_ids": [
+      1272,
+      1273
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11437,
+        "from_folder_id": 1273,
+        "to_folder_id": 1272,
+        "old_name": "惜缘6800方案",
+        "new_name": "惜缘6800方案",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11439,
+        "from_folder_id": 1273,
+        "to_folder_id": 1272,
+        "old_name": "晨美国际会场方案",
+        "new_name": "晨美国际会场方案",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1273,
+        "canonical_folder_id": 1272,
+        "name": "方案案例"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1275,
+    "name": "质检报告",
+    "folder_ids": [
+      1300,
+      1306,
+      1309,
+      1311
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1307,
+        "from_parent_id": 1306,
+        "to_parent_id": 1300,
+        "old_name": "新版",
+        "new_name": "新版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1306,
+        "canonical_folder_id": 1300,
+        "name": "质检报告"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1310,
+        "from_parent_id": 1309,
+        "to_parent_id": 1300,
+        "old_name": "新版",
+        "new_name": "新版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1309,
+        "canonical_folder_id": 1300,
+        "name": "质检报告"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1312,
+        "from_parent_id": 1311,
+        "to_parent_id": 1300,
+        "old_name": "新版",
+        "new_name": "新版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1311,
+        "canonical_folder_id": 1300,
+        "name": "质检报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1276,
+    "name": "426-美容院老板店长手册",
+    "folder_ids": [
+      1297,
+      1304
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1305,
+        "from_parent_id": 1304,
+        "to_parent_id": 1297,
+        "old_name": "七、美容院员工管理52套",
+        "new_name": "七、美容院员工管理52套(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1304,
+        "canonical_folder_id": 1297,
+        "name": "426-美容院老板店长手册"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1277,
+    "name": "2.美容院客源拓展方案400套",
+    "folder_ids": [
+      1290,
+      1291,
+      1293
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1292,
+        "from_parent_id": 1291,
+        "to_parent_id": 1290,
+        "old_name": "理论技巧",
+        "new_name": "理论技巧(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1291,
+        "canonical_folder_id": 1290,
+        "name": "2.美容院客源拓展方案400套"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1294,
+        "from_parent_id": 1293,
+        "to_parent_id": 1290,
+        "old_name": "理论技巧",
+        "new_name": "理论技巧(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1293,
+        "canonical_folder_id": 1290,
+        "name": "2.美容院客源拓展方案400套"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1281,
+    "name": "文件",
+    "folder_ids": [
+      1288,
+      1289
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11446,
+        "from_folder_id": 1289,
+        "to_folder_id": 1288,
+        "old_name": "单店排毒营合作及分成标准",
+        "new_name": "单店排毒营合作及分成标准",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11447,
+        "from_folder_id": 1289,
+        "to_folder_id": 1288,
+        "old_name": "八大技术",
+        "new_name": "八大技术",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11448,
+        "from_folder_id": 1289,
+        "to_folder_id": 1288,
+        "old_name": "关于单店排毒营的合作说明",
+        "new_name": "关于单店排毒营的合作说明",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11449,
+        "from_folder_id": 1289,
+        "to_folder_id": 1288,
+        "old_name": "会员启动流程细则",
+        "new_name": "会员启动流程细则",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11450,
+        "from_folder_id": 1289,
+        "to_folder_id": 1288,
+        "old_name": "感觉",
+        "new_name": "感觉",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11452,
+        "from_folder_id": 1289,
+        "to_folder_id": 1288,
+        "old_name": "排毒营物料准备清单",
+        "new_name": "排毒营物料准备清单",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1289,
+        "canonical_folder_id": 1288,
+        "name": "文件"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1281,
+    "name": "新建文件夹",
+    "folder_ids": [
+      1299,
+      1302,
+      1314
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11466,
+        "from_folder_id": 1302,
+        "to_folder_id": 1299,
+        "old_name": "健约酵素产品秒杀单",
+        "new_name": "健约酵素产品秒杀单",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1302,
+        "canonical_folder_id": 1299,
+        "name": "新建文件夹"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11469,
+        "from_folder_id": 1314,
+        "to_folder_id": 1299,
+        "old_name": "培训会流程",
+        "new_name": "培训会流程",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1314,
+        "canonical_folder_id": 1299,
+        "name": "新建文件夹"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1283,
+    "name": "线上系统搭建",
+    "folder_ids": [
+      1408,
+      1412
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1413,
+        "from_parent_id": 1412,
+        "to_parent_id": 1408,
+        "old_name": "营流宝",
+        "new_name": "营流宝(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1412,
+        "canonical_folder_id": 1408,
+        "name": "线上系统搭建"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1284,
+    "name": "营流宝第一次活动（5.26-28）",
+    "folder_ids": [
+      1475,
+      1476
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11649,
+        "from_folder_id": 1476,
+        "to_folder_id": 1475,
+        "old_name": "营流宝活动物料及系统准备",
+        "new_name": "营流宝活动物料及系统准备",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1476,
+        "canonical_folder_id": 1475,
+        "name": "营流宝第一次活动（5.26-28）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1290,
+    "name": "营销拓客技巧",
+    "folder_ids": [
+      1793,
+      1794
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1799,
+        "from_parent_id": 1794,
+        "to_parent_id": 1793,
+        "old_name": "拓客方案",
+        "new_name": "拓客方案(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1794,
+        "canonical_folder_id": 1793,
+        "name": "营销拓客技巧"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1297,
+    "name": "四、美容院促销方案10套",
+    "folder_ids": [
+      2141,
+      2142
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14887,
+        "from_folder_id": 2142,
+        "to_folder_id": 2141,
+        "old_name": "卡式促销",
+        "new_name": "卡式促销",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2142,
+        "canonical_folder_id": 2141,
+        "name": "四、美容院促销方案10套"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1297,
+    "name": "五、美容院培训资料23套",
+    "folder_ids": [
+      2038,
+      2039
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14126,
+        "from_folder_id": 2039,
+        "to_folder_id": 2038,
+        "old_name": "美容院培训的真正意义是什么",
+        "new_name": "美容院培训的真正意义是什么",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2039,
+        "canonical_folder_id": 2038,
+        "name": "五、美容院培训资料23套"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1300,
+    "name": "旧版",
+    "folder_ids": [
+      1842,
+      1845,
+      1847
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1846,
+        "from_parent_id": 1845,
+        "to_parent_id": 1842,
+        "old_name": "白富美质检报告",
+        "new_name": "白富美质检报告(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1845,
+        "canonical_folder_id": 1842,
+        "name": "旧版"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1850,
+        "from_parent_id": 1847,
+        "to_parent_id": 1842,
+        "old_name": "圣痘士质检报告",
+        "new_name": "圣痘士质检报告(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1847,
+        "canonical_folder_id": 1842,
+        "name": "旧版"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1301,
+    "name": "太白金星",
+    "folder_ids": [
+      1792,
+      1796
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1797,
+        "from_parent_id": 1796,
+        "to_parent_id": 1792,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1796,
+        "canonical_folder_id": 1792,
+        "name": "太白金星"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1301,
+    "name": "25.4.26娇薇诗",
+    "folder_ids": [
+      1802,
+      1804,
+      1811,
+      1814,
+      1822,
+      1825,
+      1826
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1809,
+        "from_parent_id": 1804,
+        "to_parent_id": 1802,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1804,
+        "canonical_folder_id": 1802,
+        "name": "25.4.26娇薇诗"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1813,
+        "from_parent_id": 1811,
+        "to_parent_id": 1802,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1811,
+        "canonical_folder_id": 1802,
+        "name": "25.4.26娇薇诗"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1815,
+        "from_parent_id": 1814,
+        "to_parent_id": 1802,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1814,
+        "canonical_folder_id": 1802,
+        "name": "25.4.26娇薇诗"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1828,
+        "from_parent_id": 1822,
+        "to_parent_id": 1802,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1822,
+        "canonical_folder_id": 1802,
+        "name": "25.4.26娇薇诗"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1827,
+        "from_parent_id": 1825,
+        "to_parent_id": 1802,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1825,
+        "canonical_folder_id": 1802,
+        "name": "25.4.26娇薇诗"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1832,
+        "from_parent_id": 1826,
+        "to_parent_id": 1802,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1826,
+        "canonical_folder_id": 1802,
+        "name": "25.4.26娇薇诗"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1301,
+    "name": "25.4.26苏蜜雅",
+    "folder_ids": [
+      1919,
+      1923,
+      1925,
+      1927,
+      1932
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1931,
+        "from_parent_id": 1923,
+        "to_parent_id": 1919,
+        "old_name": "苏蜜雅",
+        "new_name": "苏蜜雅(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1923,
+        "canonical_folder_id": 1919,
+        "name": "25.4.26苏蜜雅"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1926,
+        "from_parent_id": 1925,
+        "to_parent_id": 1919,
+        "old_name": "苏蜜雅",
+        "new_name": "苏蜜雅(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1925,
+        "canonical_folder_id": 1919,
+        "name": "25.4.26苏蜜雅"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1930,
+        "from_parent_id": 1927,
+        "to_parent_id": 1919,
+        "old_name": "苏蜜雅",
+        "new_name": "苏蜜雅(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1927,
+        "canonical_folder_id": 1919,
+        "name": "25.4.26苏蜜雅"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1936,
+        "from_parent_id": 1932,
+        "to_parent_id": 1919,
+        "old_name": "苏蜜雅",
+        "new_name": "苏蜜雅(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1932,
+        "canonical_folder_id": 1919,
+        "name": "25.4.26苏蜜雅"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1301,
+    "name": "KRNOQYUE",
+    "folder_ids": [
+      2067,
+      2069
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2070,
+        "from_parent_id": 2069,
+        "to_parent_id": 2067,
+        "old_name": "KRNOQYUE",
+        "new_name": "KRNOQYUE(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2069,
+        "canonical_folder_id": 2067,
+        "name": "KRNOQYUE"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1318,
+    "name": "KRNOBQUE 检测报告",
+    "folder_ids": [
+      2048,
+      2050
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2051,
+        "from_parent_id": 2050,
+        "to_parent_id": 2048,
+        "old_name": "备案报告",
+        "new_name": "备案报告(1)"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2052,
+        "from_parent_id": 2050,
+        "to_parent_id": 2048,
+        "old_name": "流通报告",
+        "new_name": "流通报告(1)"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2053,
+        "from_parent_id": 2050,
+        "to_parent_id": 2048,
+        "old_name": "流通报告",
+        "new_name": "流通报告(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2050,
+        "canonical_folder_id": 2048,
+        "name": "KRNOBQUE 检测报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1323,
+    "name": "KRNOBQUE 清肌净痘霜",
+    "folder_ids": [
+      2036,
+      2037
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14172,
+        "from_folder_id": 2037,
+        "to_folder_id": 2036,
+        "old_name": "立体图",
+        "new_name": "立体图",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2037,
+        "canonical_folder_id": 2036,
+        "name": "KRNOBQUE 清肌净痘霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1323,
+    "name": "KRNOBQUE 滢泽精华液",
+    "folder_ids": [
+      2165,
+      2169
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 15245,
+        "from_folder_id": 2169,
+        "to_folder_id": 2165,
+        "old_name": "KRNOBQUE滢泽精华液备案申请表",
+        "new_name": "KRNOBQUE滢泽精华液备案申请表",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2169,
+        "canonical_folder_id": 2165,
+        "name": "KRNOBQUE 滢泽精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1323,
+    "name": "KRNOBQUE 肌妍清欣霜",
+    "folder_ids": [
+      2034,
+      2035
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14118,
+        "from_folder_id": 2035,
+        "to_folder_id": 2034,
+        "old_name": "KRNOBQUE肌妍清欣霜摘要",
+        "new_name": "KRNOBQUE肌妍清欣霜摘要",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2035,
+        "canonical_folder_id": 2034,
+        "name": "KRNOBQUE 肌妍清欣霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1323,
+    "name": "KRNOBQUE 芙媄精华液",
+    "folder_ids": [
+      2044,
+      2045
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14174,
+        "from_folder_id": 2045,
+        "to_folder_id": 2044,
+        "old_name": "KRNOBQUE芙媄精华液说明书",
+        "new_name": "KRNOBQUE芙媄精华液说明书",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2045,
+        "canonical_folder_id": 2044,
+        "name": "KRNOBQUE 芙媄精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1326,
+    "name": "盖章版",
+    "folder_ids": [
+      2024,
+      2030
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14084,
+        "from_folder_id": 2030,
+        "to_folder_id": 2024,
+        "old_name": "KRNOBOUE凝萃粉黛美肌液  马齿苋化妆品功效宣称依据的摘要",
+        "new_name": "KRNOBOUE凝萃粉黛美肌液  马齿苋化妆品功效宣称依据的摘要",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2030,
+        "canonical_folder_id": 2024,
+        "name": "盖章版"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1335,
+    "name": "圣龙制度条例",
+    "folder_ids": [
+      1495,
+      1496
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11764,
+        "from_folder_id": 1496,
+        "to_folder_id": 1495,
+        "old_name": "启动培训话术",
+        "new_name": "启动培训话术",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11779,
+        "from_folder_id": 1496,
+        "to_folder_id": 1495,
+        "old_name": "第一遍沟通",
+        "new_name": "第一遍沟通",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11783,
+        "from_folder_id": 1496,
+        "to_folder_id": 1495,
+        "old_name": "省级招商会议合作标准",
+        "new_name": "省级招商会议合作标准",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11787,
+        "from_folder_id": 1496,
+        "to_folder_id": 1495,
+        "old_name": "招商会服务条款",
+        "new_name": "招商会服务条款",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1496,
+        "canonical_folder_id": 1495,
+        "name": "圣龙制度条例"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1335,
+    "name": "圣龙招商会培训",
+    "folder_ids": [
+      1497,
+      1499,
+      1500,
+      1501
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11778,
+        "from_folder_id": 1499,
+        "to_folder_id": 1497,
+        "old_name": "六分钟激情法",
+        "new_name": "六分钟激情法",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11784,
+        "from_folder_id": 1499,
+        "to_folder_id": 1497,
+        "old_name": "讲课",
+        "new_name": "讲课",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1499,
+        "canonical_folder_id": 1497,
+        "name": "圣龙招商会培训"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11790,
+        "from_folder_id": 1500,
+        "to_folder_id": 1497,
+        "old_name": "招商会前准备工作",
+        "new_name": "招商会前准备工作",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1500,
+        "canonical_folder_id": 1497,
+        "name": "圣龙招商会培训"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11780,
+        "from_folder_id": 1501,
+        "to_folder_id": 1497,
+        "old_name": "荣耀丽湾",
+        "new_name": "荣耀丽湾",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1501,
+        "canonical_folder_id": 1497,
+        "name": "圣龙招商会培训"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1341,
+    "name": "娇薇诗 润颜精华液",
+    "folder_ids": [
+      1595,
+      1600
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12505,
+        "from_folder_id": 1600,
+        "to_folder_id": 1595,
+        "old_name": "娇薇诗润颜精华液立体图",
+        "new_name": "娇薇诗润颜精华液立体图",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1600,
+        "canonical_folder_id": 1595,
+        "name": "娇薇诗 润颜精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1341,
+    "name": "娇薇诗 素肌焕采凝润霜",
+    "folder_ids": [
+      1602,
+      1607
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1608,
+        "from_parent_id": 1607,
+        "to_parent_id": 1602,
+        "old_name": "盖章版",
+        "new_name": "盖章版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1607,
+        "canonical_folder_id": 1602,
+        "name": "娇薇诗 素肌焕采凝润霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1345,
+    "name": "店务管理",
+    "folder_ids": [
+      1351,
+      1352,
+      1354
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1353,
+        "from_parent_id": 1352,
+        "to_parent_id": 1351,
+        "old_name": "拓客",
+        "new_name": "拓客(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1352,
+        "canonical_folder_id": 1351,
+        "name": "店务管理"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1356,
+        "from_parent_id": 1354,
+        "to_parent_id": 1351,
+        "old_name": "拓客",
+        "new_name": "拓客(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1354,
+        "canonical_folder_id": 1351,
+        "name": "店务管理"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1345,
+    "name": "表格",
+    "folder_ids": [
+      1378,
+      1379
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11515,
+        "from_folder_id": 1379,
+        "to_folder_id": 1378,
+        "old_name": "._顿康教案",
+        "new_name": "._顿康教案",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1379,
+        "canonical_folder_id": 1378,
+        "name": "表格"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1348,
+    "name": "养生手册",
+    "folder_ids": [
+      1457,
+      1461,
+      1462
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11629,
+        "from_folder_id": 1461,
+        "to_folder_id": 1457,
+        "old_name": "养生系统9",
+        "new_name": "养生系统9",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1461,
+        "canonical_folder_id": 1457,
+        "name": "养生手册"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11632,
+        "from_folder_id": 1462,
+        "to_folder_id": 1457,
+        "old_name": "养生项目的搭配原则13",
+        "new_name": "养生项目的搭配原则13",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1462,
+        "canonical_folder_id": 1457,
+        "name": "养生手册"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1376,
+    "name": "苏蜜雅 肌底焕颜美肌液",
+    "folder_ids": [
+      1610,
+      1612
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12528,
+        "from_folder_id": 1612,
+        "to_folder_id": 1610,
+        "old_name": "MESOULYER苏蜜雅肌底焕颜美肌液  备案申请表",
+        "new_name": "MESOULYER苏蜜雅肌底焕颜美肌液  备案申请表",
+        "extension": "doc"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12536,
+        "from_folder_id": 1612,
+        "to_folder_id": 1610,
+        "old_name": "MESOULYER苏蜜雅肌底焕颜美肌液  安全评估报告20241217161314",
+        "new_name": "MESOULYER苏蜜雅肌底焕颜美肌液  安全评估报告20241217161314",
+        "extension": "docx"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1619,
+        "from_parent_id": 1612,
+        "to_parent_id": 1610,
+        "old_name": "盖章版",
+        "new_name": "盖章版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1612,
+        "canonical_folder_id": 1610,
+        "name": "苏蜜雅 肌底焕颜美肌液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1376,
+    "name": "苏蜜雅 肌底蕴采精华液",
+    "folder_ids": [
+      1716,
+      1717
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1718,
+        "from_parent_id": 1717,
+        "to_parent_id": 1716,
+        "old_name": "盖章版",
+        "new_name": "盖章版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1717,
+        "canonical_folder_id": 1716,
+        "name": "苏蜜雅 肌底蕴采精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1376,
+    "name": "苏蜜雅 肌底蕴采霜",
+    "folder_ids": [
+      1613,
+      1615,
+      1616
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12530,
+        "from_folder_id": 1615,
+        "to_folder_id": 1613,
+        "old_name": "MESOULYER苏蜜雅肌底蕴采霜  备案申请表",
+        "new_name": "MESOULYER苏蜜雅肌底蕴采霜  备案申请表",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1615,
+        "canonical_folder_id": 1613,
+        "name": "苏蜜雅 肌底蕴采霜"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12531,
+        "from_folder_id": 1616,
+        "to_folder_id": 1613,
+        "old_name": "MESOULYER苏蜜雅肌底蕴采霜  丙二醇保湿功效文献",
+        "new_name": "MESOULYER苏蜜雅肌底蕴采霜  丙二醇保湿功效文献",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1616,
+        "canonical_folder_id": 1613,
+        "name": "苏蜜雅 肌底蕴采霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1376,
+    "name": "苏蜜雅 菁纯新颜霜",
+    "folder_ids": [
+      1720,
+      1721
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12878,
+        "from_folder_id": 1721,
+        "to_folder_id": 1720,
+        "old_name": "MESOULYER苏蜜雅菁纯新颜霜备案申请表",
+        "new_name": "MESOULYER苏蜜雅菁纯新颜霜备案申请表",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12883,
+        "from_folder_id": 1721,
+        "to_folder_id": 1720,
+        "old_name": "MESOULYER苏蜜雅菁纯新颜霜立体图",
+        "new_name": "MESOULYER苏蜜雅菁纯新颜霜立体图",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12891,
+        "from_folder_id": 1721,
+        "to_folder_id": 1720,
+        "old_name": "MESOULYER苏蜜雅菁纯新颜霜摘要",
+        "new_name": "MESOULYER苏蜜雅菁纯新颜霜摘要",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12901,
+        "from_folder_id": 1721,
+        "to_folder_id": 1720,
+        "old_name": "MESOULYER苏蜜雅菁纯新颜霜平面图",
+        "new_name": "MESOULYER苏蜜雅菁纯新颜霜平面图",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12924,
+        "from_folder_id": 1721,
+        "to_folder_id": 1720,
+        "old_name": "MESOULYER苏蜜雅菁纯新颜霜产品安全评估报告",
+        "new_name": "MESOULYER苏蜜雅菁纯新颜霜产品安全评估报告",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1721,
+        "canonical_folder_id": 1720,
+        "name": "苏蜜雅 菁纯新颜霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1383,
+    "name": "杨兴香交接文件",
+    "folder_ids": [
+      1965,
+      1967
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1971,
+        "from_parent_id": 1967,
+        "to_parent_id": 1965,
+        "old_name": "直播资料",
+        "new_name": "直播资料(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1967,
+        "canonical_folder_id": 1965,
+        "name": "杨兴香交接文件"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1385,
+    "name": "13套岗位工作流程",
+    "folder_ids": [
+      1997,
+      2001
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14018,
+        "from_folder_id": 2001,
+        "to_folder_id": 1997,
+        "old_name": "12配料员",
+        "new_name": "12配料员",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2001,
+        "canonical_folder_id": 1997,
+        "name": "13套岗位工作流程"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1385,
+    "name": "36套品项专业话术",
+    "folder_ids": [
+      2007,
+      2015
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2016,
+        "from_parent_id": 2015,
+        "to_parent_id": 2007,
+        "old_name": "归档",
+        "new_name": "归档(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2015,
+        "canonical_folder_id": 2007,
+        "name": "36套品项专业话术"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1419,
+    "name": "14.美容院服务资料",
+    "folder_ids": [
+      1442,
+      1443
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11605,
+        "from_folder_id": 1443,
+        "to_folder_id": 1442,
+        "old_name": "美容院享受优惠项目方案设计",
+        "new_name": "美容院享受优惠项目方案设计",
+        "extension": "doc"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11619,
+        "from_folder_id": 1443,
+        "to_folder_id": 1442,
+        "old_name": "美容院服务在经营中有什么重要性",
+        "new_name": "美容院服务在经营中有什么重要性",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1443,
+        "canonical_folder_id": 1442,
+        "name": "14.美容院服务资料"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1426,
+    "name": "通用护肤知识口播文案",
+    "folder_ids": [
+      1435,
+      1436,
+      1437
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 11585,
+        "from_folder_id": 1436,
+        "to_folder_id": 1435,
+        "old_name": "如何去除脂肪粒？",
+        "new_name": "如何去除脂肪粒？",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1436,
+        "canonical_folder_id": 1435,
+        "name": "通用护肤知识口播文案"
+      },
+      {
+        "action": "move_file",
+        "file_id": 11586,
+        "from_folder_id": 1437,
+        "to_folder_id": 1435,
+        "old_name": "如何判断自己是不是气虚体质？",
+        "new_name": "如何判断自己是不是气虚体质？",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1437,
+        "canonical_folder_id": 1435,
+        "name": "通用护肤知识口播文案"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1446,
+    "name": "备案报告",
+    "folder_ids": [
+      1637,
+      1641
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12567,
+        "from_folder_id": 1641,
+        "to_folder_id": 1637,
+        "old_name": "GF03632025085293 KRNOBQUE芙媄润泽乳",
+        "new_name": "GF03632025085293 KRNOBQUE芙媄润泽乳",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12570,
+        "from_folder_id": 1641,
+        "to_folder_id": 1637,
+        "old_name": "祛痘人体功效 KRNOBQUE清肌净痘霜",
+        "new_name": "祛痘人体功效 KRNOBQUE清肌净痘霜",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1641,
+        "canonical_folder_id": 1637,
+        "name": "备案报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1470,
+    "name": "蔻诺·清颜 清滢精华液",
+    "folder_ids": [
+      1731,
+      1733
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13009,
+        "from_folder_id": 1733,
+        "to_folder_id": 1731,
+        "old_name": "蔻诺·清颜清滢精华液备案申请表",
+        "new_name": "蔻诺·清颜清滢精华液备案申请表",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1733,
+        "canonical_folder_id": 1731,
+        "name": "蔻诺·清颜 清滢精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1470,
+    "name": "蔻诺·清颜 玑美精华液",
+    "folder_ids": [
+      1646,
+      1647
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1648,
+        "from_parent_id": 1647,
+        "to_parent_id": 1646,
+        "old_name": "盖章版",
+        "new_name": "盖章版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1647,
+        "canonical_folder_id": 1646,
+        "name": "蔻诺·清颜 玑美精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1470,
+    "name": "蔻诺·清颜 薇颜蕴润精华液",
+    "folder_ids": [
+      1737,
+      1738
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13024,
+        "from_folder_id": 1738,
+        "to_folder_id": 1737,
+        "old_name": "蔻诺·清颜薇颜蕴润精华液  甘油保湿功效文献",
+        "new_name": "蔻诺·清颜薇颜蕴润精华液  甘油保湿功效文献",
+        "extension": "docx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 13025,
+        "from_folder_id": 1738,
+        "to_folder_id": 1737,
+        "old_name": "蔻诺·清颜薇颜蕴润精华液  备案申请表",
+        "new_name": "蔻诺·清颜薇颜蕴润精华液  备案申请表",
+        "extension": "doc"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1739,
+        "from_parent_id": 1738,
+        "to_parent_id": 1737,
+        "old_name": "盖章版",
+        "new_name": "盖章版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1738,
+        "canonical_folder_id": 1737,
+        "name": "蔻诺·清颜 薇颜蕴润精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1470,
+    "name": "蔻诺·清颜 薇颜蕴润霜",
+    "folder_ids": [
+      1579,
+      1582
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12472,
+        "from_folder_id": 1582,
+        "to_folder_id": 1579,
+        "old_name": "蔻诺·清颜薇颜蕴润霜  备案申请表",
+        "new_name": "蔻诺·清颜薇颜蕴润霜  备案申请表",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1582,
+        "canonical_folder_id": 1579,
+        "name": "蔻诺·清颜 薇颜蕴润霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1518,
+    "name": "pdf版本",
+    "folder_ids": [
+      1707,
+      1709,
+      1710
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12797,
+        "from_folder_id": 1709,
+        "to_folder_id": 1707,
+        "old_name": "17、成交实战话术=78页",
+        "new_name": "17、成交实战话术=78页",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1709,
+        "canonical_folder_id": 1707,
+        "name": "pdf版本"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12793,
+        "from_folder_id": 1710,
+        "to_folder_id": 1707,
+        "old_name": "13、底薪机制=44页",
+        "new_name": "13、底薪机制=44页",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1710,
+        "canonical_folder_id": 1707,
+        "name": "pdf版本"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1523,
+    "name": "KRNOBQUE 妍采精华液",
+    "folder_ids": [
+      1702,
+      1704,
+      1706
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1705,
+        "from_parent_id": 1704,
+        "to_parent_id": 1702,
+        "old_name": "盖章版",
+        "new_name": "盖章版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1704,
+        "canonical_folder_id": 1702,
+        "name": "KRNOBQUE 妍采精华液"
+      },
+      {
+        "action": "move_file",
+        "file_id": 12770,
+        "from_folder_id": 1706,
+        "to_folder_id": 1702,
+        "old_name": "KRNOBQUE妍采精华液  安全评估报告20241205091743",
+        "new_name": "KRNOBQUE妍采精华液  安全评估报告20241205091743",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1706,
+        "canonical_folder_id": 1702,
+        "name": "KRNOBQUE 妍采精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1523,
+    "name": "KRNOBQUE 滢泽精华液",
+    "folder_ids": [
+      1728,
+      1729
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12977,
+        "from_folder_id": 1729,
+        "to_folder_id": 1728,
+        "old_name": "KRNOBQUE滢泽精华液备案申请表",
+        "new_name": "KRNOBQUE滢泽精华液备案申请表",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1729,
+        "canonical_folder_id": 1728,
+        "name": "KRNOBQUE 滢泽精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1523,
+    "name": "KRNOBQUE 肌妍精华液",
+    "folder_ids": [
+      1631,
+      1638
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12563,
+        "from_folder_id": 1638,
+        "to_folder_id": 1631,
+        "old_name": "KRNOBQUE肌妍精华液立体图",
+        "new_name": "KRNOBQUE肌妍精华液立体图",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1638,
+        "canonical_folder_id": 1631,
+        "name": "KRNOBQUE 肌妍精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1550,
+    "name": "KRNOQYUE 备案资料",
+    "folder_ids": [
+      1658,
+      1660,
+      1662
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1661,
+        "from_parent_id": 1660,
+        "to_parent_id": 1658,
+        "old_name": "KRNOQYUE 水漾丝绒护手霜",
+        "new_name": "KRNOQYUE 水漾丝绒护手霜(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1660,
+        "canonical_folder_id": 1658,
+        "name": "KRNOQYUE 备案资料"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1663,
+        "from_parent_id": 1662,
+        "to_parent_id": 1658,
+        "old_name": "KRNOQYUE 水漾丝绒护手霜",
+        "new_name": "KRNOQYUE 水漾丝绒护手霜(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1662,
+        "canonical_folder_id": 1658,
+        "name": "KRNOQYUE 备案资料"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1589,
+    "name": "各部门岗位职责说明书",
+    "folder_ids": [
+      1689,
+      1691
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1693,
+        "from_parent_id": 1691,
+        "to_parent_id": 1689,
+        "old_name": "市场部",
+        "new_name": "市场部(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1691,
+        "canonical_folder_id": 1689,
+        "name": "各部门岗位职责说明书"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1627,
+    "name": "盖章版",
+    "folder_ids": [
+      1722,
+      1725
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12952,
+        "from_folder_id": 1725,
+        "to_folder_id": 1722,
+        "old_name": "KRNOBOUE凝萃粉黛美肌液  马齿苋化妆品功效宣称依据的摘要",
+        "new_name": "KRNOBOUE凝萃粉黛美肌液  马齿苋化妆品功效宣称依据的摘要",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1725,
+        "canonical_folder_id": 1722,
+        "name": "盖章版"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1653,
+    "name": "10.28-11.01",
+    "folder_ids": [
+      1668,
+      1669
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12622,
+        "from_folder_id": 1669,
+        "to_folder_id": 1668,
+        "old_name": "推文1：华世王镞引爆新消美生态门店驱动系统学习会议今日盛大启幕",
+        "new_name": "推文1：华世王镞引爆新消美生态门店驱动系统学习会议今日盛大启幕",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1669,
+        "canonical_folder_id": 1668,
+        "name": "10.28-11.01"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1657,
+    "name": "盖章版",
+    "folder_ids": [
+      1732,
+      1735
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13018,
+        "from_folder_id": 1735,
+        "to_folder_id": 1732,
+        "old_name": "蔻诺·清颜玑美俪妍霜  备案申请表",
+        "new_name": "蔻诺·清颜玑美俪妍霜  备案申请表",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1735,
+        "canonical_folder_id": 1732,
+        "name": "盖章版"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1712,
+    "name": "盖章版",
+    "folder_ids": [
+      1713,
+      1714
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 12844,
+        "from_folder_id": 1714,
+        "to_folder_id": 1713,
+        "old_name": "MESOULYER苏蜜雅熙妍俪妍霜  备案申请表",
+        "new_name": "MESOULYER苏蜜雅熙妍俪妍霜  备案申请表",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1714,
+        "canonical_folder_id": 1713,
+        "name": "盖章版"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1758,
+    "name": "本地生活客户信息",
+    "folder_ids": [
+      1761,
+      1765
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1767,
+        "from_parent_id": 1765,
+        "to_parent_id": 1761,
+        "old_name": "398",
+        "new_name": "398(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1765,
+        "canonical_folder_id": 1761,
+        "name": "本地生活客户信息"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1801,
+    "name": "蔻诺清颜 检测报告",
+    "folder_ids": [
+      1914,
+      1916
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1917,
+        "from_parent_id": 1916,
+        "to_parent_id": 1914,
+        "old_name": "流通报告",
+        "new_name": "流通报告(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1916,
+        "canonical_folder_id": 1914,
+        "name": "蔻诺清颜 检测报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1803,
+    "name": "蔻诺·清颜 肌密菁华液",
+    "folder_ids": [
+      2084,
+      2087
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14300,
+        "from_folder_id": 2087,
+        "to_folder_id": 2084,
+        "old_name": "蔻诺·清颜肌密菁华液摘要",
+        "new_name": "蔻诺·清颜肌密菁华液摘要",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2087,
+        "canonical_folder_id": 2084,
+        "name": "蔻诺·清颜 肌密菁华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1803,
+    "name": "蔻诺·清颜 薇颜蕴润霜",
+    "folder_ids": [
+      2091,
+      2093
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14330,
+        "from_folder_id": 2093,
+        "to_folder_id": 2091,
+        "old_name": "蔻诺·清颜薇颜蕴润霜  备案申请表",
+        "new_name": "蔻诺·清颜薇颜蕴润霜  备案申请表",
+        "extension": "doc"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2093,
+        "canonical_folder_id": 2091,
+        "name": "蔻诺·清颜 薇颜蕴润霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1803,
+    "name": "蔻诺·清颜 魅萃新颜水",
+    "folder_ids": [
+      2098,
+      2101
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14356,
+        "from_folder_id": 2101,
+        "to_folder_id": 2098,
+        "old_name": "蔻诺·清颜魅萃新颜水备案申请表",
+        "new_name": "蔻诺·清颜魅萃新颜水备案申请表",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2101,
+        "canonical_folder_id": 2098,
+        "name": "蔻诺·清颜 魅萃新颜水"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1806,
+    "name": "1.美容院全套运营管理资料",
+    "folder_ids": [
+      2010,
+      2012
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2014,
+        "from_parent_id": 2012,
+        "to_parent_id": 2010,
+        "old_name": "美容院运营策略",
+        "new_name": "美容院运营策略(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2012,
+        "canonical_folder_id": 2010,
+        "name": "1.美容院全套运营管理资料"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1807,
+    "name": "营销拓客技巧",
+    "folder_ids": [
+      1865,
+      1866
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1867,
+        "from_parent_id": 1866,
+        "to_parent_id": 1865,
+        "old_name": "拓客方案",
+        "new_name": "拓客方案(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1866,
+        "canonical_folder_id": 1865,
+        "name": "营销拓客技巧"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1812,
+    "name": "娇薇诗 检测报告",
+    "folder_ids": [
+      1900,
+      1901
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1904,
+        "from_parent_id": 1901,
+        "to_parent_id": 1900,
+        "old_name": "备案报告",
+        "new_name": "备案报告(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1901,
+        "canonical_folder_id": 1900,
+        "name": "娇薇诗 检测报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1836,
+    "name": "娇薇诗 娇韵皓芙精华液",
+    "folder_ids": [
+      1853,
+      1854
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13727,
+        "from_folder_id": 1854,
+        "to_folder_id": 1853,
+        "old_name": "娇薇诗娇韵皓芙精华液平面图",
+        "new_name": "娇薇诗娇韵皓芙精华液平面图",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1854,
+        "canonical_folder_id": 1853,
+        "name": "娇薇诗 娇韵皓芙精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1836,
+    "name": "娇薇诗 素肌焕采美肌液",
+    "folder_ids": [
+      1876,
+      1879,
+      1881
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1880,
+        "from_parent_id": 1879,
+        "to_parent_id": 1876,
+        "old_name": "盖章版",
+        "new_name": "盖章版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1879,
+        "canonical_folder_id": 1876,
+        "name": "娇薇诗 素肌焕采美肌液"
+      },
+      {
+        "action": "move_file",
+        "file_id": 13784,
+        "from_folder_id": 1881,
+        "to_folder_id": 1876,
+        "old_name": "娇薇诗素肌焕采美肌液  安全评估报告20241205091743",
+        "new_name": "娇薇诗素肌焕采美肌液  安全评估报告20241205091743",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1881,
+        "canonical_folder_id": 1876,
+        "name": "娇薇诗 素肌焕采美肌液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1836,
+    "name": "娇薇诗 臻肌娇蕴霜",
+    "folder_ids": [
+      1886,
+      1889
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13803,
+        "from_folder_id": 1889,
+        "to_folder_id": 1886,
+        "old_name": "娇薇诗臻肌娇蕴霜  丙二醇保湿功效文献",
+        "new_name": "娇薇诗臻肌娇蕴霜  丙二醇保湿功效文献",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1889,
+        "canonical_folder_id": 1886,
+        "name": "娇薇诗 臻肌娇蕴霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1842,
+    "name": "蔻诺质检报告",
+    "folder_ids": [
+      1906,
+      1908,
+      1909
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1912,
+        "from_parent_id": 1908,
+        "to_parent_id": 1906,
+        "old_name": "蔻诺",
+        "new_name": "蔻诺(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1908,
+        "canonical_folder_id": 1906,
+        "name": "蔻诺质检报告"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 1910,
+        "from_parent_id": 1909,
+        "to_parent_id": 1906,
+        "old_name": "蔻诺",
+        "new_name": "蔻诺(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1909,
+        "canonical_folder_id": 1906,
+        "name": "蔻诺质检报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1843,
+    "name": "蔻诺清颜",
+    "folder_ids": [
+      1856,
+      1861
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13737,
+        "from_folder_id": 1861,
+        "to_folder_id": 1856,
+        "old_name": "GF00512022375594 蔻诺·清颜 纯美新妆晶透霜备案报告 草稿",
+        "new_name": "GF00512022375594 蔻诺·清颜 纯美新妆晶透霜备案报告 草稿",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1861,
+        "canonical_folder_id": 1856,
+        "name": "蔻诺清颜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1869,
+    "name": "蔻诺白富美质检报告",
+    "folder_ids": [
+      1890,
+      1893
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1894,
+        "from_parent_id": 1893,
+        "to_parent_id": 1890,
+        "old_name": "蔻诺质检报告",
+        "new_name": "蔻诺质检报告(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1893,
+        "canonical_folder_id": 1890,
+        "name": "蔻诺白富美质检报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1914,
+    "name": "备案报告",
+    "folder_ids": [
+      2103,
+      2104
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14384,
+        "from_folder_id": 2104,
+        "to_folder_id": 2103,
+        "old_name": "GF03322024599655蔻诺·清颜玑美精华液",
+        "new_name": "GF03322024599655蔻诺·清颜玑美精华液",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 14389,
+        "from_folder_id": 2104,
+        "to_folder_id": 2103,
+        "old_name": "GF03632025085169 蔻诺·清颜柔护精华液",
+        "new_name": "GF03632025085169 蔻诺·清颜柔护精华液",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 14392,
+        "from_folder_id": 2104,
+        "to_folder_id": 2103,
+        "old_name": "祛痘人体功效 蔻诺·清颜清颜净痘霜",
+        "new_name": "祛痘人体功效 蔻诺·清颜清颜净痘霜",
+        "extension": "pdf"
+      },
+      {
+        "action": "move_file",
+        "file_id": 14395,
+        "from_folder_id": 2104,
+        "to_folder_id": 2103,
+        "old_name": "蔻诺·清颜薇颜蕴润霜GF02762024593901",
+        "new_name": "蔻诺·清颜薇颜蕴润霜GF02762024593901",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2104,
+        "canonical_folder_id": 2103,
+        "name": "备案报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1921,
+    "name": "16.美容院常用表格",
+    "folder_ids": [
+      1988,
+      1989
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13984,
+        "from_folder_id": 1989,
+        "to_folder_id": 1988,
+        "old_name": "客户管理之美容院美胸课程记录",
+        "new_name": "客户管理之美容院美胸课程记录",
+        "extension": "doc"
+      },
+      {
+        "action": "move_file",
+        "file_id": 13986,
+        "from_folder_id": 1989,
+        "to_folder_id": 1988,
+        "old_name": "美容院人员绩效考核表",
+        "new_name": "美容院人员绩效考核表",
+        "extension": "doc"
+      },
+      {
+        "action": "move_file",
+        "file_id": 13989,
+        "from_folder_id": 1989,
+        "to_folder_id": 1988,
+        "old_name": "美容院内各种表格",
+        "new_name": "美容院内各种表格",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1989,
+        "canonical_folder_id": 1988,
+        "name": "16.美容院常用表格"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1924,
+    "name": "苏蜜雅 熙妍美肌液",
+    "folder_ids": [
+      1946,
+      1948
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 13897,
+        "from_folder_id": 1948,
+        "to_folder_id": 1946,
+        "old_name": "MESOULYER苏蜜雅熙妍美肌液  丙二醇保湿功效文献",
+        "new_name": "MESOULYER苏蜜雅熙妍美肌液  丙二醇保湿功效文献",
+        "extension": "docx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1948,
+        "canonical_folder_id": 1946,
+        "name": "苏蜜雅 熙妍美肌液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1973,
+    "name": "社群运营全套课程",
+    "folder_ids": [
+      1980,
+      1983
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 1984,
+        "from_parent_id": 1983,
+        "to_parent_id": 1980,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 1983,
+        "canonical_folder_id": 1980,
+        "name": "社群运营全套课程"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 1998,
+    "name": "16-打造年入百万的个人IP与社群（2022-10-09）",
+    "folder_ids": [
+      2002,
+      2003
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2004,
+        "from_parent_id": 2003,
+        "to_parent_id": 2002,
+        "old_name": "pdf",
+        "new_name": "pdf(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2003,
+        "canonical_folder_id": 2002,
+        "name": "16-打造年入百万的个人IP与社群（2022-10-09）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2017,
+    "name": "盖章版",
+    "folder_ids": [
+      2027,
+      2031
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14100,
+        "from_folder_id": 2031,
+        "to_folder_id": 2027,
+        "old_name": "KRNOBQUE 凝萃蕴颜霜   甘油保湿功效文献",
+        "new_name": "KRNOBQUE 凝萃蕴颜霜   甘油保湿功效文献",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2031,
+        "canonical_folder_id": 2027,
+        "name": "盖章版"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2048,
+    "name": "流通报告",
+    "folder_ids": [
+      2058,
+      2059,
+      2060,
+      2062
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14221,
+        "from_folder_id": 2059,
+        "to_folder_id": 2058,
+        "old_name": "XYJCR250314-009 KRNOBQUE滢泽精华液(全检)",
+        "new_name": "XYJCR250314-009 KRNOBQUE滢泽精华液(全检)",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2059,
+        "canonical_folder_id": 2058,
+        "name": "流通报告"
+      },
+      {
+        "action": "move_file",
+        "file_id": 14215,
+        "from_folder_id": 2060,
+        "to_folder_id": 2058,
+        "old_name": "YJ-R-202412-0448KRNOBQUE凝萃蕴颜精华液",
+        "new_name": "YJ-R-202412-0448KRNOBQUE凝萃蕴颜精华液",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2060,
+        "canonical_folder_id": 2058,
+        "name": "流通报告"
+      },
+      {
+        "action": "move_file",
+        "file_id": 14211,
+        "from_folder_id": 2062,
+        "to_folder_id": 2058,
+        "old_name": "YJ-R-202412-0450KRNOBQUE凝萃粉黛娇媚霜",
+        "new_name": "YJ-R-202412-0450KRNOBQUE凝萃粉黛娇媚霜",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2062,
+        "canonical_folder_id": 2058,
+        "name": "流通报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2050,
+    "name": "流通报告",
+    "folder_ids": [
+      2052,
+      2053
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 14176,
+        "from_folder_id": 2053,
+        "to_folder_id": 2052,
+        "old_name": "WH24112525-01KRNOBQUE妍采俪妍霜",
+        "new_name": "WH24112525-01KRNOBQUE妍采俪妍霜",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2053,
+        "canonical_folder_id": 2052,
+        "name": "流通报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2111,
+    "name": "娇薇诗",
+    "folder_ids": [
+      2181,
+      2182,
+      2183
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 15473,
+        "from_folder_id": 2182,
+        "to_folder_id": 2181,
+        "old_name": "GF03632025102598 娇薇诗素滢精华液",
+        "new_name": "GF03632025102598 娇薇诗素滢精华液",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2182,
+        "canonical_folder_id": 2181,
+        "name": "娇薇诗"
+      },
+      {
+        "action": "move_file",
+        "file_id": 15470,
+        "from_folder_id": 2183,
+        "to_folder_id": 2181,
+        "old_name": "GF03632025102590 娇薇诗娇韵皓芙精华水(1)",
+        "new_name": "GF03632025102590 娇薇诗娇韵皓芙精华水(1)",
+        "extension": "pdf"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2183,
+        "canonical_folder_id": 2181,
+        "name": "娇薇诗"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2198,
+    "name": "抖音来客",
+    "folder_ids": [
+      3195,
+      3197
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3198,
+        "from_parent_id": 3197,
+        "to_parent_id": 3195,
+        "old_name": "公司介绍营销案例图片",
+        "new_name": "公司介绍营销案例图片(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3197,
+        "canonical_folder_id": 3195,
+        "name": "抖音来客"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2199,
+    "name": "小红书账号图文素材",
+    "folder_ids": [
+      3163,
+      3164
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3167,
+        "from_parent_id": 3164,
+        "to_parent_id": 3163,
+        "old_name": "小红书账号笔记",
+        "new_name": "小红书账号笔记(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3164,
+        "canonical_folder_id": 3163,
+        "name": "小红书账号图文素材"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2199,
+    "name": "广州工厂素材",
+    "folder_ids": [
+      3099,
+      3102,
+      3105,
+      3106
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3103,
+        "from_parent_id": 3102,
+        "to_parent_id": 3099,
+        "old_name": "照片",
+        "new_name": "照片(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3102,
+        "canonical_folder_id": 3099,
+        "name": "广州工厂素材"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3108,
+        "from_parent_id": 3105,
+        "to_parent_id": 3099,
+        "old_name": "照片",
+        "new_name": "照片(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3105,
+        "canonical_folder_id": 3099,
+        "name": "广州工厂素材"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3107,
+        "from_parent_id": 3106,
+        "to_parent_id": 3099,
+        "old_name": "照片",
+        "new_name": "照片(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3106,
+        "canonical_folder_id": 3099,
+        "name": "广州工厂素材"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2201,
+    "name": "产品海报",
+    "folder_ids": [
+      2215,
+      2218
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2219,
+        "from_parent_id": 2218,
+        "to_parent_id": 2215,
+        "old_name": "清颜图片造景图",
+        "new_name": "清颜图片造景图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2218,
+        "canonical_folder_id": 2215,
+        "name": "产品海报"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "每层肌肤吃什么",
+    "folder_ids": [
+      2265,
+      2266
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16197,
+        "from_folder_id": 2266,
+        "to_folder_id": 2265,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16206,
+        "from_folder_id": 2266,
+        "to_folder_id": 2265,
+        "old_name": "封面",
+        "new_name": "封面",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2266,
+        "canonical_folder_id": 2265,
+        "name": "每层肌肤吃什么"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "美业高情商吸金话术",
+    "folder_ids": [
+      2270,
+      2271,
+      2272
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16233,
+        "from_folder_id": 2271,
+        "to_folder_id": 2270,
+        "old_name": "5",
+        "new_name": "5",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2271,
+        "canonical_folder_id": 2270,
+        "name": "美业高情商吸金话术"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16227,
+        "from_folder_id": 2272,
+        "to_folder_id": 2270,
+        "old_name": "3",
+        "new_name": "3",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2272,
+        "canonical_folder_id": 2270,
+        "name": "美业高情商吸金话术"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "1-17 淡斑6大误区",
+    "folder_ids": [
+      2423,
+      2426,
+      2428,
+      2429
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16815,
+        "from_folder_id": 2426,
+        "to_folder_id": 2423,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2426,
+        "canonical_folder_id": 2423,
+        "name": "1-17 淡斑6大误区"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16820,
+        "from_folder_id": 2428,
+        "to_folder_id": 2423,
+        "old_name": "3",
+        "new_name": "3",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2428,
+        "canonical_folder_id": 2423,
+        "name": "1-17 淡斑6大误区"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16827,
+        "from_folder_id": 2429,
+        "to_folder_id": 2423,
+        "old_name": "4",
+        "new_name": "4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2429,
+        "canonical_folder_id": 2423,
+        "name": "1-17 淡斑6大误区"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "1-17 美业老板如何运营个人IP",
+    "folder_ids": [
+      2421,
+      2427
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16817,
+        "from_folder_id": 2427,
+        "to_folder_id": 2421,
+        "old_name": "5",
+        "new_name": "5",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2427,
+        "canonical_folder_id": 2421,
+        "name": "1-17 美业老板如何运营个人IP"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "1-19 皮肤老化三大杀手",
+    "folder_ids": [
+      2424,
+      2425
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16816,
+        "from_folder_id": 2425,
+        "to_folder_id": 2424,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2425,
+        "canonical_folder_id": 2424,
+        "name": "1-19 皮肤老化三大杀手"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "1-26 皮肤一直不好的原因",
+    "folder_ids": [
+      2432,
+      2433
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16858,
+        "from_folder_id": 2433,
+        "to_folder_id": 2432,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2433,
+        "canonical_folder_id": 2432,
+        "name": "1-26 皮肤一直不好的原因"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "1-29 敏感肌面诊话术",
+    "folder_ids": [
+      2217,
+      2222
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16010,
+        "from_folder_id": 2222,
+        "to_folder_id": 2217,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2222,
+        "canonical_folder_id": 2217,
+        "name": "1-29 敏感肌面诊话术"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "1-6 美业前台必背话术（上）(1)",
+    "folder_ids": [
+      2225,
+      2226,
+      2227
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16040,
+        "from_folder_id": 2226,
+        "to_folder_id": 2225,
+        "old_name": "1",
+        "new_name": "1",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16046,
+        "from_folder_id": 2226,
+        "to_folder_id": 2225,
+        "old_name": "5",
+        "new_name": "5",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2226,
+        "canonical_folder_id": 2225,
+        "name": "1-6 美业前台必背话术（上）(1)"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16018,
+        "from_folder_id": 2227,
+        "to_folder_id": 2225,
+        "old_name": "3",
+        "new_name": "3",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16022,
+        "from_folder_id": 2227,
+        "to_folder_id": 2225,
+        "old_name": "8",
+        "new_name": "8",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2227,
+        "canonical_folder_id": 2225,
+        "name": "1-6 美业前台必背话术（上）(1)"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "1-6美业前台必背话术（中） (1)",
+    "folder_ids": [
+      2231,
+      2232
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16031,
+        "from_folder_id": 2232,
+        "to_folder_id": 2231,
+        "old_name": "5",
+        "new_name": "5",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2232,
+        "canonical_folder_id": 2231,
+        "name": "1-6美业前台必背话术（中） (1)"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "12-12皮肤屏障受损",
+    "folder_ids": [
+      2434,
+      2435
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16879,
+        "from_folder_id": 2435,
+        "to_folder_id": 2434,
+        "old_name": "8",
+        "new_name": "8",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16881,
+        "from_folder_id": 2435,
+        "to_folder_id": 2434,
+        "old_name": "1",
+        "new_name": "1",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16882,
+        "from_folder_id": 2435,
+        "to_folder_id": 2434,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16883,
+        "from_folder_id": 2435,
+        "to_folder_id": 2434,
+        "old_name": "7",
+        "new_name": "7",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16886,
+        "from_folder_id": 2435,
+        "to_folder_id": 2434,
+        "old_name": "6",
+        "new_name": "6",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16887,
+        "from_folder_id": 2435,
+        "to_folder_id": 2434,
+        "old_name": "4",
+        "new_name": "4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2435,
+        "canonical_folder_id": 2434,
+        "name": "12-12皮肤屏障受损"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "12-13 痘痘肌是如何形成的",
+    "folder_ids": [
+      2244,
+      2245
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16078,
+        "from_folder_id": 2245,
+        "to_folder_id": 2244,
+        "old_name": "4",
+        "new_name": "4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2245,
+        "canonical_folder_id": 2244,
+        "name": "12-13 痘痘肌是如何形成的"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2203,
+    "name": "12-28 皮肤基础知识",
+    "folder_ids": [
+      2256,
+      2257
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16144,
+        "from_folder_id": 2257,
+        "to_folder_id": 2256,
+        "old_name": "3",
+        "new_name": "3",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2257,
+        "canonical_folder_id": 2256,
+        "name": "12-28 皮肤基础知识"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2215,
+    "name": "苏蜜雅产品图",
+    "folder_ids": [
+      3104,
+      3109
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 19200,
+        "from_folder_id": 3109,
+        "to_folder_id": 3104,
+        "old_name": "13.焕彩水漾组合  (10)",
+        "new_name": "13.焕彩水漾组合  (10)",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3109,
+        "canonical_folder_id": 3104,
+        "name": "苏蜜雅产品图"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2215,
+    "name": "苏蜜雅造景图",
+    "folder_ids": [
+      3095,
+      3096,
+      3097,
+      3098,
+      3100
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 19189,
+        "from_folder_id": 3096,
+        "to_folder_id": 3095,
+        "old_name": "水漾精华液 (3)",
+        "new_name": "水漾精华液 (3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3096,
+        "canonical_folder_id": 3095,
+        "name": "苏蜜雅造景图"
+      },
+      {
+        "action": "move_file",
+        "file_id": 19204,
+        "from_folder_id": 3097,
+        "to_folder_id": 3095,
+        "old_name": "13肌源焕颜霜-(5)",
+        "new_name": "13肌源焕颜霜-(5)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3097,
+        "canonical_folder_id": 3095,
+        "name": "苏蜜雅造景图"
+      },
+      {
+        "action": "move_file",
+        "file_id": 19195,
+        "from_folder_id": 3098,
+        "to_folder_id": 3095,
+        "old_name": "._水漾精华液 (3)",
+        "new_name": "._水漾精华液 (3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3098,
+        "canonical_folder_id": 3095,
+        "name": "苏蜜雅造景图"
+      },
+      {
+        "action": "move_file",
+        "file_id": 19188,
+        "from_folder_id": 3100,
+        "to_folder_id": 3095,
+        "old_name": "焕亮新颜霜 (3)",
+        "new_name": "焕亮新颜霜 (3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3100,
+        "canonical_folder_id": 3095,
+        "name": "苏蜜雅造景图"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2220,
+    "name": "社群运营全套课程",
+    "folder_ids": [
+      2348,
+      2351,
+      2354
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2352,
+        "from_parent_id": 2351,
+        "to_parent_id": 2348,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2351,
+        "canonical_folder_id": 2348,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2355,
+        "from_parent_id": 2354,
+        "to_parent_id": 2348,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2354,
+        "canonical_folder_id": 2348,
+        "name": "社群运营全套课程"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2221,
+    "name": "美萃防晒海报",
+    "folder_ids": [
+      2389,
+      2391
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2392,
+        "from_parent_id": 2391,
+        "to_parent_id": 2389,
+        "old_name": "美萃防晒海报",
+        "new_name": "美萃防晒海报(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2391,
+        "canonical_folder_id": 2389,
+        "name": "美萃防晒海报"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2237,
+    "name": "娇薇诗",
+    "folder_ids": [
+      2333,
+      2336
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2337,
+        "from_parent_id": 2336,
+        "to_parent_id": 2333,
+        "old_name": "产品海报",
+        "new_name": "产品海报(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2336,
+        "canonical_folder_id": 2333,
+        "name": "娇薇诗"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2237,
+    "name": "清雅",
+    "folder_ids": [
+      2306,
+      2308,
+      2309,
+      2312,
+      2314
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2311,
+        "from_parent_id": 2308,
+        "to_parent_id": 2306,
+        "old_name": "清颜产品图",
+        "new_name": "清颜产品图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2308,
+        "canonical_folder_id": 2306,
+        "name": "清雅"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2310,
+        "from_parent_id": 2309,
+        "to_parent_id": 2306,
+        "old_name": "清颜产品图",
+        "new_name": "清颜产品图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2309,
+        "canonical_folder_id": 2306,
+        "name": "清雅"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2313,
+        "from_parent_id": 2312,
+        "to_parent_id": 2306,
+        "old_name": "清颜产品图",
+        "new_name": "清颜产品图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2312,
+        "canonical_folder_id": 2306,
+        "name": "清雅"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2315,
+        "from_parent_id": 2314,
+        "to_parent_id": 2306,
+        "old_name": "清颜产品图",
+        "new_name": "清颜产品图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2314,
+        "canonical_folder_id": 2306,
+        "name": "清雅"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2239,
+    "name": "加水印加二维码",
+    "folder_ids": [
+      2278,
+      2279
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16260,
+        "from_folder_id": 2279,
+        "to_folder_id": 2278,
+        "old_name": "蔻诺小套5",
+        "new_name": "蔻诺小套5",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2279,
+        "canonical_folder_id": 2278,
+        "name": "加水印加二维码"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2239,
+    "name": "蔻诺白富美种草图（不宣发）",
+    "folder_ids": [
+      2443,
+      2444
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17003,
+        "from_folder_id": 2444,
+        "to_folder_id": 2443,
+        "old_name": "蔻诺种草图2",
+        "new_name": "蔻诺种草图2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2444,
+        "canonical_folder_id": 2443,
+        "name": "蔻诺白富美种草图（不宣发）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2242,
+    "name": "产品海报",
+    "folder_ids": [
+      2292,
+      2293,
+      2297
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16360,
+        "from_folder_id": 2293,
+        "to_folder_id": 2292,
+        "old_name": "苏蜜雅熙妍精华液",
+        "new_name": "苏蜜雅熙妍精华液",
+        "extension": "png"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16363,
+        "from_folder_id": 2293,
+        "to_folder_id": 2292,
+        "old_name": "苏蜜雅美白三件套（加二维码）4",
+        "new_name": "苏蜜雅美白三件套（加二维码）4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2293,
+        "canonical_folder_id": 2292,
+        "name": "产品海报"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16382,
+        "from_folder_id": 2297,
+        "to_folder_id": 2292,
+        "old_name": "苏蜜雅",
+        "new_name": "苏蜜雅",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2297,
+        "canonical_folder_id": 2292,
+        "name": "产品海报"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2276,
+    "name": "氨基酸洁面乳",
+    "folder_ids": [
+      2445,
+      2448
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17025,
+        "from_folder_id": 2448,
+        "to_folder_id": 2445,
+        "old_name": "氨基酸洁面乳（2）",
+        "new_name": "氨基酸洁面乳（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2448,
+        "canonical_folder_id": 2445,
+        "name": "氨基酸洁面乳"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2276,
+    "name": "焕亮新颜霜",
+    "folder_ids": [
+      2286,
+      2288
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16330,
+        "from_folder_id": 2288,
+        "to_folder_id": 2286,
+        "old_name": "焕亮新颜霜3",
+        "new_name": "焕亮新颜霜3",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2288,
+        "canonical_folder_id": 2286,
+        "name": "焕亮新颜霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2276,
+    "name": "肌源焕颜霜",
+    "folder_ids": [
+      2447,
+      2453
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17059,
+        "from_folder_id": 2453,
+        "to_folder_id": 2447,
+        "old_name": "肌源焕颜霜（2）",
+        "new_name": "肌源焕颜霜（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2453,
+        "canonical_folder_id": 2447,
+        "name": "肌源焕颜霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2276,
+    "name": "舒悦精华水",
+    "folder_ids": [
+      2451,
+      2456
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17039,
+        "from_folder_id": 2456,
+        "to_folder_id": 2451,
+        "old_name": "舒悦精华水（2）",
+        "new_name": "舒悦精华水（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2456,
+        "canonical_folder_id": 2451,
+        "name": "舒悦精华水"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2276,
+    "name": "（已换新包装）焕彩水漾组合",
+    "folder_ids": [
+      2450,
+      2452,
+      2455
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17057,
+        "from_folder_id": 2452,
+        "to_folder_id": 2450,
+        "old_name": "焕彩水漾组合（2）",
+        "new_name": "焕彩水漾组合（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2452,
+        "canonical_folder_id": 2450,
+        "name": "（已换新包装）焕彩水漾组合"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17038,
+        "from_folder_id": 2455,
+        "to_folder_id": 2450,
+        "old_name": "焕彩水漾组合（3）",
+        "new_name": "焕彩水漾组合（3）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2455,
+        "canonical_folder_id": 2450,
+        "name": "（已换新包装）焕彩水漾组合"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2276,
+    "name": "（已换新包装）舒护精华液",
+    "folder_ids": [
+      2454,
+      2457
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17041,
+        "from_folder_id": 2457,
+        "to_folder_id": 2454,
+        "old_name": "舒护精华液",
+        "new_name": "舒护精华液",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2457,
+        "canonical_folder_id": 2454,
+        "name": "（已换新包装）舒护精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2281,
+    "name": "典雅阁卡",
+    "folder_ids": [
+      2396,
+      2397
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16720,
+        "from_folder_id": 2397,
+        "to_folder_id": 2396,
+        "old_name": "副卡",
+        "new_name": "副卡",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2397,
+        "canonical_folder_id": 2396,
+        "name": "典雅阁卡"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2281,
+    "name": "杨润雪福利卡",
+    "folder_ids": [
+      2398,
+      2400
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16723,
+        "from_folder_id": 2400,
+        "to_folder_id": 2398,
+        "old_name": "杨润雪主卡",
+        "new_name": "杨润雪主卡",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16735,
+        "from_folder_id": 2400,
+        "to_folder_id": 2398,
+        "old_name": "杨润雪主卡",
+        "new_name": "杨润雪主卡",
+        "extension": "tif"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16755,
+        "from_folder_id": 2400,
+        "to_folder_id": 2398,
+        "old_name": "副卡",
+        "new_name": "副卡(1)",
+        "extension": "tif"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2400,
+        "canonical_folder_id": 2398,
+        "name": "杨润雪福利卡"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2281,
+    "name": "水墨中国卡",
+    "folder_ids": [
+      2404,
+      2405
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16727,
+        "from_folder_id": 2405,
+        "to_folder_id": 2404,
+        "old_name": "主卡",
+        "new_name": "主卡",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2405,
+        "canonical_folder_id": 2404,
+        "name": "水墨中国卡"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2281,
+    "name": "田沺私人定制",
+    "folder_ids": [
+      2401,
+      2402
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16724,
+        "from_folder_id": 2402,
+        "to_folder_id": 2401,
+        "old_name": "主卡",
+        "new_name": "主卡",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2402,
+        "canonical_folder_id": 2401,
+        "name": "田沺私人定制"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2281,
+    "name": "直营店卡",
+    "folder_ids": [
+      2403,
+      2407,
+      2408
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16788,
+        "from_folder_id": 2407,
+        "to_folder_id": 2403,
+        "old_name": "直营店主卡",
+        "new_name": "直营店主卡",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2407,
+        "canonical_folder_id": 2403,
+        "name": "直营店卡"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16746,
+        "from_folder_id": 2408,
+        "to_folder_id": 2403,
+        "old_name": "直营店",
+        "new_name": "直营店(1)",
+        "extension": "tif"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2408,
+        "canonical_folder_id": 2403,
+        "name": "直营店卡"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2281,
+    "name": "钰妃福利卡",
+    "folder_ids": [
+      2411,
+      2412
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16768,
+        "from_folder_id": 2412,
+        "to_folder_id": 2411,
+        "old_name": "钰妃主卡",
+        "new_name": "钰妃主卡",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2412,
+        "canonical_folder_id": 2411,
+        "name": "钰妃福利卡"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2295,
+    "name": "苏蜜雅白富美大套海报",
+    "folder_ids": [
+      2298,
+      2301
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16398,
+        "from_folder_id": 2301,
+        "to_folder_id": 2298,
+        "old_name": "苏蜜雅白富美套盒",
+        "new_name": "苏蜜雅白富美套盒",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2301,
+        "canonical_folder_id": 2298,
+        "name": "苏蜜雅白富美大套海报"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2295,
+    "name": "苏蜜雅白富美大小套造景图",
+    "folder_ids": [
+      2299,
+      2300
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16391,
+        "from_folder_id": 2300,
+        "to_folder_id": 2299,
+        "old_name": "苏蜜雅小套 (3)",
+        "new_name": "苏蜜雅小套 (3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16392,
+        "from_folder_id": 2300,
+        "to_folder_id": 2299,
+        "old_name": "苏蜜雅小套",
+        "new_name": "苏蜜雅小套",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16395,
+        "from_folder_id": 2300,
+        "to_folder_id": 2299,
+        "old_name": "苏蜜雅小套 (4)",
+        "new_name": "苏蜜雅小套 (4)",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16396,
+        "from_folder_id": 2300,
+        "to_folder_id": 2299,
+        "old_name": "苏蜜雅大套",
+        "new_name": "苏蜜雅大套",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16408,
+        "from_folder_id": 2300,
+        "to_folder_id": 2299,
+        "old_name": "苏蜜雅四件套造景图",
+        "new_name": "苏蜜雅四件套造景图",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2300,
+        "canonical_folder_id": 2299,
+        "name": "苏蜜雅白富美大小套造景图"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2306,
+    "name": "清颜白富美套盒",
+    "folder_ids": [
+      2326,
+      2328,
+      2330
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2329,
+        "from_parent_id": 2328,
+        "to_parent_id": 2326,
+        "old_name": "清颜白富美种草图（不宣发）",
+        "new_name": "清颜白富美种草图（不宣发）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2328,
+        "canonical_folder_id": 2326,
+        "name": "清颜白富美套盒"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2331,
+        "from_parent_id": 2330,
+        "to_parent_id": 2326,
+        "old_name": "清颜白富美造景图",
+        "new_name": "清颜白富美造景图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2330,
+        "canonical_folder_id": 2326,
+        "name": "清颜白富美套盒"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2326,
+    "name": "清颜白富美大套海报",
+    "folder_ids": [
+      2458,
+      2459,
+      2460
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17164,
+        "from_folder_id": 2459,
+        "to_folder_id": 2458,
+        "old_name": "清颜白富美套盒2",
+        "new_name": "清颜白富美套盒2",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2459,
+        "canonical_folder_id": 2458,
+        "name": "清颜白富美大套海报"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17139,
+        "from_folder_id": 2460,
+        "to_folder_id": 2458,
+        "old_name": "规避敏感词2",
+        "new_name": "规避敏感词2",
+        "extension": "png"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17149,
+        "from_folder_id": 2460,
+        "to_folder_id": 2458,
+        "old_name": "规避敏感词",
+        "new_name": "规避敏感词",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2460,
+        "canonical_folder_id": 2458,
+        "name": "清颜白富美大套海报"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2333,
+    "name": "粉红女郎",
+    "folder_ids": [
+      2462,
+      2464
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2465,
+        "from_parent_id": 2464,
+        "to_parent_id": 2462,
+        "old_name": "产品海报",
+        "new_name": "产品海报(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2464,
+        "canonical_folder_id": 2462,
+        "name": "粉红女郎"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2356,
+    "name": "作业拆解",
+    "folder_ids": [
+      2361,
+      2365,
+      2366,
+      2367,
+      2368,
+      2369,
+      2370
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16596,
+        "from_folder_id": 2365,
+        "to_folder_id": 2361,
+        "old_name": "mmexport1645435633434",
+        "new_name": "mmexport1645435633434",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2365,
+        "canonical_folder_id": 2361,
+        "name": "作业拆解"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16598,
+        "from_folder_id": 2366,
+        "to_folder_id": 2361,
+        "old_name": "mmexport1645436182440",
+        "new_name": "mmexport1645436182440",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2366,
+        "canonical_folder_id": 2361,
+        "name": "作业拆解"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16620,
+        "from_folder_id": 2367,
+        "to_folder_id": 2361,
+        "old_name": "mmexport1645437425866",
+        "new_name": "mmexport1645437425866",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2367,
+        "canonical_folder_id": 2361,
+        "name": "作业拆解"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16595,
+        "from_folder_id": 2368,
+        "to_folder_id": 2361,
+        "old_name": "mmexport1645436408497",
+        "new_name": "mmexport1645436408497",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2368,
+        "canonical_folder_id": 2361,
+        "name": "作业拆解"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16622,
+        "from_folder_id": 2369,
+        "to_folder_id": 2361,
+        "old_name": "mmexport1645436280153",
+        "new_name": "mmexport1645436280153",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2369,
+        "canonical_folder_id": 2361,
+        "name": "作业拆解"
+      },
+      {
+        "action": "move_file",
+        "file_id": 16591,
+        "from_folder_id": 2370,
+        "to_folder_id": 2361,
+        "old_name": "mmexport1645436178580",
+        "new_name": "mmexport1645436178580",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2370,
+        "canonical_folder_id": 2361,
+        "name": "作业拆解"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2356,
+    "name": "2022-社群 复盘",
+    "folder_ids": [
+      2371,
+      2381
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16627,
+        "from_folder_id": 2381,
+        "to_folder_id": 2371,
+        "old_name": "余晓明",
+        "new_name": "余晓明",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2381,
+        "canonical_folder_id": 2371,
+        "name": "2022-社群 复盘"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2386,
+    "name": "新发的对比图（2024）",
+    "folder_ids": [
+      3366,
+      3369
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3370,
+        "from_parent_id": 3369,
+        "to_parent_id": 3366,
+        "old_name": "圣痘士更改水印版",
+        "new_name": "圣痘士更改水印版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3369,
+        "canonical_folder_id": 3366,
+        "name": "新发的对比图（2024）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2409,
+    "name": "标签",
+    "folder_ids": [
+      2413,
+      2414
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 16761,
+        "from_folder_id": 2414,
+        "to_folder_id": 2413,
+        "old_name": "美业人创业如何才能赚到钱",
+        "new_name": "美业人创业如何才能赚到钱",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2414,
+        "canonical_folder_id": 2413,
+        "name": "标签"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2466,
+    "name": "视频剪辑素材",
+    "folder_ids": [
+      2476,
+      2484,
+      2494
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2485,
+        "from_parent_id": 2484,
+        "to_parent_id": 2476,
+        "old_name": "成片视频（娇薇诗和苏蜜雅账号）",
+        "new_name": "成片视频（娇薇诗和苏蜜雅账号）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2484,
+        "canonical_folder_id": 2476,
+        "name": "视频剪辑素材"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2495,
+        "from_parent_id": 2494,
+        "to_parent_id": 2476,
+        "old_name": "成片视频（娇薇诗和苏蜜雅账号）",
+        "new_name": "成片视频（娇薇诗和苏蜜雅账号）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2494,
+        "canonical_folder_id": 2476,
+        "name": "视频剪辑素材"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2471,
+    "name": "25.4.26蔻诺·清颜",
+    "folder_ids": [
+      2979,
+      2981,
+      2982
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2984,
+        "from_parent_id": 2981,
+        "to_parent_id": 2979,
+        "old_name": "蔻诺·清颜",
+        "new_name": "蔻诺·清颜(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2981,
+        "canonical_folder_id": 2979,
+        "name": "25.4.26蔻诺·清颜"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2986,
+        "from_parent_id": 2982,
+        "to_parent_id": 2979,
+        "old_name": "蔻诺·清颜",
+        "new_name": "蔻诺·清颜(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2982,
+        "canonical_folder_id": 2979,
+        "name": "25.4.26蔻诺·清颜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2492,
+    "name": "本地生活",
+    "folder_ids": [
+      2958,
+      2960
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18419,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "本地生活商家11.30.",
+        "new_name": "本地生活商家11.30.",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18420,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "~$本地生活商家1",
+        "new_name": "~$本地生活商家1",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18423,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "刷单汇总表(最终确认)",
+        "new_name": "刷单汇总表(最终确认)",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18424,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "总部     团购核销登记表",
+        "new_name": "总部     团购核销登记表",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18425,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "刷单汇总表(最终确认)(2)",
+        "new_name": "刷单汇总表(最终确认)(2)",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18426,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "门店记录表",
+        "new_name": "门店记录表",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18429,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "本地生活商家1",
+        "new_name": "本地生活商家1",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18430,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "超级编导3980客户视频发布详情(1)(2)",
+        "new_name": "超级编导3980客户视频发布详情(1)(2)",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18440,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "批量新建子账号模版",
+        "new_name": "批量新建子账号模版",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18442,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "抖音团购已交付汇总表",
+        "new_name": "抖音团购已交付汇总表",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18495,
+        "from_folder_id": 2960,
+        "to_folder_id": 2958,
+        "old_name": "本地生活服务商家资料（2023.5.20更新版）",
+        "new_name": "本地生活服务商家资料（2023.5.20更新版）",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2965,
+        "from_parent_id": 2960,
+        "to_parent_id": 2958,
+        "old_name": "团购合作商家联系表（实时）",
+        "new_name": "团购合作商家联系表（实时）"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2960,
+        "canonical_folder_id": 2958,
+        "name": "本地生活"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2505,
+    "name": "KRNOBQUE 肌妍精萃霜",
+    "folder_ids": [
+      3000,
+      3001
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18564,
+        "from_folder_id": 3001,
+        "to_folder_id": 3000,
+        "old_name": "配方导入模板",
+        "new_name": "配方导入模板",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3001,
+        "canonical_folder_id": 3000,
+        "name": "KRNOBQUE 肌妍精萃霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2505,
+    "name": "KRNOBQUE 芙媄精华液",
+    "folder_ids": [
+      3006,
+      3007
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18599,
+        "from_folder_id": 3007,
+        "to_folder_id": 3006,
+        "old_name": "配方导入模板",
+        "new_name": "配方导入模板",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3007,
+        "canonical_folder_id": 3006,
+        "name": "KRNOBQUE 芙媄精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2538,
+    "name": "市场部",
+    "folder_ids": [
+      2544,
+      2545
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17397,
+        "from_folder_id": 2545,
+        "to_folder_id": 2544,
+        "old_name": "市场经理岗位说明书",
+        "new_name": "市场经理岗位说明书",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17404,
+        "from_folder_id": 2545,
+        "to_folder_id": 2544,
+        "old_name": "运营总监岗位说明书",
+        "new_name": "运营总监岗位说明书",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17405,
+        "from_folder_id": 2545,
+        "to_folder_id": 2544,
+        "old_name": "美导老师岗位说明书",
+        "new_name": "美导老师岗位说明书",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2545,
+        "canonical_folder_id": 2544,
+        "name": "市场部"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2538,
+    "name": "招商",
+    "folder_ids": [
+      3026,
+      3027
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18672,
+        "from_folder_id": 3027,
+        "to_folder_id": 3026,
+        "old_name": "招商主管岗位说明书",
+        "new_name": "招商主管岗位说明书",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3027,
+        "canonical_folder_id": 3026,
+        "name": "招商"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2547,
+    "name": "质检报告",
+    "folder_ids": [
+      2567,
+      2574
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2575,
+        "from_parent_id": 2574,
+        "to_parent_id": 2567,
+        "old_name": "新版",
+        "new_name": "新版(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2574,
+        "canonical_folder_id": 2567,
+        "name": "质检报告"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2548,
+    "name": "003 每个文件夹单独勾选保存3",
+    "folder_ids": [
+      2648,
+      2662,
+      2664,
+      2667
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2663,
+        "from_parent_id": 2662,
+        "to_parent_id": 2648,
+        "old_name": "003 每个文件夹单独勾选保存3",
+        "new_name": "003 每个文件夹单独勾选保存3(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2662,
+        "canonical_folder_id": 2648,
+        "name": "003 每个文件夹单独勾选保存3"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2666,
+        "from_parent_id": 2664,
+        "to_parent_id": 2648,
+        "old_name": "003 每个文件夹单独勾选保存3",
+        "new_name": "003 每个文件夹单独勾选保存3(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2664,
+        "canonical_folder_id": 2648,
+        "name": "003 每个文件夹单独勾选保存3"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2669,
+        "from_parent_id": 2667,
+        "to_parent_id": 2648,
+        "old_name": "003 每个文件夹单独勾选保存3",
+        "new_name": "003 每个文件夹单独勾选保存3(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2667,
+        "canonical_folder_id": 2648,
+        "name": "003 每个文件夹单独勾选保存3"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2549,
+    "name": "美容院（带名字）",
+    "folder_ids": [
+      2587,
+      2601
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2602,
+        "from_parent_id": 2601,
+        "to_parent_id": 2587,
+        "old_name": "山西",
+        "new_name": "山西(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2601,
+        "canonical_folder_id": 2587,
+        "name": "美容院（带名字）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2549,
+    "name": "美容新2021年",
+    "folder_ids": [
+      2652,
+      2655,
+      2656,
+      2659
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2657,
+        "from_parent_id": 2655,
+        "to_parent_id": 2652,
+        "old_name": "山西",
+        "new_name": "山西(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2655,
+        "canonical_folder_id": 2652,
+        "name": "美容新2021年"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2658,
+        "from_parent_id": 2656,
+        "to_parent_id": 2652,
+        "old_name": "四川",
+        "new_name": "四川(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2656,
+        "canonical_folder_id": 2652,
+        "name": "美容新2021年"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2660,
+        "from_parent_id": 2659,
+        "to_parent_id": 2652,
+        "old_name": "吉林",
+        "new_name": "吉林(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2659,
+        "canonical_folder_id": 2652,
+        "name": "美容新2021年"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2551,
+    "name": "社群数据",
+    "folder_ids": [
+      2907,
+      2908
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2909,
+        "from_parent_id": 2908,
+        "to_parent_id": 2907,
+        "old_name": "社群礼品统计",
+        "new_name": "社群礼品统计(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2908,
+        "canonical_folder_id": 2907,
+        "name": "社群数据"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2556,
+    "name": "引流",
+    "folder_ids": [
+      2885,
+      2886
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18124,
+        "from_folder_id": 2886,
+        "to_folder_id": 2885,
+        "old_name": "引流SOP 01 包裹卡引流用户体验全景图拆解",
+        "new_name": "引流SOP 01 包裹卡引流用户体验全景图拆解",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2886,
+        "canonical_folder_id": 2885,
+        "name": "引流"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2556,
+    "name": "数据分析",
+    "folder_ids": [
+      2888,
+      2889
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18150,
+        "from_folder_id": 2889,
+        "to_folder_id": 2888,
+        "old_name": "数据分析SOP 01 数据埋点",
+        "new_name": "数据分析SOP 01 数据埋点",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2889,
+        "canonical_folder_id": 2888,
+        "name": "数据分析"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2556,
+    "name": "私域调研",
+    "folder_ids": [
+      2896,
+      2897
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18194,
+        "from_folder_id": 2897,
+        "to_folder_id": 2896,
+        "old_name": "私域调研SOP 04 企业调研维度",
+        "new_name": "私域调研SOP 04 企业调研维度",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2897,
+        "canonical_folder_id": 2896,
+        "name": "私域调研"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2562,
+    "name": "开发部",
+    "folder_ids": [
+      3033,
+      3037,
+      3038,
+      3039
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18716,
+        "from_folder_id": 3037,
+        "to_folder_id": 3033,
+        "old_name": "市场开发经理岗位说明书",
+        "new_name": "市场开发经理岗位说明书",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3037,
+        "canonical_folder_id": 3033,
+        "name": "开发部"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18727,
+        "from_folder_id": 3038,
+        "to_folder_id": 3033,
+        "old_name": "开发专员岗位说明书",
+        "new_name": "开发专员岗位说明书",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3038,
+        "canonical_folder_id": 3033,
+        "name": "开发部"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18724,
+        "from_folder_id": 3039,
+        "to_folder_id": 3033,
+        "old_name": "开发主管岗位说明书",
+        "new_name": "开发主管岗位说明书",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3039,
+        "canonical_folder_id": 3033,
+        "name": "开发部"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2568,
+    "name": "25.4.26苏蜜雅",
+    "folder_ids": [
+      2622,
+      2629
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2630,
+        "from_parent_id": 2629,
+        "to_parent_id": 2622,
+        "old_name": "苏蜜雅",
+        "new_name": "苏蜜雅(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2629,
+        "canonical_folder_id": 2622,
+        "name": "25.4.26苏蜜雅"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2568,
+    "name": "25.4.26蔻诺KN",
+    "folder_ids": [
+      2589,
+      2592,
+      2604,
+      2608
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2593,
+        "from_parent_id": 2592,
+        "to_parent_id": 2589,
+        "old_name": "蔻诺KN",
+        "new_name": "蔻诺KN(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2592,
+        "canonical_folder_id": 2589,
+        "name": "25.4.26蔻诺KN"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2605,
+        "from_parent_id": 2604,
+        "to_parent_id": 2589,
+        "old_name": "蔻诺KN",
+        "new_name": "蔻诺KN(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2604,
+        "canonical_folder_id": 2589,
+        "name": "25.4.26蔻诺KN"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2609,
+        "from_parent_id": 2608,
+        "to_parent_id": 2589,
+        "old_name": "蔻诺KN",
+        "new_name": "蔻诺KN(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2608,
+        "canonical_folder_id": 2589,
+        "name": "25.4.26蔻诺KN"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2587,
+    "name": "四川",
+    "folder_ids": [
+      2924,
+      2925
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18326,
+        "from_folder_id": 2925,
+        "to_folder_id": 2924,
+        "old_name": "3",
+        "new_name": "3",
+        "extension": "xls"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18329,
+        "from_folder_id": 2925,
+        "to_folder_id": 2924,
+        "old_name": "1",
+        "new_name": "1",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2925,
+        "canonical_folder_id": 2924,
+        "name": "四川"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2596,
+    "name": "产品介绍",
+    "folder_ids": [
+      3029,
+      3030
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18682,
+        "from_folder_id": 3030,
+        "to_folder_id": 3029,
+        "old_name": "清颜品牌产品介绍 ",
+        "new_name": "清颜品牌产品介绍",
+        "extension": "pptx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3030,
+        "canonical_folder_id": 3029,
+        "name": "产品介绍"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2599,
+    "name": "天津",
+    "folder_ids": [
+      2642,
+      2643
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17560,
+        "from_folder_id": 2643,
+        "to_folder_id": 2642,
+        "old_name": "天津8.17客户登记表",
+        "new_name": "天津8.17客户登记表",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2643,
+        "canonical_folder_id": 2642,
+        "name": "天津"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2599,
+    "name": "安徽",
+    "folder_ids": [
+      2644,
+      2654
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17596,
+        "from_folder_id": 2654,
+        "to_folder_id": 2644,
+        "old_name": "安徽珍镱汇407会议参会表",
+        "new_name": "安徽珍镱汇407会议参会表",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2654,
+        "canonical_folder_id": 2644,
+        "name": "安徽"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2599,
+    "name": "湖北",
+    "folder_ids": [
+      2930,
+      2932
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18340,
+        "from_folder_id": 2932,
+        "to_folder_id": 2930,
+        "old_name": "湖北",
+        "new_name": "湖北",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2932,
+        "canonical_folder_id": 2930,
+        "name": "湖北"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2599,
+    "name": "重庆",
+    "folder_ids": [
+      2711,
+      2712
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17724,
+        "from_folder_id": 2712,
+        "to_folder_id": 2711,
+        "old_name": "~$重庆朵妍",
+        "new_name": "~$重庆朵妍",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17730,
+        "from_folder_id": 2712,
+        "to_folder_id": 2711,
+        "old_name": "重庆朵妍",
+        "new_name": "重庆朵妍",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17735,
+        "from_folder_id": 2712,
+        "to_folder_id": 2711,
+        "old_name": "成都 确认单",
+        "new_name": "成都 确认单",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17736,
+        "from_folder_id": 2712,
+        "to_folder_id": 2711,
+        "old_name": "重庆鼎益",
+        "new_name": "重庆鼎益",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17737,
+        "from_folder_id": 2712,
+        "to_folder_id": 2711,
+        "old_name": "重庆浩华签到本",
+        "new_name": "重庆浩华签到本",
+        "extension": "xls"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17744,
+        "from_folder_id": 2712,
+        "to_folder_id": 2711,
+        "old_name": "重庆亮泉美业签到表",
+        "new_name": "重庆亮泉美业签到表",
+        "extension": "xlsx"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17747,
+        "from_folder_id": 2712,
+        "to_folder_id": 2711,
+        "old_name": "重庆鼎益公司签到表",
+        "new_name": "重庆鼎益公司签到表",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2712,
+        "canonical_folder_id": 2711,
+        "name": "重庆"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2599,
+    "name": "陕西",
+    "folder_ids": [
+      2927,
+      2928,
+      2931
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18335,
+        "from_folder_id": 2928,
+        "to_folder_id": 2927,
+        "old_name": "西安1",
+        "new_name": "西安1",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2928,
+        "canonical_folder_id": 2927,
+        "name": "陕西"
+      },
+      {
+        "action": "move_file",
+        "file_id": 18339,
+        "from_folder_id": 2931,
+        "to_folder_id": 2927,
+        "old_name": "西安2",
+        "new_name": "西安2",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2931,
+        "canonical_folder_id": 2927,
+        "name": "陕西"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2624,
+    "name": "苏蜜雅 肌源精华液",
+    "folder_ids": [
+      3062,
+      3065
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18786,
+        "from_folder_id": 3065,
+        "to_folder_id": 3062,
+        "old_name": "配方导入模板",
+        "new_name": "配方导入模板",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3065,
+        "canonical_folder_id": 3062,
+        "name": "苏蜜雅 肌源精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2652,
+    "name": "广东",
+    "folder_ids": [
+      2952,
+      2954
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18402,
+        "from_folder_id": 2954,
+        "to_folder_id": 2952,
+        "old_name": "其他城市",
+        "new_name": "其他城市",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2954,
+        "canonical_folder_id": 2952,
+        "name": "广东"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2652,
+    "name": "湖南",
+    "folder_ids": [
+      2682,
+      2687
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17625,
+        "from_folder_id": 2687,
+        "to_folder_id": 2682,
+        "old_name": "其他市",
+        "new_name": "其他市",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2687,
+        "canonical_folder_id": 2682,
+        "name": "湖南"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2691,
+    "name": "文件",
+    "folder_ids": [
+      2842,
+      2843,
+      2844,
+      2845
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17951,
+        "from_folder_id": 2843,
+        "to_folder_id": 2842,
+        "old_name": "刘涛 工作表 (2)",
+        "new_name": "刘涛 工作表 (2)",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2843,
+        "canonical_folder_id": 2842,
+        "name": "文件"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17952,
+        "from_folder_id": 2844,
+        "to_folder_id": 2842,
+        "old_name": "单店排毒营流程",
+        "new_name": "单店排毒营流程",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2844,
+        "canonical_folder_id": 2842,
+        "name": "文件"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17959,
+        "from_folder_id": 2845,
+        "to_folder_id": 2842,
+        "old_name": "东宁活动流程",
+        "new_name": "东宁活动流程",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2845,
+        "canonical_folder_id": 2842,
+        "name": "文件"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2691,
+    "name": "汪培训会",
+    "folder_ids": [
+      2851,
+      2854
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18009,
+        "from_folder_id": 2854,
+        "to_folder_id": 2851,
+        "old_name": "5、健约高端及功能型酵素",
+        "new_name": "5、健约高端及功能型酵素",
+        "extension": "pptx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2854,
+        "canonical_folder_id": 2851,
+        "name": "汪培训会"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2693,
+    "name": "拓客",
+    "folder_ids": [
+      3056,
+      3058
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3059,
+        "from_parent_id": 3058,
+        "to_parent_id": 3056,
+        "old_name": "病毒式拓客",
+        "new_name": "病毒式拓客(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3058,
+        "canonical_folder_id": 3056,
+        "name": "拓客"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2694,
+    "name": "营流宝第二次活动（6.06-08）",
+    "folder_ids": [
+      2822,
+      2827
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17911,
+        "from_folder_id": 2827,
+        "to_folder_id": 2822,
+        "old_name": "营流宝门店补贴银行卡信息表 (2)",
+        "new_name": "营流宝门店补贴银行卡信息表 (2)",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2827,
+        "canonical_folder_id": 2822,
+        "name": "营流宝第二次活动（6.06-08）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2694,
+    "name": "营流宝第三次活动（7.15-17）",
+    "folder_ids": [
+      2817,
+      2818
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17893,
+        "from_folder_id": 2818,
+        "to_folder_id": 2817,
+        "old_name": "三次活动古法项目商品补货表",
+        "new_name": "三次活动古法项目商品补货表",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2818,
+        "canonical_folder_id": 2817,
+        "name": "营流宝第三次活动（7.15-17）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2715,
+    "name": "28套美业绝密文档",
+    "folder_ids": [
+      2939,
+      2941
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2942,
+        "from_parent_id": 2941,
+        "to_parent_id": 2939,
+        "old_name": "中医药膳学_第二讲_阴阳五行",
+        "new_name": "中医药膳学_第二讲_阴阳五行"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2944,
+        "from_parent_id": 2941,
+        "to_parent_id": 2939,
+        "old_name": "中医的阴阳学说-讲义",
+        "new_name": "中医的阴阳学说-讲义"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2948,
+        "from_parent_id": 2941,
+        "to_parent_id": 2939,
+        "old_name": "美容师销售话术培",
+        "new_name": "美容师销售话术培"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2941,
+        "canonical_folder_id": 2939,
+        "name": "28套美业绝密文档"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2727,
+    "name": "社群数据",
+    "folder_ids": [
+      2821,
+      2823,
+      2837
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2824,
+        "from_parent_id": 2823,
+        "to_parent_id": 2821,
+        "old_name": "各月出单明细",
+        "new_name": "各月出单明细(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2823,
+        "canonical_folder_id": 2821,
+        "name": "社群数据"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2838,
+        "from_parent_id": 2837,
+        "to_parent_id": 2821,
+        "old_name": "各月出单明细",
+        "new_name": "各月出单明细(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2837,
+        "canonical_folder_id": 2821,
+        "name": "社群数据"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2727,
+    "name": "社群运营全套课程",
+    "folder_ids": [
+      2729,
+      2735,
+      2740,
+      2743,
+      2745,
+      2750,
+      2756,
+      2757,
+      2765,
+      2771,
+      2772
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2736,
+        "from_parent_id": 2735,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2735,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2741,
+        "from_parent_id": 2740,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2740,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2744,
+        "from_parent_id": 2743,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2743,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2746,
+        "from_parent_id": 2745,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2745,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2751,
+        "from_parent_id": 2750,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2750,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2761,
+        "from_parent_id": 2756,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2756,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2758,
+        "from_parent_id": 2757,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2757,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2766,
+        "from_parent_id": 2765,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2765,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2776,
+        "from_parent_id": 2771,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2771,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 2773,
+        "from_parent_id": 2772,
+        "to_parent_id": 2729,
+        "old_name": "社群运营全套课程（买的课程在这）",
+        "new_name": "社群运营全套课程（买的课程在这）(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2772,
+        "canonical_folder_id": 2729,
+        "name": "社群运营全套课程"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2728,
+    "name": "售后文档",
+    "folder_ids": [
+      2819,
+      2820,
+      2825
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17913,
+        "from_folder_id": 2820,
+        "to_folder_id": 2819,
+        "old_name": "情况说明表",
+        "new_name": "情况说明表",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2820,
+        "canonical_folder_id": 2819,
+        "name": "售后文档"
+      },
+      {
+        "action": "move_file",
+        "file_id": 17908,
+        "from_folder_id": 2825,
+        "to_folder_id": 2819,
+        "old_name": "问题顾客退款申请",
+        "new_name": "问题顾客退款申请",
+        "extension": "xls"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2825,
+        "canonical_folder_id": 2819,
+        "name": "售后文档"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2733,
+    "name": "养号",
+    "folder_ids": [
+      2797,
+      2798
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 17834,
+        "from_folder_id": 2798,
+        "to_folder_id": 2797,
+        "old_name": "私域养号04 个微防封指南",
+        "new_name": "私域养号04 个微防封指南",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2798,
+        "canonical_folder_id": 2797,
+        "name": "养号"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2821,
+    "name": "各月出单明细",
+    "folder_ids": [
+      2847,
+      2849
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2850,
+        "from_parent_id": 2849,
+        "to_parent_id": 2847,
+        "old_name": "3月份",
+        "new_name": "3月份(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2849,
+        "canonical_folder_id": 2847,
+        "name": "各月出单明细"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2873,
+    "name": "售后文档",
+    "folder_ids": [
+      2902,
+      2903
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 18225,
+        "from_folder_id": 2903,
+        "to_folder_id": 2902,
+        "old_name": "问题顾客退换货申请",
+        "new_name": "问题顾客退换货申请",
+        "extension": "xlsx"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2903,
+        "canonical_folder_id": 2902,
+        "name": "售后文档"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 2875,
+    "name": "手法",
+    "folder_ids": [
+      2878,
+      2880
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 2881,
+        "from_parent_id": 2880,
+        "to_parent_id": 2878,
+        "old_name": "八大技术",
+        "new_name": "八大技术(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 2880,
+        "canonical_folder_id": 2878,
+        "name": "手法"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3092,
+    "name": "娇薇诗成片",
+    "folder_ids": [
+      3139,
+      3140
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 19648,
+        "from_folder_id": 3140,
+        "to_folder_id": 3139,
+        "old_name": "11月4日 (1)-封面",
+        "new_name": "11月4日 (1)-封面",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3140,
+        "canonical_folder_id": 3139,
+        "name": "娇薇诗成片"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3115,
+    "name": "4个品牌白富美展架海报（只用于宣发）",
+    "folder_ids": [
+      3123,
+      3124
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3126,
+        "from_parent_id": 3124,
+        "to_parent_id": 3123,
+        "old_name": "规避敏感词的版本",
+        "new_name": "规避敏感词的版本(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3124,
+        "canonical_folder_id": 3123,
+        "name": "4个品牌白富美展架海报（只用于宣发）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3118,
+    "name": "欣柔沁润霜",
+    "folder_ids": [
+      3121,
+      3122
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 19545,
+        "from_folder_id": 3122,
+        "to_folder_id": 3121,
+        "old_name": "欣柔沁润霜1",
+        "new_name": "欣柔沁润霜1",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3122,
+        "canonical_folder_id": 3121,
+        "name": "欣柔沁润霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3118,
+    "name": "氨基酸洁面乳",
+    "folder_ids": [
+      3128,
+      3131
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 19571,
+        "from_folder_id": 3131,
+        "to_folder_id": 3128,
+        "old_name": "氨基酸净透洁面乳",
+        "new_name": "氨基酸净透洁面乳",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3131,
+        "canonical_folder_id": 3128,
+        "name": "氨基酸洁面乳"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3118,
+    "name": "纯美新妆精萃霜",
+    "folder_ids": [
+      3130,
+      3135
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 19577,
+        "from_folder_id": 3135,
+        "to_folder_id": 3130,
+        "old_name": "纯美新妆精萃霜1",
+        "new_name": "纯美新妆精萃霜1",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3135,
+        "canonical_folder_id": 3130,
+        "name": "纯美新妆精萃霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3118,
+    "name": "美白三件套",
+    "folder_ids": [
+      3133,
+      3134
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 19567,
+        "from_folder_id": 3134,
+        "to_folder_id": 3133,
+        "old_name": "清颜MB三件套",
+        "new_name": "清颜MB三件套",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3134,
+        "canonical_folder_id": 3133,
+        "name": "美白三件套"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3165,
+    "name": "10.15搞搞这张脸小红书",
+    "folder_ids": [
+      3307,
+      3309
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 21512,
+        "from_folder_id": 3309,
+        "to_folder_id": 3307,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3309,
+        "canonical_folder_id": 3307,
+        "name": "10.15搞搞这张脸小红书"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3165,
+    "name": "10.29足足聊美业小红书",
+    "folder_ids": [
+      3216,
+      3217
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 20632,
+        "from_folder_id": 3217,
+        "to_folder_id": 3216,
+        "old_name": "3",
+        "new_name": "3",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3217,
+        "canonical_folder_id": 3216,
+        "name": "10.29足足聊美业小红书"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3165,
+    "name": "12.18足足聊美业小红书 副本",
+    "folder_ids": [
+      3239,
+      3240
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 20734,
+        "from_folder_id": 3240,
+        "to_folder_id": 3239,
+        "old_name": "2",
+        "new_name": "2",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3240,
+        "canonical_folder_id": 3239,
+        "name": "12.18足足聊美业小红书 副本"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3165,
+    "name": "9.27足足聊美业小红书",
+    "folder_ids": [
+      3249,
+      3250
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 20783,
+        "from_folder_id": 3250,
+        "to_folder_id": 3249,
+        "old_name": "4",
+        "new_name": "4",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3250,
+        "canonical_folder_id": 3249,
+        "name": "9.27足足聊美业小红书"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3182,
+    "name": "访谈表格",
+    "folder_ids": [
+      3342,
+      3343
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 21854,
+        "from_folder_id": 3343,
+        "to_folder_id": 3342,
+        "old_name": "mmexport1645514073252",
+        "new_name": "mmexport1645514073252",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 21856,
+        "from_folder_id": 3343,
+        "to_folder_id": 3342,
+        "old_name": "mmexport1645513752905",
+        "new_name": "mmexport1645513752905",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 21857,
+        "from_folder_id": 3343,
+        "to_folder_id": 3342,
+        "old_name": "mmexport1645514082343",
+        "new_name": "mmexport1645514082343",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3343,
+        "canonical_folder_id": 3342,
+        "name": "访谈表格"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3196,
+    "name": "案例",
+    "folder_ids": [
+      3257,
+      3258
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 20839,
+        "from_folder_id": 3258,
+        "to_folder_id": 3257,
+        "old_name": "微信图片_20240426163259",
+        "new_name": "微信图片_20240426163259",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3258,
+        "canonical_folder_id": 3257,
+        "name": "案例"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3260,
+    "name": "文案素材22年及以前",
+    "folder_ids": [
+      3263,
+      3265
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3266,
+        "from_parent_id": 3265,
+        "to_parent_id": 3263,
+        "old_name": "娇薇诗发圈图",
+        "new_name": "娇薇诗发圈图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3265,
+        "canonical_folder_id": 3263,
+        "name": "文案素材22年及以前"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3263,
+    "name": "苏蜜雅发圈图",
+    "folder_ids": [
+      3315,
+      3316
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 21601,
+        "from_folder_id": 3316,
+        "to_folder_id": 3315,
+        "old_name": "鲜活精华液1",
+        "new_name": "鲜活精华液1",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3316,
+        "canonical_folder_id": 3315,
+        "name": "苏蜜雅发圈图"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3263,
+    "name": "四大品牌有logo原始版",
+    "folder_ids": [
+      3310,
+      3311
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 21524,
+        "from_folder_id": 3311,
+        "to_folder_id": 3310,
+        "old_name": "凝萃粉黛百媚霜 (4)",
+        "new_name": "凝萃粉黛百媚霜 (4)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3311,
+        "canonical_folder_id": 3310,
+        "name": "四大品牌有logo原始版"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3289,
+    "name": "毛孔清道夫",
+    "folder_ids": [
+      3376,
+      3377
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 22095,
+        "from_folder_id": 3377,
+        "to_folder_id": 3376,
+        "old_name": "0eaf2940bc8de2a64edd5b67b247e60",
+        "new_name": "0eaf2940bc8de2a64edd5b67b247e60",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3377,
+        "canonical_folder_id": 3376,
+        "name": "毛孔清道夫"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3295,
+    "name": "公司logo",
+    "folder_ids": [
+      3389,
+      3390
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 22356,
+        "from_folder_id": 3390,
+        "to_folder_id": 3389,
+        "old_name": "娇薇诗logo黑",
+        "new_name": "娇薇诗logo黑",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3390,
+        "canonical_folder_id": 3389,
+        "name": "公司logo"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3310,
+    "name": "苏蜜雅有logo",
+    "folder_ids": [
+      3331,
+      3332
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 21746,
+        "from_folder_id": 3332,
+        "to_folder_id": 3331,
+        "old_name": "泉润晶透霜 (7)",
+        "new_name": "泉润晶透霜 (7)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3332,
+        "canonical_folder_id": 3331,
+        "name": "苏蜜雅有logo"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3327,
+    "name": "白富美案例对比图",
+    "folder_ids": [
+      3379,
+      3380
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 22206,
+        "from_folder_id": 3380,
+        "to_folder_id": 3379,
+        "old_name": "2白富美4件套对比图-正面-恢复的 (1)",
+        "new_name": "2白富美4件套对比图-正面-恢复的 (1)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3380,
+        "canonical_folder_id": 3379,
+        "name": "白富美案例对比图"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3334,
+    "name": "娇薇诗案例对比图（更新完）",
+    "folder_ids": [
+      3365,
+      3368
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 22048,
+        "from_folder_id": 3368,
+        "to_folder_id": 3365,
+        "old_name": "27.娇薇诗-左边",
+        "new_name": "27.娇薇诗-左边",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 22056,
+        "from_folder_id": 3368,
+        "to_folder_id": 3365,
+        "old_name": "3.娇薇诗-左边",
+        "new_name": "3.娇薇诗-左边",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3368,
+        "canonical_folder_id": 3365,
+        "name": "娇薇诗案例对比图（更新完）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3355,
+    "name": "5.21对比用",
+    "folder_ids": [
+      3360,
+      3361
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 22021,
+        "from_folder_id": 3361,
+        "to_folder_id": 3360,
+        "old_name": "3.CB仪器一次30天效果2",
+        "new_name": "3.CB仪器一次30天效果2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3361,
+        "canonical_folder_id": 3360,
+        "name": "5.21对比用"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3355,
+    "name": "5.28对比",
+    "folder_ids": [
+      3362,
+      3371
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 22050,
+        "from_folder_id": 3371,
+        "to_folder_id": 3362,
+        "old_name": "3.对比2",
+        "new_name": "3.对比2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3371,
+        "canonical_folder_id": 3362,
+        "name": "5.28对比"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3372,
+    "name": "CB+蔻诺",
+    "folder_ids": [
+      3373,
+      3375
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 22077,
+        "from_folder_id": 3375,
+        "to_folder_id": 3373,
+        "old_name": "微信图片_20240725105948",
+        "new_name": "微信图片_20240725105948",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3375,
+        "canonical_folder_id": 3373,
+        "name": "CB+蔻诺"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3402,
+    "name": "已修",
+    "folder_ids": [
+      3411,
+      3417
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24193,
+        "from_folder_id": 3417,
+        "to_folder_id": 3411,
+        "old_name": "DSC06376",
+        "new_name": "DSC06376",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3417,
+        "canonical_folder_id": 3411,
+        "name": "已修"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3402,
+    "name": "白总",
+    "folder_ids": [
+      3412,
+      3418,
+      3420
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24196,
+        "from_folder_id": 3418,
+        "to_folder_id": 3412,
+        "old_name": "微信图片_20250206094722",
+        "new_name": "微信图片_20250206094722",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3418,
+        "canonical_folder_id": 3412,
+        "name": "白总"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24214,
+        "from_folder_id": 3420,
+        "to_folder_id": 3412,
+        "old_name": "微信图片_20250206094716",
+        "new_name": "微信图片_20250206094716",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3420,
+        "canonical_folder_id": 3412,
+        "name": "白总"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3402,
+    "name": "开工大吉_PixCake",
+    "folder_ids": [
+      3424,
+      3425,
+      3426
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24292,
+        "from_folder_id": 3425,
+        "to_folder_id": 3424,
+        "old_name": "DSC06680_(3)",
+        "new_name": "DSC06680_(3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24295,
+        "from_folder_id": 3425,
+        "to_folder_id": 3424,
+        "old_name": "DSC06695_(3)",
+        "new_name": "DSC06695_(3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24299,
+        "from_folder_id": 3425,
+        "to_folder_id": 3424,
+        "old_name": "DSC06710_(3)",
+        "new_name": "DSC06710_(3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24301,
+        "from_folder_id": 3425,
+        "to_folder_id": 3424,
+        "old_name": "DSC06720_(2)",
+        "new_name": "DSC06720_(2)",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24305,
+        "from_folder_id": 3425,
+        "to_folder_id": 3424,
+        "old_name": "DSC06734_(3)",
+        "new_name": "DSC06734_(3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24306,
+        "from_folder_id": 3425,
+        "to_folder_id": 3424,
+        "old_name": "DSC06713_(3)",
+        "new_name": "DSC06713_(3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3425,
+        "canonical_folder_id": 3424,
+        "name": "开工大吉_PixCake"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24293,
+        "from_folder_id": 3426,
+        "to_folder_id": 3424,
+        "old_name": "DSC06691_(3)",
+        "new_name": "DSC06691_(3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3426,
+        "canonical_folder_id": 3424,
+        "name": "开工大吉_PixCake"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3403,
+    "name": "1",
+    "folder_ids": [
+      3409,
+      3410,
+      3413,
+      3415,
+      3416,
+      3419
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24197,
+        "from_folder_id": 3410,
+        "to_folder_id": 3409,
+        "old_name": "DSC06246",
+        "new_name": "DSC06246",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3410,
+        "canonical_folder_id": 3409,
+        "name": "1"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24187,
+        "from_folder_id": 3413,
+        "to_folder_id": 3409,
+        "old_name": "DSC06389",
+        "new_name": "DSC06389",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3413,
+        "canonical_folder_id": 3409,
+        "name": "1"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24199,
+        "from_folder_id": 3415,
+        "to_folder_id": 3409,
+        "old_name": "DSC06386",
+        "new_name": "DSC06386",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3415,
+        "canonical_folder_id": 3409,
+        "name": "1"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24192,
+        "from_folder_id": 3416,
+        "to_folder_id": 3409,
+        "old_name": "DSC06276",
+        "new_name": "DSC06276",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3416,
+        "canonical_folder_id": 3409,
+        "name": "1"
+      },
+      {
+        "action": "move_file",
+        "file_id": 24212,
+        "from_folder_id": 3419,
+        "to_folder_id": 3409,
+        "old_name": "DSC06390",
+        "new_name": "DSC06390",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3419,
+        "canonical_folder_id": 3409,
+        "name": "1"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3403,
+    "name": "2",
+    "folder_ids": [
+      3408,
+      3414
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24190,
+        "from_folder_id": 3414,
+        "to_folder_id": 3408,
+        "old_name": "DSC06441",
+        "new_name": "DSC06441",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3414,
+        "canonical_folder_id": 3408,
+        "name": "2"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3412,
+    "name": "02.05聚餐_PixCake",
+    "folder_ids": [
+      3437,
+      3438
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24377,
+        "from_folder_id": 3438,
+        "to_folder_id": 3437,
+        "old_name": "微信图片_20250206094714",
+        "new_name": "微信图片_20250206094714",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3438,
+        "canonical_folder_id": 3437,
+        "name": "02.05聚餐_PixCake"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3421,
+    "name": "仪器海报",
+    "folder_ids": [
+      3599,
+      3600
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3601,
+        "from_parent_id": 3600,
+        "to_parent_id": 3599,
+        "old_name": "原有海报",
+        "new_name": "原有海报(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3600,
+        "canonical_folder_id": 3599,
+        "name": "仪器海报"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3421,
+    "name": "CB仪器2代",
+    "folder_ids": [
+      3474,
+      3475
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24912,
+        "from_folder_id": 3475,
+        "to_folder_id": 3474,
+        "old_name": "IMG_5416",
+        "new_name": "IMG_5416",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3475,
+        "canonical_folder_id": 3474,
+        "name": "CB仪器2代"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3421,
+    "name": "Q品牌底片图（俏小喵）",
+    "folder_ids": [
+      3487,
+      3488
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3490,
+        "from_parent_id": 3488,
+        "to_parent_id": 3487,
+        "old_name": "Q品牌",
+        "new_name": "Q品牌(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3488,
+        "canonical_folder_id": 3487,
+        "name": "Q品牌底片图（俏小喵）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3422,
+    "name": "娇薇诗",
+    "folder_ids": [
+      3433,
+      3435
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3436,
+        "from_parent_id": 3435,
+        "to_parent_id": 3433,
+        "old_name": "种草图",
+        "new_name": "种草图(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3435,
+        "canonical_folder_id": 3433,
+        "name": "娇薇诗"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3427,
+    "name": "种草图",
+    "folder_ids": [
+      3430,
+      3431
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24350,
+        "from_folder_id": 3431,
+        "to_folder_id": 3430,
+        "old_name": "美白三件套种草图",
+        "new_name": "美白三件套种草图",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3431,
+        "canonical_folder_id": 3430,
+        "name": "种草图"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3439,
+    "name": "苏蜜雅白富美套盒",
+    "folder_ids": [
+      3454,
+      3459
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3460,
+        "from_parent_id": 3459,
+        "to_parent_id": 3454,
+        "old_name": "苏蜜雅白富美大套海报",
+        "new_name": "苏蜜雅白富美大套海报(1)"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3461,
+        "from_parent_id": 3459,
+        "to_parent_id": 3454,
+        "old_name": "加水印加二维码",
+        "new_name": "加水印加二维码(1)"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3462,
+        "from_parent_id": 3459,
+        "to_parent_id": 3454,
+        "old_name": "苏蜜雅白富美种草图（不宣发）",
+        "new_name": "苏蜜雅白富美种草图（不宣发）(1)"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3463,
+        "from_parent_id": 3459,
+        "to_parent_id": 3454,
+        "old_name": "苏蜜雅白富美小套海报",
+        "new_name": "苏蜜雅白富美小套海报(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3459,
+        "canonical_folder_id": 3454,
+        "name": "苏蜜雅白富美套盒"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3439,
+    "name": "蔻诺白富美套盒",
+    "folder_ids": [
+      3448,
+      3449
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3451,
+        "from_parent_id": 3449,
+        "to_parent_id": 3448,
+        "old_name": "加水印加二维码",
+        "new_name": "加水印加二维码(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3449,
+        "canonical_folder_id": 3448,
+        "name": "蔻诺白富美套盒"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3454,
+    "name": "苏蜜雅白富美大小套造景图",
+    "folder_ids": [
+      3466,
+      3467
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 24531,
+        "from_folder_id": 3467,
+        "to_folder_id": 3466,
+        "old_name": "苏蜜雅小套 (3)",
+        "new_name": "苏蜜雅小套 (3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3467,
+        "canonical_folder_id": 3466,
+        "name": "苏蜜雅白富美大小套造景图"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3457,
+    "name": "种草图（不再宣发）",
+    "folder_ids": [
+      3499,
+      3500
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25220,
+        "from_folder_id": 3500,
+        "to_folder_id": 3499,
+        "old_name": "清颜4",
+        "new_name": "清颜4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3500,
+        "canonical_folder_id": 3499,
+        "name": "种草图（不再宣发）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3495,
+    "name": "规避敏感词的版本",
+    "folder_ids": [
+      3497,
+      3498
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25217,
+        "from_folder_id": 3498,
+        "to_folder_id": 3497,
+        "old_name": "娇薇诗",
+        "new_name": "娇薇诗",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3498,
+        "canonical_folder_id": 3497,
+        "name": "规避敏感词的版本"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3507,
+    "name": "太白金星种草图（不再宣发）",
+    "folder_ids": [
+      3510,
+      3512,
+      3513,
+      3514
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25254,
+        "from_folder_id": 3512,
+        "to_folder_id": 3510,
+        "old_name": "娇薇诗4",
+        "new_name": "娇薇诗4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3512,
+        "canonical_folder_id": 3510,
+        "name": "太白金星种草图（不再宣发）"
+      },
+      {
+        "action": "move_file",
+        "file_id": 25253,
+        "from_folder_id": 3513,
+        "to_folder_id": 3510,
+        "old_name": "清颜4",
+        "new_name": "清颜4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3513,
+        "canonical_folder_id": 3510,
+        "name": "太白金星种草图（不再宣发）"
+      },
+      {
+        "action": "move_file",
+        "file_id": 25260,
+        "from_folder_id": 3514,
+        "to_folder_id": 3510,
+        "old_name": "蔻诺4",
+        "new_name": "蔻诺4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3514,
+        "canonical_folder_id": 3510,
+        "name": "太白金星种草图（不再宣发）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3507,
+    "name": "清颜白富美种草图（不宣发）",
+    "folder_ids": [
+      3528,
+      3532
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25270,
+        "from_folder_id": 3532,
+        "to_folder_id": 3528,
+        "old_name": "清颜种草图2",
+        "new_name": "清颜种草图2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3532,
+        "canonical_folder_id": 3528,
+        "name": "清颜白富美种草图（不宣发）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3507,
+    "name": "蔻诺白富美种草图（不宣发）",
+    "folder_ids": [
+      3526,
+      3529
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25267,
+        "from_folder_id": 3529,
+        "to_folder_id": 3526,
+        "old_name": "蔻诺种草图2",
+        "new_name": "蔻诺种草图2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3529,
+        "canonical_folder_id": 3526,
+        "name": "蔻诺白富美种草图（不宣发）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3507,
+    "name": "通用品牌种草图（不宣发）",
+    "folder_ids": [
+      3518,
+      3520,
+      3521,
+      3522
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3523,
+        "from_parent_id": 3520,
+        "to_parent_id": 3518,
+        "old_name": "悠颜沁润霜",
+        "new_name": "悠颜沁润霜(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3520,
+        "canonical_folder_id": 3518,
+        "name": "通用品牌种草图（不宣发）"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3524,
+        "from_parent_id": 3521,
+        "to_parent_id": 3518,
+        "old_name": "悠颜沁润霜",
+        "new_name": "悠颜沁润霜(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3521,
+        "canonical_folder_id": 3518,
+        "name": "通用品牌种草图（不宣发）"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3525,
+        "from_parent_id": 3522,
+        "to_parent_id": 3518,
+        "old_name": "户外清新乳",
+        "new_name": "户外清新乳(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3522,
+        "canonical_folder_id": 3518,
+        "name": "通用品牌种草图（不宣发）"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3508,
+    "name": "纯美焕采组合",
+    "folder_ids": [
+      3621,
+      3623
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25548,
+        "from_folder_id": 3623,
+        "to_folder_id": 3621,
+        "old_name": "纯美焕采组合（2）",
+        "new_name": "纯美焕采组合（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3623,
+        "canonical_folder_id": 3621,
+        "name": "纯美焕采组合"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3508,
+    "name": "肌密精华液",
+    "folder_ids": [
+      3619,
+      3622
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25547,
+        "from_folder_id": 3622,
+        "to_folder_id": 3619,
+        "old_name": "肌密精华液（2）",
+        "new_name": "肌密精华液（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3622,
+        "canonical_folder_id": 3619,
+        "name": "肌密精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3508,
+    "name": "臻致美肌液",
+    "folder_ids": [
+      3626,
+      3627
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25562,
+        "from_folder_id": 3627,
+        "to_folder_id": 3626,
+        "old_name": "臻致美肌液1",
+        "new_name": "臻致美肌液1",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3627,
+        "canonical_folder_id": 3626,
+        "name": "臻致美肌液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3508,
+    "name": "舒润保湿水",
+    "folder_ids": [
+      3624,
+      3625
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25556,
+        "from_folder_id": 3625,
+        "to_folder_id": 3624,
+        "old_name": "舒润保湿水",
+        "new_name": "舒润保湿水",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3625,
+        "canonical_folder_id": 3624,
+        "name": "舒润保湿水"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3508,
+    "name": "魅眼菁华眼护套",
+    "folder_ids": [
+      3628,
+      3629
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25571,
+        "from_folder_id": 3629,
+        "to_folder_id": 3628,
+        "old_name": "魅眼菁华眼护套",
+        "new_name": "魅眼菁华眼护套",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3629,
+        "canonical_folder_id": 3628,
+        "name": "魅眼菁华眼护套"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3517,
+    "name": "优肌净肤液",
+    "folder_ids": [
+      3586,
+      3591
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25420,
+        "from_folder_id": 3591,
+        "to_folder_id": 3586,
+        "old_name": "优肌净肤液2",
+        "new_name": "优肌净肤液2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3591,
+        "canonical_folder_id": 3586,
+        "name": "优肌净肤液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3517,
+    "name": "优肌柔肤啫喱",
+    "folder_ids": [
+      3587,
+      3589
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25417,
+        "from_folder_id": 3589,
+        "to_folder_id": 3587,
+        "old_name": "优肌柔肤啫喱1",
+        "new_name": "优肌柔肤啫喱1",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3589,
+        "canonical_folder_id": 3587,
+        "name": "优肌柔肤啫喱"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3517,
+    "name": "臻肌悠颜尊享套盒",
+    "folder_ids": [
+      3603,
+      3604
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25449,
+        "from_folder_id": 3604,
+        "to_folder_id": 3603,
+        "old_name": "臻肌悠颜尊享礼盒",
+        "new_name": "臻肌悠颜尊享礼盒",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3604,
+        "canonical_folder_id": 3603,
+        "name": "臻肌悠颜尊享套盒"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3517,
+    "name": "臻肌悦颜霜",
+    "folder_ids": [
+      3605,
+      3606
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25456,
+        "from_folder_id": 3606,
+        "to_folder_id": 3605,
+        "old_name": "臻肌悦颜霜3",
+        "new_name": "臻肌悦颜霜3",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 25462,
+        "from_folder_id": 3606,
+        "to_folder_id": 3605,
+        "old_name": "臻肌悦颜霜2",
+        "new_name": "臻肌悦颜霜2",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3606,
+        "canonical_folder_id": 3605,
+        "name": "臻肌悦颜霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3517,
+    "name": "臻肌焕颜精华液",
+    "folder_ids": [
+      3612,
+      3613
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25485,
+        "from_folder_id": 3613,
+        "to_folder_id": 3612,
+        "old_name": "1",
+        "new_name": "1",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3613,
+        "canonical_folder_id": 3612,
+        "name": "臻肌焕颜精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3518,
+    "name": "悠颜保湿喷雾",
+    "folder_ids": [
+      3527,
+      3530
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25269,
+        "from_folder_id": 3530,
+        "to_folder_id": 3527,
+        "old_name": "悠颜透爽保湿喷雾(1)",
+        "new_name": "悠颜透爽保湿喷雾(1)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3530,
+        "canonical_folder_id": 3527,
+        "name": "悠颜保湿喷雾"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3518,
+    "name": "舒润畅养泥膜",
+    "folder_ids": [
+      3535,
+      3538
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25278,
+        "from_folder_id": 3538,
+        "to_folder_id": 3535,
+        "old_name": "舒润畅养泥膜（2）",
+        "new_name": "舒润畅养泥膜（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3538,
+        "canonical_folder_id": 3535,
+        "name": "舒润畅养泥膜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3518,
+    "name": "青春蕴能套",
+    "folder_ids": [
+      3542,
+      3543
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25289,
+        "from_folder_id": 3543,
+        "to_folder_id": 3542,
+        "old_name": "青春蕴能套(3)",
+        "new_name": "青春蕴能套(3)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3543,
+        "canonical_folder_id": 3542,
+        "name": "青春蕴能套"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3534,
+    "name": "水漾精华液",
+    "folder_ids": [
+      3545,
+      3546
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25291,
+        "from_folder_id": 3546,
+        "to_folder_id": 3545,
+        "old_name": "水漾精华液",
+        "new_name": "水漾精华液",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3546,
+        "canonical_folder_id": 3545,
+        "name": "水漾精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3534,
+    "name": "泉润晶透霜",
+    "folder_ids": [
+      3544,
+      3548
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25295,
+        "from_folder_id": 3548,
+        "to_folder_id": 3544,
+        "old_name": "泉润晶透1",
+        "new_name": "泉润晶透1",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3548,
+        "canonical_folder_id": 3544,
+        "name": "泉润晶透霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3534,
+    "name": "肌底焕活精华液",
+    "folder_ids": [
+      3549,
+      3556
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25309,
+        "from_folder_id": 3556,
+        "to_folder_id": 3549,
+        "old_name": "肌底焕活精华液",
+        "new_name": "肌底焕活精华液",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3556,
+        "canonical_folder_id": 3549,
+        "name": "肌底焕活精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3534,
+    "name": "肌源焕颜霜",
+    "folder_ids": [
+      3553,
+      3554
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25305,
+        "from_folder_id": 3554,
+        "to_folder_id": 3553,
+        "old_name": "肌源焕颜霜",
+        "new_name": "肌源焕颜霜",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3554,
+        "canonical_folder_id": 3553,
+        "name": "肌源焕颜霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3534,
+    "name": "（已换新包装）熙妍精华液",
+    "folder_ids": [
+      3561,
+      3563,
+      3564,
+      3566
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25326,
+        "from_folder_id": 3563,
+        "to_folder_id": 3561,
+        "old_name": "熙妍精华液",
+        "new_name": "熙妍精华液",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3563,
+        "canonical_folder_id": 3561,
+        "name": "（已换新包装）熙妍精华液"
+      },
+      {
+        "action": "move_file",
+        "file_id": 25329,
+        "from_folder_id": 3564,
+        "to_folder_id": 3561,
+        "old_name": "（旧）熙妍精华液2 (1)",
+        "new_name": "（旧）熙妍精华液2 (1)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3564,
+        "canonical_folder_id": 3561,
+        "name": "（已换新包装）熙妍精华液"
+      },
+      {
+        "action": "move_file",
+        "file_id": 25331,
+        "from_folder_id": 3566,
+        "to_folder_id": 3561,
+        "old_name": "（旧）熙妍精华液2 (2)",
+        "new_name": "（旧）熙妍精华液2 (2)",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3566,
+        "canonical_folder_id": 3561,
+        "name": "（已换新包装）熙妍精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3630,
+    "name": "新版海报",
+    "folder_ids": [
+      3633,
+      3634
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 25593,
+        "from_folder_id": 3634,
+        "to_folder_id": 3633,
+        "old_name": "CB仪器",
+        "new_name": "CB仪器",
+        "extension": "png"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3634,
+        "canonical_folder_id": 3633,
+        "name": "新版海报"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3639,
+    "name": "芙丽悦颜精华液",
+    "folder_ids": [
+      3722,
+      3724
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 26573,
+        "from_folder_id": 3724,
+        "to_folder_id": 3722,
+        "old_name": "芙丽悦颜精华液",
+        "new_name": "芙丽悦颜精华液",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3724,
+        "canonical_folder_id": 3722,
+        "name": "芙丽悦颜精华液"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3644,
+    "name": "肌源焕颜霜",
+    "folder_ids": [
+      3727,
+      3728
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 26661,
+        "from_folder_id": 3728,
+        "to_folder_id": 3727,
+        "old_name": "肌源焕颜霜（2）",
+        "new_name": "肌源焕颜霜（2）",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3728,
+        "canonical_folder_id": 3727,
+        "name": "肌源焕颜霜"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3663,
+    "name": "凝萃玉肌乳",
+    "folder_ids": [
+      3751,
+      3752
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 26793,
+        "from_folder_id": 3752,
+        "to_folder_id": 3751,
+        "old_name": "28e8e37758555d675c871dba0e5e9db",
+        "new_name": "28e8e37758555d675c871dba0e5e9db",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3752,
+        "canonical_folder_id": 3751,
+        "name": "凝萃玉肌乳"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3666,
+    "name": "氨基酸洁面乳",
+    "folder_ids": [
+      3760,
+      3761
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 26864,
+        "from_folder_id": 3761,
+        "to_folder_id": 3760,
+        "old_name": "b1205abf6810afa8849376bd6cd8cb4",
+        "new_name": "b1205abf6810afa8849376bd6cd8cb4",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3761,
+        "canonical_folder_id": 3760,
+        "name": "氨基酸洁面乳"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3681,
+    "name": "2025所有视频",
+    "folder_ids": [
+      3792,
+      3794,
+      3796
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3795,
+        "from_parent_id": 3794,
+        "to_parent_id": 3792,
+        "old_name": "1.17销售思维课内训",
+        "new_name": "1.17销售思维课内训(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3794,
+        "canonical_folder_id": 3792,
+        "name": "2025所有视频"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3797,
+        "from_parent_id": 3796,
+        "to_parent_id": 3792,
+        "old_name": "1.17销售思维课内训",
+        "new_name": "1.17销售思维课内训(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3796,
+        "canonical_folder_id": 3792,
+        "name": "2025所有视频"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3686,
+    "name": "打卡墙",
+    "folder_ids": [
+      3749,
+      3750
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 26790,
+        "from_folder_id": 3750,
+        "to_folder_id": 3749,
+        "old_name": "DSC00017",
+        "new_name": "DSC00017",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3750,
+        "canonical_folder_id": 3749,
+        "name": "打卡墙"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3718,
+    "name": "1_PixCake",
+    "folder_ids": [
+      3785,
+      3786,
+      3787
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 27480,
+        "from_folder_id": 3786,
+        "to_folder_id": 3785,
+        "old_name": "DSC06095",
+        "new_name": "DSC06095",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27481,
+        "from_folder_id": 3786,
+        "to_folder_id": 3785,
+        "old_name": "DSC06178",
+        "new_name": "DSC06178",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27488,
+        "from_folder_id": 3786,
+        "to_folder_id": 3785,
+        "old_name": "DSC06198",
+        "new_name": "DSC06198",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3786,
+        "canonical_folder_id": 3785,
+        "name": "1_PixCake"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27471,
+        "from_folder_id": 3787,
+        "to_folder_id": 3785,
+        "old_name": "DSC06059",
+        "new_name": "DSC06059",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27479,
+        "from_folder_id": 3787,
+        "to_folder_id": 3785,
+        "old_name": "DSC06106",
+        "new_name": "DSC06106",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3787,
+        "canonical_folder_id": 3785,
+        "name": "1_PixCake"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3737,
+    "name": "1 签到，打卡",
+    "folder_ids": [
+      3788,
+      3789
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 27513,
+        "from_folder_id": 3789,
+        "to_folder_id": 3788,
+        "old_name": "DSC05501",
+        "new_name": "DSC05501",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27514,
+        "from_folder_id": 3789,
+        "to_folder_id": 3788,
+        "old_name": "DSC05496",
+        "new_name": "DSC05496",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27515,
+        "from_folder_id": 3789,
+        "to_folder_id": 3788,
+        "old_name": "DSC05490",
+        "new_name": "DSC05490",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3789,
+        "canonical_folder_id": 3788,
+        "name": "1 签到，打卡"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3745,
+    "name": "精修",
+    "folder_ids": [
+      3774,
+      3777
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3778,
+        "from_parent_id": 3777,
+        "to_parent_id": 3774,
+        "old_name": "1",
+        "new_name": "1(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3777,
+        "canonical_folder_id": 3774,
+        "name": "精修"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3746,
+    "name": "粗修",
+    "folder_ids": [
+      3800,
+      3802,
+      3803
+    ],
+    "actions": [
+      {
+        "action": "move_folder",
+        "folder_id": 3804,
+        "from_parent_id": 3802,
+        "to_parent_id": 3800,
+        "old_name": "2025.1.07_PixCake",
+        "new_name": "2025.1.07_PixCake(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3802,
+        "canonical_folder_id": 3800,
+        "name": "粗修"
+      },
+      {
+        "action": "move_folder",
+        "folder_id": 3805,
+        "from_parent_id": 3803,
+        "to_parent_id": 3800,
+        "old_name": "2025.1.07_PixCake",
+        "new_name": "2025.1.07_PixCake(1)"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3803,
+        "canonical_folder_id": 3800,
+        "name": "粗修"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3746,
+    "name": "2025.1.07_PixCake",
+    "folder_ids": [
+      3798,
+      3799
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 27829,
+        "from_folder_id": 3799,
+        "to_folder_id": 3798,
+        "old_name": "DSC03864",
+        "new_name": "DSC03864",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3799,
+        "canonical_folder_id": 3798,
+        "name": "2025.1.07_PixCake"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3746,
+    "name": "7号早上2",
+    "folder_ids": [
+      3790,
+      3791
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 27538,
+        "from_folder_id": 3791,
+        "to_folder_id": 3790,
+        "old_name": "DSC03539",
+        "new_name": "DSC03539",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27539,
+        "from_folder_id": 3791,
+        "to_folder_id": 3790,
+        "old_name": "DSC03571",
+        "new_name": "DSC03571",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27544,
+        "from_folder_id": 3791,
+        "to_folder_id": 3790,
+        "old_name": "DSC03577",
+        "new_name": "DSC03577",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27550,
+        "from_folder_id": 3791,
+        "to_folder_id": 3790,
+        "old_name": "DSC03568",
+        "new_name": "DSC03568",
+        "extension": "jpg"
+      },
+      {
+        "action": "move_file",
+        "file_id": 27551,
+        "from_folder_id": 3791,
+        "to_folder_id": 3790,
+        "old_name": "DSC03576",
+        "new_name": "DSC03576",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3791,
+        "canonical_folder_id": 3790,
+        "name": "7号早上2"
+      }
+    ]
+  },
+  {
+    "owner_id": 4,
+    "parent_id": 3746,
+    "name": "7号下午4",
+    "folder_ids": [
+      3783,
+      3784
+    ],
+    "actions": [
+      {
+        "action": "move_file",
+        "file_id": 27320,
+        "from_folder_id": 3784,
+        "to_folder_id": 3783,
+        "old_name": "DSC03753",
+        "new_name": "DSC03753",
+        "extension": "jpg"
+      },
+      {
+        "action": "soft_delete_duplicate_folder",
+        "folder_id": 3784,
+        "canonical_folder_id": 3783,
+        "name": "7号下午4"
+      }
+    ]
+  }
+]

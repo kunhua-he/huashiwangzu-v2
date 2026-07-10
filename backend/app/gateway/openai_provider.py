@@ -32,6 +32,7 @@ class OpenAIProvider(BaseProvider):
         extra_headers: dict[str, str] | None = None,
         session_affinity: dict | None = None,
         auth_recovery: dict | None = None,
+        api_protocol: str = "",
     ):
         self.api_url = api_url
         self.api_key = api_key
@@ -39,6 +40,11 @@ class OpenAIProvider(BaseProvider):
         self.extra_headers = extra_headers or {}
         self.session_affinity = session_affinity or {}
         self.auth_recovery = auth_recovery or {}
+        self.api_protocol = (api_protocol or self._infer_api_protocol(api_url)).strip().lower()
+
+    @staticmethod
+    def _infer_api_protocol(api_url: str) -> str:
+        return "responses" if str(api_url or "").rstrip("/").endswith("/responses") else "chat_completions"
 
     def _headers(self, payload: dict | None = None, model: str = "") -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -60,6 +66,21 @@ class OpenAIProvider(BaseProvider):
         max_tokens: int, stream: bool, tools: list[dict] | None,
     ) -> dict:
         normalized_messages, normalized_tools = normalize_openai_payload(messages, tools)
+        if self.api_protocol == "responses":
+            data = {
+                "model": model,
+                "input": _responses_input_from_messages(normalized_messages),
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+                "stream": stream,
+                "store": False,
+            }
+            instructions = _responses_instructions_from_messages(normalized_messages)
+            if instructions:
+                data["instructions"] = instructions
+            if normalized_tools:
+                data["tools"] = normalized_tools
+            return data
         data = {
             "model": model,
             "messages": normalized_messages,
@@ -193,7 +214,7 @@ class OpenAIProvider(BaseProvider):
     async def check_health(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
-                resp = await client.get(self.api_url.replace("/chat/completions", "/models"), headers=self._headers())
+                resp = await client.get(_models_url_for_api_url(self.api_url), headers=self._headers())
                 return resp.status_code == 200
         except Exception as e:
             logger.warning("OpenAI-compatible health check failed: %s", e)
@@ -251,6 +272,69 @@ class OpenCodeProvider(OpenAIProvider):
             api_key=api_key or get_settings().DEEPSEEK_API_KEY,
             provider_name="opencode",
         )
+
+
+def _models_url_for_api_url(api_url: str) -> str:
+    url = str(api_url or "").rstrip("/")
+    for suffix in ("/chat/completions", "/responses"):
+        if url.endswith(suffix):
+            return f"{url[:-len(suffix)]}/models"
+    return f"{url}/models"
+
+
+def _responses_instructions_from_messages(messages: list[dict]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        if str(message.get("role") or "") != "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(
+                str(item.get("text"))
+                for item in content
+                if isinstance(item, dict) and item.get("type") in {"text", "input_text"} and item.get("text")
+            )
+    return "\n\n".join(part for part in parts if part)
+
+
+def _responses_input_from_messages(messages: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    for message in messages:
+        role = str(message.get("role") or "user")
+        if role == "system":
+            continue
+        result.append({
+            "role": role,
+            "content": _responses_content_parts(message.get("content")),
+        })
+    return result
+
+
+def _responses_content_parts(content: object) -> list[dict]:
+    if isinstance(content, str):
+        return [{"type": "input_text", "text": content}]
+    if not isinstance(content, list):
+        return [{"type": "input_text", "text": str(content or "")}]
+
+    parts: list[dict] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append({"type": "input_text", "text": item})
+            continue
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in {"text", "input_text"}:
+            parts.append({"type": "input_text", "text": str(item.get("text") or "")})
+            continue
+        if item_type == "image_url" or "image_url" in item:
+            image_url = item.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if url:
+                parts.append({"type": "input_image", "image_url": str(url)})
+    return parts or [{"type": "input_text", "text": ""}]
 
 
 def _payload_session_id(prefix: str, model: str, payload: dict) -> str:

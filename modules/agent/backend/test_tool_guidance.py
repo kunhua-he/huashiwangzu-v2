@@ -351,6 +351,56 @@ async def test_skill_describe_returns_display_name(monkeypatch):
     assert result["tool_guidance"] == "PUBLISH GUIDANCE"
 
 
+@pytest.mark.asyncio
+async def test_skill_use_accepts_top_level_and_json_args(monkeypatch):
+    calls = []
+
+    async def fake_call_capability(module, action, args, *, caller, caller_role):
+        calls.append({
+            "module": module,
+            "action": action,
+            "args": args,
+            "caller": caller,
+            "caller_role": caller_role,
+        })
+        return {"success": True, "data": {"results": []}}
+
+    async def fake_record_skill_invocation(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tool_discovery, "call_capability", fake_call_capability)
+    monkeypatch.setattr(tool_discovery, "record_skill_invocation", fake_record_skill_invocation)
+
+    cases = [
+        (
+            {"name": "knowledge__search", "query": "产品手册", "top_k": 3},
+            {"query": "产品手册", "top_k": 3},
+        ),
+        (
+            {"name": "knowledge__search", "args": "{}", "query": "产品手册", "top_k": 3},
+            {"query": "产品手册", "top_k": 3},
+        ),
+        (
+            {"name": "knowledge__search", "args": '{"q":"产品手册"}', "top_k": 3},
+            {"q": "产品手册", "top_k": 3},
+        ),
+        (
+            {"name": "knowledge__search", "args": {"query": "产品手册"}, "top_k": 3},
+            {"query": "产品手册", "top_k": 3},
+        ),
+    ]
+
+    for params, expected_args in cases:
+        await tool_discovery.handle_skill_use(params, caller="user:5", caller_role="viewer")
+        assert calls[-1] == {
+            "module": "knowledge",
+            "action": "search",
+            "args": expected_args,
+            "caller": "user:5",
+            "caller_role": "viewer",
+        }
+
+
 # ── Test 6: browser-tools URL allow/deny boundaries ────────────────
 
 

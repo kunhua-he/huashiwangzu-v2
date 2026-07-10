@@ -59,13 +59,13 @@ Total public actions: 8
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
-| `chart` | `editor` | `chart_type`, `data`, `title`, `x_label`, `y_label` | 傻瓜式出图，传入数据数组和图表类型，后端用 matplotlib 出图。 |
+| `chart` | `editor` | `chart_type`, `data`, `title`, `x_label`, `y_label` | 傻瓜式出图，传入数据数组和图表类型，后端用 matplotlib 出图到工作区，需 publish 才桌面可见。 |
 | `exec` | `editor` | `command`, `timeout` | 在用户工作区执行 shell 命令，返回 stdout/stderr/退出码。受路径约束、危险命令拦截、超时和输出限制。 |
 | `import` | `editor` | `file_id`, `target_path` | 将框架文件系统的文件拷入工作区供 CLI 处理，owner 校验。 |
 | `list_workspace` | `viewer` | `path` | 列出用户工作区内的文件和目录。 |
 | `publish` | `editor` | `filename`, `folder_id`, `path` | 将工作区文件显式交付到框架文件系统（桌面可见），享受框架内容去重。 |
 | `read_file` | `viewer` | `path` | 读用户工作区内的文件内容。 |
-| `run_python` | `editor` | `code`, `input_files`, `timeout` | 在用户工作区子进程执行 Python 数据分析代码。预置 pandas/numpy/matplotlib。 |
+| `run_python` | `editor` | `code`, `input_files`, `timeout` | 在用户工作区子进程执行 Python 数据分析代码。预置 pandas/numpy/matplotlib；生成图片先留在工作区，需 publish 才桌面可见。 |
 | `write_file` | `editor` | `content`, `path` | 写文件到用户工作区，路径自动约束在工作区内。 |
 <!-- /DOCS-SYNC -->
 
@@ -85,6 +85,8 @@ Use `db_schema()` for live database details. This module must not directly read 
 ## File Access / Permission Boundary
 
 If this module consumes `file_id`, it must validate file access through framework file access helpers or an approved public capability before reading disk.
+
+Generated outputs are workspace drafts by default. `publish` is the only terminal-tools path that creates framework file records visible to the desktop.
 
 ## Frontend / Backend Structure
 

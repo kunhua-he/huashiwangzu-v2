@@ -59,6 +59,8 @@ def test_manifest_public_actions_match_runtime_contract() -> None:
     assert params["count"]["default"] == 1
     assert params["steps"]["default"] == 30
     assert params["template"]["default"] == ""
+    assert params["publish"]["type"] == "boolean"
+    assert params["publish"]["default"] is False
 
     transform_params = actions["transform"]["parameters"]
     assert transform_params["source_file_id"]["type"] == "integer"
@@ -71,6 +73,8 @@ def test_manifest_public_actions_match_runtime_contract() -> None:
     assert transform_params["mode"]["default"] == "edit"
     assert transform_params["strength"]["default"] == 0.7
     assert transform_params["preserve_subject"]["default"] is True
+    assert transform_params["publish"]["type"] == "boolean"
+    assert transform_params["publish"]["default"] is False
 
     usage_params = actions["usage_history"]["parameters"]
     assert usage_params["limit"]["type"] == "integer"
@@ -191,16 +195,18 @@ def test_unconfigured_provider_resolves_to_placeholder() -> None:
         assert is_placeholder is True
 
 
-def test_generate_response_contract_uses_framework_files() -> None:
+def test_generate_response_contract_defaults_to_workspace_draft() -> None:
     result = {
         "task": {"request_id": "abc123", "record_id": 1},
         "images": [
             {
                 "type": "image",
-                "file_id": 123,
+                "workspace_path": "image-gen/image-gen_1.png",
                 "name": "image-gen_1.png",
                 "size": 2048,
                 "placeholder": True,
+                "published": False,
+                "note": "Use terminal-tools:publish to deliver to desktop",
             }
         ],
         "placeholder": True,
@@ -212,6 +218,7 @@ def test_generate_response_contract_uses_framework_files() -> None:
         "degraded_reason": "placeholder template selected",
         "points_cost": None,
         "balance": None,
+        "published": False,
     }
 
     assert "images" in result
@@ -219,20 +226,53 @@ def test_generate_response_contract_uses_framework_files() -> None:
     assert result["task"]["request_id"]
     assert result["status"] in {"success", "degraded", "partial", "failed"}
     assert result["provider"] == "placeholder"
-    assert result["images"][0]["file_id"] > 0
+    assert "file_id" not in result["images"][0]
+    assert result["images"][0]["workspace_path"].startswith("image-gen/")
+    assert result["images"][0]["published"] is False
     assert result["images"][0]["type"] == "image"
 
 
-def test_transform_response_contract_uses_framework_files() -> None:
+def test_generate_response_contract_can_publish_framework_file() -> None:
     result = {
         "task": {"request_id": "abc123", "record_id": 1},
         "images": [
             {
                 "type": "image",
-                "file_id": 124,
+                "file_id": 123,
+                "name": "image-gen_1.png",
+                "size": 2048,
+                "placeholder": True,
+                "published": True,
+            }
+        ],
+        "placeholder": True,
+        "degraded": True,
+        "status": "degraded",
+        "template": "placeholder",
+        "provider": "placeholder",
+        "requested_provider": "placeholder",
+        "degraded_reason": "placeholder template selected",
+        "points_cost": None,
+        "balance": None,
+        "published": True,
+    }
+
+    assert result["published"] is True
+    assert result["images"][0]["file_id"] > 0
+    assert "workspace_path" not in result["images"][0]
+
+
+def test_transform_response_contract_defaults_to_workspace_draft() -> None:
+    result = {
+        "task": {"request_id": "abc123", "record_id": 1},
+        "images": [
+            {
+                "type": "image",
+                "workspace_path": "image-gen/image-transform_1.png",
                 "name": "image-transform_1.png",
                 "size": 2048,
                 "placeholder": False,
+                "published": False,
             }
         ],
         "placeholder": False,
@@ -247,11 +287,13 @@ def test_transform_response_contract_uses_framework_files() -> None:
         "source_file_id": 123,
         "mode": "edit",
         "strength": 0.7,
+        "published": False,
     }
 
     assert "images" in result
     assert result["source_file_id"] > 0
-    assert result["images"][0]["file_id"] > 0
+    assert "file_id" not in result["images"][0]
+    assert result["images"][0]["workspace_path"].startswith("image-gen/")
     assert result["images"][0]["type"] == "image"
 
 
@@ -265,6 +307,8 @@ def test_router_uses_provider_placeholder_meta_and_record_shape() -> None:
     assert '"request_id": r.request_id' in router_src
     assert '"file_ids": file_ids' in router_src
     assert '"degraded_reason": r.degraded_reason' in router_src
+    assert '"workspace_path": str(output_path.relative_to(workspace.resolve()))' in router_src
+    assert '"Use terminal-tools:publish to deliver to desktop"' in router_src
 
 
 def test_router_declares_clear_parameter_validation() -> None:
@@ -287,8 +331,9 @@ def main() -> None:
     test_placeholder_provider_generates_requested_dimensions()
     test_placeholder_provider_transforms_with_source_bytes()
     test_unconfigured_provider_resolves_to_placeholder()
-    test_generate_response_contract_uses_framework_files()
-    test_transform_response_contract_uses_framework_files()
+    test_generate_response_contract_defaults_to_workspace_draft()
+    test_generate_response_contract_can_publish_framework_file()
+    test_transform_response_contract_defaults_to_workspace_draft()
     test_router_uses_provider_placeholder_meta_and_record_shape()
     test_router_declares_clear_parameter_validation()
     print("=" * 60)

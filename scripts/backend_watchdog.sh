@@ -30,6 +30,7 @@ LOCKDIR="$BACKEND_DIR/logs/.watchdog.lock"
 EXISTING_BACKEND_PID=""
 WEB_PID=""
 WORKER_PIDS=""
+SAFE_RESTART_GATE="$PROJECT_ROOT/scripts/safe_restart_gate.py"
 
 acquire_lock() {
   if mkdir "$LOCKDIR" 2>/dev/null; then
@@ -219,7 +220,7 @@ force_stop_process_group() {
 }
 
 monitor_process_group() {
-  local pid rss_kb limit_kb
+  local pid rss_kb limit_kb restart_result restart_status
   normalize_worker_memory_limits
   limit_kb=$((TASK_WORKER_MEMORY_LIMIT_MB * 1024))
   while true; do
@@ -237,6 +238,14 @@ monitor_process_group() {
       rss_kb=$(worker_group_rss_kb)
       if [ "$rss_kb" -gt "$limit_kb" ]; then
         echo "[watchdog] $(date '+%F %T') task worker RSS ${rss_kb}KB exceeded limit ${limit_kb}KB (${TASK_WORKER_MEMORY_LIMIT_MB}MB); restarting process group to release memory" >> "$LOG"
+        return 1
+      fi
+    fi
+    if [ -f "$BACKEND_DIR/logs/.safe_restart_requested" ]; then
+      restart_result=$(python3 "$SAFE_RESTART_GATE" 2>&1)
+      restart_status=$?
+      echo "[watchdog] $(date '+%F %T') safe restart gate status=$restart_status result=$restart_result" >> "$LOG"
+      if [ "$restart_status" -eq 0 ]; then
         return 1
       fi
     fi

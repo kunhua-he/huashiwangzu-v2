@@ -8,6 +8,7 @@ import logging
 import re
 import time
 import uuid
+from pathlib import Path
 
 from app.core.exceptions import AppException, ValidationError
 from app.database import AsyncSessionLocal, engine
@@ -231,8 +232,9 @@ async def _persist_provider_results(
     is_placeholder: bool,
     filename_prefix: str = "image-gen",
     placeholder_explanation: str = "占位图，真实生成待接入",
+    publish: bool = False,
 ) -> tuple[list[dict], list[int], list[str], bool]:
-    from app.services.file_upload_service import upload_file
+    from app.core.workspace_security import ensure_user_workspace
 
     ts = int(time.time() * 1000)
     request_suffix = uuid.uuid4().hex[:8]
@@ -264,24 +266,43 @@ async def _persist_provider_results(
                 continue
 
             filename = f"{filename_prefix}_{ts}_{request_suffix}_{idx + 1}.png"
-            file_obj = io.BytesIO(image_bytes)
             try:
-                upload_result = await upload_file(
-                    db, file_obj, filename, user_id, folder_id=None,
-                )
+                if publish:
+                    from app.services.file_upload_service import upload_file
+
+                    file_obj = io.BytesIO(image_bytes)
+                    upload_result = await upload_file(
+                        db, file_obj, filename, user_id, folder_id=None,
+                    )
+                    file_ids.append(upload_result["id"])
+                    entry: dict = {
+                        "type": "image",
+                        "file_id": upload_result["id"],
+                        "name": upload_result["name"],
+                        "size": upload_result["size"],
+                        "placeholder": result_placeholder,
+                        "published": True,
+                    }
+                else:
+                    workspace = ensure_user_workspace(user_id)
+                    output_dir = workspace / "image-gen"
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    output_path = (output_dir / Path(filename).name).resolve()
+                    output_path.write_bytes(image_bytes)
+                    entry = {
+                        "type": "image",
+                        "workspace_path": str(output_path.relative_to(workspace.resolve())),
+                        "name": filename,
+                        "size": output_path.stat().st_size,
+                        "placeholder": result_placeholder,
+                        "published": False,
+                        "note": "Use terminal-tools:publish to deliver to desktop",
+                    }
             except Exception as e:
                 err = f"save failed for image {idx + 1}: {e}"
                 persist_errors.append(err)
                 logger.warning("Failed to save generated image %d: %s", idx + 1, e)
                 continue
-            file_ids.append(upload_result["id"])
-            entry: dict = {
-                "type": "image",
-                "file_id": upload_result["id"],
-                "name": upload_result["name"],
-                "size": upload_result["size"],
-                "placeholder": result_placeholder,
-            }
             if result_placeholder:
                 entry["explanation"] = placeholder_explanation
             results.append(entry)
@@ -327,6 +348,7 @@ async def _generate(params: dict, caller: str) -> dict:
         raise ValidationError("prompt is required")
 
     user_id = resolve_caller_user_id(caller)
+    publish = _parse_bool(params.get("publish"), default=False)
     width, height = _resolve_dimensions(size, aspect_ratio)
 
     try:
@@ -401,6 +423,7 @@ async def _generate(params: dict, caller: str) -> dict:
         is_placeholder,
         filename_prefix="image-gen",
         placeholder_explanation="占位图，真实生成待接入",
+        publish=publish,
     )
 
     if not results:
@@ -442,6 +465,7 @@ async def _generate(params: dict, caller: str) -> dict:
         "degraded_reason": degraded_reason,
         "points_cost": points_cost,
         "balance": balance,
+        "published": publish,
     }
     if persist_errors:
         response["error"] = "部分图片保存失败，已返回可用结果"
@@ -475,6 +499,7 @@ async def _transform(params: dict, caller: str) -> dict:
         raise ValidationError("prompt is required")
 
     user_id = resolve_caller_user_id(caller)
+    publish = _parse_bool(params.get("publish"), default=False)
     width, height = _resolve_dimensions(size, aspect_ratio)
     source_image = await _load_source_image(source_file_id, user_id)
 
@@ -556,6 +581,7 @@ async def _transform(params: dict, caller: str) -> dict:
         is_placeholder,
         filename_prefix="image-transform",
         placeholder_explanation="占位图，真实图生图待接入",
+        publish=publish,
     )
 
     if not results:
@@ -600,6 +626,7 @@ async def _transform(params: dict, caller: str) -> dict:
         "source_file_id": source_file_id,
         "mode": mode,
         "strength": strength,
+        "published": publish,
     }
     if persist_errors:
         response["error"] = "部分图片保存失败，已返回可用结果"
@@ -708,6 +735,7 @@ class GenerateRequest(BaseModel):
     count: int = 1
     steps: int = 30
     template: str = ""
+    publish: bool = True
 
 
 class TransformRequest(BaseModel):
@@ -721,6 +749,7 @@ class TransformRequest(BaseModel):
     mode: str = "edit"
     strength: float = 0.7
     preserve_subject: bool = True
+    publish: bool = True
 
 
 @router.get("/health")
@@ -778,6 +807,7 @@ register_capability(
         "count": {"type": "integer", "description": "生成数量（1-4）", "default": 1},
         "steps": {"type": "integer", "description": "采样步数", "default": 30},
         "template": {"type": "string", "description": "模板key，可选值由list_templates给出，缺省用默认模板", "default": ""},
+        "publish": {"type": "boolean", "description": "是否直接发布到桌面文件系统；Agent默认false，需显式publish才用户可见", "default": False},
     },
     min_role="editor",
 )
@@ -797,6 +827,7 @@ register_capability(
         "mode": {"type": "string", "description": "模式，如 edit/variation/style_transfer/product_render", "default": "edit"},
         "strength": {"type": "number", "description": "修改强度，0到1，值越大改动越明显", "default": 0.7},
         "preserve_subject": {"type": "boolean", "description": "是否尽量保留主体、产品形态和可读标签", "default": True},
+        "publish": {"type": "boolean", "description": "是否直接发布到桌面文件系统；Agent默认false，需显式publish才用户可见", "default": False},
     },
     min_role="editor",
 )

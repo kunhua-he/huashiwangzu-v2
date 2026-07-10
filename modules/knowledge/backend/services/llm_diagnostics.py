@@ -6,12 +6,32 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
-from .model_routing import knowledge_model_call_slot
+from .model_routing import knowledge_model_call_slot, record_model_rate_limit
 
 ChatMessage = Mapping[str, str]
 ChatFunc = Callable[..., Awaitable[dict[str, Any]]]
 
 _RETRY_COUNT_NOTE = "unavailable_at_module_layer"
+
+
+def _gateway_attempt_status(diagnostics: Mapping[str, Any]) -> tuple[bool, list[str]]:
+    attempts = diagnostics.get("attempts")
+    if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
+        return False, []
+    has_success = False
+    errors: list[str] = []
+    for attempt in attempts:
+        if not isinstance(attempt, Mapping):
+            continue
+        if attempt.get("success") is True:
+            has_success = True
+            continue
+        error = str(attempt.get("error") or "").strip()
+        if error and error.lower() != "none":
+            errors.append(error)
+        else:
+            errors.append("gateway attempt failed without error")
+    return has_success, errors
 
 
 def _message_chars(messages: Sequence[ChatMessage]) -> int:
@@ -97,6 +117,16 @@ async def timed_llm_chat(
             slot_info = acquired_slot
             result = await chat_func(messages=list(messages), profile_key=profile_key)
     except Exception as exc:
+        pause_result = record_model_rate_limit(stage, error_message=exc)
+        if pause_result.get("paused"):
+            logger.error(
+                "LLM_CALL_RATE_LIMIT_AUTO_PAUSE stage=%s group=%s count=%s threshold=%s paused_stages=%s",
+                stage,
+                pause_result.get("group"),
+                pause_result.get("count"),
+                pause_result.get("threshold"),
+                pause_result.get("paused_stages"),
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.warning(
             "LLM_CALL_ERROR stage=%s profile_key=%s document_id=%s page=%s "
@@ -122,6 +152,26 @@ async def timed_llm_chat(
     annotate_model_degradation(result, profile_key)
     # Extract gateway diagnostics if present
     diagnostics = result.get("diagnostics") or {}
+    has_gateway_success, gateway_attempt_errors = (
+        _gateway_attempt_status(diagnostics) if isinstance(diagnostics, Mapping) else (False, [])
+    )
+    gateway_error_text = "\n".join(gateway_attempt_errors)
+    if gateway_error_text:
+        pause_result = record_model_rate_limit(stage, error_message=gateway_error_text)
+        if pause_result.get("paused"):
+            logger.error(
+                "LLM_CALL_RATE_LIMIT_AUTO_PAUSE stage=%s group=%s count=%s threshold=%s paused_stages=%s",
+                stage,
+                pause_result.get("group"),
+                pause_result.get("count"),
+                pause_result.get("threshold"),
+                pause_result.get("paused_stages"),
+            )
+        if (
+            not has_gateway_success
+            or pause_result.get("reason") not in {"not_rate_limit", "disabled", "not_model_stage"}
+        ):
+            raise RuntimeError(gateway_error_text)
     diag_fields = ""
     if diagnostics:
         trace_id = diagnostics.get("trace_id", "")

@@ -163,6 +163,10 @@ async def handle_skill_use(params: dict, caller: str, caller_role: str) -> dict:
             args = {}
     if not isinstance(args, dict):
         args = {}
+    if isinstance(params, dict):
+        for key, value in params.items():
+            if key not in {"name", "args"}:
+                args.setdefault(key, value)
     module, action = parse_tool_name(name)
     if not module or not action:
         return {"error": f"Invalid skill name: {name}"}

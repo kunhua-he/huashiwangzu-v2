@@ -115,6 +115,8 @@ class OpenAICompatLikeAdapter(ModelAdapter):
 
     def _build_response(self, raw: dict, provider: str = "") -> ModelResponse:
         usage = _extract_usage(raw)
+        if raw.get("object") == "response" or isinstance(raw.get("output"), list):
+            return self._build_responses_response(raw, usage)
         if provider == "ollama":
             content = _extract_ollama_content(raw)
             tool_calls = _extract_ollama_tool_calls(raw)
@@ -127,6 +129,35 @@ class OpenAICompatLikeAdapter(ModelAdapter):
             thinking=msg.get("reasoning_content", "") if self.include_thinking else "",
             tool_calls=tool_calls,
             finish_reason=choice.get("finish_reason", "stop"),
+            usage=usage,
+        )
+
+    def _build_responses_response(self, raw: dict, usage: Usage | None) -> ModelResponse:
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        for item in raw.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type == "reasoning" and self.include_thinking:
+                for summary in item.get("summary") or []:
+                    if isinstance(summary, dict) and summary.get("text"):
+                        thinking_parts.append(str(summary["text"]))
+                continue
+            if item_type != "message":
+                continue
+            for part in item.get("content") or []:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") in {"output_text", "text"} and part.get("text") is not None:
+                    content_parts.append(str(part["text"]))
+        finish_reason = "stop"
+        if raw.get("status") and raw.get("status") != "completed":
+            finish_reason = str(raw.get("status"))
+        return _build_unified(
+            content="\n".join(part for part in content_parts if part),
+            thinking="\n".join(part for part in thinking_parts if part),
+            finish_reason=finish_reason,
             usage=usage,
         )
 

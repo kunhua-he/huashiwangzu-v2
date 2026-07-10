@@ -868,9 +868,10 @@ async def list_documents(
 ) -> dict:
     """列出知识库文档。"""
     from ..models import KbDocument
+    from .source_file_state import accessible_document_clause
 
     live_conditions = (
-        KbDocument.owner_id == owner_id,
+        accessible_document_clause(owner_id),
         KbDocument.deleted.is_(False),
         File.deleted.is_(False),
     )
@@ -897,17 +898,9 @@ async def list_documents(
 
 async def get_document(db: AsyncSession, document_id: int, owner_id: int) -> dict:
     """获取文档详情。"""
-    from ..models import KbDocument
-    from .source_file_state import get_source_file_availability
+    from .source_file_state import get_accessible_document_orm, get_source_file_availability
 
-    r = await db.execute(
-        select(KbDocument).where(
-            KbDocument.id == document_id,
-            KbDocument.owner_id == owner_id,
-            KbDocument.deleted.is_(False),
-        )
-    )
-    doc = r.scalar_one_or_none()
+    doc = await get_accessible_document_orm(db, document_id, owner_id)
     if not doc:
         raise NotFound("Document not found")
     source_state = await get_source_file_availability(db, int(doc.file_id or 0))

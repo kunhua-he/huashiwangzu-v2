@@ -18,6 +18,7 @@ from sqlalchemy import and_, func, not_, or_, select, text, update
 
 from app.database import AsyncSessionLocal, engine
 from app.models.system import SystemTaskQueue
+from app.services.maintenance_service import get_maintenance_state
 from app.services.module_registry import semantic_failure_reason
 
 logger = logging.getLogger("v2.task_worker")
@@ -1101,6 +1102,10 @@ async def _claim_one_task(db, config: WorkerConfig | None = None) -> ClaimedTask
     config = config or _runtime_config
     now = datetime.now(timezone.utc)
     async with _claim_gate(db, config):
+        maintenance = await get_maintenance_state(db)
+        if maintenance.get("status") in {"draining", "restarting"} and maintenance.get("restart_requested"):
+            await db.rollback()
+            return None
         running_counts: dict[tuple[str, str], int] = {}
         lane_running_counts: dict[tuple[str, str], int] = {}
         rules = config.stage_concurrency or {}

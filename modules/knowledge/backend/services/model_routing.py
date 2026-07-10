@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from time import perf_counter
+from time import perf_counter, time
 from typing import Any
 
 from app.gateway.config import get_model_type_config, get_models_config, get_models_config_path
@@ -20,6 +21,12 @@ DEFAULT_MODEL_CALL_GLOBAL_CONCURRENCY = 10
 PIPELINE_TASK_TYPE = "kb_pipeline_stage"
 LLM_STAGES = {"fusion", "profile", "graph"}
 VLM_STAGES = {"raw_ocr", "raw_vision"}
+MODEL_STAGE_ALIASES = {
+    "entity": "graph",
+    "legacy_page_fusion": "fusion",
+}
+DEFAULT_RATE_LIMIT_AUTO_PAUSE_THRESHOLD = 30
+DEFAULT_RATE_LIMIT_AUTO_PAUSE_WINDOW_SECONDS = 300
 
 _model_call_active = 0
 _model_call_condition: asyncio.Condition | None = None
@@ -135,27 +142,202 @@ def should_pause_after_result(result: dict[str, Any]) -> bool:
 
 
 def is_model_stage(stage: str) -> bool:
-    return stage in LLM_STAGES or stage in VLM_STAGES
+    canonical = canonical_model_stage(stage)
+    return canonical in LLM_STAGES or canonical in VLM_STAGES
 
 
 def model_stage_group(stage: str) -> str:
-    if stage in VLM_STAGES:
+    canonical = canonical_model_stage(stage)
+    if canonical in VLM_STAGES:
         return "vlm"
-    if stage in LLM_STAGES:
+    if canonical in LLM_STAGES:
         return "llm"
     return "unknown"
 
 
 def model_stage_group_members(stage: str) -> set[str]:
-    if stage in VLM_STAGES:
+    canonical = canonical_model_stage(stage)
+    if canonical in VLM_STAGES:
         return set(VLM_STAGES)
-    if stage in LLM_STAGES:
+    if canonical in LLM_STAGES:
         return set(LLM_STAGES)
-    return {stage} if stage else set()
+    return {canonical} if canonical else set()
+
+
+def canonical_model_stage(stage: str) -> str:
+    key = str(stage or "").strip()
+    return MODEL_STAGE_ALIASES.get(key, key)
 
 
 def _task_worker_config_path() -> Any:
     return get_models_config_path().with_name("task_worker.json")
+
+
+def _rate_limit_state_path() -> Any:
+    return get_models_config_path().with_name("knowledge_model_rate_limit_state.json")
+
+
+def _rate_limit_auto_pause_config() -> dict[str, Any]:
+    routing = _knowledge_routing_config()
+    raw = routing.get("rate_limit_auto_pause")
+    config = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(config.get("enabled", True)),
+        "threshold": _bounded_int(
+            config.get("threshold"),
+            DEFAULT_RATE_LIMIT_AUTO_PAUSE_THRESHOLD,
+            minimum=1,
+            maximum=10_000,
+        ),
+        "window_seconds": _bounded_int(
+            config.get("window_seconds"),
+            DEFAULT_RATE_LIMIT_AUTO_PAUSE_WINDOW_SECONDS,
+            minimum=10,
+            maximum=86_400,
+        ),
+    }
+
+
+def _bounded_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def is_rate_limit_error(error_message: object) -> bool:
+    text = str(error_message or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "429",
+            "503 service unavailable",
+            "auth_unavailable",
+            "no auth available",
+            "rate limit",
+            "rate_limit",
+            "usage limit",
+            "usage_limit",
+            "usage_limit_reached",
+            "gateway attempt failed",
+            "gateway returned no successful attempts",
+            "quota",
+            "too many requests",
+            "too_many_requests",
+        )
+    )
+
+
+def record_model_rate_limit(stage: str, *, error_message: object = "") -> dict[str, Any]:
+    """Count transient model-supply failures and pause the affected group past threshold."""
+    canonical_stage = canonical_model_stage(stage)
+    if not is_model_stage(canonical_stage):
+        return {"paused": False, "reason": "not_model_stage", "stage": canonical_stage}
+    if not is_rate_limit_error(error_message):
+        return {"paused": False, "reason": "not_rate_limit", "stage": canonical_stage}
+
+    config = _rate_limit_auto_pause_config()
+    if not config["enabled"]:
+        return {"paused": False, "reason": "disabled", "stage": canonical_stage}
+
+    group = model_stage_group(canonical_stage)
+    state_path = _rate_limit_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = state_path.with_suffix(f"{state_path.suffix}.lock")
+    now = time()
+    cutoff = now - float(config["window_seconds"])
+
+    with open(lock_path, "a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            try:
+                raw = json.loads(state_path.read_text(encoding="utf-8"))
+                state = raw if isinstance(raw, dict) else {}
+            except FileNotFoundError:
+                state = {}
+            except Exception as exc:
+                logger.warning("Cannot read knowledge model rate-limit state: %s", exc)
+                state = {}
+
+            groups = state.get("groups")
+            if not isinstance(groups, dict):
+                groups = {}
+            group_state = groups.get(group)
+            if not isinstance(group_state, dict):
+                group_state = {}
+            timestamps = [
+                float(item)
+                for item in group_state.get("timestamps", [])
+                if isinstance(item, int | float) and float(item) >= cutoff
+            ]
+            timestamps.append(now)
+            group_state.update(
+                {
+                    "timestamps": timestamps,
+                    "count": len(timestamps),
+                    "stage": canonical_stage,
+                    "last_error": str(error_message or "")[:1000],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "threshold": config["threshold"],
+                    "window_seconds": config["window_seconds"],
+                }
+            )
+            groups[group] = group_state
+            state["groups"] = groups
+            _atomic_write_json(state_path, state)
+            count = len(timestamps)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    if count < int(config["threshold"]):
+        return {
+            "paused": False,
+            "reason": "below_threshold",
+            "stage": canonical_stage,
+            "group": group,
+            "count": count,
+            "threshold": config["threshold"],
+            "window_seconds": config["window_seconds"],
+        }
+
+    pause_result = pause_model_stage_queue(
+        canonical_stage,
+        reason="model_rate_limit_threshold",
+        error_message=(
+            f"model supply failure count {count} reached threshold {config['threshold']} "
+            f"within {config['window_seconds']}s; last_error={str(error_message or '')[:500]}"
+        ),
+    )
+    pause_result.update(
+        {
+            "count": count,
+            "threshold": config["threshold"],
+            "window_seconds": config["window_seconds"],
+        }
+    )
+    return pause_result
+
+
+def _atomic_write_json(path: Any, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(temp_name, path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
 
 
 def pause_model_stage_queue(stage: str, *, reason: str, error_message: str = "") -> dict[str, Any]:
@@ -166,6 +348,7 @@ def pause_model_stage_queue(stage: str, *, reason: str, error_message: str = "")
     account, relay, or local model outage from burning retries across the
     remaining queue.
     """
+    stage = canonical_model_stage(stage)
     if not is_model_stage(stage):
         return {"paused": False, "reason": "not_model_stage", "stage": stage}
 

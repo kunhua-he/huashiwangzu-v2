@@ -40,6 +40,7 @@ analysis_artifact_service = _load_service("analysis_artifact_service")
 document_service = _load_service("document_service")
 fusion_service = _load_service("fusion_service")
 llm_diagnostics_stream = _load_service("llm_diagnostics_stream")
+llm_diagnostics = _load_service("llm_diagnostics")
 model_routing = _load_service("model_routing")
 page_asset_service = _load_service("page_asset_service")
 pipeline_service = _load_service("pipeline_service")
@@ -415,6 +416,151 @@ def test_model_stage_auto_pause_groups_vlm_stages(tmp_path, monkeypatch):
     assert result["paused"] is True
     assert result["group"] == "vlm"
     assert saved["paused_stages"]["kb_pipeline_stage"] == ["raw_ocr", "raw_vision"]
+
+
+def test_model_rate_limit_auto_pause_after_threshold(tmp_path, monkeypatch):
+    config_path = tmp_path / "models.json"
+    worker_path = tmp_path / "task_worker.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "module_routing": {
+                    "knowledge": {
+                        "rate_limit_auto_pause": {
+                            "enabled": True,
+                            "threshold": 3,
+                            "window_seconds": 300,
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    worker_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(model_routing, "get_models_config_path", lambda: config_path)
+
+    first = model_routing.record_model_rate_limit("raw_vision", error_message="HTTP 429")
+    second = model_routing.record_model_rate_limit("raw_vision", error_message="rate limit")
+    third = model_routing.record_model_rate_limit("raw_vision", error_message="too many requests")
+
+    saved = json.loads(worker_path.read_text(encoding="utf-8"))
+    assert first["reason"] == "below_threshold"
+    assert second["reason"] == "below_threshold"
+    assert third["paused"] is True
+    assert third["count"] == 3
+    assert third["group"] == "vlm"
+    assert saved["paused_stages"]["kb_pipeline_stage"] == ["raw_ocr", "raw_vision"]
+    assert saved["model_auto_pause"]["reason"] == "model_rate_limit_threshold"
+
+
+def test_model_supply_unavailable_auto_pause_after_threshold(tmp_path, monkeypatch):
+    config_path = tmp_path / "models.json"
+    worker_path = tmp_path / "task_worker.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "module_routing": {
+                    "knowledge": {
+                        "rate_limit_auto_pause": {
+                            "enabled": True,
+                            "threshold": 2,
+                            "window_seconds": 300,
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    worker_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(model_routing, "get_models_config_path", lambda: config_path)
+
+    first = model_routing.record_model_rate_limit(
+        "profile",
+        error_message="HTTP 503 Service Unavailable: auth_unavailable: no auth available",
+    )
+    second = model_routing.record_model_rate_limit(
+        "profile",
+        error_message="upstream_error auth_unavailable: no auth available",
+    )
+
+    saved = json.loads(worker_path.read_text(encoding="utf-8"))
+    assert first["reason"] == "below_threshold"
+    assert second["paused"] is True
+    assert second["count"] == 2
+    assert second["group"] == "llm"
+    assert saved["paused_stages"]["kb_pipeline_stage"] == ["fusion", "graph", "profile"]
+
+
+def test_model_rate_limit_stage_alias_pauses_llm_queue_group(tmp_path, monkeypatch):
+    config_path = tmp_path / "models.json"
+    worker_path = tmp_path / "task_worker.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "module_routing": {
+                    "knowledge": {
+                        "rate_limit_auto_pause": {
+                            "enabled": True,
+                            "threshold": 1,
+                            "window_seconds": 300,
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    worker_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(model_routing, "get_models_config_path", lambda: config_path)
+
+    result = model_routing.record_model_rate_limit("entity", error_message="HTTP 429")
+
+    saved = json.loads(worker_path.read_text(encoding="utf-8"))
+    assert result["paused"] is True
+    assert result["stage"] == "graph"
+    assert result["group"] == "llm"
+    assert saved["paused_stages"]["kb_pipeline_stage"] == ["fusion", "graph", "profile"]
+
+
+@pytest.mark.asyncio
+async def test_timed_llm_chat_rejects_gateway_attempt_without_success(monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    def fake_record_model_rate_limit(stage: str, *, error_message: object = "") -> dict:
+        calls.append((stage, error_message))
+        return {"paused": False, "reason": "below_threshold", "stage": stage}
+
+    async def fake_chat(**kwargs):
+        return {
+            "content": "placeholder gateway failure text",
+            "diagnostics": {
+                "attempts": [
+                    {
+                        "profile": "gpt-5.5-knowledge",
+                        "provider": "gptstore-text",
+                        "model": "gpt-5.5",
+                        "stage": "chat",
+                        "success": False,
+                        "error": None,
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(llm_diagnostics, "record_model_rate_limit", fake_record_model_rate_limit)
+
+    with pytest.raises(RuntimeError, match="gateway attempt failed without error"):
+        await llm_diagnostics.timed_llm_chat(
+            logger=llm_diagnostics.logging.getLogger("test.llm_diagnostics"),
+            stage="entity",
+            profile_key="gpt-5.5-knowledge",
+            messages=[{"role": "user", "content": "ping"}],
+            chat_func=fake_chat,
+        )
+
+    assert calls == [("entity", "gateway attempt failed without error")]
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.services.maintenance_service import ensure_accepting_new_work
 from app.services.module_events import register_module_event_handler
 from app.services.module_registry import register_capability
 from fastapi import APIRouter, Depends, Query
@@ -107,8 +108,11 @@ async def _enrich_search_results(
     *,
     include_page_fusion: bool = False,
 ) -> tuple[list[dict], dict]:
+    from app.models.file import File
+
     from .models import KbChunk, KbDocument
     from .services.entity_service import get_page_fusion as _get_page_fusion
+    from .services.search_service import _accessible_document_clause
 
     enriched: list[dict] = []
     doc_cache: dict[int, dict] = {}
@@ -128,14 +132,19 @@ async def _enrich_search_results(
             document_ids.add(int(doc_id))
             if int(doc_id) not in doc_cache:
                 dr = await db.execute(
-                    select(KbDocument).where(
+                    select(KbDocument)
+                    .join(File, File.id == KbDocument.file_id)
+                    .where(
                         KbDocument.id == int(doc_id),
-                        KbDocument.owner_id == owner_id,
+                        KbDocument.deleted.is_(False),
+                        File.deleted.is_(False),
+                        _accessible_document_clause(owner_id),
                     )
                 )
                 doc = dr.scalar_one_or_none()
                 doc_cache[int(doc_id)] = {
                     "name": doc.filename if doc else "",
+                    "owner_id": doc.owner_id if doc else None,
                     "file_id": doc.file_id if doc else None,
                     "mime_type": doc.mime_type if doc else "",
                     "extension": doc.extension if doc else "",
@@ -151,9 +160,15 @@ async def _enrich_search_results(
         if chunk_id:
             if int(chunk_id) not in chunk_cache:
                 cr = await db.execute(
-                    select(KbChunk).where(
+                    select(KbChunk)
+                    .join(KbDocument, KbDocument.id == KbChunk.document_id)
+                    .join(File, File.id == KbDocument.file_id)
+                    .where(
                         KbChunk.id == int(chunk_id),
-                        KbChunk.owner_id == owner_id,
+                        KbChunk.owner_id == KbDocument.owner_id,
+                        KbDocument.deleted.is_(False),
+                        File.deleted.is_(False),
+                        _accessible_document_clause(owner_id),
                     )
                 )
                 chunk = cr.scalar_one_or_none()
@@ -210,7 +225,7 @@ async def _enrich_search_results(
                 db,
                 int(doc_id),
                 int(page),
-                owner_id=owner_id,
+                owner_id=int(doc_info["owner_id"]) if doc_info.get("owner_id") else owner_id,
             )
         enriched.append(item)
 
@@ -389,6 +404,7 @@ async def api_parse_document(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("editor")),
 ):
+    await ensure_accepting_new_work(db, "knowledge parsing")
     result = await parse_and_index_document(
         db,
         payload.document_id,
@@ -525,8 +541,8 @@ async def api_get_profile(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await get_live_document_or_raise(db, document_id, user.id)
-    result = await get_document_profile(db, document_id, owner_id=user.id)
+    doc = await get_live_document_or_raise(db, document_id, user.id)
+    result = await get_document_profile(db, document_id, owner_id=int(doc["owner_id"]))
     if not result:
         from app.core.exceptions import NotFound
         raise NotFound("Document profile not found")
@@ -743,8 +759,8 @@ async def api_get_page_fusion(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("viewer")),
 ):
-    await get_live_document_or_raise(db, document_id, user.id)
-    result = await get_page_fusion(db, document_id, page, owner_id=user.id)
+    doc = await get_live_document_or_raise(db, document_id, user.id)
+    result = await get_page_fusion(db, document_id, page, owner_id=int(doc["owner_id"]))
     return ApiResponse(data=result)
 
 @router.get("/entities")
@@ -969,6 +985,8 @@ async def api_cognitive_v3_backfill(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
+    if not payload.dry_run:
+        await ensure_accepting_new_work(db, "knowledge backfill")
     result = await backfill_cognitive_v3(
         db,
         owner_id=user.id,
@@ -985,6 +1003,7 @@ async def api_cognitive_v3_derive_document(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
+    await ensure_accepting_new_work(db, "knowledge backfill")
     await get_live_document_or_raise(db, payload.document_id, user.id)
     result = await derive_document_cognitive_index(
         db,
@@ -1002,6 +1021,8 @@ async def api_derived_governance_backfill(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
+    if not payload.dry_run:
+        await ensure_accepting_new_work(db, "knowledge backfill")
     result = await backfill_derived_governance(
         db,
         owner_id=user.id,
@@ -1030,6 +1051,7 @@ async def api_reflect_retrieval_feedback(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
+    await ensure_accepting_new_work(db, "knowledge reflection")
     result = await reflect_retrieval_feedback(
         db,
         owner_id=user.id,
@@ -1056,6 +1078,8 @@ async def api_chunk_embedding_backfill(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
+    if not payload.dry_run:
+        await ensure_accepting_new_work(db, "knowledge backfill")
     result = await backfill_chunk_embeddings(
         db,
         owner_id=user.id,
@@ -1097,7 +1121,14 @@ async def _enqueue_task(db, stage: str, document_id: int, user_id: int) -> ApiRe
 
 async def _cap_search(params: dict, caller: str) -> dict:
     owner_id = resolve_user_id(caller)
-    query = str(params.get("query", "")).strip()
+    query = str(
+        params.get("query")
+        or params.get("q")
+        or params.get("keyword")
+        or params.get("text")
+        or params.get("search")
+        or ""
+    ).strip()
     top_k = int(params.get("top_k", 10) or 10)
     embedding_profile = params.get("embedding_profile")
     embedding_profile = str(embedding_profile).strip() if embedding_profile else None
@@ -1156,8 +1187,8 @@ async def _cap_get_page_fusion(params: dict, caller: str) -> dict:
     document_id = int(params.get("document_id", 0) or 0)
     page = int(params.get("page", 1) or 1)
     async with AsyncSessionLocal() as db:
-        await get_live_document_or_raise(db, document_id, owner_id)
-        result = await get_page_fusion(db, document_id, page, owner_id=owner_id)
+        doc = await get_live_document_or_raise(db, document_id, owner_id)
+        result = await get_page_fusion(db, document_id, page, owner_id=int(doc["owner_id"]))
         return {"page_fusion": result}
 
 async def _cap_get_entity_dictionary(params: dict, caller: str) -> dict:
@@ -1250,6 +1281,8 @@ async def _cap_backfill_cognitive_v3(params: dict, caller: str) -> dict:
     source_root = str(params.get("source_root", "") or "")
     build_terms = bool(params.get("build_terms", True))
     async with AsyncSessionLocal() as db:
+        if not dry_run:
+            await ensure_accepting_new_work(db, "knowledge backfill")
         return await backfill_cognitive_v3(
             db,
             owner_id=owner_id,
@@ -1266,6 +1299,7 @@ async def _cap_derive_cognitive_index(params: dict, caller: str) -> dict:
         raise ValueError("document_id must be positive")
     limit = int(params.get("limit", 200) or 200)
     async with AsyncSessionLocal() as db:
+        await ensure_accepting_new_work(db, "knowledge backfill")
         await get_live_document_or_raise(db, document_id, owner_id)
         result = await derive_document_cognitive_index(
             db,
@@ -1282,6 +1316,8 @@ async def _cap_backfill_derived_governance(params: dict, caller: str) -> dict:
     dry_run = bool(params.get("dry_run", True))
     limit = int(params.get("limit", 5000) or 5000)
     async with AsyncSessionLocal() as db:
+        if not dry_run:
+            await ensure_accepting_new_work(db, "knowledge backfill")
         return await backfill_derived_governance(
             db,
             owner_id=owner_id,
@@ -1310,6 +1346,7 @@ async def _cap_reflect_retrieval_feedback(params: dict, caller: str) -> dict:
     if not conversation_excerpt:
         raise ValueError("conversation_excerpt is required")
     async with AsyncSessionLocal() as db:
+        await ensure_accepting_new_work(db, "knowledge reflection")
         result = await reflect_retrieval_feedback(
             db,
             owner_id=owner_id,
@@ -1338,6 +1375,8 @@ async def _cap_backfill_chunk_embeddings(params: dict, caller: str) -> dict:
     limit = int(params.get("limit", 1000) or 1000)
     batch_size = int(params.get("batch_size", 8) or 8)
     async with AsyncSessionLocal() as db:
+        if not dry_run:
+            await ensure_accepting_new_work(db, "knowledge backfill")
         return await backfill_chunk_embeddings(
             db,
             owner_id=owner_id,
@@ -1387,6 +1426,8 @@ async def _cap_import_enterprise_source_batch(params: dict, caller: str) -> dict
     else:
         extensions = []
     async with AsyncSessionLocal() as db:
+        if not dry_run:
+            await ensure_accepting_new_work(db, "enterprise source batch import")
         return await import_enterprise_source_batch(
             db,
             owner_id=owner_id,
@@ -1438,6 +1479,8 @@ async def _cap_scan_source_manifest(params: dict, caller: str) -> dict:
     else:
         extensions = []
     async with AsyncSessionLocal() as db:
+        if mark_missing:
+            await ensure_accepting_new_work(db, "source manifest scan")
         return await scan_source_manifest(
             db,
             owner_id=owner_id,
@@ -1940,8 +1983,8 @@ async def api_export_document(
     """Export a parsed document in markdown/html/json format."""
     from .services.export_service import export_document
 
-    await get_live_document_or_raise(db, payload.document_id, user.id)
-    result = await export_document(db, payload.document_id, fmt=payload.format, owner_id=user.id)
+    doc = await get_live_document_or_raise(db, payload.document_id, user.id)
+    result = await export_document(db, payload.document_id, fmt=payload.format, owner_id=int(doc["owner_id"]))
     if not result.get("success"):
         from app.core.exceptions import NotFound, ValidationError
         if result.get("error", "").startswith("Document not"):
@@ -1990,8 +2033,11 @@ async def _cap_export(params: dict, caller: str) -> dict:
 
     async with AsyncSessionLocal() as db:
         if owner_id is not None:
-            await get_live_document_or_raise(db, document_id, owner_id)
-        result = await export_document(db, document_id, fmt=fmt, owner_id=owner_id)
+            doc = await get_live_document_or_raise(db, document_id, owner_id)
+            effective_owner_id = int(doc["owner_id"])
+        else:
+            effective_owner_id = owner_id
+        result = await export_document(db, document_id, fmt=fmt, owner_id=effective_owner_id)
         if not result.get("success"):
             return {"success": False, "error": str(result.get("error") or "Export failed")}
         return result

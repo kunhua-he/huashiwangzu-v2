@@ -6,7 +6,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.core.exceptions import ValidationError
 from app.models.system import SystemTaskQueue
 from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -15,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import KbSourceFileManifest
 from .enterprise_import_service import (
     ENTERPRISE_IMPORT_FILE_TASK,
-    is_ignored_source_path,
     _normalize_extensions,
+    is_ignored_source_path,
+    resolve_enterprise_source_root,
 )
 
 
@@ -33,7 +33,12 @@ def _iter_manifest_files(source_root: Path, extensions: set[str]):
     for path in source_root.rglob("*"):
         if is_ignored_source_path(path):
             continue
+        if path.is_symlink():
+            continue
         if not path.is_file():
+            continue
+        resolved_path = path.resolve()
+        if not resolved_path.is_relative_to(source_root):
             continue
         ext = _normalize_ext(path)
         if ext in extensions:
@@ -51,9 +56,7 @@ async def scan_source_manifest(
     mark_missing: bool = False,
 ) -> dict[str, Any]:
     """Scan an external source root into a durable manifest without importing files."""
-    root = Path(source_root).expanduser().resolve()
-    if not root.exists() or not root.is_dir():
-        raise ValidationError("source_root must be an existing directory")
+    root = resolve_enterprise_source_root(source_root)
     allowed_extensions = _normalize_extensions(extensions)
     bounded_limit = max(1, min(int(limit or 10000), 200000))
     scan_id = uuid.uuid4().hex
@@ -191,7 +194,7 @@ async def enqueue_source_manifest_import(
     priority: int = 8,
     skip_existing_md5: bool = True,
 ) -> dict[str, Any]:
-    root = Path(source_root).expanduser().resolve()
+    root = resolve_enterprise_source_root(source_root)
     allowed_extensions = _normalize_extensions(extensions)
     bounded_limit = max(1, min(int(limit or 1000), 50000))
     clean_target_root = (target_root_name or "企业微盘导入").strip().strip("/") or "企业微盘导入"
@@ -214,10 +217,20 @@ async def enqueue_source_manifest_import(
     samples: list[dict[str, Any]] = []
     for item in rows:
         source_path = Path(item.source_path)
+        if source_path.is_symlink():
+            item.import_status = "skipped"
+            item.error_message = "source_file_symlink"
+            skipped_ignored += 1
+            continue
         if not source_path.exists() or not source_path.is_file():
             item.import_status = "missing"
             item.error_message = "source_file_missing"
             skipped_missing += 1
+            continue
+        if not source_path.resolve().is_relative_to(root):
+            item.import_status = "skipped"
+            item.error_message = "source_file_outside_root"
+            skipped_ignored += 1
             continue
         if is_ignored_source_path(source_path):
             item.import_status = "skipped"

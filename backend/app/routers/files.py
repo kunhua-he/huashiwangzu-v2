@@ -77,7 +77,7 @@ async def get_folder_tree(db: AsyncSession = Depends(get_db), user: User = Depen
 
 
 @router.post("/folder")
-async def create_folder(body: CreateFolderRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def create_folder(body: CreateFolderRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     folder = await file_service.create_folder(db, body.name, body.parent_id, user.id)
     return ApiResponse(data=FolderResponse.model_validate(folder))
 
@@ -99,25 +99,25 @@ async def get_file_detail(
 
 
 @router.post("/rename")
-async def rename(body: RenameRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def rename(body: RenameRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     await file_service.rename_item(db, body.type, body.id, body.new_name, user.id)
     return ApiResponse(data={"message": "Renamed"})
 
 
 @router.post("/move")
-async def move(body: MoveRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def move(body: MoveRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     await file_service.move_item(db, body.type, body.id, body.target_folder_id, user.id)
     return ApiResponse(data={"message": "Moved"})
 
 
 @router.post("/copy")
-async def copy(body: MoveRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def copy(body: MoveRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     item = await file_ops_service.copy_item(db, body.type, body.id, body.target_folder_id, user.id)
     return ApiResponse(data={"id": item.id, "message": "Copied"})
 
 
 @router.post("/delete")
-async def delete_item(body: DeleteRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def delete_item(body: DeleteRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     file_ids_to_emit = [body.id] if body.type == "file" else await _collect_folder_file_ids(
         db, body.id, user.id, deleted=False
     )
@@ -150,7 +150,7 @@ class BatchRequest(BaseModel):
 
 
 @router.post("/batch-delete")
-async def batch_delete(body: BatchRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def batch_delete(body: BatchRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     results = []
     success_count = 0
     failed_count = 0
@@ -176,7 +176,7 @@ async def batch_delete(body: BatchRequest, db: AsyncSession = Depends(get_db), u
 
 
 @router.post("/batch-move")
-async def batch_move(body: BatchRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def batch_move(body: BatchRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
     results = []
     success_count = 0
     failed_count = 0

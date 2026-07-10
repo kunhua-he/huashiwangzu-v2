@@ -37,11 +37,10 @@ BACKEND_DIR = PROJECT_ROOT / "backend"
 DEFAULT_ENV_FILE = PROJECT_ROOT / "backend" / ".env"
 EXPECTED_DB_NAME = "华世王镞_v2"
 
-# The live backend is started with cwd=backend, so relative storage settings such
-# as "data/uploads" resolve under backend/. Keep this script aligned when it is
-# executed from the project root.
-os.environ.setdefault("UPLOAD_DIR", str(BACKEND_DIR / "data" / "uploads"))
-os.environ.setdefault("STORAGE_ROOT", str(BACKEND_DIR / "data" / "uploads"))
+# Keep helper imports aligned with the app config: relative storage settings are
+# resolved from the project root, not from backend/.
+os.environ.setdefault("UPLOAD_DIR", str(PROJECT_ROOT / "data" / "uploads"))
+os.environ.setdefault("STORAGE_ROOT", str(PROJECT_ROOT / "data" / "uploads"))
 
 for import_root in (PROJECT_ROOT, BACKEND_DIR):
     import_path = str(import_root)

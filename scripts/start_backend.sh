@@ -162,6 +162,15 @@ start_watchdog() {
 
 if [ "$1" = "--restart" ]; then
   echo "[start_backend] Forcing restart..."
+  if [ "${FORCE_RESTART:-}" != "1" ]; then
+    RESTART_PREFLIGHT=$(cd "$PROJECT_ROOT" && python3 "$SCRIPT_DIR/safe_restart_gate.py" --preflight-only 2>&1)
+    RESTART_PREFLIGHT_STATUS=$?
+    echo "[start_backend] Safe restart preflight status=$RESTART_PREFLIGHT_STATUS result=$RESTART_PREFLIGHT"
+    if [ "$RESTART_PREFLIGHT_STATUS" -ne 0 ]; then
+      echo "[start_backend] Restart blocked by running tasks or active upload sessions. Use the maintenance safe-restart API, wait for drain, or set FORCE_RESTART=1 for an emergency restart."
+      exit 1
+    fi
+  fi
   # 先杀守护进程，否则它会立刻把旧 uvicorn 拉起来
   WATCHDOG_PIDS=$(watchdog_pids)
   if [ -n "$WATCHDOG_PIDS" ]; then

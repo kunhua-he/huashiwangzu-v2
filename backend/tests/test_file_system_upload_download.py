@@ -1,10 +1,14 @@
 """Test file system: upload, download, preview."""
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
+from app.config import get_settings
 from app.core.exceptions import ValidationError
+from app.database import AsyncSessionLocal
 from app.main import app
+from app.models.file import File
 from app.routers import file_transfer
 from httpx import ASGITransport, AsyncClient
 
@@ -25,6 +29,21 @@ class _MemoryUpload:
 async def _login(client: AsyncClient) -> str:
     resp = await client.post("/api/login", json={"username": "admin", "password": SEED_PASS})
     return resp.json()["data"]["access_token"]
+
+
+async def _login_as(client: AsyncClient, username: str) -> str:
+    resp = await client.post("/api/login", json={"username": username, "password": SEED_PASS})
+    return resp.json()["data"]["access_token"]
+
+
+async def _delete_file_record(file_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        file = await db.get(File, file_id)
+        if file and file.storage_path:
+            (Path(get_settings().UPLOAD_DIR).resolve() / file.storage_path).unlink(missing_ok=True)
+        if file:
+            await db.delete(file)
+            await db.commit()
 
 
 async def _cleanup(client: AsyncClient, headers: dict, file_id: int) -> None:
@@ -69,6 +88,63 @@ async def test_upload_txt_and_download() -> None:
         assert data["success"] is True
         assert "hello world" in data["data"]["content"]
         await _cleanup(client, headers, file_id)
+
+
+@pytest.mark.asyncio
+async def test_viewer_can_upload_own_file() -> None:
+    transport = ASGITransport(app=app)
+    file_id = 0
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        token = await _login_as(client, "viewer")
+        headers = {"Authorization": f"Bearer {token}"}
+        filename = f"viewer-upload-{uuid4().hex}.txt"
+        resp = await client.post(
+            "/api/files/upload",
+            files={"file": (filename, b"viewer upload")},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        file_id = data["data"]["id"]
+
+        resp = await client.get(f"/api/files/download/{file_id}", headers=headers)
+        assert resp.status_code == 200
+        assert resp.content == b"viewer upload"
+    await _delete_file_record(file_id)
+
+
+@pytest.mark.asyncio
+async def test_knowledge_pdf_fallback_builds_pdf_for_missing_source() -> None:
+    class FakeResult:
+        @staticmethod
+        def mappings():
+            return FakeResult()
+
+        @staticmethod
+        def all():
+            return [
+                {"page": 1, "chunk_index": 0, "text": "第一段知识库文本"},
+                {"page": 1, "chunk_index": 1, "text": "第二段知识库文本"},
+            ]
+
+    class FakeDb:
+        @staticmethod
+        async def execute(*args, **kwargs):
+            return FakeResult()
+
+    result = await file_transfer._try_build_knowledge_text_pdf(
+        FakeDb(),
+        123456,
+        "missing-source.pdf",
+    )
+    assert result is not None
+    pdf_path = Path(result["file_path"])
+    try:
+        assert pdf_path.read_bytes().startswith(b"%PDF")
+    finally:
+        pdf_path.unlink(missing_ok=True)
+
 
 @pytest.mark.asyncio
 async def test_upload_folder_not_found() -> None:

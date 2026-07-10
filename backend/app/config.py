@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "data/uploads"
     MAX_PREVIEW_SIZE: int = 1 * 1024 * 1024
     STORAGE_ROOT: str = "data/uploads"
+    ENTERPRISE_SOURCE_ALLOWED_ROOTS: str = f"~:{Path('/Volumes')}"
 
     MODEL_WATCHDOG_ENABLED: bool = True
     MODEL_WATCHDOG_POLL_INTERVAL: float = 2.0

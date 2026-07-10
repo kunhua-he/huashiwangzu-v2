@@ -50,6 +50,7 @@ from .fusion_service import fuse_all_pages
 from .model_routing import (
     is_model_stage,
     pause_model_stage_queue,
+    record_model_rate_limit,
     resolve_knowledge_concurrency,
     resolve_knowledge_pipeline_priority,
     should_pause_after_result,
@@ -725,12 +726,23 @@ async def _pipeline_stage_handler(params: dict) -> dict:
             else:
                 result = {"document_id": document_id, "status": "failed", "error": str(exc)}
                 if is_model_stage(stage):
+                    rate_limit_pause = record_model_rate_limit(stage, error_message=exc)
+                    if rate_limit_pause.get("paused"):
+                        result["pause"] = {
+                            "status": "paused",
+                            "reason": "model_rate_limit_threshold",
+                            "after_stage": stage,
+                            **rate_limit_pause,
+                        }
+                    else:
+                        result["rate_limit"] = rate_limit_pause
+                    should_fallback_pause = rate_limit_pause.get("reason") != "below_threshold"
                     pause_result = pause_model_stage_queue(
                         stage,
                         reason="model_fallback_exhausted",
                         error_message=str(exc),
-                    )
-                    if pause_result.get("paused"):
+                    ) if should_fallback_pause else {"paused": False, "reason": "rate_limit_below_threshold"}
+                    if pause_result.get("paused") and "pause" not in result:
                         result["pause"] = {
                             "status": "paused",
                             "reason": "model_fallback_exhausted",

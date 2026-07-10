@@ -69,7 +69,7 @@ async def list_recycle(
 async def restore(
     body: RestoreRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
+    user: User = Depends(require_permission("viewer")),
 ):
     folder_file_ids: list[int] = []
     if body.item_type == "folder":
@@ -91,7 +91,7 @@ async def restore(
 async def delete_permanently(
     body: RestoreRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
+    user: User = Depends(require_permission("viewer")),
 ):
     result = await recycle_service.delete_permanently(db, body.item_type, body.id, user.id)
     for file_id in result.get("permanently_deleted_file_ids", []):

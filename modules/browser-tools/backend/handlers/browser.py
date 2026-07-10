@@ -26,6 +26,8 @@ from urllib.parse import urljoin, urlparse
 
 from app.core.exceptions import ValidationError
 from app.core.url_safety import validate_safe_url
+from app.core.workspace_security import ensure_user_workspace
+from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
 
 logger = logging.getLogger("v2.browser-tools").getChild("browser")
@@ -81,10 +83,7 @@ _BLOCKED_PRIVATE_NETWORKS = [
 
 def _get_workspace_path(caller: str) -> Path:
     """Resolve user workspace path from caller identity."""
-    uid = caller.replace("user:", "") if caller else "0"
-    workspace = Path(os.environ.get("WORKSPACE_ROOT", "data/workspaces")) / str(uid)
-    workspace.mkdir(parents=True, exist_ok=True)
-    return workspace
+    return ensure_user_workspace(resolve_caller_user_id(caller))
 
 
 def _workspace_relative_path(path: Path, workspace: Path) -> str:

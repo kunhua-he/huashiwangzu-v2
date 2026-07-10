@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
 
     from app.database import AsyncSessionLocal
     from app.services.app_service import sync_apps_from_manifest
+    from app.services.maintenance_service import mark_startup_complete_if_needed
     from app.services.private_module_service import restore_active_private_modules, set_app_instance
     from app.services.task_worker import start_worker, stop_worker
 
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
     set_app_instance(app)
 
     async with AsyncSessionLocal() as db:
+        await mark_startup_complete_if_needed(db)
         result = await sync_apps_from_manifest(db)
         logger.info("App manifest sync completed: %s", result)
         private_restore = await restore_active_private_modules(db)

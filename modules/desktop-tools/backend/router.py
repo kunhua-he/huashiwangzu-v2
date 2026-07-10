@@ -1,7 +1,7 @@
 """FastAPI router for desktop-tools module.
 
 Provides complete CRUD + artifact bridge capabilities for Agent file operations.
-All queries are owner-isolated. No Agent should handle base64 or physical paths.
+Queries use the framework owner/share boundary. No Agent should handle base64 or physical paths.
 """
 import io
 import json
@@ -25,12 +25,12 @@ from app.services.artifact_service import (
 )
 from app.services.file_ops_service import copy_item
 from app.services.file_reader import get_file_content_bytes, resolve_caller_user_id
-from app.services.file_service import check_file_access, delete_to_trash, rename_item
+from app.services.file_service import check_file_access, delete_to_trash, get_file_list, rename_item
 from app.services.file_upload_service import replace_file_content, upload_file
 from app.services.module_registry import call_capability, register_capability
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 try:
     from .services import file_contract
@@ -66,82 +66,25 @@ logger = logging.getLogger("v2.desktop-tools.router")
 # Capability: desktop:list_files
 # =====================================================================
 async def _list_files(params: dict, caller: str) -> dict:
-    """List files in a folder (or root). Owner-isolated."""
-    from app.models.file import File, Folder
-
+    """List files in a folder (or root), including shared virtual folders."""
     owner_id = resolve_caller_user_id(caller)
-    folder_id = _coerce_non_negative_int(params.get("folder_id", 0), "folder_id")
+    folder_id = _coerce_int(params.get("folder_id", 0), "folder_id")
     page = _coerce_page(params.get("page", 1))
     page_size = _coerce_page_size(params.get("page_size", 50))
-    offset = (page - 1) * page_size
 
     async with AsyncSessionLocal() as db:
-        if folder_id:
-            folder = await db.get(Folder, folder_id)
-            if not folder or folder.deleted or folder.owner_id != owner_id:
-                raise NotFound("Folder not found")
-
-        folder_cond = Folder.parent_id.is_(None) if folder_id == 0 else Folder.parent_id == folder_id
-        file_cond = File.folder_id.is_(None) if folder_id == 0 else File.folder_id == folder_id
-
-        folder_total = await db.scalar(
-            select(func.count(Folder.id)).where(
-                folder_cond,
-                Folder.owner_id == owner_id,
-                Folder.deleted.is_(False),
-            )
-        ) or 0
-        file_total = await db.scalar(
-            select(func.count(File.id)).where(
-                file_cond,
-                File.owner_id == owner_id,
-                File.deleted.is_(False),
-            )
-        ) or 0
-
-        folder_limit = max(0, min(page_size, folder_total - offset))
-        folders = []
-        if folder_limit:
-            folders_result = await db.execute(
-                select(Folder).where(
-                    folder_cond,
-                    Folder.owner_id == owner_id,
-                    Folder.deleted.is_(False),
-                ).order_by(Folder.name)
-                .offset(offset)
-                .limit(folder_limit)
-            )
-            folders = folders_result.scalars().all()
-
-        file_offset = max(0, offset - folder_total)
-        file_limit = page_size - len(folders)
-        files = []
-        if file_limit:
-            files_result = await db.execute(
-                select(File).where(
-                    file_cond,
-                    File.owner_id == owner_id,
-                    File.deleted.is_(False),
-                ).order_by(File.created_at.desc())
-                .offset(file_offset)
-                .limit(file_limit)
-            )
-            files = files_result.scalars().all()
-
-        items = [_folder_to_item(f) for f in folders] + [_file_to_item(f) for f in files]
-
+        result = await get_file_list(db, folder_id, owner_id, page, page_size)
     return {
-        "items": items,
-        "total": folder_total + file_total,
-        "page": page,
-        "page_size": page_size,
+        **result,
+        "items": [_desktop_item(item) for item in result.get("items", [])],
         "folder_id": folder_id,
     }
 
 
 async def _search_files(params: dict, caller: str) -> dict:
-    """Search files by keyword / extension. Owner-isolated."""
+    """Search owned and shared files by keyword / extension."""
     from app.models.file import File
+    from app.models.file_share import FileShare
 
     owner_id = resolve_caller_user_id(caller)
     keyword = str(params.get("keyword", "")).strip()
@@ -150,7 +93,11 @@ async def _search_files(params: dict, caller: str) -> dict:
     page_size = _coerce_page_size(params.get("page_size", 50))
 
     async with AsyncSessionLocal() as db:
-        conds = [File.owner_id == owner_id, File.deleted.is_(False)]
+        shared_ids = select(FileShare.file_id).where(FileShare.shared_with_user_id == owner_id)
+        conds = [
+            or_(File.owner_id == owner_id, File.id.in_(shared_ids)),
+            File.deleted.is_(False),
+        ]
         if keyword:
             conds.append(File.name.ilike(f"%{keyword}%"))
         if extension:
@@ -176,6 +123,27 @@ async def _search_files(params: dict, caller: str) -> dict:
         "page_size": page_size,
         "keyword": keyword,
         "extension": extension,
+    }
+
+
+def _coerce_int(value, field_name: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"{field_name} must be an integer") from exc
+
+
+def _desktop_item(item: dict) -> dict:
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "extension": item.get("extension"),
+        "size": item.get("size", 0),
+        "mime_type": item.get("mime_type"),
+        "folder_id": item.get("parent_id"),
+        "created_at": str(item.get("created_at")) if item.get("created_at") else None,
+        "updated_at": str(item.get("updated_at")) if item.get("updated_at") else None,
+        "is_folder": bool(item.get("is_folder")),
     }
 
 # =====================================================================

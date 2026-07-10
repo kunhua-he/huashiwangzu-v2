@@ -53,7 +53,8 @@ async def _run_python(params: dict, caller: str) -> dict:
 
     Reuses terminal-tools workspace isolation, timeout, and output truncation.
     Uses sandbox-exec on macOS (same as _exec), fail-closed on other platforms.
-    Automatically collects plt.savefig() charts and uploads them to framework FS.
+    Collects plt.savefig() charts into the user workspace. Desktop delivery
+    still requires terminal-tools:publish.
     """
     user_id = _resolve_user_id(caller)
     workspace = _user_workspace(user_id)
@@ -155,26 +156,25 @@ async def _run_python(params: dict, caller: str) -> dict:
             return response
 
         charts = []
-        chart_upload_errors = []
+        chart_errors = []
+        output_dir = workspace / "outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
         for fpath in run_dir.iterdir():
             if fpath.is_file() and fpath.suffix.lower() in _CHART_EXTENSIONS:
                 try:
-                    from app.database import AsyncSessionLocal
-                    from app.services import file_upload_service
-                    async with AsyncSessionLocal() as db:
-                        with fpath.open("rb") as chart_handle:
-                            upload_result = await file_upload_service.upload_file(
-                                db, chart_handle, fpath.name, user_id, None,
-                            )
-                        charts.append({
-                            "file_id": upload_result["id"],
-                            "name": upload_result["name"],
-                            "size": upload_result["size"],
-                            "deduplicated": upload_result.get("deduplicated", False),
-                        })
+                    output_name = f"{run_id}_{_safe_external_filename(fpath.name, 'chart.png')}"
+                    output_path = _resolve_workspace_path(user_id, f"outputs/{output_name}")
+                    shutil.copy2(str(fpath), str(output_path))
+                    charts.append({
+                        "workspace_path": _workspace_relative_path(output_path, workspace),
+                        "name": output_path.name,
+                        "size": output_path.stat().st_size,
+                        "published": False,
+                        "note": "Use terminal-tools:publish to deliver to desktop",
+                    })
                 except Exception as exc:
-                    chart_upload_errors.append({"name": fpath.name, "error": str(exc)})
-                    logger.warning("user=%s failed to upload chart %s: %s", user_id, fpath.name, exc)
+                    chart_errors.append({"name": fpath.name, "error": str(exc)})
+                    logger.warning("user=%s failed to collect chart %s: %s", user_id, fpath.name, exc)
 
         response = {
             "success": result["return_code"] == 0,
@@ -185,7 +185,7 @@ async def _run_python(params: dict, caller: str) -> dict:
             "stderr_truncated": result["stderr_truncated"],
             "charts": charts,
             "chart_count": len(charts),
-            "chart_upload_errors": chart_upload_errors,
+            "chart_errors": chart_errors,
             "imported_files": imported_files,
         }
         return response
@@ -271,5 +271,5 @@ async def _chart(params: dict, caller: str) -> dict:
     result = await _run_python(exec_params, caller)
     if result.get("success") and result.get("chart_count", 0) < 1:
         result["success"] = False
-        result["error"] = "Chart generation produced no uploaded chart file"
+        result["error"] = "Chart generation produced no workspace chart file"
     return result

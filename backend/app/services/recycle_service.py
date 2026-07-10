@@ -166,18 +166,18 @@ async def _recursive_restore_folder(db: AsyncSession, folder_id: int):
 
 async def _delete_file_row_permanently(db: AsyncSession, file: File) -> int:
     file_id = int(file.id)
+    storage_path = file.storage_path
     shares = await db.execute(
         select(FileShare).where(FileShare.file_id == file.id)
     )
     for share in shares.scalars():
         await db.delete(share)
-    other_refs = await db.execute(
-        select(File).where(
-            File.md5_hash == file.md5_hash,
-            File.deleted.is_(False),
-            File.id != file.id,
-        ).with_for_update()
-    )
+    ref_conditions = [File.id != file.id]
+    if storage_path:
+        ref_conditions.append(File.storage_path == storage_path)
+    else:
+        ref_conditions.append(File.md5_hash == file.md5_hash)
+    other_refs = await db.execute(select(File).where(*ref_conditions).with_for_update())
     if not other_refs.scalars().all():
         path = _resolve_storage_path(file)
         if path and path.exists():

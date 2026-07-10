@@ -26,6 +26,7 @@ from ..ir_models import to_legacy_dict
 from ..models import KbDocument, KbRawData
 from .model_routing import (
     knowledge_model_call_slot,
+    record_model_rate_limit,
     resolve_knowledge_concurrency,
     resolve_knowledge_image_preprocess_int,
     resolve_knowledge_vision_profile,
@@ -546,6 +547,16 @@ async def _exec_round_2_ocr(
             content = str(result.get("content") or "")
             metadata = _vision_model_metadata("vlm_ocr", profile_key, result)
     except Exception as e:
+        pause_result = record_model_rate_limit("raw_ocr", error_message=e)
+        if pause_result.get("paused"):
+            logger.error(
+                "Raw OCR rate-limit auto-pause doc_id=%d page=%d group=%s count=%s threshold=%s",
+                doc_id,
+                page,
+                pause_result.get("group"),
+                pause_result.get("count"),
+                pause_result.get("threshold"),
+            )
         logger.warning("Round 2 OCR failed for doc_id=%d page=%d: %s", doc_id, page, e)
         content = ""
         metadata = _vision_model_metadata("vlm_ocr", profile_key)
@@ -620,6 +631,16 @@ async def _exec_round_3_vision(
         content = str(result.get("content") or "")
         metadata = _vision_model_metadata("vlm_vision", profile_key, result)
     except Exception as e:
+        pause_result = record_model_rate_limit("raw_vision", error_message=e)
+        if pause_result.get("paused"):
+            logger.error(
+                "Raw vision rate-limit auto-pause doc_id=%d page=%d group=%s count=%s threshold=%s",
+                doc_id,
+                page,
+                pause_result.get("group"),
+                pause_result.get("count"),
+                pause_result.get("threshold"),
+            )
         logger.warning("Round 3 vision failed for doc_id=%d page=%d: %s", doc_id, page, e)
         content = ""
         error_message = str(e)

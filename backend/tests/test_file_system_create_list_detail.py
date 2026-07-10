@@ -1,8 +1,12 @@
 """Test file system: create folder, list files, get file detail."""
-import pytest
-from httpx import ASGITransport, AsyncClient
+from uuid import uuid4
 
+import pytest
+from app.database import AsyncSessionLocal
 from app.main import app
+from app.models.file import Folder
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
 
 SEED_PASS = "admin123"
 
@@ -12,6 +16,19 @@ async def _login(client: AsyncClient) -> str:
     data = resp.json()
     assert data["success"] is True
     return data["data"]["access_token"]
+
+
+async def _login_as(client: AsyncClient, username: str) -> str:
+    resp = await client.post("/api/login", json={"username": username, "password": SEED_PASS})
+    data = resp.json()
+    assert data["success"] is True
+    return data["data"]["access_token"]
+
+
+async def _delete_folder_record(folder_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(Folder).where(Folder.id == folder_id))
+        await db.commit()
 
 
 async def _cleanup_folder(client: AsyncClient, headers: dict, folder_id: int):
@@ -44,7 +61,26 @@ async def test_create_folder_and_list() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_folder_conflict_returns_409() -> None:
+async def test_viewer_can_create_folder_for_uploads() -> None:
+    transport = ASGITransport(app=app)
+    folder_id = 0
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        token = await _login_as(client, "viewer")
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = await client.post(
+            "/api/files/folder",
+            json={"name": f"viewer-upload-folder-{uuid4().hex}", "parent_id": None},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        folder_id = data["data"]["id"]
+    await _delete_folder_record(folder_id)
+
+
+@pytest.mark.asyncio
+async def test_create_folder_conflict_auto_renames() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         token = await _login(client)
@@ -56,9 +92,12 @@ async def test_create_folder_conflict_returns_409() -> None:
         fid = data["data"]["id"]
 
         resp2 = await client.post("/api/files/folder", json={"name": "test-dup-folder", "parent_id": None}, headers=headers)
-        assert resp2.status_code == 409
+        data2 = resp2.json()
+        assert data2["success"] is True
+        assert data2["data"]["name"] == "test-dup-folder(1)"
 
         await _cleanup_folder(client, headers, fid)
+        await _cleanup_folder(client, headers, data2["data"]["id"])
 
 
 @pytest.mark.asyncio

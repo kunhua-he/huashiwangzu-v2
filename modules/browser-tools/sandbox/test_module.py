@@ -38,6 +38,16 @@ def _install_handler_import_stubs() -> None:
     url_safety_module.validate_safe_url = lambda _url: None
     sys.modules["app.core.url_safety"] = url_safety_module
 
+    workspace_security_module = types.ModuleType("app.core.workspace_security")
+    workspace_security_module.ensure_user_workspace = (
+        lambda user_id: Path(tempfile.gettempdir()) / "browser_tools_workspace" / str(user_id)
+    )
+    sys.modules["app.core.workspace_security"] = workspace_security_module
+
+    file_reader_module = types.ModuleType("app.services.file_reader")
+    file_reader_module.resolve_caller_user_id = lambda caller: int(str(caller).split(":", 1)[1])
+    sys.modules["app.services.file_reader"] = file_reader_module
+
     registry_module = types.ModuleType("app.services.module_registry")
     registry_module.register_capability = lambda *_args, **_kwargs: None
     sys.modules["app.services.module_registry"] = registry_module

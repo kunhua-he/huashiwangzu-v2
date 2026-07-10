@@ -6,7 +6,9 @@ from pathlib import Path
 from app.config import get_settings
 from app.core.exceptions import NotFound
 from app.models.file import File
-from sqlalchemy import select
+from app.models.file_share import FileShare
+from app.services.file_share_service import active_share_conditions
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 NON_CONTENT_FILE_REASONS = {
@@ -110,14 +112,47 @@ async def raise_if_source_unavailable(db: AsyncSession, file_id: int) -> None:
         raise SourceFileUnavailable(file_id, state.reason)
 
 
+def accessible_document_clause(user_id: int):
+    """Return the read-access predicate for a knowledge document."""
+    from ..models import KbDocument
+
+    shared_file_exists = exists(
+        select(FileShare.id).where(
+            FileShare.file_id == KbDocument.file_id,
+            *active_share_conditions(user_id=user_id),
+        )
+    )
+    return or_(KbDocument.owner_id == user_id, shared_file_exists)
+
+
+async def get_accessible_document_orm(db: AsyncSession, document_id: int, user_id: int):
+    """Return a non-deleted document whose source file is visible to user_id."""
+    from ..models import KbDocument
+
+    result = await db.execute(
+        select(KbDocument)
+        .join(File, File.id == KbDocument.file_id)
+        .where(
+            KbDocument.id == document_id,
+            KbDocument.deleted.is_(False),
+            File.deleted.is_(False),
+            accessible_document_clause(user_id),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_live_document_or_raise(db: AsyncSession, document_id: int, owner_id: int) -> dict:
     """Return a visible knowledge document only when its source file is still live."""
-    from .document_service import get_document
+    from .document_service import document_payload
 
-    doc = await get_document(db, document_id, owner_id)
-    state = await get_source_file_availability(db, int(doc.get("file_id") or 0))
+    doc = await get_accessible_document_orm(db, document_id, owner_id)
+    if not doc:
+        raise NotFound("Document not found")
+    state = await get_source_file_availability(db, int(doc.file_id or 0))
     if not state.available:
         raise NotFound(f"Document source file unavailable: {state.reason}")
-    doc["source_available"] = True
-    doc["source_state"] = "available"
-    return doc
+    payload = document_payload(doc)
+    payload["source_available"] = True
+    payload["source_state"] = "available"
+    return payload

@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, UploadFile
 from fastapi import File as FastAPIFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -32,6 +33,7 @@ from app.services import (
     file_upload_service,
     file_upload_session_service,
 )
+from app.services.maintenance_service import ensure_accepting_new_work
 from app.services.module_registry import call_capability
 
 logger = logging.getLogger("v2.file_transfer")
@@ -64,7 +66,8 @@ async def _emit_file_uploaded(file_id: int, user: User) -> None:
 
 
 @router.post("/upload")
-async def upload(file: UploadFile = FastAPIFile(...), folder_id: int = Form(0), relative_path: str = Form(""), db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("editor"))):
+async def upload(file: UploadFile = FastAPIFile(...), folder_id: int = Form(0), relative_path: str = Form(""), db: AsyncSession = Depends(get_db), user: User = Depends(require_permission("viewer"))):
+    await ensure_accepting_new_work(db, "uploads")
     if not file.filename:
         raise ValidationError("No file provided")
     # 流式写入临时文件，同时计算 md5
@@ -112,8 +115,9 @@ async def upload(file: UploadFile = FastAPIFile(...), folder_id: int = Form(0), 
 async def create_upload_session(
     payload: UploadSessionCreateRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
+    user: User = Depends(require_permission("viewer")),
 ):
+    await ensure_accepting_new_work(db, "upload sessions")
     result = await file_upload_session_service.create_upload_session(
         db,
         filename=payload.filename,
@@ -140,7 +144,7 @@ async def upload_session_chunk(
     chunk_index: int = Form(...),
     chunk: UploadFile = FastAPIFile(...),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
+    user: User = Depends(require_permission("viewer")),
 ):
     result = await file_upload_session_service.store_upload_chunk(
         db,
@@ -157,7 +161,7 @@ async def complete_upload_session(
     session_id: str,
     payload: UploadSessionCompleteRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
+    user: User = Depends(require_permission("viewer")),
 ):
     result = await file_upload_session_service.complete_upload_session(
         db,
@@ -174,7 +178,7 @@ async def complete_upload_session(
 async def abort_upload_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("editor")),
+    user: User = Depends(require_permission("viewer")),
 ):
     result = await file_upload_session_service.abort_upload_session(
         db,
@@ -263,6 +267,109 @@ async def _try_compile_from_excel_engine(
     return None
 
 
+async def _try_build_knowledge_text_pdf(
+    db: AsyncSession,
+    file_id: int,
+    filename: str,
+) -> dict | None:
+    """Build a readable fallback PDF from Knowledge chunks when source bytes are gone."""
+    result = await db.execute(
+        sa_text("""
+            SELECT
+                c.page,
+                c.chunk_index,
+                c.text
+            FROM kb_documents d
+            JOIN kb_chunks c ON c.document_id = d.id AND c.owner_id = d.owner_id
+            WHERE d.file_id = :file_id
+              AND d.deleted IS FALSE
+              AND COALESCE(c.text, '') <> ''
+            ORDER BY c.page NULLS LAST, c.chunk_index NULLS LAST, c.id
+            LIMIT 2000
+        """),
+        {"file_id": file_id},
+    )
+    rows = result.mappings().all()
+    if not rows:
+        return None
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfgen import canvas
+    except Exception as exc:
+        logger.warning("Knowledge PDF fallback unavailable for file_id=%d: %s", file_id, exc)
+        return None
+
+    TMP_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        dir=str(TMP_DOWNLOAD_DIR),
+        prefix=f"knowledge-fallback-{file_id}-",
+        suffix=".pdf",
+    )
+    os.close(fd)
+    pdf_path = Path(temp_name)
+    try:
+        font_name = "STSong-Light"
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+        except Exception:
+            pass
+        page_width, page_height = A4
+        margin = 48
+        line_height = 15
+        max_chars = 42
+        c = canvas.Canvas(str(pdf_path), pagesize=A4)
+        c.setTitle(filename)
+
+        def new_page(title: str | None = None) -> float:
+            c.setFont(font_name, 10)
+            y_pos = page_height - margin
+            if title:
+                c.setFont(font_name, 13)
+                c.drawString(margin, y_pos, title[:70])
+                y_pos -= line_height * 2
+                c.setFont(font_name, 10)
+            return y_pos
+
+        y = new_page(f"{filename}（知识库文本兜底版）")
+        current_page = None
+        for row in rows:
+            source_page = row.get("page")
+            if source_page != current_page:
+                current_page = source_page
+                if y < margin + line_height * 3:
+                    c.showPage()
+                    y = new_page()
+                c.setFont(font_name, 11)
+                c.drawString(margin, y, f"第 {source_page or '-'} 页")
+                y -= line_height
+                c.setFont(font_name, 10)
+            text = str(row.get("text") or "").replace("\r", "\n")
+            for raw_line in text.splitlines() or [""]:
+                line = raw_line.strip()
+                while line:
+                    if y < margin:
+                        c.showPage()
+                        y = new_page()
+                    c.drawString(margin, y, line[:max_chars])
+                    y -= line_height
+                    line = line[max_chars:]
+                if raw_line.strip() == "":
+                    y -= line_height
+            y -= 3
+        c.save()
+        return {
+            "file_path": str(pdf_path),
+            "filename": f"{filename}.pdf" if not filename.lower().endswith(".pdf") else filename,
+        }
+    except Exception as exc:
+        pdf_path.unlink(missing_ok=True)
+        logger.warning("Knowledge PDF fallback failed for file_id=%d: %s", file_id, exc)
+        return None
+
+
 @router.get("/download/{file_id}")
 async def download(
     file_id: int,
@@ -301,9 +408,18 @@ async def download(
 
     # 3. Fallback: return original physical file
     safe_path = file_preview_service._resolve_storage_path(file)
-    if not safe_path:
-        raise NotFound("File on disk not found")
     full_name = f"{file.name}.{file.extension}" if file.extension else file.name
+    if not safe_path:
+        if (file.extension or "").lower() == "pdf":
+            fallback = await _try_build_knowledge_text_pdf(db, file_id, full_name)
+            if fallback:
+                background_tasks.add_task(_cleanup_temp_file, fallback["file_path"])
+                return FileResponse(
+                    path=fallback["file_path"],
+                    media_type="application/pdf",
+                    filename=fallback["filename"],
+                )
+        raise NotFound("File on disk not found")
     return FileResponse(path=str(safe_path), media_type=file.mime_type or "application/octet-stream", filename=full_name)
 
 

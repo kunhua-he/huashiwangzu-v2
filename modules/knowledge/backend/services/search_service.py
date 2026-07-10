@@ -8,6 +8,8 @@ import time
 from collections.abc import Sequence
 
 from app.models.file import File
+from app.models.file_share import FileShare
+from app.services.file_share_service import active_share_conditions
 from app.services.model_services import get_embedding, get_embedding_profile_contract, rerank
 from sqlalchemy import and_, bindparam, or_, select
 from sqlalchemy import text as sa_text
@@ -63,6 +65,8 @@ GENERIC_QUERY_STOP_WORDS = {
     "列表",
     "列出",
 }
+
+
 class SearchResults(list):
     """List-like search results with retrieval diagnostics attached."""
 
@@ -182,6 +186,32 @@ class _RetrievalDiagnostics:
 
 def _live_source_fields() -> dict[str, bool | str]:
     return {"source_available": True, "source_state": "available"}
+
+
+def _accessible_document_clause(viewer_id: int):
+    from ..models import KbDocument
+
+    return or_(
+        File.owner_id == viewer_id,
+        KbDocument.file_id.in_(
+            select(FileShare.file_id).where(*active_share_conditions(user_id=viewer_id))
+        ),
+    )
+
+
+def _accessible_file_sql() -> str:
+    return """
+    (
+        f.owner_id = :owner_id
+        OR EXISTS (
+            SELECT 1
+            FROM framework_file_shares share
+            WHERE share.file_id = d.file_id
+              AND share.shared_with_user_id = :owner_id
+              AND (share.expiry IS NULL OR share.expiry > now())
+        )
+    )
+    """
 
 
 def _live_chunk_select():
@@ -792,8 +822,8 @@ async def keyword_search(db: AsyncSession, query: str, owner_id: int, top_k: int
         _live_chunk_select()
         .where(
             clause,
-            KbChunk.owner_id == owner_id,
-            KbDocument.owner_id == owner_id,
+            KbChunk.owner_id == KbDocument.owner_id,
+            _accessible_document_clause(owner_id),
             _preferred_index_clause(),
         )
         .order_by(KbChunk.id.desc())
@@ -948,11 +978,11 @@ async def vector_search(
                 JOIN kb_documents d ON d.id = c.document_id
                 JOIN framework_file_items f ON f.id = d.file_id
                 WHERE
-                    e.owner_id = :owner_id
-                    AND c.owner_id = :owner_id
-                    AND d.owner_id = :owner_id
+                    e.owner_id = d.owner_id
+                    AND c.owner_id = d.owner_id
                     AND d.deleted IS FALSE
                     AND f.deleted IS FALSE
+                    AND {_accessible_file_sql()}
                     AND e.embedding_model = :embedding_model
                     AND e.embedding_version = :embedding_version
                     AND e.embedding_dim = :embedding_dim
@@ -993,11 +1023,11 @@ async def vector_search(
                     JOIN kb_documents d ON d.id = c.document_id
                     JOIN framework_file_items f ON f.id = d.file_id
                     WHERE
-                        e.owner_id = :owner_id
-                        AND c.owner_id = :owner_id
-                        AND d.owner_id = :owner_id
+                        e.owner_id = d.owner_id
+                        AND c.owner_id = d.owner_id
                         AND d.deleted IS FALSE
                         AND f.deleted IS FALSE
+                        AND {_accessible_file_sql()}
                         AND e.embedding_model = :embedding_model
                         AND e.embedding_version = :embedding_version
                         AND e.embedding_dim = :embedding_dim
@@ -1046,7 +1076,7 @@ async def vector_search(
     else:
         result = await db.execute(
             sa_text(
-                """
+                f"""
                 SELECT
                     c.id AS chunk_id,
                     c.document_id,
@@ -1061,10 +1091,10 @@ async def vector_search(
                 JOIN kb_documents d ON d.id = c.document_id
                 JOIN framework_file_items f ON f.id = d.file_id
                 WHERE
-                    c.owner_id = :owner_id
-                    AND d.owner_id = :owner_id
+                    c.owner_id = d.owner_id
                     AND d.deleted IS FALSE
                     AND f.deleted IS FALSE
+                    AND {_accessible_file_sql()}
                     AND c.embedding IS NOT NULL
                     AND (
                         c.index_layer IS NULL
@@ -1160,7 +1190,7 @@ async def document_candidate_search(
                 SELECT 1
                 FROM kb_chunks c
                 WHERE c.document_id = base.document_id
-                  AND c.owner_id = :owner_id
+                  AND c.owner_id = base.doc_owner_id
                   AND (
                     c.text ILIKE :{key}
                     OR COALESCE(c.keywords, '') ILIKE :{key}
@@ -1201,6 +1231,7 @@ async def document_candidate_search(
             WITH base AS (
                 SELECT
                     d.id AS document_id,
+                    d.owner_id AS doc_owner_id,
                     d.file_id,
                     d.filename,
                     d.extension,
@@ -1226,10 +1257,9 @@ async def document_candidate_search(
                     ON p.document_id = d.id
                     AND p.owner_id = d.owner_id
                 WHERE
-                    d.owner_id = :owner_id
-                    AND f.owner_id = :owner_id
-                    AND d.deleted IS FALSE
+                    d.deleted IS FALSE
                     AND f.deleted IS FALSE
+                    AND {_accessible_file_sql()}
             ),
             candidates AS (
                 SELECT
@@ -1344,13 +1374,12 @@ async def structured_signal_search(
         sa_text(
             f"""
             WITH live_docs AS (
-                SELECT d.id AS document_id, d.file_id, d.filename
+                SELECT d.id AS document_id, d.owner_id AS doc_owner_id, d.file_id, d.filename
                 FROM kb_documents d
                 JOIN framework_file_items f ON f.id = d.file_id
-                WHERE d.owner_id = :owner_id
-                  AND f.owner_id = :owner_id
-                  AND d.deleted IS FALSE
+                WHERE d.deleted IS FALSE
                   AND f.deleted IS FALSE
+                  AND {_accessible_file_sql()}
             ),
             term_hits AS (
                 SELECT
@@ -1362,13 +1391,12 @@ async def structured_signal_search(
                     left(string_agg(DISTINCT CONCAT(t.term, ': ', COALESCE(o.context, '')), E'\n'), 500) AS evidence_text
                 FROM kb_term_occurrences o
                 JOIN kb_terms t ON t.id = o.term_id AND t.owner_id = o.owner_id
-                JOIN live_docs ld ON ld.document_id = o.document_id
+                JOIN live_docs ld ON ld.document_id = o.document_id AND ld.doc_owner_id = o.owner_id
                 LEFT JOIN kb_entity_dictionary ed ON false
                 LEFT JOIN kb_entity_aliases ea ON false
                 LEFT JOIN kb_fact_candidates fc ON false
                 LEFT JOIN kb_causal_candidates cc ON false
-                WHERE o.owner_id = :owner_id
-                  AND t.status = 'active'
+                WHERE t.status = 'active'
                   AND ({match_clause})
                 GROUP BY o.document_id
             ),
@@ -1381,13 +1409,12 @@ async def structured_signal_search(
                     left(string_agg(DISTINCT ed.name, ', '), 500) AS evidence_text
                 FROM kb_chunk_entities ce
                 JOIN kb_entity_dictionary ed ON ed.id = ce.entity_id AND ed.owner_id = ce.owner_id
-                JOIN live_docs ld ON ld.document_id = ce.document_id
+                JOIN live_docs ld ON ld.document_id = ce.document_id AND ld.doc_owner_id = ce.owner_id
                 LEFT JOIN kb_entity_aliases ea ON ea.entity_id = ed.id AND ea.owner_id = ed.owner_id
                 LEFT JOIN kb_terms t ON false
                 LEFT JOIN kb_fact_candidates fc ON false
                 LEFT JOIN kb_causal_candidates cc ON false
-                WHERE ce.owner_id = :owner_id
-                  AND ed.status IN ('candidate', 'confirmed')
+                WHERE ed.status IN ('candidate', 'confirmed')
                   AND ({match_clause})
                 GROUP BY ce.document_id
             ),
@@ -1399,13 +1426,12 @@ async def structured_signal_search(
                     avg(COALESCE(fc.confidence, 0.55)) AS fact_confidence,
                     left(string_agg(DISTINCT fc.claim_text, E'\n'), 500) AS evidence_text
                 FROM kb_fact_candidates fc
-                JOIN live_docs ld ON ld.document_id = fc.document_id
+                JOIN live_docs ld ON ld.document_id = fc.document_id AND ld.doc_owner_id = fc.owner_id
                 LEFT JOIN kb_terms t ON false
                 LEFT JOIN kb_entity_dictionary ed ON false
                 LEFT JOIN kb_entity_aliases ea ON false
                 LEFT JOIN kb_causal_candidates cc ON false
-                WHERE fc.owner_id = :owner_id
-                  AND fc.status IN ('candidate', 'confirmed')
+                WHERE fc.status IN ('candidate', 'confirmed')
                   AND ({match_clause})
                 GROUP BY fc.document_id
             ),
@@ -1417,13 +1443,12 @@ async def structured_signal_search(
                     avg(COALESCE(cc.confidence, 0.55)) AS causal_confidence,
                     left(string_agg(DISTINCT COALESCE(cc.context, CONCAT(cc.cause, ' -> ', cc.effect)), E'\n'), 500) AS evidence_text
                 FROM kb_causal_candidates cc
-                JOIN live_docs ld ON ld.document_id = cc.document_id
+                JOIN live_docs ld ON ld.document_id = cc.document_id AND ld.doc_owner_id = cc.owner_id
                 LEFT JOIN kb_terms t ON false
                 LEFT JOIN kb_entity_dictionary ed ON false
                 LEFT JOIN kb_entity_aliases ea ON false
                 LEFT JOIN kb_fact_candidates fc ON false
-                WHERE cc.owner_id = :owner_id
-                  AND cc.status IN ('candidate', 'confirmed')
+                WHERE cc.status IN ('candidate', 'confirmed')
                   AND ({match_clause})
                 GROUP BY cc.document_id
             ),
@@ -1632,86 +1657,87 @@ async def verify_and_score_results(
         return results
 
     stmt = sa_text(
-        """
+        f"""
         WITH doc_ids AS (
             SELECT CAST(value AS bigint) AS document_id
             FROM unnest(CAST(:document_ids AS bigint[])) AS value
         ),
         live AS (
-            SELECT d.id AS document_id, d.parse_status, d.raw_status, d.fusion_status, d.profile_status, d.graph_status
-            FROM kb_documents d
-            JOIN framework_file_items f ON f.id = d.file_id
-            JOIN doc_ids ids ON ids.document_id = d.id
-            WHERE d.owner_id = :owner_id
-              AND f.owner_id = :owner_id
-              AND d.deleted IS FALSE
-              AND f.deleted IS FALSE
-        ),
+                SELECT
+                    d.id AS document_id,
+                    d.owner_id AS doc_owner_id,
+                    d.parse_status,
+                    d.raw_status,
+                    d.fusion_status,
+                    d.profile_status,
+                    d.graph_status
+                FROM kb_documents d
+                JOIN framework_file_items f ON f.id = d.file_id
+                JOIN doc_ids ids ON ids.document_id = d.id
+                WHERE d.deleted IS FALSE
+                  AND f.deleted IS FALSE
+                  AND {_accessible_file_sql()}
+            ),
         evidence_stats AS (
             SELECT
-                document_id,
+                ev.document_id,
                 count(*) AS evidence_count,
-                avg(COALESCE(confidence, 0.0)) AS evidence_confidence,
+                avg(COALESCE(ev.confidence, 0.0)) AS evidence_confidence,
                 count(*) FILTER (
-                    WHERE raw_data_id IS NOT NULL
-                       OR page_fusion_id IS NOT NULL
-                       OR artifact_id IS NOT NULL
-                       OR source_hash IS NOT NULL
+                    WHERE ev.raw_data_id IS NOT NULL
+                       OR ev.page_fusion_id IS NOT NULL
+                       OR ev.artifact_id IS NOT NULL
+                       OR ev.source_hash IS NOT NULL
                 ) AS lineage_count
-            FROM kb_evidence
-            WHERE owner_id = :owner_id
-              AND document_id IN (SELECT document_id FROM doc_ids)
-              AND status IN ('pending', 'confirmed')
-            GROUP BY document_id
+                FROM kb_evidence ev
+                JOIN live ON live.document_id = ev.document_id AND live.doc_owner_id = ev.owner_id
+                WHERE ev.status IN ('pending', 'confirmed')
+                GROUP BY ev.document_id
         ),
         fusion_stats AS (
             SELECT
-                document_id,
+                    pf.document_id,
                 count(*) AS fusion_count,
-                avg(COALESCE(confidence, 0.65)) AS fusion_confidence,
+                avg(COALESCE(pf.confidence, 0.65)) AS fusion_confidence,
                 count(*) FILTER (
-                    WHERE conflicts_json IS NOT NULL
-                      AND json_typeof(conflicts_json) = 'array'
-                      AND json_array_length(conflicts_json) > 0
+                    WHERE pf.conflicts_json IS NOT NULL
+                      AND json_typeof(pf.conflicts_json) = 'array'
+                      AND json_array_length(pf.conflicts_json) > 0
                 ) AS conflict_count
-            FROM kb_page_fusions
-            WHERE owner_id = :owner_id
-              AND document_id IN (SELECT document_id FROM doc_ids)
-              AND fusion_status = 'done'
-            GROUP BY document_id
+                FROM kb_page_fusions pf
+                JOIN live ON live.document_id = pf.document_id AND live.doc_owner_id = pf.owner_id
+                WHERE pf.fusion_status = 'done'
+                GROUP BY pf.document_id
         ),
         raw_stats AS (
             SELECT
-                document_id,
+                rd.document_id,
                 count(*) AS raw_count,
-                count(DISTINCT source_type) AS raw_source_count
-            FROM kb_raw_data
-            WHERE owner_id = :owner_id
-              AND document_id IN (SELECT document_id FROM doc_ids)
-              AND status IN ('done', 'degraded')
-            GROUP BY document_id
+                count(DISTINCT rd.source_type) AS raw_source_count
+                FROM kb_raw_data rd
+                JOIN live ON live.document_id = rd.document_id AND live.doc_owner_id = rd.owner_id
+                WHERE rd.status IN ('done', 'degraded')
+                GROUP BY rd.document_id
         ),
         fact_stats AS (
             SELECT
-                document_id,
+                fc.document_id,
                 count(*) AS fact_count,
-                avg(COALESCE(confidence, 0.55)) AS fact_confidence
-            FROM kb_fact_candidates
-            WHERE owner_id = :owner_id
-              AND document_id IN (SELECT document_id FROM doc_ids)
-              AND status IN ('candidate', 'confirmed')
-            GROUP BY document_id
+                avg(COALESCE(fc.confidence, 0.55)) AS fact_confidence
+                FROM kb_fact_candidates fc
+                JOIN live ON live.document_id = fc.document_id AND live.doc_owner_id = fc.owner_id
+                WHERE fc.status IN ('candidate', 'confirmed')
+                GROUP BY fc.document_id
         ),
         causal_stats AS (
             SELECT
-                document_id,
+                cc.document_id,
                 count(*) AS causal_count,
-                avg(COALESCE(confidence, 0.55)) AS causal_confidence
-            FROM kb_causal_candidates
-            WHERE owner_id = :owner_id
-              AND document_id IN (SELECT document_id FROM doc_ids)
-              AND status IN ('candidate', 'confirmed')
-            GROUP BY document_id
+                avg(COALESCE(cc.confidence, 0.55)) AS causal_confidence
+                FROM kb_causal_candidates cc
+                JOIN live ON live.document_id = cc.document_id AND live.doc_owner_id = cc.owner_id
+                WHERE cc.status IN ('candidate', 'confirmed')
+                GROUP BY cc.document_id
         ),
         entity_stats AS (
             SELECT
@@ -1722,9 +1748,8 @@ async def verify_and_score_results(
             FROM kb_chunk_entities ce
             LEFT JOIN kb_graph_nodes gn ON gn.owner_id = ce.owner_id AND gn.entity_id = ce.entity_id
             LEFT JOIN kb_graph_edges ge ON ge.owner_id = ce.owner_id AND (ge.source_node_id = gn.id OR ge.target_node_id = gn.id)
-            WHERE ce.owner_id = :owner_id
-              AND ce.document_id IN (SELECT document_id FROM doc_ids)
-            GROUP BY ce.document_id
+                JOIN live ON live.document_id = ce.document_id AND live.doc_owner_id = ce.owner_id
+                GROUP BY ce.document_id
         )
         SELECT
             live.document_id,
@@ -2054,7 +2079,10 @@ async def get_document_chunks(db: AsyncSession, document_id: int, owner_id: int 
         .order_by(KbChunk.page, KbChunk.chunk_index)
     )
     if owner_id is not None:
-        stmt = stmt.where(KbChunk.owner_id == owner_id, KbDocument.owner_id == owner_id)
+        stmt = stmt.where(
+            KbChunk.owner_id == KbDocument.owner_id,
+            _accessible_document_clause(owner_id),
+        )
     r = await db.execute(stmt)
     chunks = r.scalars().all()
     return [

@@ -2,6 +2,7 @@
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("JWT_SECRET", "test-secret-for-enterprise-import")
 
@@ -19,6 +20,7 @@ from modules.knowledge.backend.services.enterprise_import_service import (
     _iter_source_files,
     _normalize_extensions,
     _relative_import_path,
+    _repair_existing_target_storage,
     import_enterprise_source_batch,
     is_ignored_source_path,
 )
@@ -51,6 +53,14 @@ class _FakeDb:
         return _ScalarResult()
 
 
+class _CommitOnlyDb:
+    def __init__(self) -> None:
+        self.commits = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
 def test_normalize_extensions_filters_unsupported_and_video() -> None:
     assert _normalize_extensions([".PDF", "mp4", "exe", "tif", "jpg"]) == {"pdf", "tiff", "jpg"}
 
@@ -79,12 +89,20 @@ def test_source_path_filter_skips_recycle_bin_and_temp_files(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_import_enterprise_source_batch_dry_run_keeps_source_file(tmp_path: Path) -> None:
+async def test_import_enterprise_source_batch_dry_run_keeps_source_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     source_root = tmp_path / "source"
     nested = source_root / "品牌资料"
     nested.mkdir(parents=True)
     source_file = nested / "产品说明.pdf"
     source_file.write_bytes(b"pdf bytes")
+    monkeypatch.setattr(
+        enterprise_import,
+        "get_settings",
+        lambda: SimpleNamespace(UPLOAD_DIR=str(tmp_path / "uploads"), ENTERPRISE_SOURCE_ALLOWED_ROOTS=str(tmp_path)),
+    )
 
     result = await import_enterprise_source_batch(
         _FakeDb(),
@@ -107,6 +125,7 @@ async def test_import_enterprise_source_batch_dry_run_keeps_source_file(tmp_path
 
 @pytest.mark.asyncio
 async def test_import_enterprise_source_batch_dry_run_keeps_duplicate_logical_file(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -115,6 +134,11 @@ async def test_import_enterprise_source_batch_dry_run_keeps_duplicate_logical_fi
     source_file = nested / "重复资料.pdf"
     source_file.write_bytes(b"same bytes")
     duplicate_md5 = enterprise_import._file_md5(source_file)
+    monkeypatch.setattr(
+        enterprise_import,
+        "get_settings",
+        lambda: SimpleNamespace(UPLOAD_DIR=str(tmp_path / "uploads"), ENTERPRISE_SOURCE_ALLOWED_ROOTS=str(tmp_path)),
+    )
 
     result = await import_enterprise_source_batch(
         _FakeDb(existing_md5=[duplicate_md5]),
@@ -134,6 +158,45 @@ async def test_import_enterprise_source_batch_dry_run_keeps_duplicate_logical_fi
 
 
 @pytest.mark.asyncio
+async def test_repair_existing_target_storage_restores_missing_upload_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    upload_root = tmp_path / "uploads"
+    source_file = tmp_path / "source.pdf"
+    source_file.write_bytes(b"source bytes")
+    md5_hash = enterprise_import._file_md5(source_file)
+    storage_path = f"{md5_hash[:2]}/{md5_hash[2:4]}/{md5_hash}.pdf"
+    file = SimpleNamespace(
+        id=2831,
+        extension="pdf",
+        storage_path=storage_path,
+        size=0,
+        md5_hash=md5_hash,
+    )
+    db = _CommitOnlyDb()
+    monkeypatch.setattr(
+        enterprise_import,
+        "get_settings",
+        lambda: SimpleNamespace(UPLOAD_DIR=str(upload_root)),
+    )
+
+    repaired = await _repair_existing_target_storage(
+        db,
+        file=file,
+        source_path=source_file,
+        md5_hash=md5_hash,
+    )
+
+    assert repaired is True
+    assert (upload_root / storage_path).read_bytes() == b"source bytes"
+    assert file.storage_path == storage_path
+    assert file.size == len(b"source bytes")
+    assert file.md5_hash == md5_hash
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
 async def test_import_enterprise_source_batch_reuses_duplicate_content_without_new_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -145,6 +208,11 @@ async def test_import_enterprise_source_batch_reuses_duplicate_content_without_n
     source_file.write_bytes(b"same bytes")
     duplicate_md5 = enterprise_import._file_md5(source_file)
     calls: dict[str, object] = {}
+    monkeypatch.setattr(
+        enterprise_import,
+        "get_settings",
+        lambda: SimpleNamespace(UPLOAD_DIR=str(tmp_path / "uploads"), ENTERPRISE_SOURCE_ALLOWED_ROOTS=str(tmp_path)),
+    )
 
     async def fake_upload_file_from_path(
         _db,
@@ -208,3 +276,36 @@ async def test_import_enterprise_source_batch_reuses_duplicate_content_without_n
     assert result["items"][0]["duplicate_reused"] is True
     assert result["items"][0]["enqueued"] is False
     assert result["items"][0]["reason"] == "content already indexed"
+
+
+def test_enterprise_source_root_rejects_outside_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    allowed = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    allowed.mkdir()
+    outside.mkdir()
+    monkeypatch.setattr(
+        enterprise_import,
+        "get_settings",
+        lambda: SimpleNamespace(UPLOAD_DIR=str(tmp_path / "uploads"), ENTERPRISE_SOURCE_ALLOWED_ROOTS=str(allowed)),
+    )
+
+    with pytest.raises(Exception, match="outside allowed roots"):
+        enterprise_import.resolve_enterprise_source_root(str(outside))
+
+
+def test_iter_source_files_skips_symlink_escape(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    outside = tmp_path / "outside"
+    source_root.mkdir()
+    outside.mkdir()
+    outside_file = outside / "secret.pdf"
+    outside_file.write_bytes(b"secret")
+    symlink_file = source_root / "linked.pdf"
+    symlink_file.symlink_to(outside_file)
+    normal_file = source_root / "normal.pdf"
+    normal_file.write_bytes(b"normal")
+
+    assert _iter_source_files(source_root.resolve(), {"pdf"}) == [normal_file]

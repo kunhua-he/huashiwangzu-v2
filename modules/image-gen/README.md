@@ -55,9 +55,9 @@ Total public actions: 4
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
-| `generate` | `editor` | `aspect_ratio`, `count`, `prompt`, `size`, `steps`, `template` | 生成图片：根据提示词生成产品图、海报、配图等（多服务商模板，支持LiblibAI星流/GPTStore/占位图降级） |
+| `generate` | `editor` | `aspect_ratio`, `count`, `prompt`, `publish`, `size`, `steps`, `template` | 生成图片：根据提示词生成产品图、海报、配图等；Agent 默认写入工作区草稿，`publish=true` 才进入桌面文件系统 |
 | `list_templates` | `viewer` | none | 列出可用生图模板（服务商+模型），含凭据是否齐全标识 |
-| `transform` | `editor` | `aspect_ratio`, `count`, `mode`, `preserve_subject`, `prompt`, `size`, `source_file_id`, `steps`, `strength`, `template` | 图生图：读取已有图片file_id作为参考图，按提示词编辑、变体或风格化生成新图片 |
+| `transform` | `editor` | `aspect_ratio`, `count`, `mode`, `preserve_subject`, `prompt`, `publish`, `size`, `source_file_id`, `steps`, `strength`, `template` | 图生图：读取已有图片file_id作为参考图；Agent 默认写入工作区草稿，`publish=true` 才进入桌面文件系统 |
 | `usage_history` | `editor` | `limit` | 查询本人的生图历史记录，含积分消耗 |
 <!-- /DOCS-SYNC -->
 
@@ -77,6 +77,8 @@ Use `db_schema()` for live database details. This module must not directly read 
 ## File Access / Permission Boundary
 
 If this module consumes `file_id`, it must validate file access through framework file access helpers or an approved public capability before reading disk.
+
+Generated images follow the workspace boundary: capability calls default to `publish=false` and return `workspace_path`; explicit `publish=true` or the HTTP app flow creates framework file records visible to the desktop.
 
 ## Frontend / Backend Structure
 

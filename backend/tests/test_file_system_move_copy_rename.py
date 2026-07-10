@@ -1,6 +1,8 @@
+from uuid import uuid4
+
 import pytest
-from httpx import ASGITransport, AsyncClient
 from app.main import app
+from httpx import ASGITransport, AsyncClient
 
 SEED_PASS = "admin123"
 
@@ -78,3 +80,46 @@ async def test_copy_file_to_root_with_zero_folder_id():
         assert copied and copied[0]["parent_id"] is None
         await _del_file(client, headers, fid)
         await _del_file(client, headers, cid)
+
+@pytest.mark.asyncio
+async def test_viewer_can_manage_own_uploaded_file():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        headers = {"Authorization": f"Bearer {await _login(client, 'viewer')}"}
+        folder_name = f"viewer-manage-{uuid4().hex}"
+        fr = await client.post("/api/files/folder", json={"name": folder_name}, headers=headers)
+        assert fr.status_code == 200
+        folder_id = fr.json()["data"]["id"]
+
+        fid = await _upload(client, headers, f"viewer-manage-{uuid4().hex}.txt", b"viewer owns this")
+        resp = await client.post(
+            "/api/files/rename",
+            json={"type": "file", "id": fid, "new_name": f"viewer-renamed-{uuid4().hex}"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        resp = await client.post(
+            "/api/files/move",
+            json={"type": "file", "id": fid, "target_folder_id": folder_id},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        resp = await client.post(
+            "/api/files/copy",
+            json={"type": "file", "id": fid, "target_folder_id": None},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        cid = resp.json()["data"]["id"]
+
+        resp = await client.post("/api/files/delete", json={"type": "file", "id": fid}, headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        await _del_file(client, headers, cid)
+        await _del_folder(client, headers, folder_id)

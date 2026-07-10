@@ -11,6 +11,7 @@ import {
   triggerDesktopRefresh,
   uniqueRefs,
 } from '../utils/messageSanitizer'
+import { openDesktopFileFromToolResult } from '../utils/desktopFileOpen'
 import type {
   AgentEntryProps,
   ConvItem,
@@ -338,7 +339,7 @@ export function useAgentChat(props: AgentEntryProps) {
   }
 
   /** 处理 tool_result 事件：合并到同名 tool_call 卡片，找不到则独立 */
-  function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[], durationMs?: number, event?: Record<string, unknown>) {
+  function applyToolResultEvent(name: string, result: unknown, messages: MsgItem[], durationMs?: number, event?: Record<string, unknown>, autoOpen = false) {
     let merged = false
     const toolCallId = (event?.tool_call_id as string) || ''
     const toolStatus = (event?.status as string) || ''
@@ -377,6 +378,7 @@ export function useAgentChat(props: AgentEntryProps) {
         durationMs: durationMs || 0,
       } as MsgItem)
     }
+    if (autoOpen) openDesktopFileFromToolResult(result)
   }
 
   function applyToolProgressEvent(event: Record<string, unknown>, messages: MsgItem[]) {
@@ -885,7 +887,7 @@ export function useAgentChat(props: AgentEntryProps) {
                   applyToolProgressEvent(evt, currentWorkGroup.value?.items ?? messages.value)
                 } else if (etype === 'tool_result') {
                   ensureWorkGroup()
-                  applyToolResultEvent(evt.name as string || 'unknown', evt.result, currentWorkGroup.value?.items ?? messages.value, evt.duration_ms as number | undefined, evt)
+                  applyToolResultEvent(evt.name as string || 'unknown', evt.result, currentWorkGroup.value?.items ?? messages.value, evt.duration_ms as number | undefined, evt, true)
                       } else if (etype === 'token') {
                         if (activeAssistantStreamId.value) {
                           appendAssistantStream(activeAssistantStreamId.value, (evt.content as string) || '')

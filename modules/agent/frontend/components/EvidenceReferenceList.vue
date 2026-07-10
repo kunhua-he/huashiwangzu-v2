@@ -87,6 +87,7 @@ import {
   numericFileId,
   type EvidenceReference,
 } from './evidenceReferences'
+import { openDesktopFile, openDesktopFileUrl } from '../utils/desktopFileOpen'
 
 defineProps<{
   references: EvidenceReference[]
@@ -152,6 +153,8 @@ async function openReference(ref: EvidenceReference, index: number) {
   openError.value = ''
   try {
     if (ref.open_url) {
+      if (openDesktopFileUrl(ref.open_url)) return
+      if (ref.open_url.startsWith('app://file/open')) throw new Error('文件打开链接无效')
       await openBlobPath(ref.open_url.replace(/^\/api/, ''))
       return
     }
@@ -161,7 +164,13 @@ async function openReference(ref: EvidenceReference, index: number) {
     }
     const fileId = numericFileId(ref)
     if (fileId === null) throw new Error(evidenceReferenceOpenReason(ref))
-    await openBlobPath(`/files/preview/${fileId}`)
+    if (!openDesktopFile({
+      fileId,
+      fileName: ref.title || ref.source || '',
+      format: ref.format || '',
+    })) {
+      await openBlobPath(`/files/preview/${fileId}`)
+    }
   } catch (error: unknown) {
     openError.value = error instanceof Error ? error.message : '打开文件失败'
   } finally {

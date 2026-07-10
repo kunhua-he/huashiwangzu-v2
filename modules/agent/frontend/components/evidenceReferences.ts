@@ -9,6 +9,7 @@ export interface EvidenceReference {
   status?: string
   excerpt?: string
   file_id?: string | number | null
+  source_file_id?: string | number | null
   document_id?: string | number | null
   chunk_id?: string | number | null
   package_id?: string | number | null
@@ -17,6 +18,7 @@ export interface EvidenceReference {
   section?: string | null
   score?: string | number | null
   snippet?: string | null
+  format?: string | null
   download_url?: string | null
   open_url?: string | null
 }
@@ -89,6 +91,7 @@ function directReferenceFromRecord(record: Record<string, unknown>, context: Evi
     status: stringField(record, 'status'),
     excerpt: stringField(record, 'excerpt') || stringField(record, 'snippet') || memoryExcerptFromRecord(refKey, record),
     file_id: record.file_id as EvidenceReference['file_id'],
+    source_file_id: record.source_file_id as EvidenceReference['source_file_id'],
     document_id: record.document_id as EvidenceReference['document_id'],
     chunk_id: record.chunk_id as EvidenceReference['chunk_id'],
     package_id: record.package_id as EvidenceReference['package_id'],
@@ -97,6 +100,7 @@ function directReferenceFromRecord(record: Record<string, unknown>, context: Evi
     section: stringField(record, 'section'),
     score: record.score as EvidenceReference['score'],
     snippet: stringField(record, 'snippet') || stringField(record, 'excerpt'),
+    format: stringField(record, 'format') || stringField(record, 'extension'),
     download_url: stringField(record, 'download_url') || stringField(record, 'downloadUrl'),
     open_url: stringField(record, 'open_url') || stringField(record, 'openUrl'),
   }, context)
@@ -148,6 +152,7 @@ export function collectEvidenceReferences(
           source: key,
           source_module: stringField(value, 'source_module') || stringField(value, 'sourceModule') || sourceModuleFromRefKey(key),
           file_id: value.file_id as EvidenceReference['file_id'],
+          source_file_id: value.source_file_id as EvidenceReference['source_file_id'],
           document_id: value.document_id as EvidenceReference['document_id'],
           chunk_id: value.chunk_id as EvidenceReference['chunk_id'],
           package_id: value.package_id as EvidenceReference['package_id'],
@@ -156,6 +161,7 @@ export function collectEvidenceReferences(
           section: stringField(value, 'section'),
           score: value.score as EvidenceReference['score'],
           snippet: stringField(value, 'snippet') || stringField(value, 'excerpt'),
+          format: stringField(value, 'format') || stringField(value, 'extension'),
           download_url: stringField(value, 'download_url') || stringField(value, 'downloadUrl'),
           open_url: stringField(value, 'open_url') || stringField(value, 'openUrl'),
         }, context))
@@ -209,7 +215,7 @@ export function canOpenEvidenceReference(ref: EvidenceReference): boolean {
 }
 
 export function numericFileId(ref: EvidenceReference): number | null {
-  const fileId = Number(ref.ref_key === 'source_file_id' || ref.ref_key === 'file_id' ? ref.ref_id : (ref.file_id ?? ref.source))
+  const fileId = Number(ref.ref_key === 'source_file_id' || ref.ref_key === 'file_id' ? ref.ref_id : (ref.file_id ?? ref.source_file_id ?? ref.source))
   return Number.isInteger(fileId) && fileId > 0 ? fileId : null
 }
 

@@ -25,6 +25,7 @@ brief -> plan_task -> worktree_guard -> evidence -> edit -> verify -> docs_audit
 | Contracts | `routes`, `capabilities`, `db_schema`, `capability_contract_diff` |
 | Edits | `quick_fix_preview`, `quick_fix_patch`, batch/edit recipes |
 | Verification | `lint`, `run_test`, `probe`, `call_capability`, `tail_log` |
+| Runtime restart | `restart_backend` |
 | Docs guard | `docs_snapshot`, `docs_audit`, `docs_sync` |
 | Release | `smoke_all`, `release_gate`, `module_sandbox_matrix` |
 | Git workflow | `git_sync_plan`, `git_sync_workflow` |
@@ -88,6 +89,7 @@ Do not add large schemas or business implementation blocks directly to `server.p
 - `clear_log` truncates logs.
 - `sql` is read-only by design.
 - `probe` and `call_capability` hit the live backend.
+- `restart_backend` runs `zsh scripts/start_backend.sh --restart`, waits for health, and reports the active port. Run it after backend Python, router, capability, or toolkit-server changes before live verification.
 - `docs_sync` writes Markdown generated sections.
 - `git_sync_workflow` stages local changes, commits, pushes a branch, fast-forwards the target branch, and pushes the target branch. It never force-pushes, rebases, or resets; use `git_sync_plan` first when unsure.
 

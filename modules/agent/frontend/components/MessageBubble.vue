@@ -94,6 +94,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
 import GeneratedImageStrip, { type GeneratedImageEntry } from './GeneratedImageStrip.vue'
+import { openDesktopFileUrl } from '../utils/desktopFileOpen'
 
 interface RefItem {
   type: string
@@ -300,34 +301,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function openExternalLink(url: string) {
-  if (openInternalFileLink(url)) return
+  if (openDesktopFileUrl(url)) return
   window.open(url, '_blank')
-}
-
-function openInternalFileLink(url: string): boolean {
-  if (!url.startsWith('app://file/open')) return false
-  try {
-    const parsed = new URL(url)
-    const fileId = Number(parsed.searchParams.get('file_id') || parsed.searchParams.get('fileId'))
-    if (!Number.isInteger(fileId) || fileId <= 0) return true
-    const pageRaw = parsed.searchParams.get('page')
-    const page = pageRaw ? Number(pageRaw) : undefined
-    const payload: Record<string, unknown> = {
-      fileId,
-      fileName: parsed.searchParams.get('file_name') || parsed.searchParams.get('fileName') || '',
-      format: parsed.searchParams.get('format') || '',
-    }
-    if (Number.isInteger(page) && Number(page) > 0) payload.page = Number(page)
-    const bus = (window as unknown as { __DESKTOP_EVENT_BUS__?: { emit: (name: string, payload: Record<string, unknown>) => void } }).__DESKTOP_EVENT_BUS__
-    if (bus) {
-      bus.emit('file:open', payload)
-    } else {
-      window.dispatchEvent(new CustomEvent('desktop:open-file', { detail: payload }))
-    }
-    return true
-  } catch {
-    return true
-  }
 }
 
 function onSourceClick(e: MouseEvent) {

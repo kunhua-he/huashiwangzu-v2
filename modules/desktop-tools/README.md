@@ -51,7 +51,7 @@ Backend HTTP prefix: `/api/desktop-tools`
 <!-- DOCS-SYNC: section=public_actions -->
 Runtime authority: backend `register_capability(...)`. Discovery metadata: `manifest.public_actions`.
 
-Total public actions: 15
+Total public actions: 16
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
@@ -62,6 +62,7 @@ Total public actions: 15
 | `list_apps` | `viewer` | object | List desktop applications available to the current user. |
 | `list_files` | `viewer` | `folder_id`, `page`, `page_size` | List files in a folder (or root). Returns file name, type, size, and id. |
 | `list_versions` | `viewer` | `artifact_id` | List file versions (via artifact). |
+| `open_file` | `viewer` | `file_id`, `mode`, `page` | Open or preview a desktop file by file_id. Returns app://file/open plus a client_action for the desktop shell. |
 | `publish_artifact` | `editor` | `artifact_id`, `target_file_id` | Publish an artifact to the desktop as a file. |
 | `read_file` | `viewer` | `file_id` | Read file content by file_id. Routes to format parsers (PDF, DOCX, XLSX, etc.) and returns text content capped at 20000 chars with truncation metadata. |
 | `refresh` | `viewer` | object | Trigger desktop file list refresh. |

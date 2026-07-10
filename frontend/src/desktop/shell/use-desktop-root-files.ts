@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted, ref } from 'vue'
-import { fetchFileList } from '@/shared/api/desktop'
+import { fetchFileDetail, fetchFileList } from '@/shared/api/desktop'
 import type { FileEntry } from '@/shared/api/types'
 import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
 import { openAppById, openFileByRecord } from '@/desktop/app-registry/app-opener'
@@ -9,6 +9,8 @@ import { createLoadState, failLoading, finishLoading, startLoading } from '@/sha
 function displayName(file: FileEntry) {
   return file.is_folder ? String(file.file_name || '') : formatFileDisplayName(file.file_name, file.format)
 }
+
+type FileOpenEventPayload = { fileId: number; fileName?: string; format?: string; page?: number }
 
 export function useDesktopRootFiles() {
   const desktopFileList = ref<FileEntry[]>([])
@@ -44,14 +46,29 @@ export function useDesktopRootFiles() {
     openFileByRecord({ fileId: file.id, fileName: displayName(file), format: file.format })
   }
 
-  function openFileFromEvent(payload: { fileId: number; fileName?: string; format?: string; page?: number }) {
+  async function openFileFromEvent(payload: FileOpenEventPayload) {
     if (!payload?.fileId) return
+    let fileName = payload.fileName || ''
+    let format = payload.format || ''
+    if (!fileName || !format) {
+      try {
+        const detail = await fetchFileDetail(payload.fileId)
+        format = format || detail.extension || ''
+        fileName = fileName || formatFileDisplayName(detail.name, format)
+      } catch {
+        // Let openFileByRecord show the normal no-association warning below.
+      }
+    }
     openFileByRecord({
       fileId: payload.fileId,
-      fileName: payload.fileName || '',
-      format: payload.format || '',
+      fileName,
+      format,
       page: payload.page,
     })
+  }
+
+  function openFileFromWindowEvent(event: Event) {
+    void openFileFromEvent((event as CustomEvent<FileOpenEventPayload>).detail)
   }
 
   onMounted(() => {
@@ -60,12 +77,14 @@ export function useDesktopRootFiles() {
     on('file:uploaded', onFileRefresh)
     on('file:created', onFileRefresh)
     on('file:open', openFileFromEvent)
+    window.addEventListener('desktop:open-file', openFileFromWindowEvent)
   })
   onUnmounted(() => {
     off('refresh:file-list', onFileRefresh)
     off('file:uploaded', onFileRefresh)
     off('file:created', onFileRefresh)
     off('file:open', openFileFromEvent)
+    window.removeEventListener('desktop:open-file', openFileFromWindowEvent)
   })
 
   return { desktopFileList, desktopFileLoadState, loadDesktopFiles, openDesktopEntry }

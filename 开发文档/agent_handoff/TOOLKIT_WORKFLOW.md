@@ -30,6 +30,12 @@ Prefer exact patch tools when possible:
 - `call_capability(module, action, params)` for cross-module behavior.
 - `docs_audit` / `docs_sync` for documentation currentness.
 
+## Backend Restart
+
+- After backend Python, router, capability, registry, or toolkit-server changes, run `restart_backend()`.
+- `restart_backend()` is the MCP wrapper for `zsh scripts/start_backend.sh --restart`; use the script only when the MCP tool is unavailable.
+- Verify with `probe(method="GET", path="/api/health")` or a focused `call_capability(...)` before handing work back.
+
 ## Docs Guard Flow
 
 1. Run `docs_audit` after changing manifests, registered capabilities, routers, models, sandbox, release gate, or toolkit tools.

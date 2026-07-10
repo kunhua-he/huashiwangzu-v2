@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from app.core.exceptions import AppException, NotFound, ValidationError
 from app.database import AsyncSessionLocal
@@ -331,6 +332,69 @@ async def _get_file(params: dict, caller: str) -> dict:
 
 
 # =====================================================================
+# Capability: desktop:open_file
+# =====================================================================
+async def _open_file(params: dict, caller: str) -> dict:
+    """Resolve a desktop file into a client-side open action.
+
+    The backend validates access and returns a deterministic contract. The
+    desktop shell remains responsible for choosing the viewer/editor app from
+    its registered file associations and for enforcing app access checks.
+    """
+
+    owner_id = resolve_caller_user_id(caller)
+    file_id = _coerce_positive_int(params.get("file_id", 0), "file_id")
+    mode = str(params.get("mode") or "view").strip().lower()
+    if mode not in {"view", "edit"}:
+        raise ValidationError("mode must be 'view' or 'edit'")
+
+    page = None
+    if params.get("page") is not None:
+        page = _coerce_positive_int(params.get("page"), "page")
+
+    async with AsyncSessionLocal() as db:
+        file = await check_file_access(db, file_id, owner_id)
+
+    file_name = file.name or f"file-{file_id}"
+    file_format = (file.extension or "").lower()
+    query: dict[str, str] = {
+        "file_id": str(file.id),
+        "file_name": file_name,
+    }
+    if file_format:
+        query["format"] = file_format
+    if page is not None:
+        query["page"] = str(page)
+    open_url = f"app://file/open?{urlencode(query)}"
+
+    payload: dict[str, object] = {
+        "fileId": file.id,
+        "fileName": file_name,
+        "format": file_format,
+        "mode": mode,
+    }
+    if page is not None:
+        payload["page"] = page
+
+    return {
+        "file_id": file.id,
+        "file_name": file_name,
+        "format": file_format,
+        "mime_type": file.mime_type,
+        "size": file.size,
+        "folder_id": file.folder_id,
+        "mode": mode,
+        "open_url": open_url,
+        "preview_url": f"/api/files/preview/{file.id}",
+        "download_url": f"/api/files/download/{file.id}",
+        "client_action": {
+            "type": "open_file",
+            "payload": payload,
+        },
+    }
+
+
+# =====================================================================
 # Capability: desktop:create_file
 # =====================================================================
 async def _create_file(params: dict, caller: str) -> dict:
@@ -647,6 +711,25 @@ register_capability(
 )
 
 register_capability(
+    "desktop-tools", "open_file", _open_file,
+    description=(
+        "Open or preview a desktop file by file_id. Validates file access and returns "
+        "an app://file/open URL plus a client_action for the desktop shell."
+    ),
+    brief="打开桌面文件",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "integer", "description": "File ID"},
+            "mode": {"type": "string", "description": "Open mode: view or edit", "default": "view"},
+            "page": {"type": "integer", "description": "Optional page number"},
+        },
+        "required": ["file_id"],
+    },
+    min_role="viewer",
+)
+
+register_capability(
     "desktop-tools", "create_file", _create_file,
     description="Create a new file with text content. For binary content, use artifact-based replace.",
     brief="创建文件",
@@ -817,6 +900,12 @@ class ReadFileRequest(BaseModel):
     file_id: int
 
 
+class OpenFileRequest(BaseModel):
+    file_id: int
+    mode: str = "view"
+    page: int | None = None
+
+
 @router.get("/health")
 async def health():
     return ApiResponse(data={"module": "desktop-tools", "status": "ok"})
@@ -846,6 +935,15 @@ async def http_read_file(
     user: User = Depends(require_permission("viewer")),
 ):
     result = await _read_file(body.model_dump(), f"user:{user.id}")
+    return ApiResponse(data=result)
+
+
+@router.post("/open-file")
+async def http_open_file(
+    body: OpenFileRequest,
+    user: User = Depends(require_permission("viewer")),
+):
+    result = await _open_file(body.model_dump(), f"user:{user.id}")
     return ApiResponse(data=result)
 
 

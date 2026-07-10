@@ -6,7 +6,7 @@
       type="button"
       class="generated-image-button"
       :title="image.name || `file #${image.file_id}`"
-      @click="openImage(image.file_id)"
+      @click="openImage(image)"
     >
       <img
         v-if="imageUrls[image.file_id]"
@@ -22,11 +22,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { apiFetchRaw } from '../api'
+import { openDesktopFile } from '../utils/desktopFileOpen'
 
 export interface GeneratedImageEntry {
   type?: string
   file_id: number
   name?: string
+  format?: string
   [key: string]: unknown
 }
 
@@ -59,8 +61,13 @@ async function loadImages() {
   imageUrls.value = nextUrls
 }
 
-function openImage(fileId: number) {
-  const url = imageUrls.value[fileId]
+function openImage(image: GeneratedImageEntry) {
+  if (openDesktopFile({
+    fileId: image.file_id,
+    fileName: image.name || '',
+    format: image.format || image.name?.split('.').pop() || 'png',
+  })) return
+  const url = imageUrls.value[image.file_id]
   if (!url) return
   window.open(url, '_blank', 'noopener')
 }

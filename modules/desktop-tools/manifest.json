@@ -122,6 +122,31 @@
       "min_role": "viewer"
     },
     {
+      "action": "open_file",
+      "description": "Open or preview a desktop file by file_id. Returns app://file/open plus a client_action for the desktop shell.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "integer",
+            "description": "File ID"
+          },
+          "mode": {
+            "type": "string",
+            "description": "Open mode: view or edit"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Optional page number"
+          }
+        },
+        "required": [
+          "file_id"
+        ]
+      },
+      "min_role": "viewer"
+    },
+    {
       "action": "create_file",
       "description": "Create a new file with text content.",
       "parameters": {

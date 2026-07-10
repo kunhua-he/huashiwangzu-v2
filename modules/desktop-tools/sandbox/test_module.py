@@ -38,6 +38,7 @@ EXPECTED_ACTIONS = {
     "read_file",
     "list_apps",
     "get_file",
+    "open_file",
     "create_file",
     "replace_file",
     "delete_file",
@@ -99,7 +100,11 @@ def test_registered_parameter_metadata() -> None:
 
     search_props = by_action["search_files"]["parameters"]["properties"]
     assert set(search_props) == {"keyword", "extension", "page", "page_size"}
-    print("  [CAPABILITY PARAMS] list/search metadata keys: OK")
+
+    open_props = by_action["open_file"]["parameters"]["properties"]
+    assert set(open_props) == {"file_id", "mode", "page"}
+    assert by_action["open_file"]["parameters"]["required"] == ["file_id"]
+    print("  [CAPABILITY PARAMS] list/search/open metadata keys: OK")
 
 
 def test_parser_map_completeness() -> None:

@@ -167,17 +167,55 @@ def _extract_file_refs(name: str, result: dict) -> list[dict]:
     """Extract references from file-reading tools (desktop-tools, docs-open, terminal-tools)."""
     if not isinstance(result, dict):
         return []
+
+    file_id = result.get("file_id")
+    file_name = result.get("file_name") or result.get("name") or result.get("title") or ""
+    file_format = result.get("format") or result.get("extension") or ""
+    open_url = result.get("open_url") or ""
+    if file_id and (file_name or open_url):
+        return [{
+            "type": "file",
+            "title": str(file_name or f"file #{file_id}"),
+            "source": str(file_name or ""),
+            "excerpt": "",
+            "file_id": file_id,
+            "format": file_format,
+            "open_url": open_url,
+            "download_url": result.get("download_url") or f"/api/files/download/{file_id}",
+        }]
+
     # desktop-tools__read_file
     file_info = result.get("file")
     if isinstance(file_info, dict):
         filename = file_info.get("name") or ""
         if filename:
-            return [{"type": "file", "title": filename, "source": filename, "excerpt": ""}]
+            nested_file_id = file_info.get("file_id")
+            extension = file_info.get("extension") or ""
+            ref = {"type": "file", "title": filename, "source": filename, "excerpt": ""}
+            if nested_file_id:
+                query = {"file_id": str(nested_file_id), "file_name": str(filename)}
+                if extension:
+                    query["format"] = str(extension)
+                ref.update({
+                    "file_id": nested_file_id,
+                    "format": extension,
+                    "open_url": f"app://file/open?{urlencode(query)}",
+                    "download_url": f"/api/files/download/{nested_file_id}",
+                })
+            return [ref]
 
     # docs-open results
     title = result.get("title") or ""
     if title:
-        return [{"type": "file", "title": title, "source": title, "excerpt": ""}]
+        ref = {"type": "file", "title": title, "source": title, "excerpt": ""}
+        if result.get("file_id"):
+            ref.update({
+                "file_id": result.get("file_id"),
+                "format": result.get("mime") or result.get("type") or "",
+                "open_url": result.get("open_url") or "",
+                "download_url": result.get("download_url") or f"/api/files/download/{result.get('file_id')}",
+            })
+        return [ref]
 
     # terminal-tools__read_file
     path = result.get("path") or ""

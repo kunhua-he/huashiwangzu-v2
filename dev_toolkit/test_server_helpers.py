@@ -90,6 +90,16 @@ def test_release_gate_schema_exposes_mode() -> None:
     assert properties["mode"]["enum"] == ["preflight", "full"]
 
 
+def test_restart_backend_tools_are_discoverable() -> None:
+    tools = {tool.name: tool for tool in core_tools.tool_definitions()}
+
+    assert "restart_backend" in tools
+    assert "_restart_backend" in tools
+    assert core_tools.handles_tool("restart_backend") is True
+    assert core_tools.handles_tool("_restart_backend") is True
+    assert "scripts/start_backend.sh --restart" in tools["restart_backend"].description
+
+
 def test_release_gate_rejects_invalid_mode() -> None:
     result = json.loads(anyio.run(server._release_gate, False, "slow"))
 

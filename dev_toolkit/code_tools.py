@@ -52,7 +52,26 @@ def resolve_repo_path(repo_root: Path, path: str, *, base_dir: Path | None = Non
 
 
 def split_path_list(raw: str) -> list[str]:
-    return [item.strip() for item in re.split(r"[,\n]", raw or "") if item.strip()]
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+
+    items: list[str] = []
+    for chunk in re.split(r"[,\n]", raw):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            parts = shlex.split(chunk)
+        except ValueError:
+            parts = [chunk]
+        items.extend(part.strip() for part in parts if part.strip())
+    return items
 
 
 def normalize_pytest_targets(repo_root: Path, target: str) -> list[str]:
@@ -199,7 +218,13 @@ async def lint(run_command_json, repo_root: Path, ruff_cli: str, path: str, diff
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-async def run_test(run_command_json, repo_root: Path, target: str, timeout: int = 120) -> str:
+async def run_test(
+    run_command_json,
+    repo_root: Path,
+    target: str,
+    timeout: int = 120,
+    env: dict[str, str] | None = None,
+) -> str:
     normalized_targets = normalize_pytest_targets(repo_root, target)
     backend_dir = repo_root / "backend"
     command_targets = pytest_targets_for_command(backend_dir, normalized_targets)
@@ -211,12 +236,16 @@ async def run_test(run_command_json, repo_root: Path, target: str, timeout: int 
         if os.environ.get("PYTHONPATH"):
             pythonpath = f"{pythonpath}:{os.environ['PYTHONPATH']}"
         cmd = ["env", f"PYTHONPATH={pythonpath}", *cmd]
-    result = await run_command_json(cmd, cwd=cwd, timeout=timeout)
+    if env:
+        result = await run_command_json(cmd, cwd=cwd, timeout=timeout, env={**os.environ, **env})
+    else:
+        result = await run_command_json(cmd, cwd=cwd, timeout=timeout)
     return json.dumps({
         "success": result.get("success", False),
         "target": target,
         "normalized_targets": normalized_targets,
         "command": cmd,
+        "env_keys": sorted(env.keys()) if env else [],
         "cwd": result.get("cwd"),
         "duration_seconds": result.get("duration_seconds"),
         "returncode": result.get("returncode"),

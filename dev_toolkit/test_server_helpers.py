@@ -251,6 +251,41 @@ def test_lint_accepts_comma_and_newline_separated_paths() -> None:
     assert calls[1]["cmd"][-1].endswith("dev_toolkit/agent_board_tools.py")
 
 
+def test_split_path_list_accepts_spaces_commas_newlines_and_json() -> None:
+    assert code_tools.split_path_list("dev_toolkit/a.py dev_toolkit/b.py,\ndev_toolkit/c.py") == [
+        "dev_toolkit/a.py",
+        "dev_toolkit/b.py",
+        "dev_toolkit/c.py",
+    ]
+    assert code_tools.split_path_list('["dev_toolkit/a.py", "dev_toolkit/b.py"]') == [
+        "dev_toolkit/a.py",
+        "dev_toolkit/b.py",
+    ]
+
+
+def test_run_test_forwards_env_overrides() -> None:
+    calls = []
+
+    async def fake_run_command_json(cmd, *, cwd: Path, timeout: int = 120, env: dict[str, str] | None = None):
+        calls.append({"cmd": cmd, "cwd": cwd, "timeout": timeout, "env": env})
+        return {"success": True, "returncode": 0, "stdout": "ok", "stderr": ""}
+
+    async def run() -> dict:
+        raw = await code_tools.run_test(
+            fake_run_command_json,
+            server.REPO_ROOT,
+            "backend/tests/test_config_paths.py",
+            env={"JWT_SECRET": "test-secret"},
+        )
+        return json.loads(raw)
+
+    data = anyio.run(run)
+
+    assert data["success"] is True
+    assert data["env_keys"] == ["JWT_SECRET"]
+    assert calls[0]["env"]["JWT_SECRET"] == "test-secret"
+
+
 def test_finish_task_forwards_allowed_prefixes_to_worktree_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
 
@@ -342,6 +377,40 @@ def test_finish_task_collects_timing_data_and_test_duration(monkeypatch: pytest.
     assert data["test_timing"]["summary"] == {"count": 2, "timed_count": 2, "total_duration_seconds": 2.0}
 
 
+def test_finish_task_adds_default_jwt_secret_and_custom_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = {}
+
+    async def fake_git_status_summary(*_args, **_kwargs) -> dict:
+        return {"branch": "codex/test", "is_main": False, "dirty_count": 0, "sample": []}
+
+    async def fake_worktree_guard(*_args, **_kwargs) -> str:
+        return json.dumps({"success": True, "outside_allowed": []})
+
+    async def fake_code_run_test(_run_command_json, _repo_root, target: str, env: dict[str, str] | None = None) -> str:
+        seen["target"] = target
+        seen["env"] = env
+        return json.dumps({"success": True, "target": target, "duration_seconds": 0.2})
+
+    monkeypatch.setattr(server, "git_status_summary", fake_git_status_summary)
+    monkeypatch.setattr(server, "worktree_guard", fake_worktree_guard)
+    monkeypatch.setattr(server, "code_run_test", fake_code_run_test)
+
+    async def run() -> dict:
+        raw = await server._finish_task(
+            "finish with env",
+            test_targets="backend/tests/test_config_paths.py",
+            test_env_json='{"CUSTOM_FLAG":"1"}',
+        )
+        return json.loads(raw)
+
+    data = anyio.run(run)
+
+    assert data["success"] is True
+    assert seen["env"] == {"CUSTOM_FLAG": "1", "JWT_SECRET": "test-secret"}
+    assert data["tests"][0]["finish_task_env_keys"] == ["CUSTOM_FLAG", "JWT_SECRET"]
+    assert data["tests"][0]["finish_task_default_env"] == {"JWT_SECRET": True}
+
+
 def test_finish_task_schema_exposes_baseline_parameters() -> None:
     finish_tool = next(tool for tool in core_tools.tool_definitions() if tool.name == "finish_task")
     properties = finish_tool.inputSchema["properties"]
@@ -349,6 +418,22 @@ def test_finish_task_schema_exposes_baseline_parameters() -> None:
     assert "baseline_paths" in properties
     assert "baseline_status_json" in properties
     assert "timing_data" in properties
+    assert "test_env_json" in properties
+
+
+def test_auth_context_payload_keeps_identity_without_token() -> None:
+    payload = server._auth_context_payload({
+        "requested_role": "viewer",
+        "account_role": "admin",
+        "token": "secret",
+        "user": {"id": 7, "username": "admin", "role": "admin", "display_name": "Admin", "email": "a@example.com"},
+    })
+
+    assert payload == {
+        "requested_role": "viewer",
+        "account_role": "admin",
+        "user": {"id": 7, "username": "admin", "role": "admin", "display_name": "Admin"},
+    }
 
 
 def test_normalize_pytest_targets_accepts_module_repo_path() -> None:

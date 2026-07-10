@@ -65,7 +65,7 @@ class CoreToolContext:
     capabilities: Callable[[str], Awaitable[str]]
     db_schema: Callable[[str], Awaitable[str]]
     plan_task: Callable[[str, str, str], Awaitable[str]]
-    finish_task: Callable[[str, str, str, str, str, str, str, str, str, str, str], Awaitable[str]]
+    finish_task: Callable[[str, str, str, str, str, str, str, str, str, str, str, str], Awaitable[str]]
     knowledge_noise_report: Callable[[], dict[str, Any]]
     knowledge_cleanup_noise: Callable[[], dict[str, Any]]
     workspace_audit: Callable[[], Awaitable[dict[str, Any]]]
@@ -282,8 +282,13 @@ def tool_definitions() -> list[Any]:
                 "properties": {
                     "summary": {"type": "string", "description": "本次任务一句话摘要"},
                     "agent": {"type": "string", "description": "执行 agent 标识", "default": ""},
-                    "lint_paths": {"type": "string", "description": "逗号或换行分隔的 Python 文件路径", "default": ""},
+                    "lint_paths": {"type": "string", "description": "Python 文件路径，支持空格、逗号、换行或 JSON list", "default": ""},
                     "test_targets": {"type": "string", "description": "pytest 目标，支持多个空格分隔", "default": ""},
+                    "test_env_json": {
+                        "type": "string",
+                        "description": "可选测试环境变量 JSON object；finish_task 跑 pytest 时默认会补 JWT_SECRET=test-secret",
+                        "default": "",
+                    },
                     "module_key": {"type": "string", "description": "模块 key，用于边界校验", "default": ""},
                     "allowed_prefixes": {
                         "type": "string",
@@ -445,6 +450,7 @@ async def handle_tool(context: CoreToolContext, name: str, arguments: dict[str, 
             arguments.get("agent", ""),
             arguments.get("lint_paths", ""),
             arguments.get("test_targets", ""),
+            arguments.get("test_env_json", ""),
             arguments.get("module_key", ""),
             arguments.get("allowed_prefixes", ""),
             arguments.get("baseline_paths", ""),

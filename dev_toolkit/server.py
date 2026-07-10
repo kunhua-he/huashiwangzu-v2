@@ -34,6 +34,7 @@ try:
     from dev_toolkit.code_tools import normalize_pytest_targets as _normalize_pytest_targets_raw
     from dev_toolkit.code_tools import resolve_repo_path as _resolve_repo_path_raw
     from dev_toolkit.code_tools import run_test as code_run_test
+    from dev_toolkit.code_tools import split_path_list as _split_path_list_raw
     from dev_toolkit.code_tools import tool_definitions as code_tool_definitions
     from dev_toolkit.config_loader import load_config
     from dev_toolkit.contract_tools import handle_tool as contract_handle_tool
@@ -116,6 +117,7 @@ except ModuleNotFoundError:
     from code_tools import normalize_pytest_targets as _normalize_pytest_targets_raw
     from code_tools import resolve_repo_path as _resolve_repo_path_raw
     from code_tools import run_test as code_run_test
+    from code_tools import split_path_list as _split_path_list_raw
     from code_tools import tool_definitions as code_tool_definitions
     from config_loader import load_config
     from contract_tools import handle_tool as contract_handle_tool
@@ -216,6 +218,45 @@ def _resolve_repo_path(path: str) -> Path:
     return _resolve_repo_path_raw(REPO_ROOT, path)
 
 
+def _split_path_list(raw: str) -> list[str]:
+    return _split_path_list_raw(raw)
+
+
+def _visible_env_keys(env: dict[str, str] | None) -> list[str]:
+    if not env:
+        return []
+    return sorted(key for key, value in env.items() if os.environ.get(key) != value)
+
+
+def _parse_test_env(test_env_json: str) -> dict[str, str]:
+    if not test_env_json.strip():
+        return {}
+    try:
+        parsed = json.loads(test_env_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"test_env_json must be a JSON object: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("test_env_json must be a JSON object")
+    return {str(key): str(value) for key, value in parsed.items() if str(key).strip()}
+
+
+def _auth_context_payload(auth: dict[str, Any]) -> dict[str, Any]:
+    user = auth.get("user")
+    user_payload = None
+    if isinstance(user, dict):
+        user_payload = {
+            "id": user.get("id"),
+            "username": user.get("username"),
+            "role": user.get("role"),
+            "display_name": user.get("display_name"),
+        }
+    return {
+        "requested_role": auth.get("requested_role"),
+        "account_role": auth.get("account_role"),
+        "user": user_payload,
+    }
+
+
 def _is_knowledge_noise_name(filename: str) -> bool:
     """Check if a filename looks like a test/smoke/validation artifact."""
     return bool(MEMORY_NOISE_PATTERN.search(filename))
@@ -235,6 +276,7 @@ async def _run_command_json(
     *,
     cwd: Path,
     timeout: int = 120,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
     proc: asyncio.subprocess.Process | None = None
@@ -244,6 +286,7 @@ async def _run_command_json(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env=env,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
@@ -255,6 +298,7 @@ async def _run_command_json(
             "timeout_seconds": timeout,
             "command": cmd,
             "cwd": str(cwd),
+            "env_keys": _visible_env_keys(env),
             "duration_seconds": round(time.time() - started, 3),
             "stdout": "",
             "stderr": "",
@@ -270,6 +314,7 @@ async def _run_command_json(
         "returncode": proc.returncode,
         "command": cmd,
         "cwd": str(cwd),
+        "env_keys": _visible_env_keys(env),
         "duration_seconds": round(time.time() - started, 3),
         "stdout": out,
         "stderr": err,
@@ -288,9 +333,13 @@ EMBEDDING_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 _token_cache: dict[str, dict[str, Any]] = {}  # role -> {"token": str, "expires_at": float}
 
+
+def _effective_account_role(role: str) -> str:
+    return role if role in ACCOUNTS else "admin"
+
+
 async def _ensure_token(role: str = "admin", *, force_refresh: bool = False) -> str:
-    if role not in ACCOUNTS:
-        role = "admin"
+    role = _effective_account_role(role)
     now = time.time()
     cached = _token_cache.get(role)
     if not force_refresh and cached and cached["expires_at"] > now + 60:
@@ -309,16 +358,38 @@ async def _ensure_token(role: str = "admin", *, force_refresh: bool = False) -> 
         return token
 
 
-async def _ensure_live_token(role: str = "admin") -> str:
-    token = await _ensure_token(role, force_refresh=True)
+async def _current_user_for_token(token: str) -> dict[str, Any] | None:
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
         resp = await client.get("/api/current-user", headers=headers)
-        if resp.status_code == 200:
-            return token
-    token = await _ensure_token(role, force_refresh=True)
-    _token_cache.pop(role, None)
-    return token
+    if resp.status_code != 200:
+        return None
+    try:
+        payload = resp.json()
+    except ValueError:
+        return None
+    data = payload.get("data", payload) if isinstance(payload, dict) else payload
+    return data if isinstance(data, dict) else None
+
+
+async def _ensure_live_auth(role: str = "admin") -> dict[str, Any]:
+    effective_role = _effective_account_role(role)
+    token = await _ensure_token(effective_role, force_refresh=True)
+    current_user = await _current_user_for_token(token)
+    if current_user is None:
+        _token_cache.pop(effective_role, None)
+        token = await _ensure_token(effective_role, force_refresh=True)
+        current_user = await _current_user_for_token(token)
+    return {
+        "requested_role": role,
+        "account_role": effective_role,
+        "token": token,
+        "user": current_user,
+    }
+
+
+async def _ensure_live_token(role: str = "admin") -> str:
+    return str((await _ensure_live_auth(role))["token"])
 
 # ── SQL 只读执行器 ──────────────────────────────────────────────────
 
@@ -1210,6 +1281,7 @@ async def _finish_task(
     agent: str = "",
     lint_paths: str = "",
     test_targets: str = "",
+    test_env_json: str = "",
     module_key: str = "",
     allowed_prefixes: str = "",
     baseline_paths: str = "",
@@ -1283,7 +1355,7 @@ async def _finish_task(
             + f" | [边界违规] outside_allowed={report['boundary_check'].get('outside_allowed', [])[:10]}"
         )
 
-    for item in [p.strip() for p in re.split(r"[,\n]", lint_paths) if p.strip()]:
+    for item in _split_path_list(lint_paths):
         try:
             lint_result = json.loads(await code_lint(_run_command_json, REPO_ROOT, _RUFF_CLI, item))
         except json.JSONDecodeError as exc:
@@ -1293,7 +1365,15 @@ async def _finish_task(
             report["success"] = False
     if test_targets.strip():
         try:
-            test_result = json.loads(await code_run_test(_run_command_json, REPO_ROOT, test_targets))
+            test_env = _parse_test_env(test_env_json)
+            test_env.setdefault("JWT_SECRET", "test-secret")
+            test_result = json.loads(await code_run_test(_run_command_json, REPO_ROOT, test_targets, env=test_env))
+            test_result["finish_task_env_keys"] = sorted(test_env)
+            test_result["finish_task_default_env"] = {
+                "JWT_SECRET": test_env.get("JWT_SECRET") == "test-secret",
+            }
+        except ValueError as exc:
+            test_result = {"success": False, "target": test_targets, "error": str(exc)}
         except json.JSONDecodeError as exc:
             test_result = {"success": False, "target": test_targets, "error": str(exc)}
         report["tests"].append(test_result)
@@ -1584,7 +1664,8 @@ async def _probe(
     json_path: str | None = None,
 ) -> str:
     """打后端任意接口, 自动登录."""
-    token = await _ensure_live_token(role)
+    auth = await _ensure_live_auth(role)
+    token = str(auth["token"])
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{BACKEND_BASE}{path}"
     async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
@@ -1599,7 +1680,11 @@ async def _probe(
             data = resp.json()
         except Exception:
             data = resp.text
-        result = {"status_code": resp.status_code, "data": data}
+        result = {
+            "status_code": resp.status_code,
+            "data": data,
+            "_toolkit_auth": _auth_context_payload(auth),
+        }
         options = ResponseShapeOptions(
             selector=selector or json_path,
             max_items=max_items,
@@ -1620,7 +1705,8 @@ async def _call_capability(
     json_path: str | None = None,
 ) -> str:
     """调模块能力(跨模块调用入口)."""
-    token = await _ensure_live_token(role)
+    auth = await _ensure_live_auth(role)
+    token = str(auth["token"])
     body = {
         "target_module": module,
         "action": action,
@@ -1634,8 +1720,9 @@ async def _call_capability(
 
     resp = await _post_with_token(token)
     if resp.status_code == 401:
-        token = await _ensure_token(role, force_refresh=True)
-        _token_cache.pop(role, None)
+        _token_cache.pop(str(auth["account_role"]), None)
+        auth = await _ensure_live_auth(role)
+        token = str(auth["token"])
         resp = await _post_with_token(token)
 
     try:
@@ -1646,6 +1733,7 @@ async def _call_capability(
         "status_code": resp.status_code,
         "data": data,
         "target": {"module": module, "action": action, "role": role},
+        "_toolkit_auth": _auth_context_payload(auth),
     }
     options = ResponseShapeOptions(
         selector=selector or json_path,

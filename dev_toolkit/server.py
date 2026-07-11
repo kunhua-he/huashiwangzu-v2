@@ -15,6 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import httpx
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
@@ -28,6 +32,7 @@ try:
     from dev_toolkit.asset_lifecycle_tools import handle_tool as asset_lifecycle_handle_tool
     from dev_toolkit.asset_lifecycle_tools import handles_tool as asset_lifecycle_handles_tool
     from dev_toolkit.asset_lifecycle_tools import tool_definitions as asset_lifecycle_tool_definitions
+    from dev_toolkit.auth_token import issue_toolkit_token
     from dev_toolkit.code_tools import handle_tool as code_handle_tool
     from dev_toolkit.code_tools import handles_tool as code_handles_tool
     from dev_toolkit.code_tools import lint as code_lint
@@ -111,6 +116,7 @@ except ModuleNotFoundError:
     from asset_lifecycle_tools import handle_tool as asset_lifecycle_handle_tool
     from asset_lifecycle_tools import handles_tool as asset_lifecycle_handles_tool
     from asset_lifecycle_tools import tool_definitions as asset_lifecycle_tool_definitions
+    from auth_token import issue_toolkit_token
     from code_tools import handle_tool as code_handle_tool
     from code_tools import handles_tool as code_handles_tool
     from code_tools import lint as code_lint
@@ -190,7 +196,6 @@ except ModuleNotFoundError:
 
 # ── 配置 ──────────────────────────────────────────────────────────────
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG = load_config(REPO_ROOT)
 
 BACKEND_BASE = CONFIG["backend_base_url"]
@@ -344,18 +349,14 @@ async def _ensure_token(role: str = "admin", *, force_refresh: bool = False) -> 
     cached = _token_cache.get(role)
     if not force_refresh and cached and cached["expires_at"] > now + 60:
         return cached["token"]
-    acct = ACCOUNTS[role]
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
-        resp = await client.post("/api/login", json={
-            "username": acct["username"],
-            "password": acct["password"],
-        })
-        data = resp.json()
-        token = data.get("data", data).get("access_token") or data.get("access_token")
-        if not token:
-            raise RuntimeError(f"登录失败 {role}: {data}")
-        _token_cache[role] = {"token": token, "expires_at": now + 3600}
-        return token
+    token, user, expires_at = issue_toolkit_token(
+        REPO_ROOT,
+        role=role,
+        accounts=ACCOUNTS,
+        db_dsn=DB_DSN,
+    )
+    _token_cache[role] = {"token": token, "expires_at": expires_at, "user": user}
+    return token
 
 
 async def _current_user_for_token(token: str) -> dict[str, Any] | None:
@@ -623,10 +624,8 @@ async def _workspace_audit() -> dict[str, Any]:
         "framework_file_shares",
         "framework_desktop_states",
         "framework_file_recycle_items",
-        "framework_file_json_packages",
-        "framework_file_json_versions",
-        "framework_file_json_patches",
-        "framework_file_json_tasks",
+        "framework_content_packages",
+        "framework_content_package_versions",
         "kb_catalogs",
         "kb_documents",
         "kb_chunks",
@@ -672,27 +671,15 @@ async def _workspace_reset(confirm: str, scope: str = "all") -> dict[str, Any]:
     if scope not in {"all", "desktop", "knowledge", "files"}:
         return {"error": "scope must be one of all/desktop/knowledge/files", "rejected": True}
 
-    deleted_files: list[str] = []
-    if scope in {"all", "files", "knowledge"} and UPLOADS_DIR.exists():
-        for path in UPLOADS_DIR.rglob("*"):
-            if not path.is_file():
-                continue
-            try:
-                path.unlink()
-                deleted_files.append(str(path.relative_to(REPO_ROOT)))
-            except FileNotFoundError:
-                continue
-
     table_groups = {
         "files": [
             "framework_file_shares",
             "framework_file_recycle_items",
-            "framework_file_json_packages",
-            "framework_file_json_versions",
-            "framework_file_json_patches",
-            "framework_file_json_tasks",
             "framework_file_items",
             "framework_file_folders",
+            "framework_desktop_states",
+        ],
+        "desktop": [
             "framework_desktop_states",
         ],
         "knowledge": [
@@ -722,10 +709,35 @@ async def _workspace_reset(confirm: str, scope: str = "all") -> dict[str, Any]:
         tables_to_truncate = table_groups[scope]
 
     if tables_to_truncate:
+        quoted = ", ".join(f"'{table}'" for table in tables_to_truncate)
+        exists_sql = (
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' "
+            f"AND table_name IN ({quoted});"
+        )
+        code, out, err = await _run_psql(exists_sql, timeout=30)
+        if code != 0:
+            return {"error": err.strip() or out.strip() or "table validation failed", "rejected": True}
+        existing_tables = {line.strip() for line in out.splitlines() if line.strip() in tables_to_truncate}
+        missing_tables = [table for table in tables_to_truncate if table not in existing_tables]
+        if missing_tables:
+            return {"error": f"missing tables: {', '.join(missing_tables)}", "rejected": True}
+
         sql = "TRUNCATE TABLE " + ", ".join(tables_to_truncate) + " RESTART IDENTITY CASCADE;"
         code, out, err = await _run_psql(sql, timeout=60)
         if code != 0:
             return {"error": err.strip() or out.strip() or "reset failed", "rejected": True}
+
+    deleted_files: list[str] = []
+    if scope in {"all", "files", "knowledge"} and UPLOADS_DIR.exists():
+        for path in UPLOADS_DIR.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                path.unlink()
+                deleted_files.append(str(path.relative_to(REPO_ROOT)))
+            except FileNotFoundError:
+                continue
 
     return {
         "success": True,
@@ -747,7 +759,8 @@ async def _restart_backend() -> dict[str, Any]:
     started_at = time.monotonic()
     start_script = REPO_ROOT / "scripts" / "start_backend.sh"
     result = {
-        "status": "ok",
+        "success": False,
+        "status": "error",
         "restarted": False,
         "port": 0,
         "health": "",
@@ -774,23 +787,35 @@ async def _restart_backend() -> dict[str, Any]:
         except (ValueError, OSError):
             port = 33000
 
+    result["port"] = port
+    result["output_tail"] = output[-2000:]
+    if proc.returncode != 0:
+        result["health"] = "not_checked"
+        result["duration_seconds"] = round(time.monotonic() - started_at, 3)
+        result["error"] = "Backend restart script failed"
+        return result
+
     health = "unknown"
+    health_ok = False
     for _ in range(15):
         try:
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=5, trust_env=False) as c:
                 r = await c.get("/api/health")
                 health = r.text[:300]
                 if r.status_code == 200:
+                    health_ok = True
                     break
         except Exception:
             pass
         await asyncio.sleep(1.0)
 
-    result["restarted"] = proc.returncode == 0
-    result["port"] = port
+    result["restarted"] = True
+    result["success"] = health_ok
+    result["status"] = "ok" if health_ok else "error"
     result["health"] = health
     result["duration_seconds"] = round(time.monotonic() - started_at, 3)
-    result["output_tail"] = output[-2000:]
+    if not health_ok:
+        result["error"] = "Backend restart completed but health check did not pass"
     return result
 
 

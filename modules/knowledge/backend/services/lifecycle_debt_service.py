@@ -55,18 +55,18 @@ def _validate_reason(reason: str | None) -> str | None:
 
 async def _source_unavailable_rows(
     db: AsyncSession,
-    owner_id: int,
+    owner_id: int | None,
     *,
     reason: str | None = None,
 ) -> list[tuple[KbDocument, File | None, str]]:
     reason = _validate_reason(reason)
+    filters = [KbDocument.deleted.is_(False)]
+    if owner_id is not None:
+        filters.append(KbDocument.owner_id == owner_id)
     result = await db.execute(
         select(KbDocument, File)
         .outerjoin(File, File.id == KbDocument.file_id)
-        .where(
-            KbDocument.owner_id == owner_id,
-            KbDocument.deleted.is_(False),
-        )
+        .where(*filters)
         .order_by(KbDocument.id.desc())
     )
     rows: list[tuple[KbDocument, File | None, str]] = []
@@ -82,6 +82,7 @@ def _item_payload(doc: KbDocument, file: File | None, reason: str) -> dict[str, 
     source_state = classify_file_availability(file)
     return {
         "document_id": int(doc.id),
+        "owner_id": int(doc.owner_id),
         "file_id": int(doc.file_id),
         "filename": doc.filename,
         "reason": reason,
@@ -117,7 +118,7 @@ def _source_lifecycle_state(reason: str) -> str:
 
 async def audit_lifecycle_debt(
     db: AsyncSession,
-    owner_id: int,
+    owner_id: int | None,
     *,
     limit: int = 500,
     reason: str | None = None,
@@ -142,12 +143,13 @@ async def audit_lifecycle_debt(
         "items": items,
         "limit": limit,
         "recommended_action": "archive_source_unavailable_documents",
+        "owner_scope": "all" if owner_id is None else "current_user",
     }
 
 
 async def archive_source_unavailable_documents(
     db: AsyncSession,
-    owner_id: int,
+    owner_id: int | None,
     *,
     dry_run: bool = True,
     limit: int = 100,
@@ -179,6 +181,7 @@ async def archive_source_unavailable_documents(
             "requires_confirm": True,
             "confirm_token": CONFIRM_ARCHIVE_SOURCE_UNAVAILABLE,
             "reason": audit_reason,
+            "owner_scope": "all" if owner_id is None else "current_user",
         }
 
     if confirm != CONFIRM_ARCHIVE_SOURCE_UNAVAILABLE:
@@ -204,4 +207,5 @@ async def archive_source_unavailable_documents(
         "skipped": 0,
         "skipped_items": [],
         "reason": audit_reason,
+        "owner_scope": "all" if owner_id is None else "current_user",
     }

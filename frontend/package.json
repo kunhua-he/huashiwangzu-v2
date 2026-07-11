@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/scan-modules.js && bash scripts/copy-pdf-worker.sh && vue-tsc -b && vite build",
+    "build": "node scripts/scan-modules.js && npm run check:runtime-drift && bash scripts/copy-pdf-worker.sh && vue-tsc -b && vite build",
     "scan:modules": "node scripts/scan-modules.js",
     "check:runtime-drift": "node scripts/check-runtime-drift.js",
     "preview": "vite preview",

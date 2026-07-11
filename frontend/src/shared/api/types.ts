@@ -44,8 +44,10 @@ export interface SystemStatus {
   backend: SystemStatusEntry
   database: SystemStatusEntry
   worker: SystemStatusEntry
-  modelService: SystemStatusEntry
-  productionEntry: SystemStatusEntry
+  model_service: SystemStatusEntry
+  entry: SystemStatusEntry
+  cpu_percent: number
+  memory_percent: number
 }
 
 export type {

@@ -23,12 +23,12 @@
       "parse_index": 6,
       "raw_text": 4,
       "page_render": 2,
-      "raw_ocr": 200,
-      "raw_vision": 200,
-      "fusion": 60,
-      "profile": 60,
+      "raw_ocr": 160,
+      "raw_vision": 160,
+      "fusion": 160,
+      "profile": 160,
       "cognitive_index": 1,
-      "graph": 60,
+      "graph": 160,
       "relations": 2
     }
   },
@@ -51,7 +51,13 @@
     "kb_enterprise_import"
   ],
   "paused_stages": {
-    "kb_pipeline_stage": []
+    "kb_pipeline_stage": [
+      "fusion",
+      "graph",
+      "profile",
+      "raw_ocr",
+      "raw_vision"
+    ]
   },
   "paused_lanes": {
     "kb_pipeline_stage": []
@@ -59,34 +65,37 @@
   "lane_concurrency": {
     "kb_pipeline_stage": {
       "local_preprocess": 16,
-      "vision_analysis": 50,
-      "llm_analysis": 50,
+      "vision_analysis": 160,
+      "llm_analysis": 160,
       "derived_index": 2,
       "relation_build": 2
     }
   },
   "config_note": "Knowledge tasks dispatch by explicit stage_key columns. Uvicorn web processes run with TASK_WORKER_AUTOSTART=0. scripts/backend_watchdog.sh dynamically starts standalone task_worker_main processes only when there are executable, non-paused pending tasks. worker_process_slots is the max worker process count unless TASK_WORKER_PROCESSES overrides it; worker_min_processes=0 lets idle workers exit after worker_idle_exit_seconds. worker_scale_pending_per_process controls scale-out pressure, so 10 pending executable tasks request about 1 worker process. Each worker still hot-reloads this JSON every 5s. worker_total_memory_limit_mb=73728 lets the worker group use up to about 72GB RSS before watchdog restarts only the worker group. claim_lock_scope=group avoids one global DB claim lock; workers claim through row locks plus short stage-group locks so different resource pools can fill in parallel. lane_concurrency is the resource-pool budget: local_preprocess is local CPU/disk/conversion work capped near local CPU capacity, vision_analysis is VLM/OCR cloud vision work, llm_analysis is LLM fusion/profile/graph work, derived_index and relation_build are downstream DB work. The worker scheduler chooses the most underfilled resource pool first, then applies stage_dispatch_order only inside that pool, so entry/local/VLM/LLM/relation lanes cannot starve each other. dynamic_stage_concurrency redistributes a lane budget across only the active stages in that lane by fair share plus backlog weight. Changing DB pool env values still requires backend restart; worker scaling config is read by the watchdog loop.",
   "model_auto_pause": {
-    "enabled": false,
-    "stage": "graph",
-    "group": "llm",
-    "paused_stages": [],
-    "reason": "model_fallback_exhausted",
-    "error_message": "QueuePool limit of size 8 overflow 1 reached, connection timed out, timeout 120.00 (Background on this error at: https://sqlalche.me/e/20/3o7r)",
-    "updated_at": "2026-07-09T23:37:46.132303+00:00"
+    "enabled": true,
+    "stage": "raw_vision",
+    "group": "vlm",
+    "paused_stages": [
+      "raw_ocr",
+      "raw_vision"
+    ],
+    "reason": "manual_pause_by_user",
+    "error_message": "User requested temporary pause of LLM/VLM background work",
+    "updated_at": "2026-07-11T03:17:00.152741+00:00"
   },
   "dynamic_stage_concurrency": {
     "kb_pipeline_stage": {
       "vision_analysis": {
         "enabled": true,
         "min_per_stage": 1,
-        "max_per_stage": 50,
+        "max_per_stage": 160,
         "fair_share_ratio": 0.6
       },
       "llm_analysis": {
         "enabled": true,
         "min_per_stage": 1,
-        "max_per_stage": 50,
+        "max_per_stage": 160,
         "fair_share_ratio": 0.6
       }
     }

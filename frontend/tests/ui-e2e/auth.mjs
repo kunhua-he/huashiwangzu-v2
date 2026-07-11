@@ -1,9 +1,7 @@
 import fs from 'fs'
 
 import { ADMIN_STORAGE_FILE, BASE_URL } from './state.mjs'
-
-export const ADMIN_USER = '何焜华'
-export const ADMIN_PASS = '123rgE123'
+import { issueLocalToken, storageStateForToken } from './token-helper.mjs'
 
 let adminTokenOverride = null
 let adminRefreshPromise = null
@@ -17,13 +15,7 @@ async function isAdminTokenValid(token) {
 }
 
 function writeAdminStorageState(token) {
-  const storageState = {
-    cookies: [],
-    origins: [{
-      origin: new URL(BASE_URL).origin,
-      localStorage: [{ name: 'v2_auth_token', value: token }],
-    }],
-  }
+  const storageState = storageStateForToken(BASE_URL, token)
   fs.writeFileSync(ADMIN_STORAGE_FILE, JSON.stringify(storageState, null, 2), 'utf-8')
 }
 
@@ -43,16 +35,7 @@ export async function refreshAdminStorageState() {
     return storedToken
   }
 
-  const resp = await fetch(`${BASE_URL}/api/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
-  })
-  const body = await resp.json()
-  const token = body?.data?.access_token
-  if (!resp.ok || !token) {
-    throw new Error(`Admin API login failed: ${JSON.stringify(body).slice(0, 300)}`)
-  }
+  const token = issueLocalToken('admin')
   adminTokenOverride = token
   writeAdminStorageState(token)
   return token

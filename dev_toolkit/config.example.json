@@ -4,9 +4,18 @@
   "db_dsn": "",
   "bge_m3_url": "http://127.0.0.1:30000",
   "accounts": {
-    "admin": { "username": "", "password": "", "role": "admin" },
-    "editor": { "username": "", "password": "", "role": "editor" },
-    "viewer": { "username": "", "password": "", "role": "viewer" }
+    "admin": {
+      "username": "",
+      "role": "admin"
+    },
+    "editor": {
+      "username": "",
+      "role": "editor"
+    },
+    "viewer": {
+      "username": "",
+      "role": "viewer"
+    }
   },
   "memory_dir": "backend/logs/project_memory",
   "user_profile_path": "backend/logs/user_profile/profile.json",

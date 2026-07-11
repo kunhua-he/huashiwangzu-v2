@@ -100,6 +100,28 @@ def test_restart_backend_tools_are_discoverable() -> None:
     assert "scripts/start_backend.sh --restart" in tools["restart_backend"].description
 
 
+def test_restart_backend_reports_script_failure_without_false_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailedProc:
+        returncode = 1
+
+        async def communicate(self):
+            return b"restart failed\n", b"permission denied\n"
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return FailedProc()
+
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = anyio.run(server._restart_backend)
+
+    assert result["success"] is False
+    assert result["status"] == "error"
+    assert result["restarted"] is False
+    assert result["script_returncode"] == 1
+    assert result["health"] == "not_checked"
+    assert "restart failed" in result["output_tail"]
+
+
 def test_release_gate_rejects_invalid_mode() -> None:
     result = json.loads(anyio.run(server._release_gate, False, "slow"))
 

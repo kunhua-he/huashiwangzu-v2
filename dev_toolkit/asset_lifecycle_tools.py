@@ -19,6 +19,9 @@ TOOL_NAMES = {"test_data_pollution_audit", "test_data_pollution_cleanup"}
 TEST_MARKERS = (
     "smoke-",
     "e2e-",
+    "e2e_test_",
+    "pipeline_e2e_",
+    "excel_engine_test",
     "recycle-",
     "pytest-",
     "test-upload-",
@@ -97,11 +100,13 @@ def cleanup_test_data_pollution(
 ) -> dict[str, Any]:
     audit = audit_test_data_pollution(repo_root, limit=min(limit, 50))
     if dry_run:
+        selected_files = int(audit.get("candidate_file_count") or 0)
+        selected_docs = int(audit.get("candidate_document_count") or 0)
         return {
             **audit,
             "action": "test_data_pollution_cleanup",
             "dry_run": True,
-            "selected": min(int(audit.get("candidate_file_count") or 0), limit),
+            "selected": min(selected_files + selected_docs, limit),
             "changed": 0,
             "requires_confirm": True,
             "confirm_token": CONFIRM_CLEAN_TEST_DATA,
@@ -250,10 +255,15 @@ select json_build_object(
   'content_packages_from_test_files', (select count(*) from marker_packages where deleted=false),
   'uploads_test_artifacts', (select count(*) from marker_files where storage_path is not null and storage_path <> ''),
   'candidate_file_count', (select count(*) from marker_files),
+  'candidate_document_count', (select count(*) from marker_docs where deleted=false),
   'candidate_file_ids', coalesce((select json_agg(id) from candidate_files), '[]'::json),
   'sample_files', coalesce((
     select json_agg(json_build_object('id', id, 'name', name, 'extension', extension, 'deleted', deleted))
     from (select * from marker_files order by id desc limit {limit}) s
+  ), '[]'::json),
+  'sample_documents', coalesce((
+    select json_agg(json_build_object('id', id, 'file_id', file_id, 'filename', filename, 'deleted', deleted))
+    from (select * from marker_docs order by id desc limit {limit}) s
   ), '[]'::json)
 )::text;
 """

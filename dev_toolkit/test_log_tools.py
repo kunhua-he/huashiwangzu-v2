@@ -57,6 +57,20 @@ def test_bug_logs_classifies_request_log_as_frontend_source(tmp_path: Path) -> N
     assert result["matches"][0]["source"] == "frontend"
 
 
+def test_bug_logs_does_not_treat_index_progress_as_http_5xx(tmp_path: Path) -> None:
+    log_dir = tmp_path / "backend" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "backend.log").write_text(
+        "INFO Indexed 500/689 files\nINFO Indexed 550/689 files\n",
+        encoding="utf-8",
+    )
+
+    result = bug_logs(tmp_path, sources="backend", severity="error")
+
+    assert result["matches"] == []
+    assert result["summary"]["backend/logs/backend.log"]["error"] == 0
+
+
 def test_bug_log_handle_tool_returns_json(tmp_path: Path) -> None:
     log_dir = tmp_path / "backend" / "logs"
     log_dir.mkdir(parents=True)

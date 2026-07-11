@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 
 try:
+    from dev_toolkit.contract_tools import capability_contract_diff
     from dev_toolkit.docs_sync import docs_audit
     from dev_toolkit.process_tools import create_subprocess_exec_group, terminate_process_tree
     from dev_toolkit.release_gate_support import (
         audit_content_package_lifecycle_debt,
+        audit_file_share_schema,
         audit_knowledge_lifecycle_debt,
+        audit_pgvector_access,
         audit_test_data_pollution,
         classify_capability_drift,
         classify_component_key_contracts,
@@ -19,13 +23,17 @@ try:
         classify_semantic_failed_completed,
         ensure_envelope_success,
         find_semantic_failed_completed_tasks,
+        inspect_alembic_revision_state,
     )
 except ModuleNotFoundError:
+    from contract_tools import capability_contract_diff
     from docs_sync import docs_audit
     from process_tools import create_subprocess_exec_group, terminate_process_tree
     from release_gate_support import (
         audit_content_package_lifecycle_debt,
+        audit_file_share_schema,
         audit_knowledge_lifecycle_debt,
+        audit_pgvector_access,
         audit_test_data_pollution,
         classify_capability_drift,
         classify_component_key_contracts,
@@ -34,10 +42,12 @@ except ModuleNotFoundError:
         classify_semantic_failed_completed,
         ensure_envelope_success,
         find_semantic_failed_completed_tasks,
+        inspect_alembic_revision_state,
     )
 
 from .context import (
     REPO_ROOT,
+    _ensure_token,
     _project_python,
     changed_module_keys,
     fetch_live_capabilities,
@@ -70,14 +80,141 @@ async def check_system_status() -> None:
         backend_ok = d.get("backend", {}).get("status") is True
         db_ok = d.get("database", {}).get("status") is True
         worker_ok = d.get("worker", {}).get("status") is True
-        if backend_ok and db_ok and worker_ok:
-            add_result("System status", "PASS", "backend/db/worker all ok")
+        model_ok = d.get("model_service", {}).get("status") is True
+        entry_ok = d.get("entry", {}).get("status") is True
+        require_entry = os.getenv("RELEASE_GATE_REQUIRE_ENTRY", "").strip().lower() in {"1", "true", "yes", "on"}
+        if backend_ok and db_ok and worker_ok and model_ok and (entry_ok or not require_entry):
+            detail = "backend/db/worker/model all ok"
+            if not entry_ok:
+                detail += "; entry not required in this environment"
+            add_result("System status", "PASS" if entry_ok or not require_entry else "DEBT", detail)
         else:
-            failing = [k for k in ("backend", "database", "worker") if not d.get(k, {}).get("status")]
+            blocker_keys = ["backend", "database", "worker", "model_service"]
+            failing = [k for k in blocker_keys if not d.get(k, {}).get("status")]
+            if require_entry and not entry_ok:
+                failing.append("entry")
             add_result("System status", "BLOCKER", f"failing: {', '.join(failing)}")
         runtime_context["system_status"] = d
     except Exception as e:
         add_result("System status", "BLOCKER", str(e))
+
+def check_alembic_revision_state() -> None:
+    try:
+        data = inspect_alembic_revision_state()
+        runtime_context["alembic_revision_state"] = data
+        heads = data.get("heads", [])
+        current_versions = data.get("current_versions", [])
+        missing = data.get("missing_current_heads", [])
+        extra = data.get("extra_current_versions", [])
+        detail = (
+            f"heads={heads}, current={current_versions}, "
+            f"missing={missing}, extra={extra}"
+        )
+        if data.get("head_count") != 1:
+            add_result("Alembic revision state", "BLOCKER", detail, data)
+        elif missing:
+            add_result("Alembic revision state", "BLOCKER", detail, data)
+        elif extra:
+            add_result("Alembic revision state", "DEBT", detail, data)
+        else:
+            add_result("Alembic revision state", "PASS", detail, data)
+    except Exception as exc:
+        add_result("Alembic revision state", "BLOCKER", str(exc))
+
+def check_pgvector_access() -> None:
+    try:
+        data = audit_pgvector_access()
+        runtime_context["pgvector_access"] = data
+        available = data.get("available_default_version")
+        installed = data.get("installed_version")
+        distance = data.get("probe_distance")
+        detail = f"available={available}, installed={installed}, probe_distance={distance}"
+        if not available:
+            add_result("pgvector access", "BLOCKER", detail, data)
+        elif not installed:
+            add_result("pgvector access", "BLOCKER", detail, data)
+        elif float(distance) != 0.0:
+            add_result("pgvector access", "BLOCKER", detail, data)
+        else:
+            add_result("pgvector access", "PASS", detail, data)
+    except Exception as exc:
+        add_result("pgvector access", "BLOCKER", str(exc))
+
+
+def check_file_share_schema() -> None:
+    try:
+        data = audit_file_share_schema()
+        runtime_context["file_share_schema"] = data
+        missing = data.get("missing_columns", [])
+        if missing:
+            add_result("File share schema", "BLOCKER", f"missing columns={missing}", data)
+        else:
+            add_result("File share schema", "PASS", "required columns present", data)
+    except Exception as exc:
+        add_result("File share schema", "BLOCKER", str(exc))
+
+async def check_auth_files_probe() -> None:
+    try:
+        await _ensure_token(force_refresh=True)
+        payload = await probe("GET", "/api/files/list?page=1&page_size=20")
+        ensure_envelope_success(payload, "files list")
+        data = payload.get("data", payload)
+        items = data.get("items") if isinstance(data, dict) else None
+        if isinstance(items, list):
+            add_result("Desktop files API", "PASS", f"items={len(items)}")
+            downloadable = next((item for item in items if isinstance(item, dict) and not item.get("is_folder")), None)
+            if downloadable is None:
+                search_payload = await probe("GET", "/api/files/search?page=1&page_size=50")
+                ensure_envelope_success(search_payload, "files search")
+                search_data = search_payload.get("data", search_payload)
+                search_items = search_data.get("items") if isinstance(search_data, dict) else None
+                if isinstance(search_items, list):
+                    downloadable = next(
+                        (item for item in search_items if isinstance(item, dict) and not item.get("is_folder")),
+                        None,
+                    )
+            if downloadable:
+                download_payload = await probe("GET", f"/api/files/download/{downloadable['id']}")
+                if isinstance(download_payload, dict) and download_payload.get("success") is False:
+                    raise RuntimeError(download_payload.get("error") or "file download failed")
+                add_result("Desktop file download API", "PASS", f"file_id={downloadable['id']}")
+            else:
+                add_result("Desktop file download API", "DEBT", "no downloadable file sample found")
+        else:
+            add_result("Desktop files API", "BLOCKER", "bad shape: data.items is not a list", payload)
+    except Exception as exc:
+        add_result("Desktop files API", "BLOCKER", str(exc))
+
+
+async def check_runtime_drift() -> None:
+    proc: asyncio.subprocess.Process | None = None
+    try:
+        proc = await create_subprocess_exec_group(
+            "npm",
+            "run",
+            "check:runtime-drift",
+            "--silent",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=REPO_ROOT / "frontend",
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        output = "\n".join(
+            part.strip()
+            for part in (stdout.decode(errors="replace"), stderr.decode(errors="replace"))
+            if part.strip()
+        )
+        if proc.returncode == 0:
+            add_result("Runtime drift", "PASS", output.splitlines()[-1] if output else "OK")
+        else:
+            add_result("Runtime drift", "BLOCKER", output[:500] or f"exit={proc.returncode}")
+    except asyncio.TimeoutError:
+        if proc is not None:
+            await terminate_process_tree(proc)
+        add_result("Runtime drift", "BLOCKER", "timeout (>30s)")
+    except Exception as exc:
+        add_result("Runtime drift", "BLOCKER", str(exc))
+
 
 async def check_task_queue_audit(
     baseline_failed: int | None,
@@ -110,6 +247,7 @@ async def check_task_queue_audit(
         active_failed = max(0, int(failed or 0) - int(obsolete_failed or 0))
         gate_failed_delta = None if baseline_failed is None else max(0, active_failed - baseline_failed)
         historical_debt = d.get("historical_debt_total", 0)
+        paused_pending = classification.get("paused_pending_count", 0)
         stale_pending = classification.get("stale_pending_debt_count", 0)
         orphan_running = classification.get("orphan_running_debt_count", 0)
 
@@ -155,6 +293,15 @@ async def check_task_queue_audit(
             )
         else:
             add_result("Queue: deleted-source obsolete failures", "PASS", "no deleted-source obsolete failed tasks")
+
+        if paused_pending > 0:
+            add_result(
+                "Queue: paused pending",
+                "PASS",
+                f"{paused_pending} sampled pending task(s) are intentionally paused by worker config",
+            )
+        else:
+            add_result("Queue: paused pending", "PASS", "no paused pending in audit sample")
 
         if stale_pending > 0:
             info = f"{stale_pending} stale pending (not new)"
@@ -247,6 +394,24 @@ async def check_capability_drift() -> None:
         add_result("Capability drift", level, detail, data)
     except Exception as exc:
         add_result("Capability drift", "BLOCKER", str(exc))
+
+    try:
+        data = capability_contract_diff(REPO_ROOT, include_parameters=True)
+        summary = data.get("summary", {})
+        runtime_context["capability_contract_diff"] = data
+        detail = (
+            f"modules_with_drift={summary.get('modules_with_drift', 0)}, "
+            f"uncheckable_sites={summary.get('uncheckable_sites', 0)}, "
+            f"checked_modules={summary.get('checked_modules', 0)}"
+        )
+        add_result(
+            "Capability metadata drift",
+            "PASS" if data.get("success") else "BLOCKER",
+            detail,
+            data,
+        )
+    except Exception as exc:
+        add_result("Capability metadata drift", "BLOCKER", str(exc))
 
 def check_readme_acceptance_matrix() -> None:
     try:

@@ -75,8 +75,8 @@ Total public actions: 32
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
 | `apply_pipeline_debt` | `admin` | `action`, `categories`, `category`, `category_limits`, `dry_run`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 或 guarded apply 历史知识库管道债治理动作 |
-| `archive_source_unavailable_documents` | `admin` | `audit_reason`, `confirm`, `dry_run`, `limit`, `reason` | dry-run 或确认归档源文件不可用的知识库文档 |
-| `audit_lifecycle_debt` | `admin` | `limit`, `reason` | 审计源文件已删除、缺失、路径异常或磁盘文件缺失的 active 知识库文档 |
+| `archive_source_unavailable_documents` | `admin` | `all_owners`, `audit_reason`, `confirm`, `dry_run`, `limit`, `reason` | dry-run 或确认归档源文件不可用的知识库文档 |
+| `audit_lifecycle_debt` | `admin` | `all_owners`, `limit`, `reason` | 审计源文件已删除、缺失、路径异常或磁盘文件缺失的 active 知识库文档 |
 | `backfill_chunk_embeddings` | `admin` | `batch_size`, `dry_run`, `embedding_profile`, `limit` | dry-run 或补跑版本化块向量到边车向量表 |
 | `backfill_cognitive_index` | `admin` | `build_terms`, `dry_run`, `limit`, `source_root` | 回填知识库内容复用链路、批次验收报告和可选认知派生索引 |
 | `backfill_derived_governance` | `admin` | `dry_run`, `include_conclusion_evidence`, `include_disambiguation`, `include_entity_aliases`, `include_lineage`, `limit` | 从已有分析产物、事实候选和实体词典回填知识库派生治理索引 |

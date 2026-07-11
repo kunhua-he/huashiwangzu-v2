@@ -13,6 +13,7 @@ from .document_service import (
     mark_document_source_unavailable,
     register_document,
 )
+from .pipeline_debt_service import archive_pending_pipeline_tasks_for_documents
 from .source_file_state import get_source_file_availability
 
 logger = logging.getLogger("v2.knowledge").getChild("file_lifecycle")
@@ -46,14 +47,25 @@ async def _on_file_deleted(payload: dict, caller: str, caller_role: str) -> dict
         docs = result.scalars().all()
         for doc in docs:
             mark_document_source_unavailable(doc, "source_file_deleted")
+        queue_result = await archive_pending_pipeline_tasks_for_documents(
+            db,
+            [int(doc.id) for doc in docs],
+        )
         await db.commit()
 
-    logger.info("Paused %d knowledge document(s) for deleted file_id=%d", len(docs), file_id)
+    archived_tasks = int(queue_result.get("changed") or 0)
+    logger.info(
+        "Paused %d knowledge document(s) and archived %d pending pipeline task(s) for deleted file_id=%d",
+        len(docs),
+        archived_tasks,
+        file_id,
+    )
     return {
         "file_id": file_id,
         "status": "skipped",
         "reason": "source_file_deleted",
         "documents_paused": len(docs),
+        "pending_pipeline_tasks_archived": archived_tasks,
     }
 
 

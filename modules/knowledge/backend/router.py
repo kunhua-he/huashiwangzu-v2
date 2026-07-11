@@ -307,6 +307,7 @@ class PendingPipelineQueueReconcileRequest(BaseModel):
 class LifecycleArchiveRequest(BaseModel):
     dry_run: bool = True
     limit: int = Field(default=100, ge=1, le=5000)
+    all_owners: bool = False
     reason: Literal[
         "source_file_deleted",
         "source_file_missing",
@@ -945,6 +946,7 @@ async def api_pending_pipeline_queue_reconcile(
 @router.get("/governance/lifecycle-debt/dry-run")
 async def api_lifecycle_debt_dry_run(
     limit: int = Query(default=500, ge=1, le=5000),
+    all_owners: bool = Query(default=False),
     reason: Literal[
         "source_file_deleted",
         "source_file_missing",
@@ -956,7 +958,12 @@ async def api_lifecycle_debt_dry_run(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("admin")),
 ):
-    result = await audit_lifecycle_debt(db, user.id, limit=limit, reason=reason)
+    result = await audit_lifecycle_debt(
+        db,
+        None if all_owners else user.id,
+        limit=limit,
+        reason=reason,
+    )
     return ApiResponse(data=result)
 
 @router.post("/governance/lifecycle-debt/archive")
@@ -967,7 +974,7 @@ async def api_archive_lifecycle_debt(
 ):
     result = await archive_source_unavailable_documents(
         db,
-        user.id,
+        None if payload.all_owners else user.id,
         dry_run=payload.dry_run,
         limit=payload.limit,
         reason=payload.reason,
@@ -1239,14 +1246,16 @@ async def _cap_reconcile_orphan_pipeline_runs(params: dict, caller: str) -> dict
         )
 
 async def _cap_audit_lifecycle_debt(params: dict, caller: str) -> dict:
-    owner_id = resolve_user_id(caller)
+    all_owners = bool(params.get("all_owners", False))
+    owner_id = None if all_owners else resolve_user_id(caller)
     limit = int(params.get("limit", 500) or 500)
     reason = str(params.get("reason", "source_unavailable") or "source_unavailable")
     async with AsyncSessionLocal() as db:
         return await audit_lifecycle_debt(db, owner_id, limit=limit, reason=reason)
 
 async def _cap_archive_source_unavailable_documents(params: dict, caller: str) -> dict:
-    owner_id = resolve_user_id(caller)
+    all_owners = bool(params.get("all_owners", False))
+    owner_id = None if all_owners else resolve_user_id(caller)
     limit = int(params.get("limit", 100) or 100)
     reason = str(params.get("reason", "source_unavailable") or "source_unavailable")
     dry_run = bool(params.get("dry_run", True))
@@ -1671,6 +1680,7 @@ register_capability(
     brief="审计知识库源文件债",
     parameters={
         "limit": {"type": "integer", "description": "Maximum candidate documents to return, default 500"},
+        "all_owners": {"type": "boolean", "description": "Admin-only full-owner audit when true, default false"},
         "reason": {
             "type": "string",
             "description": (
@@ -1688,6 +1698,7 @@ register_capability(
     parameters={
         "dry_run": {"type": "boolean", "description": "Preview only when true, default true"},
         "limit": {"type": "integer", "description": "Maximum documents to archive, default 100"},
+        "all_owners": {"type": "boolean", "description": "Admin-only full-owner archive when true, default false"},
         "reason": {
             "type": "string",
             "description": (

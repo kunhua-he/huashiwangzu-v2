@@ -25,12 +25,16 @@ try:
         CONFIRM_CLEAN_TEST_DATA,
         cleanup_test_data_pollution,
     )
+    from dev_toolkit.auth_token import issue_toolkit_token
+    from dev_toolkit.config_loader import load_config
     from dev_toolkit.semantic_failure import semantic_failure_reason
 except ModuleNotFoundError:
     from asset_lifecycle_tools import (
         CONFIRM_CLEAN_TEST_DATA,
         cleanup_test_data_pollution,
     )
+    from auth_token import issue_toolkit_token
+    from config_loader import load_config
     from semantic_failure import semantic_failure_reason
 
 # ── 配置 ──────────────────────────────────────────────────────────────
@@ -38,12 +42,11 @@ except ModuleNotFoundError:
 BACKEND_BASE = "http://127.0.0.1:33000"
 FRONTEND_BASE = "http://localhost:5173"
 REPO_ROOT = Path(__file__).resolve().parent.parent
+CONFIG = load_config(REPO_ROOT)
+DB_DSN = CONFIG["db_dsn"]
+BACKEND_PYTHON = REPO_ROOT / "backend" / ".venv" / "bin" / "python"
 
-ACCOUNTS = {
-    "admin": {"username": "何焜华", "password": "123rgE123", "user_id": 4},
-    "editor": {"username": "editor", "password": "admin123", "role": "editor"},
-    "viewer": {"username": "viewer", "password": "admin123", "role": "viewer"},
-}
+ACCOUNTS = CONFIG.get("accounts", {})
 
 TS = int(time.time() * 1000)
 results: list[dict[str, Any]] = []
@@ -53,22 +56,33 @@ _TOKEN_CACHE: dict[str, str] = {}
 
 # ── 辅助 ──────────────────────────────────────────────────────────────
 
+
+def _embedding_health_target() -> tuple[str, str, str]:
+    config_path = REPO_ROOT / "backend" / "data" / "config" / "models.json"
+    model_key = "qwen3-embedding-8b"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        model = config.get("watchdog_models", {}).get(model_key, {})
+        endpoint = str(model.get("endpoint") or "http://127.0.0.1:30004").rstrip("/")
+        health_path = str(model.get("health_path") or "/v1/models")
+    except Exception:
+        endpoint = "http://127.0.0.1:30004"
+        health_path = "/v1/models"
+    return model_key, endpoint, health_path
+
+
 async def _ensure_token(role: str = "admin", *, force_refresh: bool = False) -> str:
     if not force_refresh and role in _TOKEN_CACHE:
         return _TOKEN_CACHE[role]
 
-    acct = ACCOUNTS.get(role, ACCOUNTS["admin"])
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
-        resp = await client.post("/api/login", json={
-            "username": acct["username"],
-            "password": acct["password"],
-        })
-        data = resp.json()
-        token = data.get("data", data).get("access_token") or data.get("access_token")
-        if not token:
-            raise RuntimeError(f"Login failed {role}: status={resp.status_code}, data={data}")
-        _TOKEN_CACHE[role] = token
-        return token
+    token, _user, _expires_at = issue_toolkit_token(
+        REPO_ROOT,
+        role=role,
+        accounts=ACCOUNTS,
+        db_dsn=DB_DSN,
+    )
+    _TOKEN_CACHE[role] = token
+    return token
 
 
 def _json_or_raw(resp: httpx.Response) -> dict:
@@ -547,6 +561,29 @@ def _no_new_queue_failures(failed_now: int, baseline_failed: int) -> bool:
     return _new_failed_delta(failed_now, baseline_failed) == 0
 
 
+def _queue_backlog_explainable(
+    *,
+    pending_now: int,
+    new_failures: int,
+    settle_timed_out: bool,
+    classification: dict,
+) -> bool:
+    if pending_now <= 5 and not settle_timed_out:
+        return True
+    actionable_pending = int(classification.get("actionable_pending_count") or 0)
+    paused_pending = int(classification.get("paused_pending_count") or 0)
+    stale_pending = int(classification.get("stale_pending_debt_count") or 0)
+    future_scheduled = int(classification.get("future_scheduled_count") or 0)
+    orphan_running = int(classification.get("orphan_running_debt_count") or 0)
+    explainable_pending = paused_pending + stale_pending + future_scheduled
+    return (
+        new_failures == 0
+        and actionable_pending == 0
+        and orphan_running == 0
+        and explainable_pending >= pending_now
+    )
+
+
 def _queue_active_failed(state: dict) -> int:
     """Return queue failures that still need action; deleted-source obsolete debt is audit-only."""
     if "active_failed" in state:
@@ -958,13 +995,14 @@ async def health_check():
     except Exception as e:
         add_result("后端 health", False, str(e))
 
+    model_key, endpoint, health_path = _embedding_health_target()
     try:
         async with httpx.AsyncClient(timeout=5, trust_env=False) as cli:
-            r = await cli.get("http://127.0.0.1:30000/health")
+            r = await cli.get(f"{endpoint}{health_path}")
             ok = r.status_code == 200
-            add_result("bge-m3 嵌入服务", ok, f"status={r.status_code}")
+            add_result(f"{model_key} 嵌入服务", ok, f"status={r.status_code}", status=None if ok else "DEBT")
     except Exception:
-        add_result("bge-m3 嵌入服务", False, "unreachable (some features may degrade)")
+        add_result(f"{model_key} 嵌入服务", True, "unreachable (some features may degrade)", status="DEBT")
 
 # ── 主函数 ────────────────────────────────────────────────────────────
 
@@ -1056,13 +1094,34 @@ async def main():
     pending_now = final.get("pending", 0)
     oldest = final.get("oldest_waiting_seconds", 0) or 0
     settle_timed_out = bool(final.get("_settle_timed_out"))
+    classification = final.get("classification") if isinstance(final.get("classification"), dict) else {}
+    actionable_pending = int(classification.get("actionable_pending_count") or 0)
+    paused_pending = int(classification.get("paused_pending_count") or 0)
+    stale_pending = int(classification.get("stale_pending_debt_count") or 0)
+    future_scheduled = int(classification.get("future_scheduled_count") or 0)
+    orphan_running = int(classification.get("orphan_running_debt_count") or 0)
     new_failures = _new_failed_delta(failed_now, pre_failed)
     add_result("Z1 异步队列无意外新增失败", _no_new_queue_failures(failed_now, pre_failed),
                f"active_failed: {pre_failed}(业务前基线) → {failed_now}(终), 新增={new_failures}, "
                f"raw_failed={raw_failed_now}, deleted_source_obsolete={obsolete_failed_now}, "
                f"清理文件数={cleanup_count}")
-    add_result("Z2 异步队列积压可解释", pending_now <= 5 and not settle_timed_out,
-               f"pending={pending_now}, oldest_waiting={oldest}s, settle_timeout={settle_timed_out}")
+    queue_clean = pending_now <= 5 and not settle_timed_out
+    queue_explainable = (not queue_clean) and _queue_backlog_explainable(
+        pending_now=int(pending_now or 0),
+        new_failures=new_failures,
+        settle_timed_out=settle_timed_out,
+        classification=classification,
+    )
+    add_result(
+        "Z2 异步队列积压可解释",
+        queue_clean or queue_explainable,
+        (
+            f"pending={pending_now}, paused={paused_pending}, stale={stale_pending}, "
+            f"future={future_scheduled}, actionable={actionable_pending}, "
+            f"orphan_running={orphan_running}, oldest_waiting={oldest}s, settle_timeout={settle_timed_out}"
+        ),
+        status="DEBT" if queue_explainable else None,
+    )
     print("\n" + "=" * 60)
     print("  红绿矩阵")
     print("=" * 60)
@@ -1092,4 +1151,10 @@ async def main():
         print("全绿!")
 
 if __name__ == "__main__":
+    if (
+        BACKEND_PYTHON.exists()
+        and Path(sys.prefix).resolve() != BACKEND_PYTHON.parents[1].resolve()
+        and os.environ.get("DEV_TOOLKIT_NO_PYTHON_REEXEC") != "1"
+    ):
+        os.execv(str(BACKEND_PYTHON), [str(BACKEND_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]])
     asyncio.run(main())

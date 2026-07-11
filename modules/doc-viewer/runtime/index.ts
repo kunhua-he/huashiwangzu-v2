@@ -41,6 +41,7 @@ export interface FileItem {
   extension: string | null
   size: number
   folder_id: number | null
+  parent_folder_id: number | null
   created_at: string
   is_folder: boolean
   storage_path: string | null
@@ -53,6 +54,7 @@ export interface FileDetail {
   extension: string
   size: number
   folder_id: number | null
+  parent_folder_id: number | null
   folder_name: string
   created_at: string
   updated_at: string
@@ -258,7 +260,32 @@ export function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+type PlatformApiBridge = {
+  get?: <T = unknown>(url: string, config?: Record<string, unknown>) => Promise<T>
+  post?: <T = unknown>(url: string, data?: unknown, config?: Record<string, unknown>) => Promise<T>
+  put?: <T = unknown>(url: string, data?: unknown, config?: Record<string, unknown>) => Promise<T>
+  delete?: <T = unknown>(url: string, config?: Record<string, unknown>) => Promise<T>
+}
+
+function platformApiBridge(): PlatformApiBridge | undefined {
+  if (_config?.mode !== 'framework') return undefined
+  return (window as unknown as { platform?: { api?: PlatformApiBridge } }).platform?.api
+}
+
+function normalizeFileItem(item: FileItem): FileItem {
+  const record = item as FileItem & { parent_id?: number | null; parent_folder_id?: number | null }
+  const parentId = record.parent_folder_id ?? record.parent_id ?? record.folder_id ?? null
+  return { ...item, folder_id: record.folder_id ?? parentId, parent_folder_id: parentId }
+}
+
+function normalizeFilePage<T extends FileListPage | FileSearchPage>(page: T): T {
+  return { ...page, items: page.items.map(normalizeFileItem) }
+}
+
+
 export async function apiGet<T>(path: string): Promise<T> {
+  const bridge = platformApiBridge()
+  if (bridge?.get) return await bridge.get<T>(path)
   const url = getApiUrl(path)
   const r = await fetch(url, { headers: authHeaders() })
   if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
@@ -269,6 +296,8 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
+  const bridge = platformApiBridge()
+  if (bridge?.post) return await bridge.post<T>(path, payload)
   const url = getApiUrl(path)
   const r = await fetch(url, {
     method: 'POST',
@@ -283,6 +312,8 @@ export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
 }
 
 export async function apiPut<T>(path: string, payload?: unknown): Promise<T> {
+  const bridge = platformApiBridge()
+  if (bridge?.put) return await bridge.put<T>(path, payload)
   const url = getApiUrl(path)
   const r = await fetch(url, {
     method: 'PUT',
@@ -297,6 +328,8 @@ export async function apiPut<T>(path: string, payload?: unknown): Promise<T> {
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
+  const bridge = platformApiBridge()
+  if (bridge?.delete) return await bridge.delete<T>(path)
   const url = getApiUrl(path)
   const r = await fetch(url, {
     method: 'DELETE',
@@ -329,7 +362,7 @@ export const files = {
     if (params.folder_id !== undefined) qs.set('folder_id', String(params.folder_id))
     if (params.page) qs.set('page', String(params.page))
     if (params.page_size) qs.set('page_size', String(params.page_size))
-    return apiGet<FileListPage>(`/files/list?${qs.toString()}`)
+    return normalizeFilePage(await apiGet<FileListPage>(`/files/list?${qs.toString()}`))
   },
   /** Search files and folders */
   async search(params: { keyword?: string; extension?: string; page?: number; page_size?: number } = {}): Promise<FileSearchPage> {
@@ -338,7 +371,7 @@ export const files = {
     if (params.extension) qs.set('extension', params.extension)
     if (params.page) qs.set('page', String(params.page))
     if (params.page_size) qs.set('page_size', String(params.page_size))
-    return apiGet<FileSearchPage>(`/files/search?${qs.toString()}`)
+    return normalizeFilePage(await apiGet<FileSearchPage>(`/files/search?${qs.toString()}`))
   },
   /** Get file detail */
   async detail(fileId: number): Promise<FileDetail> {
@@ -357,7 +390,14 @@ export const files = {
     if (!body.success) throw new Error(body.error ?? 'Upload error')
     return body.data as UploadResult
   },
-  /** Get download URL for a file */
+  /** Download a file with the current Authorization header */
+  async download(fileId: number): Promise<Blob> {
+    const r = await fetch(getApiUrl(`/files/download/${fileId}`), { headers: authHeaders() })
+    if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
+    if (!r.ok) throw new Error(`Download returned ${r.status}`)
+    return await r.blob()
+  },
+  /** Get the API URL for callers that attach authHeaders() themselves */
   downloadUrl(fileId: number): string {
     return getApiUrl(`/files/download/${fileId}`)
   },
@@ -499,8 +539,8 @@ export const modules = {
     return apiPost<unknown>('/modules/call', { target_module: targetModule, action, parameters })
   },
   /** 列出当前已注册的跨模块能力（module:action 列表） */
-  async capabilities(): Promise<string[]> {
-    return apiGet<string[]>('/modules/capabilities')
+  async capabilities(): Promise<Array<Record<string, unknown>>> {
+    return apiGet<Array<Record<string, unknown>>>('/modules/capabilities')
   },
   /** 打开另一个模块的应用窗口（框架模式下可用） */
   openApp(appKey: string, params?: Record<string, unknown>): string | null {
@@ -508,11 +548,7 @@ export const modules = {
       platform?: { modules?: { openApp?: (appKey: string, payload?: Record<string, unknown>) => string | null } }
     }).platform?.modules?.openApp
     if (bridge) return bridge(appKey, params)
-    const wm = (window as unknown as Record<string, unknown>).__HSWZ_WINDOW_MANAGER__ as {
-      openWindow: (appKey: string, payload?: unknown) => string | null
-    } | undefined
-    if (wm) return wm.openWindow(appKey, params)
-    console.warn('[runtime] openApp: windowManager not available (not in framework mode)')
+    console.warn('[runtime] openApp: platform.modules.openApp not available')
     return null
   },
 }

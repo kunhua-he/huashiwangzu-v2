@@ -125,8 +125,16 @@ export async function moveToRecycleBinRequest(itemType: FileItemType, id: number
   return await api.post<unknown, Record<string, unknown>>('/files/delete', { type: itemType, id })
 }
 
-export function downloadFileRequest(fileId: number) {
-  window.open(`${API_BASE_URL}/files/download/${fileId}`, '_blank')
+export async function downloadFileRequest(fileId: number, filename?: string) {
+  const response = await api.get<unknown, Blob>(`/files/download/${fileId}`, { responseType: 'blob' })
+  const objectUrl = URL.createObjectURL(response)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  if (filename) link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
 }
 
 interface CreateFileResponse {

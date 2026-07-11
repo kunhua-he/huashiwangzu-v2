@@ -12,9 +12,11 @@ from typing import Any
 import httpx
 
 try:
+    from dev_toolkit.auth_token import issue_toolkit_token
     from dev_toolkit.config_loader import load_config
     from dev_toolkit.release_gate_support import ensure_envelope_success
 except ModuleNotFoundError:
+    from auth_token import issue_toolkit_token
     from config_loader import load_config
     from release_gate_support import ensure_envelope_success
 
@@ -113,23 +115,14 @@ async def _ensure_token(*, force_refresh: bool = False) -> str:
         cached_token, cached_at = _token_cache["admin"]
         if now - cached_at < _TOKEN_MAX_AGE:
             return cached_token
-    acct = ACCOUNTS["admin"]
-    if not acct.get("username") or not acct.get("password"):
-        raise RuntimeError(
-            "dev_toolkit admin account is not configured; set dev_toolkit/config.local.json "
-            "or DEV_TOOLKIT_ADMIN_USERNAME/DEV_TOOLKIT_ADMIN_PASSWORD"
-        )
-    async with httpx.AsyncClient(base_url=BACKEND_BASE, timeout=10, trust_env=False) as client:
-        resp = await client.post("/api/login", json={
-            "username": acct["username"],
-            "password": acct["password"],
-        })
-        data = resp.json()
-        token = data.get("data", {}).get("access_token") or data.get("access_token")
-        if not token:
-            raise RuntimeError(f"Login failed: {data}")
-        _token_cache["admin"] = (token, now)
-        return token
+    token, _user, _expires_at = issue_toolkit_token(
+        REPO_ROOT,
+        role="admin",
+        accounts=ACCOUNTS,
+        db_dsn=DB_DSN,
+    )
+    _token_cache["admin"] = (token, now)
+    return token
 
 async def probe(method: str, path: str, body: dict | None = None) -> dict:
     token = await _ensure_token()

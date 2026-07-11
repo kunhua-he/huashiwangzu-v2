@@ -20,7 +20,7 @@ Spreadsheet engine for parsing, workbook state, edits, history, versions, export
 | allow_multiple | `true` |
 | show_in_launcher | `true` |
 | show_on_desktop | `false` |
-| route_prefix | `null` |
+| route_prefix | `/api/excel-engine` |
 | contract_version | `"2.0"` |
 | module_version | `"1.0.0"` |
 | backend.enabled | `true` |

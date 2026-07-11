@@ -7,6 +7,9 @@ def test_marker_predicate_includes_required_test_marker() -> None:
     predicate = tools._marker_predicate("f.name")
 
     assert "smoke-" in predicate
+    assert "pipeline_e2e_" in predicate
+    assert "e2e_test_" in predicate
+    assert "excel_engine_test" in predicate
     assert "like '%test-%'" not in predicate
     assert "test-upload-" in predicate
     assert "test-file-" in predicate
@@ -46,6 +49,8 @@ def test_audit_sql_reports_all_pollution_domains() -> None:
     assert "content_packages_from_test_files" in sql
     assert "uploads_test_artifacts" in sql
     assert "candidate_file_count" in sql
+    assert "candidate_document_count" in sql
+    assert "sample_documents" in sql
     assert "like '%test-%'" not in tools._marker_predicate("f.name")
 
 
@@ -58,13 +63,16 @@ def test_cleanup_requires_confirm(monkeypatch, tmp_path: Path) -> None:
             "content_packages_from_test_files": 4,
             "uploads_test_artifacts": 5,
             "candidate_file_count": 6,
+            "candidate_document_count": 3,
             "candidate_file_ids": [1, 2],
             "sample_files": [],
+            "sample_documents": [],
         }
 
     monkeypatch.setattr(tools, "_run_json_sql", fake_run_json_sql)
 
     dry_run = tools.cleanup_test_data_pollution(tmp_path, dry_run=True, limit=2)
+    assert dry_run["selected"] == 2
     assert dry_run["changed"] == 0
     assert dry_run["confirm_token"] == "CLEAN_TEST_DATA"
 

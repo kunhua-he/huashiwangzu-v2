@@ -61,9 +61,12 @@ function setAuthorizationHeader(config: { headers?: unknown }, token: string): v
 
 function reportFrontendError(url: string, statusCode: number | undefined, errorMessage: string) {
   if (url.includes('/logs/frontend-error')) return
+  const token = localStorage.getItem(TOKEN_KEY)
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
   void axios.post(`${API_BASE_URL}/logs/frontend-error`, {
     url, status_code: statusCode || 0, error_message: errorMessage, page_path: window.location.pathname,
-  }, { withCredentials: true, timeout: 3000 }).catch(() => undefined)
+  }, { withCredentials: true, timeout: 3000, headers }).catch(() => undefined)
 }
 
 function logErrorWithThrottle(url: string, statusCode: number | undefined, errorMessage: string) {
@@ -80,7 +83,7 @@ function logErrorWithThrottle(url: string, statusCode: number | undefined, error
 api.interceptors.response.use(
   (response) => {
     const responseData = response.data
-    if (response.config?.responseType === 'blob') return response
+    if (response.config?.responseType === 'blob') return responseData as unknown
 
     if (responseData?.data?.access_token) {
       const payload = responseData.data

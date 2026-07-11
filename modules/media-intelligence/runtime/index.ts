@@ -56,7 +56,7 @@ function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) || ''
 }
 
-async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const cfg = await initRuntime()
   const normalizedBase = cfg.api_base_url.replace(/\/$/, '')
   const normalizedPath = path.startsWith('/') ? path : `/${path}`

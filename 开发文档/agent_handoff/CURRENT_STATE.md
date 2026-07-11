@@ -11,7 +11,7 @@ This file is generated from current repository facts. Refresh it with `docs_sync
 | Backend | FastAPI on `127.0.0.1:33000`, actual port recorded in `backend/logs/.backend.port` |
 | Frontend | Vite dev server on `127.0.0.1:5173` |
 | Database | PostgreSQL 17 + pgvector, DB name `华世王镞_v2` |
-| Embeddings | bge-m3 OpenAI-compatible endpoint on `127.0.0.1:30000` |
+| Embeddings | Qwen3-Embedding-8B endpoint on `127.0.0.1:30004` for `kb_chunk_embeddings` 4096D sidecar vectors; legacy bge-m3 1024D remains compatibility-only |
 
 ## Code-derived status
 

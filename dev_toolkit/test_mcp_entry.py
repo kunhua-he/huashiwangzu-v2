@@ -45,8 +45,8 @@ def test_mcp_json_declares_stable_stdio_entrypoint() -> None:
 
 
 def test_stdio_entrypoints_list_required_tools() -> None:
-    async def list_tools(command: str, args: list[str], cwd: str):
-        params = StdioServerParameters(command=command, args=args, cwd=cwd)
+    async def list_tools(command: str, args: list[str], cwd: str, env: dict | None = None):
+        params = StdioServerParameters(command=command, args=args, cwd=cwd, env=env)
         async with stdio_client(params) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 init = await session.initialize()
@@ -58,7 +58,12 @@ def test_stdio_entrypoints_list_required_tools() -> None:
     declared = json.loads((REPO_ROOT / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["项目工具台"]
 
     async def run() -> None:
-        declared_tools = await list_tools(declared["command"], declared["args"], declared["cwd"])
+        declared_tools = await list_tools(
+            declared["command"],
+            declared["args"],
+            declared["cwd"],
+            declared.get("env"),
+        )
         direct_tools = await list_tools("python3.14", ["dev_toolkit/server.py"], str(REPO_ROOT))
         declared_names = {tool.name for tool in declared_tools}
         direct_names = {tool.name for tool in direct_tools}

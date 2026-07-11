@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import Sequence
 
+from app.gateway.config import get_model_type_config
 from app.models.file import File
 from app.models.file_share import FileShare
 from app.services.file_share_service import active_share_conditions
@@ -30,6 +31,7 @@ QUERY_PLAN_MAX_TERMS = 16
 RETRIEVAL_SCORE_VERSION = "kb_retrieval_score_v1"
 MODEL_WARM_THRESHOLD_MS = 1500.0
 MODEL_COLD_THRESHOLD_MS = 3000.0
+LEGACY_CHUNK_EMBEDDING_PROFILE = "bge-m3"
 GENERIC_QUERY_STOP_WORDS = {
     "有",
     "没",
@@ -84,6 +86,35 @@ class SearchResults(list):
 
 def _elapsed_ms(started_at: float) -> float:
     return round((time.perf_counter() - started_at) * 1000, 2)
+
+
+def _knowledge_vector_profile_key(profile_key: str | None = None) -> str | None:
+    if profile_key:
+        return profile_key
+    embedding_config = get_model_type_config("embedding")
+    return str(
+        embedding_config.get("knowledge_sidecar_primary")
+        or embedding_config.get("primary")
+        or ""
+    ) or None
+
+
+def _merge_vector_fallback_results(primary: list[dict], fallback: list[dict], *, limit: int) -> list[dict]:
+    merged: list[dict] = []
+    seen_chunks: set[int] = set()
+    for item in [*primary, *fallback]:
+        chunk_id = item.get("chunk_id")
+        if chunk_id is not None:
+            chunk_key = int(chunk_id)
+            if chunk_key in seen_chunks:
+                continue
+            seen_chunks.add(chunk_key)
+        merged.append(dict(item))
+        if len(merged) >= limit:
+            break
+    for index, item in enumerate(merged):
+        item["rank"] = index + 1
+    return merged
 
 
 def _classify_model_warm_state(duration_ms: float | None, *, status: str = "done") -> str:
@@ -879,19 +910,33 @@ async def vector_search(
     top_k: int = 20,
     diagnostics: _RetrievalDiagnostics | None = None,
     embedding_profile: str | None = None,
+    *,
+    _allow_legacy_fallback: bool = True,
+    _fallback_from: str | None = None,
 ) -> list[dict]:
     """向量检索：用 pgvector 在数据库侧召回 TopK，避免 Python 全量扫块。"""
     from .profile_vector_service import vector_literal
 
     # 获取 query 向量
     embedding_started_at = time.perf_counter()
+    embedding_contract = get_embedding_profile_contract(_knowledge_vector_profile_key(embedding_profile))
+    embedding_model = str(embedding_contract.get("profile_key") or embedding_profile or "")
+    vector_store = str(embedding_contract.get("vector_store") or "")
+    configured_dim = int(embedding_contract.get("dimensions") or embedding_contract.get("embedding_dim") or 0)
     try:
-        embedding_contract = get_embedding_profile_contract(embedding_profile)
-        query_emb = await get_embedding(query, profile_key=embedding_contract["profile_key"])
+        query_emb = await get_embedding(query, profile_key=embedding_model)
     except Exception as e:
         duration_ms = _elapsed_ms(embedding_started_at)
         if diagnostics is not None:
-            diagnostics.stage("embedding_request", duration_ms=duration_ms, status="failed", error=str(e))
+            diagnostics.stage(
+                "embedding_request",
+                duration_ms=duration_ms,
+                status="failed",
+                error=str(e),
+                vector_store=vector_store,
+                embedding_model=embedding_model,
+                fallback_from=_fallback_from,
+            )
             diagnostics.model_node(
                 "embedding",
                 used=True,
@@ -900,6 +945,31 @@ async def vector_search(
                 error=str(e),
             )
         logger.warning("get_embedding failed for query '%s': %s", query[:50], e)
+        if _allow_legacy_vector_fallback(
+            embedding_model=embedding_model,
+            vector_store=vector_store,
+            fallback_from=_fallback_from,
+            allow=_allow_legacy_fallback,
+        ):
+            if diagnostics is not None:
+                diagnostics.stage(
+                    "vector_fallback",
+                    status="done",
+                    reason="embedding_request_failed",
+                    result_count=0,
+                    fallback_from=embedding_model,
+                    fallback_to=LEGACY_CHUNK_EMBEDDING_PROFILE,
+                )
+            return await vector_search(
+                db,
+                query,
+                owner_id,
+                top_k=top_k,
+                diagnostics=diagnostics,
+                embedding_profile=LEGACY_CHUNK_EMBEDDING_PROFILE,
+                _allow_legacy_fallback=False,
+                _fallback_from=embedding_model,
+            )
         return []
     duration_ms = _elapsed_ms(embedding_started_at)
     if diagnostics is not None:
@@ -909,6 +979,9 @@ async def vector_search(
             duration_ms=duration_ms,
             status=embedding_status,
             result_count=1 if query_emb else 0,
+            vector_store=vector_store,
+            embedding_model=embedding_model,
+            fallback_from=_fallback_from,
         )
         diagnostics.model_node(
             "embedding",
@@ -924,9 +997,6 @@ async def vector_search(
     limit = max(1, min(int(top_k or 20), VECTOR_SEARCH_MAX_CANDIDATES))
     query_vector = vector_literal(query_emb)
     embedding_dim = len(query_emb)
-    embedding_model = str(embedding_contract.get("profile_key") or embedding_profile or "")
-    vector_store = str(embedding_contract.get("vector_store") or "")
-    configured_dim = int(embedding_contract.get("dimensions") or embedding_contract.get("embedding_dim") or 0)
     if configured_dim and configured_dim != embedding_dim:
         if diagnostics is not None:
             diagnostics.stage(
@@ -938,6 +1008,7 @@ async def vector_search(
                 embedding_model=embedding_model,
                 embedding_dim=embedding_dim,
                 configured_dim=configured_dim,
+                fallback_from=_fallback_from,
             )
         return []
     use_chunk_embedding_sidecar = vector_store == "kb_chunk_embeddings"
@@ -952,6 +1023,7 @@ async def vector_search(
                 vector_store=vector_store,
                 embedding_model=embedding_model,
                 embedding_dim=embedding_dim,
+                fallback_from=_fallback_from,
             )
         return []
     sql_started_at = time.perf_counter()
@@ -1127,6 +1199,7 @@ async def vector_search(
             vector_store=active_vector_store,
             embedding_model=embedding_model,
             embedding_dim=embedding_dim,
+            fallback_from=_fallback_from,
         )
     scored: list[dict] = []
     for i, row in enumerate(rows):
@@ -1147,10 +1220,53 @@ async def vector_search(
             "source": "vector",
             "vector_store": active_vector_store,
             "embedding_model": embedding_model,
+            "fallback_from": _fallback_from,
             **_live_source_fields(),
         })
 
+    if len(scored) < limit and _allow_legacy_vector_fallback(
+        embedding_model=embedding_model,
+        vector_store=active_vector_store,
+        fallback_from=_fallback_from,
+        allow=_allow_legacy_fallback,
+    ):
+        if diagnostics is not None:
+            diagnostics.stage(
+                "vector_fallback",
+                status="done",
+                reason="primary_vector_results_below_limit" if scored else "empty_primary_vector_results",
+                result_count=len(scored),
+                fallback_from=embedding_model,
+                fallback_to=LEGACY_CHUNK_EMBEDDING_PROFILE,
+            )
+        fallback_results = await vector_search(
+            db,
+            query,
+            owner_id,
+            top_k=top_k,
+            diagnostics=diagnostics,
+            embedding_profile=LEGACY_CHUNK_EMBEDDING_PROFILE,
+            _allow_legacy_fallback=False,
+            _fallback_from=embedding_model,
+        )
+        return _merge_vector_fallback_results(scored, fallback_results, limit=limit)
+
     return scored
+
+
+def _allow_legacy_vector_fallback(
+    *,
+    embedding_model: str,
+    vector_store: str,
+    fallback_from: str | None,
+    allow: bool,
+) -> bool:
+    return (
+        allow
+        and fallback_from is None
+        and embedding_model != LEGACY_CHUNK_EMBEDDING_PROFILE
+        and vector_store == "kb_chunk_embeddings"
+    )
 
 
 async def document_candidate_search(

@@ -36,6 +36,34 @@ def test_smoke_queue_gate_excludes_deleted_source_obsolete_failures() -> None:
     )
 
 
+def test_smoke_queue_backlog_accepts_paused_and_stale_debt() -> None:
+    assert smoke._queue_backlog_explainable(
+        pending_now=3803,
+        new_failures=0,
+        settle_timed_out=True,
+        classification={
+            "paused_pending_count": 3802,
+            "stale_pending_debt_count": 1,
+            "actionable_pending_count": 0,
+            "orphan_running_debt_count": 0,
+        },
+    )
+
+
+def test_smoke_queue_backlog_rejects_actionable_pending() -> None:
+    assert not smoke._queue_backlog_explainable(
+        pending_now=3803,
+        new_failures=0,
+        settle_timed_out=True,
+        classification={
+            "paused_pending_count": 3802,
+            "stale_pending_debt_count": 1,
+            "actionable_pending_count": 1,
+            "orphan_running_debt_count": 0,
+        },
+    )
+
+
 def test_cap_ok_rejects_outer_or_inner_semantic_failure() -> None:
     assert not smoke._cap_ok({
         "status": 200,
@@ -169,30 +197,20 @@ def test_read_queue_state_normalizes_audit_payload(monkeypatch) -> None:
 
 def test_ensure_token_caches_by_role(monkeypatch) -> None:
     smoke._TOKEN_CACHE.clear()
-    login_calls: list[str] = []
+    token_calls: list[str] = []
 
-    class FakeClient:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
+    def fake_issue_toolkit_token(*_args, **kwargs):
+        token_calls.append(str(kwargs.get("role")))
+        return f"token-{len(token_calls)}", {"id": 1, "role": "admin"}, 9999999999
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb) -> None:
-            pass
-
-        async def post(self, path: str, json: dict) -> _FakeResponse:
-            login_calls.append(json["username"])
-            return _FakeResponse(200, {"data": {"access_token": f"token-{len(login_calls)}"}})
-
-    monkeypatch.setattr(smoke.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(smoke, "issue_toolkit_token", fake_issue_toolkit_token)
 
     first = asyncio.run(smoke._ensure_token("admin"))
     second = asyncio.run(smoke._ensure_token("admin"))
 
     assert first == "token-1"
     assert second == "token-1"
-    assert login_calls == ["何焜华"]
+    assert token_calls == ["admin"]
 
 
 def test_probe_refreshes_cached_token_once_on_401(monkeypatch) -> None:
@@ -210,15 +228,16 @@ def test_probe_refreshes_cached_token_once_on_401(monkeypatch) -> None:
         async def __aexit__(self, exc_type, exc, tb) -> None:
             pass
 
-        async def post(self, path: str, json: dict) -> _FakeResponse:
-            return _FakeResponse(200, {"data": {"access_token": "fresh"}})
-
         async def request(self, method: str, path: str, headers: dict, **kwargs) -> _FakeResponse:
             seen_auth.append(headers["Authorization"])
             if len(seen_auth) == 1:
                 return _FakeResponse(401, {"success": False, "error": "expired"})
             return _FakeResponse(200, {"success": True, "data": {"ok": True}})
 
+    def fake_issue_toolkit_token(*_args, **_kwargs):
+        return "fresh", {"id": 1, "role": "admin"}, 9999999999
+
+    monkeypatch.setattr(smoke, "issue_toolkit_token", fake_issue_toolkit_token)
     monkeypatch.setattr(smoke.httpx, "AsyncClient", FakeClient)
 
     result = asyncio.run(smoke.probe("GET", "/api/health"))
@@ -255,3 +274,11 @@ def test_smoke_summary_tracks_debt_and_model_fallback() -> None:
     finally:
         smoke.results[:] = original_results
         smoke.model_fallback_observations[:] = original_model
+
+
+def test_embedding_health_target_uses_qwen3_sidecar_model() -> None:
+    model_key, endpoint, health_path = smoke._embedding_health_target()
+
+    assert model_key == "qwen3-embedding-8b"
+    assert endpoint == "http://127.0.0.1:30004"
+    assert health_path == "/v1/models"

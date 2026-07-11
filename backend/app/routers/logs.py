@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -6,9 +7,10 @@ from app.core.exceptions import NotFound
 from app.database import get_db
 from app.schemas.common import ApiResponse, PaginatedResponse
 from app.schemas.system import SystemLogResponse, SystemLogDetailResponse, FrontendErrorRequest
-from app.middleware.auth import get_current_user, require_permission
+from app.middleware.auth import get_current_user, require_permission, security
 from app.models.user import User
 from app.models.system import SystemLog
+from app.services.auth import decode_access_token, get_user_by_id
 from app.services.log_service import write_log
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
@@ -20,6 +22,24 @@ class ModuleLogRequest(BaseModel):
     message: str
     module: str = "module"
     data: dict | None = None
+
+
+async def get_optional_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    if not credentials:
+        return None
+    try:
+        payload = decode_access_token(credentials.credentials)
+        user_id = int(payload.get("sub", 0))
+        token_sv = payload.get("sv", 0)
+        user = await get_user_by_id(db, user_id)
+    except Exception:
+        return None
+    if not user or not user.enabled or token_sv != user.session_version:
+        return None
+    return user
 
 
 @router.get("/")
@@ -59,11 +79,11 @@ async def module_log(
 @router.post("/frontend-error")
 async def report_frontend_error(
     body: FrontendErrorRequest, db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
 ):
     await write_log(db, "warning", "frontend", "frontend_error",
                     body.error_message or "Frontend API error",
-                    user_id=current_user.id,
+                    user_id=current_user.id if current_user else 0,
                     data={"url": body.url, "status_code": body.status_code, "page_path": body.page_path})
     return ApiResponse(data={"ok": True})
 

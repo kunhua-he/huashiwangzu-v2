@@ -163,8 +163,10 @@ start_watchdog() {
 if [ "$1" = "--restart" ]; then
   echo "[start_backend] Forcing restart..."
   if [ "${FORCE_RESTART:-}" != "1" ]; then
-    RESTART_PREFLIGHT=$(cd "$PROJECT_ROOT" && python3 "$SCRIPT_DIR/safe_restart_gate.py" --preflight-only 2>&1)
+    set +e
+    RESTART_PREFLIGHT=$(cd "$PROJECT_ROOT" && PYTHONPATH="$BACKEND_DIR:$PROJECT_ROOT:${PYTHONPATH:-}" python "$SCRIPT_DIR/safe_restart_gate.py" --preflight-only 2>&1)
     RESTART_PREFLIGHT_STATUS=$?
+    set -e
     echo "[start_backend] Safe restart preflight status=$RESTART_PREFLIGHT_STATUS result=$RESTART_PREFLIGHT"
     if [ "$RESTART_PREFLIGHT_STATUS" -ne 0 ]; then
       echo "[start_backend] Restart blocked by running tasks or active upload sessions. Use the maintenance safe-restart API, wait for drain, or set FORCE_RESTART=1 for an emergency restart."

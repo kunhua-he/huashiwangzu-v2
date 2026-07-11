@@ -474,8 +474,8 @@ async def test_search_filters_deleted_doc_and_unavailable_source(monkeypatch: py
         monkeypatch.setattr(search_service, "plan_query", fake_query_plan)
         async with AsyncSessionLocal() as db:
             keyword_results = await keyword_search(db, marker, OWNER_ID, top_k=10)
-            vector_results = await vector_search(db, marker, OWNER_ID, top_k=10)
-            hybrid_results = await hybrid_search(db, marker, OWNER_ID, top_k=10)
+            vector_results = await vector_search(db, marker, OWNER_ID, top_k=10, embedding_profile="bge-m3")
+            hybrid_results = await hybrid_search(db, marker, OWNER_ID, top_k=10, embedding_profile="bge-m3")
 
         assert [item["document_id"] for item in keyword_results] == [docs["live"]]
         hybrid_doc_ids = {item["document_id"] for item in hybrid_results}
@@ -553,6 +553,215 @@ async def test_vector_search_uses_versioned_chunk_embedding_sidecar(monkeypatch:
         assert vector_results[0]["embedding_model"] == "qwen3-embedding-8b"
     finally:
         await _cleanup(list(docs.values()), [ids["live_file"], ids["deleted_file"]])
+
+
+@pytest.mark.asyncio
+async def test_vector_search_falls_back_to_legacy_1024_when_qwen3_sidecar_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = uuid.uuid4().hex[:8]
+    docs, ids = await _create_case(marker)
+    calls: list[str] = []
+    try:
+        async def fake_embedding(_query: str, profile_key: str | None = None) -> list[float]:
+            calls.append(str(profile_key))
+            if profile_key == "bge-m3":
+                return [1.0] + [0.0] * (VECTOR_SIZE - 1)
+            return [1.0] + [0.0] * 4095
+
+        def fake_contract(profile_key: str | None = None) -> dict:
+            if profile_key == "bge-m3":
+                return {
+                    "profile_key": "bge-m3",
+                    "embedding_version": 1,
+                    "dimensions": 1024,
+                    "vector_store": "kb_chunks",
+                }
+            return {
+                "profile_key": profile_key or "qwen3-embedding-8b",
+                "embedding_version": 1,
+                "dimensions": 4096,
+                "vector_store": "kb_chunk_embeddings",
+            }
+
+        monkeypatch.setattr(search_service, "get_embedding", fake_embedding)
+        monkeypatch.setattr(search_service, "get_embedding_profile_contract", fake_contract)
+        async with AsyncSessionLocal() as db:
+            vector_results = await vector_search(
+                db,
+                marker,
+                OWNER_ID,
+                top_k=10,
+            )
+
+        assert calls == ["qwen3-embedding-8b", "bge-m3"]
+        assert [item["document_id"] for item in vector_results] == [docs["live"]]
+        assert vector_results[0]["vector_store"] == "kb_chunks"
+        assert vector_results[0]["embedding_model"] == "bge-m3"
+        assert vector_results[0]["fallback_from"] == "qwen3-embedding-8b"
+    finally:
+        await _cleanup(list(docs.values()), [ids["live_file"], ids["deleted_file"]])
+
+
+@pytest.mark.asyncio
+async def test_vector_search_falls_back_to_legacy_1024_when_qwen3_embedding_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = uuid.uuid4().hex[:8]
+    docs, ids = await _create_case(marker)
+    calls: list[str] = []
+    try:
+        async def fake_embedding(_query: str, profile_key: str | None = None) -> list[float]:
+            calls.append(str(profile_key))
+            if profile_key == "qwen3-embedding-8b":
+                raise RuntimeError("qwen3 unavailable")
+            return [1.0] + [0.0] * (VECTOR_SIZE - 1)
+
+        def fake_contract(profile_key: str | None = None) -> dict:
+            if profile_key == "bge-m3":
+                return {
+                    "profile_key": "bge-m3",
+                    "embedding_version": 1,
+                    "dimensions": 1024,
+                    "vector_store": "kb_chunks",
+                }
+            return {
+                "profile_key": profile_key or "qwen3-embedding-8b",
+                "embedding_version": 1,
+                "dimensions": 4096,
+                "vector_store": "kb_chunk_embeddings",
+            }
+
+        monkeypatch.setattr(search_service, "get_embedding", fake_embedding)
+        monkeypatch.setattr(search_service, "get_embedding_profile_contract", fake_contract)
+        async with AsyncSessionLocal() as db:
+            vector_results = await vector_search(
+                db,
+                marker,
+                OWNER_ID,
+                top_k=10,
+            )
+
+        assert calls == ["qwen3-embedding-8b", "bge-m3"]
+        assert [item["document_id"] for item in vector_results] == [docs["live"]]
+        assert vector_results[0]["vector_store"] == "kb_chunks"
+        assert vector_results[0]["embedding_model"] == "bge-m3"
+        assert vector_results[0]["fallback_from"] == "qwen3-embedding-8b"
+    finally:
+        await _cleanup(list(docs.values()), [ids["live_file"], ids["deleted_file"]])
+
+
+@pytest.mark.asyncio
+async def test_vector_search_supplements_partial_qwen3_sidecar_with_legacy_1024(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = uuid.uuid4().hex[:8]
+    docs, ids = await _create_case(marker)
+    extra_doc_ids: list[int] = []
+    extra_file_ids: list[int] = []
+    vector_4096 = "[" + ",".join(["1"] + ["0"] * 4095) + "]"
+    try:
+        async def fake_embedding(_query: str, profile_key: str | None = None) -> list[float]:
+            if profile_key == "bge-m3":
+                return [1.0] + [0.0] * (VECTOR_SIZE - 1)
+            return [1.0] + [0.0] * 4095
+
+        def fake_contract(profile_key: str | None = None) -> dict:
+            if profile_key == "bge-m3":
+                return {
+                    "profile_key": "bge-m3",
+                    "embedding_version": 1,
+                    "dimensions": 1024,
+                    "vector_store": "kb_chunks",
+                }
+            return {
+                "profile_key": profile_key or "qwen3-embedding-8b",
+                "embedding_version": 1,
+                "dimensions": 4096,
+                "vector_store": "kb_chunk_embeddings",
+            }
+
+        monkeypatch.setattr(search_service, "get_embedding", fake_embedding)
+        monkeypatch.setattr(search_service, "get_embedding_profile_contract", fake_contract)
+        async with AsyncSessionLocal() as db:
+            extra_file = File(
+                name=f"k3_extra_live_{marker}",
+                extension="txt",
+                size=1,
+                owner_id=OWNER_ID,
+                storage_path=f"tests/k3_extra_live_{marker}.txt",
+                mime_type="text/plain",
+                deleted=False,
+            )
+            _write_upload_file(str(extra_file.storage_path), f"extra live source {marker}")
+            db.add(extra_file)
+            await db.flush()
+            extra_doc = KbDocument(
+                owner_id=OWNER_ID,
+                file_id=extra_file.id,
+                filename=f"k3_extra_live_{marker}.txt",
+                extension="txt",
+                file_size=1,
+                mime_type="text/plain",
+                parse_status="done",
+                vector_status="done",
+                raw_status="done",
+                fusion_status="done",
+                total_chunks=1,
+                total_pages=1,
+                deleted=False,
+            )
+            db.add(extra_doc)
+            await db.flush()
+            extra_chunk = KbChunk(
+                document_id=extra_doc.id,
+                owner_id=OWNER_ID,
+                page=1,
+                chunk_index=0,
+                block_type="paragraph",
+                text=f"K3 live source filtering {marker} extra live",
+                embedding=[1.0] + [0.0] * (VECTOR_SIZE - 1),
+                keywords=f"K3 {marker} extra",
+            )
+            db.add(extra_chunk)
+            await db.flush()
+            extra_doc_ids.append(extra_doc.id)
+            extra_file_ids.append(extra_file.id)
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO kb_chunk_embeddings (
+                        owner_id, document_id, chunk_id, index_layer,
+                        embedding_model, embedding_version, embedding_dim,
+                        embedding, source_hash, status
+                    )
+                    VALUES (
+                        :owner_id, :document_id, :chunk_id, 'base_parse',
+                        'qwen3-embedding-8b', 1, 4096,
+                        CAST(:embedding AS vector), :source_hash, 'active'
+                    )
+                    """
+                ),
+                {
+                    "owner_id": OWNER_ID,
+                    "document_id": docs["live"],
+                    "chunk_id": ids["live"],
+                    "embedding": vector_4096,
+                    "source_hash": f"test-{marker}-partial-live",
+                },
+            )
+            await db.commit()
+            vector_results = await vector_search(db, marker, OWNER_ID, top_k=10)
+
+        result_docs = [item["document_id"] for item in vector_results]
+        assert result_docs[:2] == [docs["live"], extra_doc_ids[0]]
+        assert vector_results[0]["vector_store"] == "kb_chunk_embeddings"
+        assert vector_results[0]["embedding_model"] == "qwen3-embedding-8b"
+        assert vector_results[1]["vector_store"] == "kb_chunks"
+        assert vector_results[1]["embedding_model"] == "bge-m3"
+        assert vector_results[1]["fallback_from"] == "qwen3-embedding-8b"
+    finally:
+        await _cleanup([*list(docs.values()), *extra_doc_ids], [ids["live_file"], ids["deleted_file"], *extra_file_ids])
 
 
 @pytest.mark.asyncio

@@ -23,9 +23,11 @@ try:
         split_path_list,
     )
     from dev_toolkit.process_tools import popen_process_group, terminate_popen_tree
+    from dev_toolkit.release_response import build_release_gate_response
 except ModuleNotFoundError:
     from code_tools import normalize_pytest_targets, pytest_targets_for_command, resolve_repo_path, split_path_list
     from process_tools import popen_process_group, terminate_popen_tree
+    from release_response import build_release_gate_response
 
 
 TOOL_NAMES = {"tool_job_submit", "tool_job_status", "tool_job_notifications"}
@@ -229,25 +231,13 @@ def _build_command(repo_root: Path, tool_name: str, arguments: dict[str, Any]) -
 
 def _parse_result(tool_name: str, returncode: int, output: str) -> dict[str, Any]:
     if tool_name == "release_gate":
-        summary = _extract_prefixed_json(output, "RELEASE_GATE_JSON:")
-        verdict = summary.get("verdict") if summary else ("PASS" if returncode == 0 else "FAIL")
-        release_safe_verdicts = {"PASS", "PASS_WITH_DEBT"}
-        if summary and "clean_pass" in summary:
-            clean_pass = bool(summary.get("clean_pass"))
-        else:
-            clean_pass = verdict == "PASS"
-        if summary and "release_safe" in summary:
-            release_safe = bool(summary.get("release_safe"))
-        else:
-            release_safe = returncode == 0 and verdict in release_safe_verdicts
-        return {
-            "success": returncode == 0 and clean_pass,
-            "clean_pass": clean_pass,
-            "release_safe": release_safe,
-            "has_debt": bool(summary.get("has_debt")) if summary and "has_debt" in summary else verdict == "PASS_WITH_DEBT",
-            "verdict": verdict,
-            "summary": summary,
-        }
+        response = build_release_gate_response(
+            output=output,
+            returncode=returncode,
+            skip_ui=False,
+            duration_seconds=0.0,
+        )
+        return {key: value for key, value in response.items() if key not in {"output", "output_tail"}}
     if tool_name == "smoke_all":
         summary = _extract_prefixed_json(output, "SMOKE_JSON:")
         verdict = summary.get("verdict") if summary else ("PASS" if returncode == 0 else "FAIL")

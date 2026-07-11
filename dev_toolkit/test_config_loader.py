@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 from dev_toolkit.config_loader import load_config
 
@@ -15,7 +16,7 @@ def test_load_config_merges_example_local_and_env(
             "backend_base_url": "http://example",
             "db_dsn": "",
             "accounts": {
-                "admin": {"username": "example-admin", "password": "", "role": "admin"},
+                "admin": {"username": "example-admin", "role": "admin"},
             },
             "release_gate": {"sandbox_jobs": 1, "sandbox_frontend_jobs": 1},
         }),
@@ -23,7 +24,7 @@ def test_load_config_merges_example_local_and_env(
     )
     (toolkit_dir / "config.local.json").write_text(
         json.dumps({
-            "db_dsn": "postgresql://local/test",
+            "db_dsn": f"postgresql://local/{quote('华世王镞_v2', safe='')}",
             "accounts": {
                 "admin": {"password": "local-secret"},
             },
@@ -38,8 +39,8 @@ def test_load_config_merges_example_local_and_env(
     config = load_config(tmp_path)
 
     assert config["backend_base_url"] == "http://env"
-    assert config["db_dsn"] == "postgresql://local/test"
+    assert config["db_dsn"] == f"postgresql://local/{quote('华世王镞_v2', safe='')}"
     assert config["user_profile_path"] == "backend/logs/custom_profile.json"
     assert config["accounts"]["admin"]["username"] == "env-admin"
-    assert config["accounts"]["admin"]["password"] == "local-secret"
+    assert "password" not in config["accounts"]["admin"]
     assert config["release_gate"]["sandbox_jobs"] == 3

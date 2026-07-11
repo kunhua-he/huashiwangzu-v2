@@ -8,7 +8,7 @@
   "module_family": "office",
   "product_status": "active",
   "component_key": "index.vue",
-  "route_prefix": null,
+  "route_prefix": "/api/excel-engine",
   "permissions": [
     "viewer",
     "editor",

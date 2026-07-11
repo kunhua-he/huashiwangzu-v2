@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from dev_toolkit import release_gate  # noqa: E402
+from dev_toolkit.release_gate import context as release_context  # noqa: E402
 
 GATE_SCRIPT = REPO_ROOT / "dev_toolkit" / "release_gate.py"
 BACKEND_PYTHON = REPO_ROOT / "backend" / ".venv" / "bin" / "python"
@@ -42,6 +43,24 @@ def test_help_output() -> None:
     assert r.returncode == 0
     assert "usage:" in r.stdout.lower()
     assert "--preflight" in r.stdout
+
+
+def test_release_gate_token_uses_local_issuer_not_password_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def fake_issue_toolkit_token(*_args, **kwargs):
+        calls.append(str(kwargs.get("role")))
+        return "local-token", {"id": 1, "role": "admin"}, 9999999999
+
+    release_context._token_cache.clear()
+    monkeypatch.setattr(release_context, "issue_toolkit_token", fake_issue_toolkit_token)
+
+    async def check_token() -> None:
+        assert await release_context._ensure_token(force_refresh=True) == "local-token"
+        assert await release_context._ensure_token() == "local-token"
+
+    anyio.run(check_token)
+    assert calls == ["admin"]
 
 
 def test_release_gate_cli_preflight_runs_with_skip_ui(
@@ -183,6 +202,9 @@ def test_asset_marker_predicate_includes_required_test_marker() -> None:
     assert "%test-upload-%" in predicate
     assert "%test-file-%" in predicate
     assert "%test-pollution-%" in predicate
+    assert "%pipeline_e2e_%" in predicate
+    assert "%e2e_test_%" in predicate
+    assert "%excel_engine_test%" in predicate
     assert "%smoke-%" in predicate
     assert "%pytest-%" in predicate
 
@@ -263,6 +285,8 @@ def test_skip_ui_marks_release_summary_as_debt() -> None:
         assert preflight_summary["clean_pass"] is False
         assert preflight_summary["clean_release_ready"] is False
         assert preflight_summary["release_safe"] is True
+        assert preflight_summary["release_safe_with_debt"] is True
+        assert preflight_summary["deploy_allowed"] is False
         assert preflight_summary["has_debt"] is True
         assert preflight_summary["gate_mode"] == "preflight"
 
@@ -274,6 +298,8 @@ def test_skip_ui_marks_release_summary_as_debt() -> None:
         assert summary["clean_pass"] is False
         assert summary["clean_release_ready"] is False
         assert summary["release_safe"] is True
+        assert summary["release_safe_with_debt"] is True
+        assert summary["deploy_allowed"] is False
         assert summary["has_debt"] is True
         assert summary["ui_skipped"] is True
         assert summary["gate_mode"] == "backend_preflight"
@@ -291,6 +317,18 @@ def test_preflight_does_not_run_smoke_or_sandbox(monkeypatch) -> None:
 
         async def fake_check_system_status() -> None:
             release_gate.add_result("System status", "PASS", "ok")
+
+        def fake_check_alembic_revision_state() -> None:
+            release_gate.add_result("Alembic revision state", "PASS", "ok")
+
+        def fake_check_pgvector_access() -> None:
+            release_gate.add_result("pgvector access", "PASS", "ok")
+
+        async def fake_check_auth_files_probe() -> None:
+            release_gate.add_result("Desktop files API", "PASS", "ok")
+
+        async def fake_check_runtime_drift() -> None:
+            release_gate.add_result("Runtime drift", "PASS", "ok")
 
         async def fake_fetch_task_queue_audit() -> dict:
             return {
@@ -324,6 +362,10 @@ def test_preflight_does_not_run_smoke_or_sandbox(monkeypatch) -> None:
         monkeypatch.setattr(sys, "argv", ["release_gate.py", "--preflight"])
         monkeypatch.setattr(release_gate, "check_health", fake_check_health)
         monkeypatch.setattr(release_gate, "check_system_status", fake_check_system_status)
+        monkeypatch.setattr(release_gate, "check_alembic_revision_state", fake_check_alembic_revision_state)
+        monkeypatch.setattr(release_gate, "check_pgvector_access", fake_check_pgvector_access)
+        monkeypatch.setattr(release_gate, "check_auth_files_probe", fake_check_auth_files_probe)
+        monkeypatch.setattr(release_gate, "check_runtime_drift", fake_check_runtime_drift)
         monkeypatch.setattr(release_gate, "fetch_task_queue_audit", fake_fetch_task_queue_audit)
         monkeypatch.setattr(release_gate, "find_semantic_failed_completed_tasks", lambda *_args, **_kwargs: (0, []))
         monkeypatch.setattr(release_gate, "check_smoke", forbidden_smoke)
@@ -499,6 +541,271 @@ def test_check_system_status_rejects_outer_success_false(monkeypatch) -> None:
         release_gate.results[:] = original
 
 
+def test_alembic_revision_state_blocks_multiple_heads(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        monkeypatch.setattr(
+            release_gate,
+            "inspect_alembic_revision_state",
+            lambda: {
+                "heads": ["a", "b"],
+                "head_count": 2,
+                "current_versions": ["a"],
+                "missing_current_heads": ["b"],
+                "extra_current_versions": [],
+            },
+        )
+
+        release_gate.check_alembic_revision_state()
+
+        assert release_gate.results[-1]["check"] == "Alembic revision state"
+        assert release_gate.results[-1]["level"] == "BLOCKER"
+        assert "heads=['a', 'b']" in release_gate.results[-1]["detail"]
+    finally:
+        release_gate.results[:] = original
+
+
+def test_alembic_revision_state_blocks_missing_current_head(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        monkeypatch.setattr(
+            release_gate,
+            "inspect_alembic_revision_state",
+            lambda: {
+                "heads": ["head"],
+                "head_count": 1,
+                "current_versions": ["old"],
+                "missing_current_heads": ["head"],
+                "extra_current_versions": ["old"],
+            },
+        )
+
+        release_gate.check_alembic_revision_state()
+
+        assert release_gate.results[-1]["level"] == "BLOCKER"
+        assert "missing=['head']" in release_gate.results[-1]["detail"]
+    finally:
+        release_gate.results[:] = original
+
+
+def test_alembic_revision_state_passes_when_current_matches_head(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        monkeypatch.setattr(
+            release_gate,
+            "inspect_alembic_revision_state",
+            lambda: {
+                "heads": ["head"],
+                "head_count": 1,
+                "current_versions": ["head"],
+                "missing_current_heads": [],
+                "extra_current_versions": [],
+            },
+        )
+
+        release_gate.check_alembic_revision_state()
+
+        assert release_gate.results[-1]["level"] == "PASS"
+    finally:
+        release_gate.results[:] = original
+
+
+def test_pgvector_access_blocks_missing_extension(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        monkeypatch.setattr(
+            release_gate,
+            "audit_pgvector_access",
+            lambda: {
+                "available_default_version": "0.8.5",
+                "installed_version": None,
+                "probe_distance": None,
+            },
+        )
+
+        release_gate.check_pgvector_access()
+
+        assert release_gate.results[-1]["check"] == "pgvector access"
+        assert release_gate.results[-1]["level"] == "BLOCKER"
+    finally:
+        release_gate.results[:] = original
+
+
+def test_pgvector_access_passes_when_probe_loads(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        monkeypatch.setattr(
+            release_gate,
+            "audit_pgvector_access",
+            lambda: {
+                "available_default_version": "0.8.5",
+                "installed_version": "0.8.2",
+                "probe_distance": 0,
+            },
+        )
+
+        release_gate.check_pgvector_access()
+
+        assert release_gate.results[-1]["level"] == "PASS"
+    finally:
+        release_gate.results[:] = original
+
+
+def test_file_share_schema_blocks_missing_required_columns(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        monkeypatch.setattr(
+            release_gate,
+            "audit_file_share_schema",
+            lambda: {
+                "table_name": "framework_file_shares",
+                "required_columns": ["scope", "expiry"],
+                "missing_columns": ["expiry"],
+            },
+        )
+
+        release_gate.check_file_share_schema()
+
+        assert release_gate.results[-1]["check"] == "File share schema"
+        assert release_gate.results[-1]["level"] == "BLOCKER"
+        assert "expiry" in release_gate.results[-1]["detail"]
+    finally:
+        release_gate.results[:] = original
+
+
+def test_file_share_schema_passes_when_required_columns_exist(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        monkeypatch.setattr(
+            release_gate,
+            "audit_file_share_schema",
+            lambda: {
+                "table_name": "framework_file_shares",
+                "required_columns": ["scope", "expiry"],
+                "missing_columns": [],
+            },
+        )
+
+        release_gate.check_file_share_schema()
+
+        assert release_gate.results[-1]["check"] == "File share schema"
+        assert release_gate.results[-1]["level"] == "PASS"
+    finally:
+        release_gate.results[:] = original
+
+
+def test_auth_files_probe_blocks_login_failure(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+
+        async def fake_ensure_token(*, force_refresh: bool = False) -> str:
+            assert force_refresh is True
+            raise RuntimeError("HTTP 429: too many requests")
+
+        monkeypatch.setattr(release_gate, "_ensure_token", fake_ensure_token)
+
+        anyio.run(release_gate.check_auth_files_probe)
+
+        assert release_gate.results[-1]["check"] == "Desktop files API"
+        assert release_gate.results[-1]["level"] == "BLOCKER"
+        assert "429" in release_gate.results[-1]["detail"]
+    finally:
+        release_gate.results[:] = original
+
+
+def test_auth_files_probe_blocks_bad_shape(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+
+        async def fake_ensure_token(*, force_refresh: bool = False) -> str:
+            assert force_refresh is True
+            return "token"
+
+        async def fake_probe(method: str, path: str, body: dict | None = None) -> dict:
+            assert method == "GET"
+            assert path.startswith("/api/files/list")
+            return {"success": True, "data": {"items": {}}}
+
+        monkeypatch.setattr(release_gate, "_ensure_token", fake_ensure_token)
+        monkeypatch.setattr(release_gate, "probe", fake_probe)
+
+        anyio.run(release_gate.check_auth_files_probe)
+
+        assert release_gate.results[-1]["level"] == "BLOCKER"
+        assert "data.items" in release_gate.results[-1]["detail"]
+    finally:
+        release_gate.results[:] = original
+
+
+def test_auth_files_probe_downloads_file_found_by_search(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+        requested_paths: list[str] = []
+
+        async def fake_ensure_token(*, force_refresh: bool = False) -> str:
+            assert force_refresh is True
+            return "token"
+
+        async def fake_probe(method: str, path: str, body: dict | None = None) -> dict:
+            requested_paths.append(path)
+            if path.startswith("/api/files/list"):
+                return {"success": True, "data": {"items": [{"id": 1, "is_folder": True}]}}
+            if path.startswith("/api/files/search"):
+                return {"success": True, "data": {"items": [{"id": 42, "is_folder": False}]}}
+            if path == "/api/files/download/42":
+                return {"raw": "file-bytes"}
+            raise AssertionError(f"unexpected path: {path}")
+
+        monkeypatch.setattr(release_gate, "_ensure_token", fake_ensure_token)
+        monkeypatch.setattr(release_gate, "probe", fake_probe)
+
+        anyio.run(release_gate.check_auth_files_probe)
+
+        assert release_gate.results[-1]["level"] == "PASS"
+        assert requested_paths == [
+            "/api/files/list?page=1&page_size=20",
+            "/api/files/search?page=1&page_size=50",
+            "/api/files/download/42",
+        ]
+    finally:
+        release_gate.results[:] = original
+
+
+def test_auth_files_probe_marks_missing_file_sample_as_debt(monkeypatch) -> None:
+    original = list(release_gate.results)
+    try:
+        release_gate.results[:] = []
+
+        async def fake_ensure_token(*, force_refresh: bool = False) -> str:
+            assert force_refresh is True
+            return "token"
+
+        async def fake_probe(method: str, path: str, body: dict | None = None) -> dict:
+            return {"success": True, "data": {"items": []}}
+
+        monkeypatch.setattr(release_gate, "_ensure_token", fake_ensure_token)
+        monkeypatch.setattr(release_gate, "probe", fake_probe)
+
+        anyio.run(release_gate.check_auth_files_probe)
+
+        checks = {item["check"]: item for item in release_gate.results}
+        assert checks["Desktop files API"]["level"] == "PASS"
+        assert checks["Desktop file download API"]["level"] == "DEBT"
+        assert "no downloadable file sample" in checks["Desktop file download API"]["detail"]
+    finally:
+        release_gate.results[:] = original
+
+
 def test_check_smoke_requires_machine_json(monkeypatch) -> None:
     original = list(release_gate.results)
     try:
@@ -542,6 +849,8 @@ def test_release_summary_exposes_ui_and_model_fallback_status() -> None:
         assert summary["compact_summary"]["ui_coverage_status"]["passed"] == 3
         assert summary["compact_summary"]["model_fallback_status"]["fallback_used_count"] == 1
         assert summary["compact_summary"]["release_safe"] is True
+        assert summary["compact_summary"]["release_safe_with_debt"] is True
+        assert summary["compact_summary"]["deploy_allowed"] is False
     finally:
         release_gate.results[:] = original_results
         release_gate.runtime_context.clear()

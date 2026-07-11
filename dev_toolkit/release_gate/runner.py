@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
-from dev_toolkit.release_gate_support import find_semantic_failed_completed_tasks
+from dev_toolkit.release_gate_support import (
+    find_semantic_failed_completed_tasks,
+    inspect_alembic_revision_state,
+)
 
 from . import checks, smoke_gate
 from .context import (
@@ -36,12 +39,17 @@ def _default_api() -> SimpleNamespace:
         audit_failed_count=audit_failed_count,
         build_release_summary=build_release_summary,
         check_asset_lifecycle_debt=checks.check_asset_lifecycle_debt,
+        check_alembic_revision_state=checks.check_alembic_revision_state,
+        check_auth_files_probe=checks.check_auth_files_probe,
         check_capability_drift=checks.check_capability_drift,
         check_component_key_contracts=checks.check_component_key_contracts,
         check_docs_currentness=checks.check_docs_currentness,
+        check_file_share_schema=checks.check_file_share_schema,
         check_health=checks.check_health,
         check_model_fallback_summary=smoke_gate.check_model_fallback_summary,
+        check_pgvector_access=checks.check_pgvector_access,
         check_readme_acceptance_matrix=checks.check_readme_acceptance_matrix,
+        check_runtime_drift=checks.check_runtime_drift,
         check_sandbox_matrix=checks.check_sandbox_matrix,
         check_smoke=smoke_gate.check_smoke,
         check_system_status=checks.check_system_status,
@@ -104,6 +112,16 @@ async def main(argv: list[str] | None = None, *, api: Any | None = None) -> None
     await api.check_health()
     print()
     await api.check_system_status()
+    print()
+    api.check_alembic_revision_state()
+    print()
+    api.check_pgvector_access()
+    print()
+    api.check_file_share_schema()
+    print()
+    await api.check_auth_files_probe()
+    print()
+    await api.check_runtime_drift()
     print()
     baseline_failed: int | None = None
     baseline_semantic_failed_completed: int | None = None
@@ -195,6 +213,9 @@ async def main(argv: list[str] | None = None, *, api: Any | None = None) -> None
 
 def cli_main(argv: list[str] | None = None, *, api: Any | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) == 1 and argv[0] == "--alembic-state-json":
+        print(json.dumps(inspect_alembic_revision_state(), ensure_ascii=False))
+        raise SystemExit(0)
     if len(argv) == 2 and argv[0] == "--semantic-scan-json":
         scan_count, scan_samples = find_semantic_failed_completed_tasks(int(argv[1]))
         print(json.dumps({"count": scan_count, "samples": scan_samples}, ensure_ascii=False))

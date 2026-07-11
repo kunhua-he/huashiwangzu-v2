@@ -2,7 +2,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/shared/api'
 import {
   createFileRequest, uploadFileRequest, renameEntryRequest,
-  moveToRecycleBinRequest, moveEntryRequest, copyEntryRequest,
+  moveToRecycleBinRequest, moveEntryRequest, copyEntryRequest, downloadFileRequest,
 } from '@/shared/api/desktop'
 import { formatFileDisplayName } from '@/shared/files/display-name'
 import type { FileEntry } from '@/shared/api/types'
@@ -147,13 +147,7 @@ export function useFileOperations(options: FileOperationsOptions) {
 
   async function downloadFile(file: FileEntry): Promise<void> {
     try {
-      const res = await api.get(`/files/download/${file.id}`, { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = fullFileName(file)
-      a.click()
-      URL.revokeObjectURL(url)
+      await downloadFileRequest(file.id, fullFileName(file))
     } catch {
       ElMessage.warning('下载失败')
     }

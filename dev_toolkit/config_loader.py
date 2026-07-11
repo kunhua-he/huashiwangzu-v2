@@ -21,9 +21,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "db_dsn": "",
     "bge_m3_url": "http://127.0.0.1:30000",
     "accounts": {
-        "admin": {"username": "", "password": "", "role": "admin"},
-        "editor": {"username": "", "password": "", "role": "editor"},
-        "viewer": {"username": "", "password": "", "role": "viewer"},
+        "admin": {"username": "", "role": "admin"},
+        "editor": {"username": "", "role": "editor"},
+        "viewer": {"username": "", "role": "viewer"},
     },
     "memory_dir": "backend/logs/project_memory",
     "user_profile_path": "backend/logs/user_profile/profile.json",
@@ -79,12 +79,9 @@ def _apply_env_overrides(config: dict[str, Any]) -> None:
         account = accounts.setdefault(role, {"role": role})
         prefix = f"DEV_TOOLKIT_{role.upper()}"
         username = _env(f"{prefix}_USERNAME")
-        password = _env(f"{prefix}_PASSWORD")
         user_id = _env(f"{prefix}_USER_ID")
         if username is not None:
             account["username"] = username
-        if password is not None:
-            account["password"] = password
         if user_id is not None:
             try:
                 account["user_id"] = int(user_id)
@@ -99,6 +96,15 @@ def _apply_env_overrides(config: dict[str, Any]) -> None:
         value = _env(env_name)
         if value is not None:
             release_gate[key] = int(value)
+
+
+def _strip_account_passwords(config: dict[str, Any]) -> None:
+    accounts = config.get("accounts", {})
+    if not isinstance(accounts, dict):
+        return
+    for account in accounts.values():
+        if isinstance(account, dict):
+            account.pop("password", None)
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -144,6 +150,7 @@ def load_config(repo_root: Path) -> dict[str, Any]:
     config = _merge(DEFAULT_CONFIG, _read_json(toolkit_dir / "config.example.json"))
     config = _merge(config, _read_json(toolkit_dir / "config.local.json"))
     _apply_env_overrides(config)
+    _strip_account_passwords(config)
     if not config.get("db_dsn"):
         config["db_dsn"] = _build_db_dsn_from_backend_env(repo_root)
     _validate_db_dsn(str(config["db_dsn"]))

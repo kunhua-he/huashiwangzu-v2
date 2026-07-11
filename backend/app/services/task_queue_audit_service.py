@@ -7,6 +7,7 @@ orphan work that may be safely reconciled. It never clears failed rows to fake h
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select
@@ -26,6 +27,73 @@ ORPHAN_RUNNING_TIMEOUT_SECONDS = 1200
 RECENT_FAILURE_WINDOW_HOURS = 1
 HISTORICAL_DEBT_CUTOFF_HOURS = RECENT_FAILURE_WINDOW_HOURS
 COMPLETED_SEMANTIC_FAILURE_SAMPLE_LIMIT = 20
+PENDING_AUDIT_SCAN_LIMIT = 5000
+TASK_WORKER_CONFIG_PATH = Path(__file__).resolve().parents[2] / "data" / "config" / "task_worker.json"
+RECLAIMED_PENDING_GRACE_SECONDS = STALE_PENDING_THRESHOLD_SECONDS
+
+
+def _parse_config_set(raw: object) -> set[str]:
+    if isinstance(raw, list):
+        return {str(item or "").strip() for item in raw if str(item or "").strip()}
+    if isinstance(raw, str) and raw.strip():
+        return {raw.strip()}
+    return set()
+
+
+def _parse_config_dimension(raw: object) -> dict[str, set[str]]:
+    if not isinstance(raw, dict):
+        return {}
+    parsed: dict[str, set[str]] = {}
+    for task_type, values in raw.items():
+        task_type_key = str(task_type or "").strip()
+        value_set = _parse_config_set(values)
+        if task_type_key and value_set:
+            parsed[task_type_key] = value_set
+    return parsed
+
+
+def _load_paused_worker_config() -> tuple[set[str], dict[str, set[str]], dict[str, set[str]]]:
+    try:
+        raw = json.loads(TASK_WORKER_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set(), {}, {}
+    if not isinstance(raw, dict):
+        return set(), {}, {}
+    return (
+        _parse_config_set(raw.get("paused_task_types")),
+        _parse_config_dimension(raw.get("paused_stages")),
+        _parse_config_dimension(raw.get("paused_lanes")),
+    )
+
+
+def _task_paused_by_config(
+    task: SystemTaskQueue,
+    *,
+    paused_task_types: set[str],
+    paused_stages: dict[str, set[str]],
+    paused_lanes: dict[str, set[str]],
+) -> bool:
+    task_type = str(task.task_type or "").strip()
+    stage = str(task.stage_key or "").strip()
+    lane = str(task.lane_key or "").strip()
+    if task_type in paused_task_types:
+        return True
+    if stage and stage in (paused_stages.get(task_type) or set()):
+        return True
+    return bool(lane and lane in (paused_lanes.get(task_type) or set()))
+
+
+def _task_recently_reclaimed(task: SystemTaskQueue, now: datetime) -> bool:
+    message = str(task.error_message or "")
+    if not (
+        message.startswith("Orphan reconciled:")
+        or message.startswith("Task reclaimed on worker startup")
+    ):
+        return False
+    marker_time = task.updated_at or task.created_at
+    if marker_time is None:
+        return False
+    return (now - marker_time).total_seconds() < RECLAIMED_PENDING_GRACE_SECONDS
 
 
 def _decode_task_result(raw_result: Any) -> dict[str, Any] | None:
@@ -168,17 +236,19 @@ async def audit_task_queue(db: AsyncSession) -> dict:
             completed_semantic_failure_samples.append(_semantic_failure_sample(task, reason))
 
     # --- Classify pending tasks ---
+    paused_task_types, paused_stages, paused_lanes = _load_paused_worker_config()
     pending_tasks = await db.execute(
         select(SystemTaskQueue)
         .where(SystemTaskQueue.status == "pending")
         .order_by(SystemTaskQueue.created_at)
-        .limit(200)
+        .limit(PENDING_AUDIT_SCAN_LIMIT)
     )
     pending_tasks_list = list(pending_tasks.scalars().all())
 
     stalest_pending_info = None
     actionable_pending = []
     stale_pending = []
+    paused_pending = []
     unreachable_pending = []
     for t in pending_tasks_list:
         age_seconds = int((now - (t.created_at or now)).total_seconds())
@@ -196,6 +266,17 @@ async def audit_task_queue(db: AsyncSession) -> dict:
         if t.scheduled_at and t.scheduled_at > now:
             info["classification"] = "future_scheduled"
             unreachable_pending.append(info)
+        elif _task_paused_by_config(
+            t,
+            paused_task_types=paused_task_types,
+            paused_stages=paused_stages,
+            paused_lanes=paused_lanes,
+        ):
+            info["classification"] = "paused_by_config"
+            paused_pending.append(info)
+        elif _task_recently_reclaimed(t, now):
+            info["classification"] = "reclaimed_for_retry"
+            actionable_pending.append(info)
         elif age_seconds < STALE_PENDING_THRESHOLD_SECONDS:
             info["classification"] = "recent_expected"
             actionable_pending.append(info)
@@ -292,6 +373,7 @@ async def audit_task_queue(db: AsyncSession) -> dict:
             "deleted_source_obsolete_failed_count": len(obsolete_recent_failed_samples),
             "historical_failed_debt_count": historical_failed_debt_count,
             "actionable_pending_count": len(actionable_pending),
+            "paused_pending_count": len(paused_pending),
             "stale_pending_debt_count": len(stale_pending),
             "future_scheduled_count": len(unreachable_pending),
             "healthy_running_count": len(healthy_running),
@@ -331,6 +413,7 @@ async def audit_task_queue(db: AsyncSession) -> dict:
             "debt_cutoff_hours": HISTORICAL_DEBT_CUTOFF_HOURS,
             "stale_pending_threshold_seconds": STALE_PENDING_THRESHOLD_SECONDS,
             "orphan_timeout_seconds": ORPHAN_RUNNING_TIMEOUT_SECONDS,
+            "paused_pending_sample_limit": len(pending_tasks_list),
         },
     }
 
@@ -368,6 +451,7 @@ async def reconcile_orphan_running(db: AsyncSession) -> list[dict]:
             task.status = "pending"
             task.started_at = None
             task.error_message = f"Orphan reconciled: re-queued after {age}s"
+        task.updated_at = now
         reconciled.append({
             "id": task.id,
             "task_type": task.task_type,
@@ -388,6 +472,7 @@ async def reconcile_stale_pending(db: AsyncSession) -> list[dict]:
     """
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(seconds=STALE_PENDING_THRESHOLD_SECONDS)
+    paused_task_types, paused_stages, paused_lanes = _load_paused_worker_config()
 
     result = await db.execute(
         select(SystemTaskQueue)
@@ -402,11 +487,22 @@ async def reconcile_stale_pending(db: AsyncSession) -> list[dict]:
             )
         )
         .with_for_update(skip_locked=True)
-        .limit(50)
+        .limit(PENDING_AUDIT_SCAN_LIMIT)
     )
     stale = list(result.scalars().all())
     reconciled = []
     for task in stale:
+        if _task_paused_by_config(
+            task,
+            paused_task_types=paused_task_types,
+            paused_stages=paused_stages,
+            paused_lanes=paused_lanes,
+        ):
+            continue
+        if _task_recently_reclaimed(task, now):
+            continue
+        if len(reconciled) >= 50:
+            break
         age = int((now - (task.created_at or now)).total_seconds())
         task.status = "failed"
         task.error_message = f"Stale pending reconciled: waited {age}s without processing"

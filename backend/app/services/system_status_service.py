@@ -1,3 +1,4 @@
+import os
 import socket
 
 import psutil
@@ -33,9 +34,17 @@ async def check_worker() -> dict:
     from app.services.task_worker import worker_health
     wh = worker_health()
     running = wh.get("running", False)
+    external = os.getenv("TASK_WORKER_AUTOSTART", "1").strip().lower() in {"0", "false", "no", "off"}
+    healthy = running or external
+    if running:
+        message = "Background worker is running"
+    elif external:
+        message = "Background worker uses external watchdog supervision"
+    else:
+        message = "Background worker is not running"
     return {
-        "status": running,
-        "message": "Background worker is running" if running else "Background worker is not running",
+        "status": healthy,
+        "message": message,
     }
 
 

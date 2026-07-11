@@ -42,6 +42,7 @@ async def _create_task(
     started_at: datetime | None = None,
     created_at: datetime | None = None,
     completed_at: datetime | None = None,
+    updated_at: datetime | None = None,
     error_message: str | None = None,
     retry_count: int = 0,
     max_retries: int = 3,
@@ -49,6 +50,9 @@ async def _create_task(
     module: str = "test",
     parameters: dict | None = None,
     result: dict | None = None,
+    document_id: int | None = None,
+    stage_key: str | None = None,
+    lane_key: str | None = None,
 ) -> int:
     async with AsyncSessionLocal() as db:
         now = datetime.now(timezone.utc)
@@ -62,10 +66,14 @@ async def _create_task(
             max_retries=max_retries,
             started_at=started_at,
             created_at=created_at or now,
+            updated_at=updated_at,
             completed_at=completed_at,
             error_message=error_message,
             scheduled_at=scheduled_at,
             result=json.dumps(result, ensure_ascii=False) if result is not None else None,
+            document_id=document_id,
+            stage_key=stage_key,
+            lane_key=lane_key,
         )
         db.add(task)
         await db.commit()
@@ -264,6 +272,69 @@ async def test_reconcile_stale_pending_marks_as_failed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_paused_pending_is_not_stale_or_reconciled(tmp_path, monkeypatch) -> None:
+    marker = uuid4().hex
+    await _cleanup(marker)
+    config_path = tmp_path / "task_worker.json"
+    config_path.write_text(
+        json.dumps({
+            "paused_stages": {"kb_pipeline_stage": ["fusion", "graph", "profile", "raw_ocr", "raw_vision"]},
+            "paused_lanes": {"kb_pipeline_stage": ["vision_analysis"]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(audit, "TASK_WORKER_CONFIG_PATH", config_path)
+    try:
+        now = datetime.now(timezone.utc)
+        paused_task_id = await _create_task(
+            "kb_pipeline_stage",
+            "pending",
+            module="knowledge",
+            created_at=now - timedelta(hours=2),
+            parameters={"marker": marker, "document_id": 1, "stage": "graph"},
+            document_id=1,
+            stage_key="graph",
+            lane_key="llm_analysis",
+        )
+        stale_task_id = await _create_task(
+            f"test_audit_{marker}_stale",
+            "pending",
+            created_at=now - timedelta(hours=2),
+        )
+
+        async with AsyncSessionLocal() as db:
+            audit_result = await audit.audit_task_queue(db)
+
+        cls = audit_result["classification"]
+        assert cls["paused_pending_count"] >= 1
+        assert cls["stale_pending_debt_count"] >= 1
+
+        async with AsyncSessionLocal() as db:
+            reconciled = await reconcile_stale_pending(db)
+
+        assert any(r["id"] == stale_task_id for r in reconciled)
+        assert not any(r["id"] == paused_task_id for r in reconciled)
+
+        async with AsyncSessionLocal() as db:
+            rows = await db.execute(
+                text(
+                    """
+                    SELECT id, status
+                    FROM framework_system_task_queues
+                    WHERE id IN (:paused_task_id, :stale_task_id)
+                    """
+                ),
+                {"paused_task_id": paused_task_id, "stale_task_id": stale_task_id},
+            )
+            statuses = {row[0]: row[1] for row in rows.all()}
+
+        assert statuses[paused_task_id] == "pending"
+        assert statuses[stale_task_id] == "failed"
+    finally:
+        await _cleanup(marker)
+
+
+@pytest.mark.asyncio
 async def test_reconcile_orphan_running_reclaims() -> None:
     marker = uuid4().hex
     await _cleanup(marker)
@@ -278,6 +349,75 @@ async def test_reconcile_orphan_running_reclaims() -> None:
             reconciled = await reconcile_orphan_running(db)
 
         assert any(r["id"] == task_id for r in reconciled), "orphan should be reconciled"
+    finally:
+        await _cleanup(marker)
+
+
+@pytest.mark.asyncio
+async def test_requeued_orphan_is_not_immediately_marked_stale() -> None:
+    marker = uuid4().hex
+    await _cleanup(marker)
+    try:
+        now = datetime.now(timezone.utc)
+        task_id = await _create_task(
+            f"test_audit_{marker}_orphan_retry",
+            "running",
+            started_at=now - timedelta(seconds=audit.ORPHAN_RUNNING_TIMEOUT_SECONDS + 120),
+            created_at=now - timedelta(hours=2),
+            retry_count=1,
+            max_retries=5,
+        )
+
+        async with AsyncSessionLocal() as db:
+            orphan_reconciled = await reconcile_orphan_running(db)
+            stale_reconciled = await reconcile_stale_pending(db)
+
+        assert any(r["id"] == task_id for r in orphan_reconciled)
+        assert not any(r["id"] == task_id for r in stale_reconciled)
+
+        async with AsyncSessionLocal() as db:
+            row = await db.execute(
+                text(
+                    """
+                    SELECT status, error_message
+                    FROM framework_system_task_queues
+                    WHERE id = :task_id
+                    """
+                ),
+                {"task_id": task_id},
+            )
+            status, error_message = row.one()
+
+        assert status == "pending"
+        assert str(error_message).startswith("Orphan reconciled:")
+    finally:
+        await _cleanup(marker)
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_pending_grace_expires_and_becomes_stale() -> None:
+    marker = uuid4().hex
+    await _cleanup(marker)
+    try:
+        now = datetime.now(timezone.utc)
+        task_id = await _create_task(
+            f"test_audit_{marker}_expired_reclaim",
+            "pending",
+            created_at=now - timedelta(hours=2),
+            updated_at=now - timedelta(seconds=audit.RECLAIMED_PENDING_GRACE_SECONDS + 60),
+            error_message="Orphan reconciled: re-queued after 9999s",
+        )
+
+        async with AsyncSessionLocal() as db:
+            audit_result = await audit.audit_task_queue(db)
+
+        cls = audit_result["classification"]
+        assert cls["stale_pending_debt_count"] >= 1
+
+        async with AsyncSessionLocal() as db:
+            reconciled = await reconcile_stale_pending(db)
+
+        assert any(r["id"] == task_id for r in reconciled)
     finally:
         await _cleanup(marker)
 

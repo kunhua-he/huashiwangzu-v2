@@ -790,6 +790,51 @@ async def reconcile_pending_pipeline_queue(
     return result
 
 
+async def archive_pending_pipeline_tasks_for_documents(
+    db: AsyncSession,
+    document_ids: list[int],
+) -> dict[str, Any]:
+    """Archive obsolete pending pipeline tasks for specific documents.
+
+    File lifecycle handlers use this after a source is deleted/recycled so
+    queue audits do not treat now-unreachable source work as actionable.
+    """
+    ids = sorted({int(document_id) for document_id in document_ids if int(document_id or 0) > 0})
+    if not ids:
+        return {
+            "matched": 0,
+            "selected": 0,
+            "selected_obsolete": 0,
+            "changed": 0,
+            "summary": {},
+        }
+
+    result = await db.execute(
+        select(SystemTaskQueue.id).where(
+            SystemTaskQueue.module == "knowledge",
+            SystemTaskQueue.task_type.in_(PIPELINE_QUEUE_TASK_TYPES),
+            SystemTaskQueue.status == "pending",
+            SystemTaskQueue.document_id.in_(ids),
+        )
+    )
+    task_ids = [int(task_id) for task_id in result.scalars().all()]
+    if not task_ids:
+        return {
+            "matched": 0,
+            "selected": 0,
+            "selected_obsolete": 0,
+            "changed": 0,
+            "summary": {},
+        }
+
+    return await reconcile_pending_pipeline_queue(
+        db,
+        task_ids=task_ids,
+        dry_run=False,
+        order="oldest",
+    )
+
+
 def _count_by_category(items: list[dict[str, Any]]) -> dict[str, int]:
     return dict(Counter(str(item["category"]) for item in items))
 

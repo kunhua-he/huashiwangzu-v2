@@ -57,7 +57,8 @@ def build_release_summary(verdict: str, *, skip_ui: bool = False, preflight: boo
     clean_pass = summary_verdict == "PASS" and not skip_ui and not preflight and not has_debt and not has_blockers
     clean_release_ready = clean_pass and not has_debt
     release_safe = summary_verdict in {"PASS", "PASS_WITH_DEBT"} and not has_blockers
-    deploy_allowed = release_safe
+    release_safe_with_debt = summary_verdict == "PASS_WITH_DEBT" and not has_blockers
+    deploy_allowed = clean_release_ready
     ui_coverage_status = runtime_context.get("ui_coverage", {})
     model_fallback_status = runtime_context.get("model_fallback", {})
     compact_summary = {
@@ -65,6 +66,7 @@ def build_release_summary(verdict: str, *, skip_ui: bool = False, preflight: boo
         "blockers": blockers,
         "debts": debts,
         "release_safe": release_safe,
+        "release_safe_with_debt": release_safe_with_debt,
         "clean_release_ready": clean_release_ready,
         "deploy_allowed": deploy_allowed,
         "ui_coverage_status": ui_coverage_status,
@@ -78,6 +80,7 @@ def build_release_summary(verdict: str, *, skip_ui: bool = False, preflight: boo
         "clean_pass": clean_pass,
         "clean_release_ready": clean_release_ready,
         "release_safe": release_safe,
+        "release_safe_with_debt": release_safe_with_debt,
         "deploy_allowed": deploy_allowed,
         "ui_coverage_status": ui_coverage_status,
         "model_fallback_status": model_fallback_status,

@@ -1,9 +1,12 @@
 """Initialize DB tables and default prompts for douyin-delivery module."""
 
+import asyncio
 import logging
 
 from app.database import engine
+from app.database import AsyncSessionLocal
 from app.models.base import Base
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text as sa_text
 
 logger = logging.getLogger("v2.douyin_delivery").getChild("init_db")
@@ -193,51 +196,71 @@ DEFAULT_PROMPTS = [
 ]
 
 
-def _init_db():
-    """Create tables and seed default prompts if needed."""
+async def ensure_douyin_tables() -> None:
+    douyin_tables = [table for name, table in Base.metadata.tables.items() if name.startswith("douyin_")]
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=douyin_tables))
+    logger.info("Tables created/verified: %s", ", ".join(DOUYIN_TABLES))
+
+
+async def seed_default_prompts(db: AsyncSession) -> int:
+    seeded = 0
+    for dp in DEFAULT_PROMPTS:
+        r = await db.execute(
+            sa_text(
+                "SELECT id FROM douyin_prompts WHERE key = :key AND owner_id = 0 AND deleted = false LIMIT 1"
+            ),
+            {"key": dp["key"]},
+        )
+        if r.scalar_one_or_none():
+            continue
+        prompt = DouyinPrompt(
+            owner_id=0,
+            key=dp["key"],
+            name=dp["name"],
+            content=dp["content"],
+            description=dp.get("description", ""),
+            category=dp["category"],
+            channel=dp.get("channel", ""),
+        )
+        db.add(prompt)
+        seeded += 1
+    await db.commit()
+    logger.info("Ensured default douyin prompts (seeded=%d)", seeded)
+    return seeded
+
+
+async def run_init(db: AsyncSession | None = None) -> None:
+    await ensure_douyin_tables()
+    if db is not None:
+        await seed_default_prompts(db)
+        return
+    async with AsyncSessionLocal() as session:
+        await seed_default_prompts(session)
+
+
+def _run_startup_init() -> asyncio.Task[None] | None:
     try:
-        douyin_tables = [t for n, t in Base.metadata.tables.items() if n.startswith("douyin_")]
-        import asyncio
-        async def _create():
-            async with engine.begin() as conn:
-                await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=douyin_tables))
-        asyncio.run(_create())
-        logger.info("Tables created/verified: %s", ", ".join(DOUYIN_TABLES))
-    except Exception as exc:
-        logger.warning("Table creation skipped (may already exist): %s", exc)
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        task = loop.create_task(run_init())
+
+        def _log_task_result(done_task: asyncio.Task[None]) -> None:
+            try:
+                done_task.result()
+            except Exception as exc:
+                logger.warning("Douyin-delivery startup init failed: %s", exc)
+
+        task.add_done_callback(_log_task_result)
+        logger.info("Scheduled douyin-delivery startup init on running event loop")
+        return task
 
     try:
-        import asyncio
-
-        from app.database import AsyncSessionLocal
-
-        async def _seed_prompts():
-            async with AsyncSessionLocal() as db:
-                for dp in DEFAULT_PROMPTS:
-                    r = await db.execute(
-                        sa_text(
-                            "SELECT id FROM douyin_prompts WHERE key = :key AND owner_id = 0 AND deleted = false LIMIT 1"
-                        ),
-                        {"key": dp["key"]},
-                    )
-                    if r.scalar_one_or_none():
-                        continue
-                    prompt = DouyinPrompt(
-                        owner_id=0,
-                        key=dp["key"],
-                        name=dp["name"],
-                        content=dp["content"],
-                        description=dp.get("description", ""),
-                        category=dp["category"],
-                        channel=dp.get("channel", ""),
-                    )
-                    db.add(prompt)
-                await db.commit()
-                logger.info("Default prompts seeded")
-
-        asyncio.run(_seed_prompts())
+        asyncio.run(run_init())
+        logger.info("Douyin-delivery startup init complete")
     except Exception as exc:
-        logger.warning("Prompt seeding skipped: %s", exc)
-
-
-_run_startup_init = _init_db
+        logger.warning("Douyin-delivery startup init failed: %s", exc)
+    return None

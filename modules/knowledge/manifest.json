@@ -311,6 +311,10 @@
           "type": "integer",
           "description": "最多返回候选文档数（默认500）"
         },
+        "all_owners": {
+          "type": "boolean",
+          "description": "为 true 时按全 owner 审计，默认 false"
+        },
         "reason": {
           "type": "string",
           "description": "source_file_deleted、source_file_missing、source_storage_path_missing、source_path_unsafe、source_file_physical_missing 或 source_unavailable"
@@ -329,6 +333,10 @@
         "limit": {
           "type": "integer",
           "description": "最多归档文档数（默认100）"
+        },
+        "all_owners": {
+          "type": "boolean",
+          "description": "为 true 时按全 owner 归档，默认 false"
         },
         "reason": {
           "type": "string",

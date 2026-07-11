@@ -18,6 +18,7 @@ def expected_server_config(repo_root: Path) -> dict[str, Any]:
         "command": DEFAULT_COMMAND,
         "args": [str(SERVER_SCRIPT)],
         "cwd": str(repo_root),
+        "env": {"PYTHONPATH": "."},
     }
 
 

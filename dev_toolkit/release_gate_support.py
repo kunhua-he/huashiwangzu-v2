@@ -14,10 +14,18 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from dev_toolkit.asset_lifecycle_tools import (
+        TEST_MARKERS,
+        audit_test_data_pollution as audit_test_data_pollution_for_repo,
+    )
     from dev_toolkit.config_loader import load_config
     from dev_toolkit.semantic_failure import semantic_failure_reason
     from dev_toolkit.sql_guard import readonly_psql_env
 except ModuleNotFoundError:
+    from asset_lifecycle_tools import (
+        TEST_MARKERS,
+        audit_test_data_pollution as audit_test_data_pollution_for_repo,
+    )
     from config_loader import load_config
     from semantic_failure import semantic_failure_reason
     from sql_guard import readonly_psql_env
@@ -114,6 +122,35 @@ def _find_semantic_failed_completed_tasks_via_backend_python(limit: int) -> tupl
         raise RuntimeError("backend-python semantic scan returned non-object JSON")
     return int(payload.get("count") or 0), list(payload.get("samples") or [])
 
+
+def _inspect_alembic_revision_state_via_backend_python() -> dict[str, Any]:
+    if not BACKEND_PYTHON.exists():
+        raise RuntimeError("backend venv python not found for alembic migration inspection")
+    if os.environ.get("DEV_TOOLKIT_ALEMBIC_REEXEC") == "1":
+        raise RuntimeError("alembic is unavailable in backend venv")
+
+    env = os.environ.copy()
+    env["DEV_TOOLKIT_ALEMBIC_REEXEC"] = "1"
+    proc = subprocess.run(
+        [str(BACKEND_PYTHON), str(REPO_ROOT / "dev_toolkit" / "release_gate.py"), "--alembic-state-json"],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()[:500]
+        raise RuntimeError(f"backend-python alembic inspection failed: {detail}")
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"backend-python alembic inspection returned invalid JSON: {proc.stdout[:500]}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("backend-python alembic inspection returned non-object JSON")
+    return payload
+
 def find_semantic_failed_completed_tasks(limit: int = SEMANTIC_COMPLETED_SCAN_LIMIT) -> tuple[int, list[dict[str, Any]]]:
     """Find completed queue rows whose result contract still says failed/error."""
     try:
@@ -141,20 +178,78 @@ def _run_psql_json(sql: str) -> dict[str, Any]:
     output = proc.stdout.strip()
     return json.loads(output) if output else {}
 
-def _asset_marker_predicate(alias: str, column: str) -> str:
-    markers = (
-        "smoke-",
-        "e2e-",
-        "recycle-",
-        "pytest-",
-        "test-upload-",
-        "test-file-",
-        "test-pollution-",
-        "lifecycle-source-",
-        "permanent-source-",
+def inspect_alembic_revision_state() -> dict[str, Any]:
+    """Compare code migration heads with the live database alembic_version table."""
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+    except ImportError as exc:
+        if BACKEND_PYTHON.exists() and os.environ.get("DEV_TOOLKIT_ALEMBIC_REEXEC") != "1":
+            return _inspect_alembic_revision_state_via_backend_python()
+        raise RuntimeError("alembic is required for migration state inspection") from exc
+
+    config = Config(str(REPO_ROOT / "backend" / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "backend" / "migrations"))
+    script = ScriptDirectory.from_config(config)
+    heads = sorted(script.get_heads())
+    db_state = _run_psql_json(
+        """
+select json_build_object(
+  'current_versions',
+  coalesce((select json_agg(version_num order by version_num) from alembic_version), '[]'::json)
+)::text;
+"""
     )
+    current_versions = sorted(str(item) for item in db_state.get("current_versions", []))
+    return {
+        "heads": heads,
+        "head_count": len(heads),
+        "current_versions": current_versions,
+        "missing_current_heads": sorted(set(heads) - set(current_versions)),
+        "extra_current_versions": sorted(set(current_versions) - set(heads)),
+    }
+
+
+def audit_file_share_schema() -> dict[str, Any]:
+    """Verify columns used by FileShare ORM/service are present in the live DB."""
+    required = ["scope", "expiry", "reason", "publish", "reshare"]
+    data = _run_psql_json(
+        """
+select json_build_object(
+  'table_name', 'framework_file_shares',
+  'columns',
+    coalesce((
+      select json_agg(column_name order by column_name)
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'framework_file_shares'
+    ), '[]'::json)
+)::text;
+"""
+    )
+    columns = set(str(item) for item in data.get("columns", []))
+    data["required_columns"] = required
+    data["missing_columns"] = [column for column in required if column not in columns]
+    return data
+
+def audit_pgvector_access() -> dict[str, Any]:
+    """Verify pgvector is installed and the server can load its type/operator code."""
+    return _run_psql_json(
+        """
+select json_build_object(
+  'available_default_version',
+    (select default_version from pg_available_extensions where name='vector'),
+  'installed_version',
+    (select extversion from pg_extension where extname='vector'),
+  'probe_distance',
+    ('[1,0]'::vector(2) <=> '[1,0]'::vector(2))
+)::text;
+"""
+    )
+
+def _asset_marker_predicate(alias: str, column: str) -> str:
     field = f"lower(coalesce({alias}.{column}, ''))"
-    return "(" + " or ".join(f"{field} like '%{marker}%'" for marker in markers) + ")"
+    return "(" + " or ".join(f"{field} like '%{marker}%'" for marker in TEST_MARKERS) + ")"
 
 def audit_knowledge_lifecycle_debt() -> dict[str, Any]:
     return _run_psql_json(
@@ -238,40 +333,7 @@ where p.deleted=false;
     )
 
 def audit_test_data_pollution() -> dict[str, Any]:
-    file_marker = _asset_marker_predicate("f", "name")
-    storage_marker = _asset_marker_predicate("f", "storage_path")
-    doc_marker = _asset_marker_predicate("d", "filename")
-    return _run_psql_json(
-        f"""
-with marker_files as (
-  select f.id, f.deleted
-  from framework_file_items f
-  where {file_marker} or {storage_marker}
-),
-marker_docs as (
-  select d.id, d.deleted
-  from kb_documents d
-  left join marker_files mf on mf.id = d.file_id
-  where mf.id is not null or {doc_marker}
-),
-marker_packages as (
-  select p.id, p.deleted
-  from framework_content_packages p
-  join marker_files mf on mf.id = p.source_file_id
-)
-select json_build_object(
-  'active_test_files', (select count(*) from marker_files where deleted=false),
-  'recycled_test_files', (select count(*) from marker_files where deleted=true),
-  'knowledge_documents_from_test_files', (select count(*) from marker_docs where deleted=false),
-  'content_packages_from_test_files', (select count(*) from marker_packages where deleted=false),
-  'uploads_test_artifacts', (select count(*) from marker_files),
-  'markers', json_build_array(
-    'smoke-', 'e2e-', 'recycle-', 'pytest-', 'test-upload-', 'test-file-',
-    'test-pollution-', 'lifecycle-source-', 'permanent-source-'
-  )
-)::text;
-"""
-    )
+    return audit_test_data_pollution_for_repo(REPO_ROOT, limit=20)
 
 def classify_semantic_failed_completed(
     current_count: int,

@@ -18,7 +18,12 @@ _MAX_LIMIT = 200
 
 _CRITICAL_RE = re.compile(r"\b(critical|fatal|panic)\b", re.IGNORECASE)
 _ERROR_RE = re.compile(
-    r"(traceback|exception|\berror\b|internal server error|xhr 加载失败|网络异常|failed|failure|\b5\d\d\b)",
+    r"(traceback|exception|\berror\b|internal server error|xhr 加载失败|网络异常|failed|failure)",
+    re.IGNORECASE,
+)
+_HTTP_5XX_RE = re.compile(
+    r"(?:\b(?:GET|POST|PUT|PATCH|DELETE|HTTP)\b[^\n]{0,300}\b5\d\d\b|"
+    r"\b(?:status|status_code)\s*[=:]\s*5\d\d\b)",
     re.IGNORECASE,
 )
 _WARNING_RE = re.compile(r"(\bwarn(?:ing)?\b|degraded|timeout|timed out|\b40[13]\b|retry)", re.IGNORECASE)
@@ -121,7 +126,7 @@ def _tail_lines(path: Path, line_limit: int) -> list[str]:
 def _detect_severity(line: str) -> str:
     if _CRITICAL_RE.search(line):
         return "critical"
-    if _ERROR_RE.search(line):
+    if _ERROR_RE.search(line) or _HTTP_5XX_RE.search(line):
         return "error"
     if _WARNING_RE.search(line):
         return "warning"

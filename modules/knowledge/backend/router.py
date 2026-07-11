@@ -22,6 +22,7 @@ from .services import file_lifecycle_service, pipeline_service  # noqa: F401
 from .services.chunk_embedding_service import (
     DEFAULT_CHUNK_EMBEDDING_PROFILE,
     backfill_chunk_embeddings,
+    enqueue_chunk_embedding_backfill_task,
     get_chunk_embedding_counts,
 )
 from .services.chunk_rebuild_service import rebuild_document_chunks
@@ -357,6 +358,14 @@ class ChunkEmbeddingBackfillRequest(BaseModel):
     dry_run: bool = True
     limit: int = Field(default=1000, ge=1, le=50000)
     batch_size: int = Field(default=8, ge=1, le=64)
+    embedding_profile: str = DEFAULT_CHUNK_EMBEDDING_PROFILE
+
+
+class ChunkEmbeddingBackfillEnqueueRequest(BaseModel):
+    total_limit: int = Field(default=600000, ge=1, le=2_000_000)
+    chunk_limit: int = Field(default=96, ge=1, le=5000)
+    batch_size: int = Field(default=4, ge=1, le=64)
+    priority: int = Field(default=4, ge=0, le=100)
     embedding_profile: str = DEFAULT_CHUNK_EMBEDDING_PROFILE
 
 @router.get("/health")
@@ -1110,6 +1119,26 @@ async def api_chunk_embedding_backfill(
     return ApiResponse(data=result)
 
 
+@router.post("/governance/chunk-embeddings/enqueue")
+async def api_chunk_embedding_backfill_enqueue(
+    payload: ChunkEmbeddingBackfillEnqueueRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("admin")),
+):
+    await ensure_accepting_new_work(db, "knowledge chunk embedding backfill")
+    result = await enqueue_chunk_embedding_backfill_task(
+        db,
+        owner_id=user.id,
+        profile_key=payload.embedding_profile,
+        total_limit=payload.total_limit,
+        chunk_limit=payload.chunk_limit,
+        batch_size=payload.batch_size,
+        priority=payload.priority,
+    )
+    await db.commit()
+    return ApiResponse(data=result)
+
+
 # ── Cross-module capabilities ───────────────────────────────
 
 async def _enqueue_task(db, stage: str, document_id: int, user_id: int) -> ApiResponse:
@@ -1406,6 +1435,30 @@ async def _cap_backfill_chunk_embeddings(params: dict, caller: str) -> dict:
             limit=limit,
             batch_size=batch_size,
         )
+
+
+async def _cap_enqueue_chunk_embedding_backfill(params: dict, caller: str) -> dict:
+    owner_id = resolve_user_id(caller)
+    embedding_profile = str(
+        params.get("embedding_profile") or DEFAULT_CHUNK_EMBEDDING_PROFILE
+    ).strip()
+    total_limit = int(params.get("total_limit", 600000) or 600000)
+    chunk_limit = int(params.get("chunk_limit", 96) or 96)
+    batch_size = int(params.get("batch_size", 4) or 4)
+    priority = int(params.get("priority", 4) or 4)
+    async with AsyncSessionLocal() as db:
+        await ensure_accepting_new_work(db, "knowledge chunk embedding backfill")
+        result = await enqueue_chunk_embedding_backfill_task(
+            db,
+            owner_id=owner_id,
+            profile_key=embedding_profile,
+            total_limit=total_limit,
+            chunk_limit=chunk_limit,
+            batch_size=batch_size,
+            priority=priority,
+        )
+        await db.commit()
+        return result
 
 
 async def _cap_enqueue_incomplete_documents(params: dict, caller: str) -> dict:
@@ -1814,6 +1867,22 @@ register_capability(
         "dry_run": {"type": "boolean", "description": "Preview only when true, default true"},
         "limit": {"type": "integer", "description": "Maximum chunks to inspect/backfill, default 1000"},
         "batch_size": {"type": "integer", "description": "Embedding batch size, default 8"},
+        "embedding_profile": {
+            "type": "string",
+            "description": "Embedding profile key, default qwen3-embedding-8b",
+        },
+    },
+    min_role="admin",
+)
+register_capability(
+    "knowledge", "enqueue_chunk_embedding_backfill", _cap_enqueue_chunk_embedding_backfill,
+    description="Enqueue queued Qwen3 chunk embedding sidecar backfill work; worker auto-starts the local model as needed",
+    brief="入队块向量边车补跑",
+    parameters={
+        "total_limit": {"type": "integer", "description": "Maximum chunks to backfill across chained tasks, default 600000"},
+        "chunk_limit": {"type": "integer", "description": "Chunks per queued task, default 96"},
+        "batch_size": {"type": "integer", "description": "Embedding batch size, default 4"},
+        "priority": {"type": "integer", "description": "Queue priority, default 4"},
         "embedding_profile": {
             "type": "string",
             "description": "Embedding profile key, default qwen3-embedding-8b",

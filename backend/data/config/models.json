@@ -426,7 +426,7 @@
         "model_path": "/Users/hekunhua/Documents/AI模型/Embedding模型/Qwen3-Embedding-8B",
         "script_path": "/Users/hekunhua/Documents/Agent/PHP/华世王镞_v2/backend/scripts/models/serve_qwen3_embedding.py",
         "command": [
-          "python3",
+          "/Users/hekunhua/Library/FlyEnv/env/python/bin/python3.14",
           "{script_path}",
           "--model-path",
           "{model_path}",

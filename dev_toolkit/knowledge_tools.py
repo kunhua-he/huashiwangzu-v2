@@ -505,6 +505,13 @@ asyncio.run(main())
     snapshot["recent_stage_metrics"] = _summarize_stage_metrics(metric_rows)
     worker_config = _load_worker_config(repo_root)
     snapshot["worker_config"] = worker_config
+    snapshot["worker_operational_note"] = (
+        "Standalone app.task_worker_main processes are disposable background queue workers, "
+        "not durable state. Queue rows are persisted in DB, so stale workers can be killed "
+        "directly after code/handler changes or memory retirement; shutdown recovery releases "
+        "running rows for retry, and backend_watchdog auto-spawns fresh workers when "
+        "executable pending tasks exist."
+    )
     _annotate_queue_limits(snapshot, worker_config)
     return snapshot
 

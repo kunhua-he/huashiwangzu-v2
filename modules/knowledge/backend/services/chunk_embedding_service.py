@@ -6,8 +6,11 @@ import logging
 from typing import Any
 
 from app.gateway.config import get_model_type_config
+from app.database import AsyncSessionLocal
 from app.models.file import File
+from app.models.system import SystemTaskQueue
 from app.services.model_services import get_embedding_profile_contract, get_embeddings
+from app.services.task_worker import register_task_handler
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +24,10 @@ DEFAULT_CHUNK_EMBEDDING_PROFILE = "qwen3-embedding-8b"
 DEFAULT_CHUNK_EMBEDDING_DIM = 4096
 DEFAULT_CHUNK_EMBEDDING_VERSION = 1
 DEFAULT_CHUNK_EMBEDDING_BATCH_SIZE = 8
+CHUNK_EMBEDDING_BACKFILL_TASK_TYPE = "kb_chunk_embedding_backfill"
+DEFAULT_CHUNK_EMBEDDING_TASK_LIMIT = 600000
+DEFAULT_CHUNK_EMBEDDING_TASK_CHUNK_LIMIT = 96
+DEFAULT_CHUNK_EMBEDDING_TASK_BATCH_SIZE = 4
 
 
 def resolve_chunk_embedding_contract(profile_key: str | None = None) -> dict[str, Any]:
@@ -197,6 +204,86 @@ async def get_chunk_embedding_counts(
     }
 
 
+def _chunk_embedding_dependency_key(owner_id: int, profile_key: str) -> str:
+    return f"knowledge:chunk_embedding:{int(owner_id)}:{profile_key}"
+
+
+async def enqueue_chunk_embedding_backfill_task(
+    db: AsyncSession,
+    *,
+    owner_id: int,
+    profile_key: str | None = None,
+    total_limit: int = DEFAULT_CHUNK_EMBEDDING_TASK_LIMIT,
+    chunk_limit: int = DEFAULT_CHUNK_EMBEDDING_TASK_CHUNK_LIMIT,
+    batch_size: int = DEFAULT_CHUNK_EMBEDDING_TASK_BATCH_SIZE,
+    priority: int = 4,
+    embedded_total: int = 0,
+    exclude_task_id: int | None = None,
+) -> dict[str, Any]:
+    contract = resolve_chunk_embedding_contract(profile_key)
+    resolved_profile = str(contract["profile_key"])
+    dependency_key = _chunk_embedding_dependency_key(owner_id, resolved_profile)
+    filters = [
+        SystemTaskQueue.module == "knowledge",
+        SystemTaskQueue.task_type == CHUNK_EMBEDDING_BACKFILL_TASK_TYPE,
+        SystemTaskQueue.status.in_(("pending", "running")),
+        SystemTaskQueue.dependency_key == dependency_key,
+    ]
+    if exclude_task_id:
+        filters.append(SystemTaskQueue.id != int(exclude_task_id))
+    existing = await db.scalar(
+        select(SystemTaskQueue)
+        .where(*filters)
+        .order_by(SystemTaskQueue.id.desc())
+        .limit(1)
+    )
+    if existing:
+        return {
+            "enqueued": False,
+            "task_id": int(existing.id),
+            "reason": "chunk_embedding_backfill_already_in_flight",
+            "profile_key": resolved_profile,
+            "dependency_key": dependency_key,
+        }
+
+    payload = {
+        "owner_id": int(owner_id),
+        "embedding_profile": resolved_profile,
+        "total_limit": max(1, min(int(total_limit or DEFAULT_CHUNK_EMBEDDING_TASK_LIMIT), 2_000_000)),
+        "chunk_limit": max(1, min(int(chunk_limit or DEFAULT_CHUNK_EMBEDDING_TASK_CHUNK_LIMIT), 5000)),
+        "batch_size": max(1, min(int(batch_size or DEFAULT_CHUNK_EMBEDDING_TASK_BATCH_SIZE), 64)),
+        "priority": int(priority),
+        "embedded_total": max(0, int(embedded_total or 0)),
+    }
+    task = SystemTaskQueue(
+        task_type=CHUNK_EMBEDDING_BACKFILL_TASK_TYPE,
+        module="knowledge",
+        parameters=json.dumps(payload, ensure_ascii=False),
+        priority=int(priority),
+        status="pending",
+        creator_id=int(owner_id),
+        max_retries=5,
+        stage_key=resolved_profile,
+        lane_key="derived_index",
+        ready_status="ready",
+        dependency_key=dependency_key,
+    )
+    db.add(task)
+    await db.flush()
+    payload["task_id"] = int(task.id)
+    task.parameters = json.dumps(payload, ensure_ascii=False)
+    return {
+        "enqueued": True,
+        "task_id": int(task.id),
+        "reason": "chunk_embedding_backfill_created",
+        "profile_key": resolved_profile,
+        "dependency_key": dependency_key,
+        "chunk_limit": payload["chunk_limit"],
+        "batch_size": payload["batch_size"],
+        "total_limit": payload["total_limit"],
+    }
+
+
 async def backfill_chunk_embeddings(
     db: AsyncSession,
     *,
@@ -260,6 +347,11 @@ async def backfill_chunk_embeddings(
             "sample_chunk_ids": [int(chunk.id) for chunk in chunks[:20]],
         }
 
+    # Release the candidate-read transaction before the slow local embedding call.
+    # The first Qwen3 request can spend minutes loading weights; keeping an
+    # asyncpg transaction open during that window has caused stale connections.
+    await db.commit()
+
     scanned = 0
     embedded = 0
     skipped = 0
@@ -295,3 +387,63 @@ async def backfill_chunk_embeddings(
         "skipped": skipped,
         "failed_batches": failed_batches,
     }
+
+
+async def _chunk_embedding_backfill_task_handler(params: dict) -> dict:
+    owner_id = int(params.get("owner_id") or params.get("user_id") or 0)
+    if owner_id <= 0:
+        raise ValueError("owner_id is required for chunk embedding backfill task")
+    profile_key = str(
+        params.get("embedding_profile") or params.get("profile_key") or DEFAULT_CHUNK_EMBEDDING_PROFILE
+    ).strip()
+    total_limit = max(1, min(int(params.get("total_limit") or DEFAULT_CHUNK_EMBEDDING_TASK_LIMIT), 2_000_000))
+    chunk_limit = max(1, min(int(params.get("chunk_limit") or DEFAULT_CHUNK_EMBEDDING_TASK_CHUNK_LIMIT), 5000))
+    batch_size = max(1, min(int(params.get("batch_size") or DEFAULT_CHUNK_EMBEDDING_TASK_BATCH_SIZE), 64))
+    priority = int(params.get("priority") or 4)
+    task_id = int(params.get("task_id") or 0)
+    previous_total = max(0, int(params.get("embedded_total") or 0))
+
+    async with AsyncSessionLocal() as db:
+        result = await backfill_chunk_embeddings(
+            db,
+            owner_id=owner_id,
+            profile_key=profile_key,
+            dry_run=False,
+            limit=chunk_limit,
+            batch_size=batch_size,
+        )
+        counts = await get_chunk_embedding_counts(db, owner_id=owner_id, profile_key=profile_key)
+        embedded = int(result.get("embedded") or 0)
+        embedded_total = previous_total + embedded
+        should_continue = (
+            int(counts.get("remaining") or 0) > 0
+            and embedded > 0
+            and embedded_total < total_limit
+        )
+        next_task = None
+        if should_continue:
+            next_task = await enqueue_chunk_embedding_backfill_task(
+                db,
+                owner_id=owner_id,
+                profile_key=profile_key,
+                total_limit=total_limit,
+                chunk_limit=chunk_limit,
+                batch_size=batch_size,
+                priority=priority,
+                embedded_total=embedded_total,
+                exclude_task_id=task_id or None,
+            )
+        await db.commit()
+        return {
+            "task_type": CHUNK_EMBEDDING_BACKFILL_TASK_TYPE,
+            "owner_id": owner_id,
+            "profile_key": profile_key,
+            "embedded_total": embedded_total,
+            "result": result,
+            "counts": counts,
+            "continued": bool(next_task and next_task.get("enqueued")),
+            "next_task": next_task,
+        }
+
+
+register_task_handler(CHUNK_EMBEDDING_BACKFILL_TASK_TYPE, _chunk_embedding_backfill_task_handler)

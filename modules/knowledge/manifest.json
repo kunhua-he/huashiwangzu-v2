@@ -508,6 +508,33 @@
       "min_role": "admin"
     },
     {
+      "action": "enqueue_chunk_embedding_backfill",
+      "description": "把 Qwen3 块向量边车补跑加入后台队列，worker 按需拉起本地模型",
+      "parameters": {
+        "total_limit": {
+          "type": "integer",
+          "description": "链式任务最多补跑块数，默认600000"
+        },
+        "chunk_limit": {
+          "type": "integer",
+          "description": "单个队列任务处理块数，默认96"
+        },
+        "batch_size": {
+          "type": "integer",
+          "description": "向量接口批量大小，默认4"
+        },
+        "priority": {
+          "type": "integer",
+          "description": "队列优先级，默认4"
+        },
+        "embedding_profile": {
+          "type": "string",
+          "description": "向量模型 profile，默认 qwen3-embedding-8b"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
       "action": "enqueue_incomplete_documents",
       "description": "预览或补排未完成深层知识分析的文档",
       "parameters": {

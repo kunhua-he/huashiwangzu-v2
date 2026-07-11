@@ -428,10 +428,6 @@ def _process_match_fragments(record: ModelRecord, launch_cmd: list[str]) -> list
         path = Path(arg)
         if path.suffix.lower() in {".gguf", ".safetensors", ".bin", ".py"}:
             fragments.add(path.name)
-        elif "Qwen" in arg or "bge-" in arg or "gemma" in arg:
-            fragments.add(path.name or arg)
-    if record.name:
-        fragments.add(record.name)
     return sorted(fragment for fragment in fragments if len(fragment) >= 4)
 
 

@@ -70,7 +70,7 @@ Queue status and document readiness are different contracts.
 <!-- DOCS-SYNC: section=public_actions -->
 Runtime authority: backend `register_capability(...)`. Discovery metadata: `manifest.public_actions`.
 
-Total public actions: 32
+Total public actions: 33
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
@@ -82,9 +82,10 @@ Total public actions: 32
 | `backfill_derived_governance` | `admin` | `dry_run`, `include_conclusion_evidence`, `include_disambiguation`, `include_entity_aliases`, `include_lineage`, `limit` | 从已有分析产物、事实候选和实体词典回填知识库派生治理索引 |
 | `classify_pipeline_debt` | `admin` | `categories`, `category`, `category_limits`, `limit`, `limit_each`, `order`, `task_ids` | dry-run 分类历史知识库管道债，不修改队列 |
 | `derive_cognitive_index` | `admin` | `document_id`, `limit` | 按单文档重建词项、事实和因果候选派生索引 |
+| `enqueue_chunk_embedding_backfill` | `admin` | `batch_size`, `chunk_limit`, `embedding_profile`, `priority`, `total_limit` | 把 Qwen3 块向量边车补跑加入后台队列，worker 按需拉起本地模型 |
 | `enqueue_enterprise_source_import` | `admin` | `batch_size`, `extensions`, `priority`, `skip_existing_md5`, `source_root`, `target_root_name` | 将企业源目录扫描投递到后台队列，按文件任务导入并触发知识库分析 |
-| `enqueue_source_manifest_import` | `admin` | `extensions`, `limit`, `priority`, `skip_existing_md5`, `source_root`, `target_root_name` | 从外部源清单中投递尚未进入导入队列的文件 |
 | `enqueue_incomplete_documents` | `admin` | `dry_run`, `extensions`, `include_search_incomplete`, `limit`, `priority` | 预览或补排未完成深层知识分析的文档 |
+| `enqueue_source_manifest_import` | `admin` | `extensions`, `limit`, `priority`, `skip_existing_md5`, `source_root`, `target_root_name` | 从外部源清单中投递尚未进入导入队列的文件 |
 | `export` | `viewer` | `document_id`, `format` | 导出已解析文档（markdown/html/json） |
 | `get_block` | `viewer` | `block_id` | 按 block_id 获取内容块详情 |
 | `get_chunk_embedding_counts` | `admin` | `embedding_profile` | 统计指定向量模型 profile 的块向量边车覆盖率 |

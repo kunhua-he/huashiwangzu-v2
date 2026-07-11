@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 TOOL_NAMES = {"system_resource_snapshot"}
+PROCESS_CPU_SAMPLE_SECONDS = 0.2
 
 
 def tool_definitions() -> list[Any]:
@@ -59,25 +60,53 @@ def _snapshot(repo_root: Path, process_limit: int) -> dict[str, Any]:
         "memory": memory,
         "gpu": gpu,
         "project_processes": processes,
+        "metric_notes": {
+            "cpu.percent": "whole-machine CPU utilization sampled over 0.2s; expected range is 0-100.",
+            "project_processes.cpu_percent": (
+                "per-process CPU in psutil/ps style, measured against one logical core. "
+                "Multi-threaded processes can exceed 100 and must not be read as whole-machine CPU."
+            ),
+            "project_processes.normalized_system_percent": (
+                "process CPU normalized by logical core count, roughly comparable to whole-machine CPU percent."
+            ),
+            "gpu.utilization_percent": "reported only when a non-interactive GPU sampler is available.",
+        },
     }
 
 
 def _cpu_snapshot() -> dict[str, Any]:
     psutil = _import_psutil()
     if psutil is not None:
+        logical_cores = psutil.cpu_count(logical=True)
+        physical_cores = psutil.cpu_count(logical=False)
+        sampled = _psutil_cpu_times_snapshot(psutil)
         return {
             "source": "psutil",
-            "percent": psutil.cpu_percent(interval=0.2),
-            "logical_cores": psutil.cpu_count(logical=True),
-            "physical_cores": psutil.cpu_count(logical=False),
+            **sampled,
+            "percent_scope": "whole_machine",
+            "logical_cores": logical_cores,
+            "physical_cores": physical_cores,
             "load_avg": list(psutil.getloadavg()) if hasattr(psutil, "getloadavg") else None,
         }
+    top_snapshot = _top_cpu_snapshot()
+    if top_snapshot.get("error"):
+        return top_snapshot
+    return top_snapshot
+
+
+def _top_cpu_snapshot() -> dict[str, Any]:
     try:
         out = subprocess.run(["top", "-l", "1", "-n", "0"], capture_output=True, text=True, timeout=3).stdout
     except Exception as exc:
-        return {"source": "top", "percent": None, "error": str(exc)}
+        return {"source": "top", "percent": None, "percent_scope": "whole_machine", "error": str(exc)}
     line = next((item for item in out.splitlines() if item.startswith("CPU usage:")), "")
-    return {"source": "top", "percent": _parse_top_cpu_percent(line), "raw": line}
+    return {
+        "source": "top",
+        "percent": _parse_top_cpu_percent(line),
+        "percent_scope": "whole_machine",
+        "sample_method": "top",
+        "raw": line,
+    }
 
 
 def _memory_snapshot() -> dict[str, Any]:
@@ -142,9 +171,16 @@ def _gpu_snapshot() -> dict[str, Any]:
             "source": "powermetrics",
             "available": False,
             "utilization_percent": None,
+            "percent_scope": "unavailable",
+            "reason": "requires_sudo",
             "note": "macOS GPU实时利用率通常需要 sudo powermetrics；MCP 工具不提权采样，避免卡住或弹权限。",
         }
-    return {"source": "unavailable", "available": False, "utilization_percent": None}
+    return {
+        "source": "unavailable",
+        "available": False,
+        "utilization_percent": None,
+        "percent_scope": "unavailable",
+    }
 
 
 def _project_processes(repo_root: Path, limit: int) -> list[dict[str, Any]]:
@@ -152,20 +188,36 @@ def _project_processes(repo_root: Path, limit: int) -> list[dict[str, Any]]:
     if psutil is None or limit <= 0:
         return []
     root = str(repo_root)
+    logical_cores = psutil.cpu_count(logical=True) or 1
+    candidates: list[Any] = []
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "memory_info", "status"]):
+        try:
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            if root not in cmdline and not _looks_project_process(cmdline):
+                continue
+            proc.cpu_percent(None)
+            candidates.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    if candidates:
+        time.sleep(PROCESS_CPU_SAMPLE_SECONDS)
+
     rows: list[dict[str, Any]] = []
-    for proc in psutil.process_iter(["pid", "name", "cmdline", "cpu_percent", "memory_info", "status"]):
+    for proc in candidates:
         try:
             info = proc.info
             cmdline = " ".join(info.get("cmdline") or [])
-            if root not in cmdline and not _looks_project_process(cmdline):
-                continue
             memory_info = info.get("memory_info")
+            process_cpu = round(float(proc.cpu_percent(None) or 0.0), 1)
             rows.append(
                 {
                     "pid": info.get("pid"),
                     "name": info.get("name"),
                     "status": info.get("status"),
-                    "cpu_percent": info.get("cpu_percent"),
+                    "cpu_percent": process_cpu,
+                    "cpu_percent_scope": "process_single_logical_core",
+                    "normalized_system_percent": round(process_cpu / logical_cores, 2),
                     "rss_mb": round((memory_info.rss if memory_info else 0) / 1024**2, 1),
                     "cmdline": cmdline[:240],
                 }
@@ -193,6 +245,36 @@ def _import_psutil() -> Any | None:
     except ImportError:
         return None
     return psutil
+
+
+def _psutil_cpu_times_snapshot(psutil: Any) -> dict[str, float | str]:
+    if hasattr(psutil, "cpu_times_percent"):
+        times = psutil.cpu_times_percent(interval=0.2)
+        total = sum(float(getattr(times, field, 0.0) or 0.0) for field in times._fields)
+        if total < 1.0:
+            sampled = round(float(psutil.cpu_percent(interval=0.2) or 0.0), 1)
+            if sampled > 0.0:
+                return {
+                    "percent": sampled,
+                    "sample_method": "cpu_percent_after_empty_cpu_times",
+                }
+            top_snapshot = _top_cpu_snapshot()
+            top_snapshot["sample_method"] = "top_after_empty_cpu_times"
+            return top_snapshot
+        idle = float(getattr(times, "idle", 0.0) or 0.0)
+        user = float(getattr(times, "user", 0.0) or 0.0)
+        system = float(getattr(times, "system", 0.0) or 0.0)
+        return {
+            "percent": round(max(0.0, 100.0 - idle), 1),
+            "user_percent": round(user, 1),
+            "system_percent": round(system, 1),
+            "idle_percent": round(idle, 1),
+            "sample_method": "cpu_times_percent",
+        }
+    return {
+        "percent": round(float(psutil.cpu_percent(interval=0.2) or 0.0), 1),
+        "sample_method": "cpu_percent",
+    }
 
 
 def _parse_top_cpu_percent(line: str) -> float | None:

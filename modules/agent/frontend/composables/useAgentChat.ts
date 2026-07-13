@@ -228,7 +228,7 @@ export function useAgentChat(props: AgentEntryProps) {
           id: 0, role: '', content: '',
           eventType: 'work_group',
           running: false,
-          collapsed: !hasImageResult,
+          collapsed: false,
           durationMs: workDurationMs,
           items,
         } as MsgItem)
@@ -501,7 +501,7 @@ export function useAgentChat(props: AgentEntryProps) {
         stopWorkTimer()
         closeLastThinking()
         const wg = currentWorkGroup.value
-        if (wg) { wg.running = false; wg.collapsed = true }
+        if (wg) { wg.running = false; wg.collapsed = false }
             if (abortController) { abortController.abort(); abortController = null }
             sending.value = false
             streaming.value = false
@@ -539,6 +539,13 @@ export function useAgentChat(props: AgentEntryProps) {
     if (!findAssistantStream(segmentId)) startAssistantStream(segmentId)
     const msg = findAssistantStream(segmentId)
     if (msg) msg.content += content
+  }
+
+  function appendVisibleToken(content: string) {
+    if (!content) return
+    const segmentId = activeAssistantStreamId.value || `token_stream_${Date.now()}`
+    appendAssistantStream(segmentId, content)
+    streamingText.value += content
   }
 
   function rollbackAssistantStream(segmentId: string, reason?: string) {
@@ -589,7 +596,7 @@ export function useAgentChat(props: AgentEntryProps) {
           stopWorkTimer()
           closeLastThinking()
           const wg = currentWorkGroup.value
-          if (wg) { wg.running = false; wg.collapsed = true }
+          if (wg) { wg.running = false; wg.collapsed = false }
           // 也折叠工作组内的思考和工具条目
           if (wg?.items) {
             for (const item of wg.items) {
@@ -732,7 +739,7 @@ export function useAgentChat(props: AgentEntryProps) {
               } as MsgItem)
             }
             wg.running = false
-            wg.collapsed = true
+            wg.collapsed = false
             wg.durationMs = durationMs
           }
           currentWorkGroup.value = null
@@ -905,7 +912,7 @@ export function useAgentChat(props: AgentEntryProps) {
                         if (activeAssistantStreamId.value) {
                           appendAssistantStream(activeAssistantStreamId.value, (evt.content as string) || '')
                         } else {
-                          streamingText.value += evt.content as string || ''
+                          appendVisibleToken((evt.content as string) || '')
                         }
                       } else if (etype === 'error') {
 

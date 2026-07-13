@@ -33,6 +33,7 @@ Media Intelligence
 - Desktop behavior, format binding, window behavior, and permissions are declared in `manifest.json`.
 - Backend HTTP behavior, if present, is implemented in `backend/router.py`.
 - Runtime module calls, if present, are declared in `manifest.public_actions` and registered by backend capability code.
+- This is the Agent-facing image/video understanding module. OCR, VLM refinement, image summary, object detection, and media summaries should be exposed to Agent through these capabilities instead of the legacy `image-vision` parser.
 
 ## HTTP API / Endpoint Families
 

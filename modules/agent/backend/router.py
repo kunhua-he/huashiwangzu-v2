@@ -41,7 +41,7 @@ from .services import conversation_service as conv_svc
 from .services import prompt_service as prompt_svc
 from .services import workflow_seed_service as workflow_seed_svc
 from .services import workflow_service as workflow_svc
-from .services.capability_catalog import direct_function_tools
+from .services.capability_catalog import agent_visible_capabilities, direct_function_tools
 
 logger = logging.getLogger("v2.agent").getChild("router")
 
@@ -77,7 +77,7 @@ async def list_tools(user: User = Depends(require_permission("viewer"))):
     from app.services.module_registry import authorized_capability_snapshot
 
     snapshot = await authorized_capability_snapshot(user_id=user.id)
-    tools = direct_function_tools(snapshot.get("capabilities") or [])
+    tools = direct_function_tools(agent_visible_capabilities(snapshot.get("capabilities") or []))
     return ApiResponse(data=tools)
 
 

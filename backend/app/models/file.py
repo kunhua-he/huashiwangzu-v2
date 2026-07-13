@@ -1,6 +1,9 @@
-from sqlalchemy import String, Boolean, Integer, BigInteger, Text, ForeignKey, DateTime
+from datetime import datetime
+
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from datetime import datetime, timezone
+
 from app.models.base import Base, TimestampMixin
 
 
@@ -46,3 +49,28 @@ class File(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<File id={self.id} name={self.name}.{self.extension}>"
+
+
+class FileDerivative(Base, TimestampMixin):
+    __tablename__ = "framework_file_derivatives"
+    __table_args__ = (
+        UniqueConstraint("file_id", "kind", name="ux_framework_file_derivatives_file_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    file_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("framework_file_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Original framework file id",
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, comment="standard_image / preview")
+    storage_path: Mapped[str] = mapped_column(String(512), nullable=False, comment="Derivative path relative to upload root")
+    mime_type: Mapped[str] = mapped_column(String(128), nullable=False, default="image/jpeg")
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    md5_hash: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_md5_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

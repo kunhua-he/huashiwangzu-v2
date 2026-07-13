@@ -93,6 +93,55 @@ async def test_catalog_retrieval_handles_chinese_and_returns_direct_tools(monkey
     assert "capability_id" not in tools[0]
 
 
+@pytest.mark.asyncio
+async def test_catalog_retrieval_hides_internal_capabilities(monkeypatch) -> None:
+    async def fake_snapshot(*, user_id: int, caller=None):
+        return {
+            "catalog_hash": "a" * 64,
+            "principal": {"user_id": user_id, "profile_version": "b" * 20},
+            "capabilities": [
+                {
+                    "capability_id": 1,
+                    "module": "image-vision",
+                    "action": "describe",
+                    "brief": "legacy image parser",
+                    "description": "internal image parser",
+                    "parameters": {"file_id": {"type": "integer"}},
+                    "retrieval": {"expose_to_agent": False},
+                },
+                {
+                    "capability_id": 2,
+                    "module": "media-intelligence",
+                    "action": "analyze_image",
+                    "brief": "看图理解",
+                    "description": "Agent-facing image understanding",
+                    "parameters": {"file_id": {"type": "integer"}},
+                    "retrieval": {"aliases": ["看图"], "when_to_use": "用户要求理解图片"},
+                },
+            ],
+        }
+
+    async def no_experiences(**_kwargs):
+        return []
+
+    async def embed(values: list[str]) -> list[list[float]]:
+        return [[1.0] for _ in values]
+
+    monkeypatch.setattr(capability_catalog, "authorized_capability_snapshot", fake_snapshot)
+    monkeypatch.setattr(capability_catalog, "_visible_experience_patterns", no_experiences)
+    result = await capability_catalog.retrieve_capabilities(
+        user_id=4,
+        query="帮我看图",
+        limit=8,
+        embedding_fn=embed,
+    )
+
+    names = [f"{item['module']}__{item['action']}" for item in result["candidates"]]
+    assert names == ["media-intelligence__analyze_image"]
+    assert result["total_snapshot_capabilities"] == 2
+    assert result["total_authorized"] == 1
+
+
 def test_direct_tools_normalize_legacy_parameter_metadata() -> None:
     tools = capability_catalog.direct_function_tools([
         {
@@ -107,6 +156,26 @@ def test_direct_tools_normalize_legacy_parameter_metadata() -> None:
     properties = tools[0]["function"]["parameters"]["properties"]
     assert properties["record_id"] == {"type": "integer"}
     assert properties["note"] == {"type": "string", "description": "Optional note"}
+
+
+def test_parameter_schema_normalizes_dict_type_aliases_recursively() -> None:
+    schema = capability_catalog.parameter_schema({
+        "file_id": {"type": "int", "description": "Image file ID"},
+        "refine": {"type": "bool", "description": "Run VLM refine when configured"},
+        "options": {
+            "type": "object",
+            "properties": {
+                "threshold": {"type": "float"},
+                "tags": {"type": "array", "items": {"type": "str"}},
+            },
+        },
+    })
+
+    properties = schema["properties"]
+    assert properties["file_id"]["type"] == "integer"
+    assert properties["refine"]["type"] == "boolean"
+    assert properties["options"]["properties"]["threshold"]["type"] == "number"
+    assert properties["options"]["properties"]["tags"]["items"]["type"] == "string"
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,13 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFound, PermissionDenied, ValidationError
+from app.core.exceptions import ConflictError, NotFound, PermissionDenied, ValidationError
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.system import SystemTaskQueue
@@ -22,6 +24,7 @@ from app.services.task_queue_audit_service import (
 from app.services.task_worker import has_task_handler
 
 router = APIRouter(prefix="/api/tasks", tags=["system-tasks"])
+logger = logging.getLogger("v2.tasks")
 
 
 class TaskSubmitRequest(BaseModel):
@@ -42,6 +45,47 @@ class TaskDebtGovernanceRequest(BaseModel):
 def _ensure_task_owner_or_admin(task: SystemTaskQueue, user: User) -> None:
     if user.role != "admin" and task.creator_id != user.id:
         raise PermissionDenied("Permission denied")
+
+
+def _retry_diagnostics(task: SystemTaskQueue) -> dict:
+    """Return only durable, operator-useful state for retry logs."""
+    return {
+        "task_id": int(task.id),
+        "task_type": task.task_type,
+        "module": task.module,
+        "status": task.status,
+        "document_id": task.document_id,
+        "stage_key": task.stage_key,
+        "lane_key": task.lane_key,
+        "retry_count": task.retry_count,
+        "max_retries": task.max_retries,
+        "attempt": task.attempt,
+        "lease_owner": task.lease_owner,
+        "lease_expires_at": task.lease_expires_at.isoformat() if task.lease_expires_at else None,
+        "failure_class": task.failure_class,
+        "blocked_reason": task.blocked_reason,
+    }
+
+
+async def _find_active_retry_duplicate(
+    db: AsyncSession,
+    task: SystemTaskQueue,
+) -> SystemTaskQueue | None:
+    """Find the live DAG task that would violate the active-stage constraint."""
+    if task.task_type != "kb_pipeline_stage" or task.document_id is None or not task.stage_key:
+        return None
+    return await db.scalar(
+        select(SystemTaskQueue)
+        .where(
+            SystemTaskQueue.id != task.id,
+            SystemTaskQueue.task_type == task.task_type,
+            SystemTaskQueue.document_id == task.document_id,
+            SystemTaskQueue.stage_key == task.stage_key,
+            SystemTaskQueue.status.in_(("pending", "running")),
+        )
+        .order_by(desc(SystemTaskQueue.id))
+        .limit(1)
+    )
 
 
 @router.get("/")
@@ -151,19 +195,53 @@ async def retry_task(
     task_id: int, db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("editor")),
 ):
-    task = await db.get(SystemTaskQueue, task_id)
+    task = await db.scalar(
+        select(SystemTaskQueue)
+        .where(SystemTaskQueue.id == task_id)
+        .with_for_update()
+    )
     if not task:
         raise NotFound("Task not found")
     _ensure_task_owner_or_admin(task, user)
     if task.status != "failed":
         raise ValidationError("Only failed tasks can be retried")
+    duplicate = await _find_active_retry_duplicate(db, task)
+    if duplicate is not None:
+        logger.warning(
+            "Task retry conflict: failed task already has an active knowledge stage retry=%s active=%s",
+            _retry_diagnostics(task),
+            _retry_diagnostics(duplicate),
+        )
+        raise ConflictError(
+            "Retry not queued: an active task already exists for this knowledge document stage "
+            f"(task_id={duplicate.id}, status={duplicate.status})"
+        )
     task.status = "pending"
     task.retry_count = 0
     task.error_message = None
     task.result = None
     task.started_at = None
     task.completed_at = None
-    await db.commit()
+    task.lease_token = None
+    task.lease_owner = None
+    task.lease_expires_at = None
+    task.heartbeat_at = None
+    task.retry_at = None
+    task.failure_class = None
+    task.blocked_reason = None
+    task.executor_pid = None
+    try:
+        await db.commit()
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        logger.exception(
+            "Task retry database failure task=%s error_type=%s error=%s",
+            _retry_diagnostics(task),
+            type(exc).__name__,
+            str(exc),
+        )
+        raise ConflictError("Retry was not queued because queue state changed; inspect task retry diagnostics and try again") from exc
+    logger.info("Task manually re-queued retry=%s", _retry_diagnostics(task))
     return ApiResponse(data={"ok": True, "message": "Task re-queued"})
 
 

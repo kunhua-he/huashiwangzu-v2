@@ -8,7 +8,6 @@ import logging
 import re
 import time
 import uuid
-from pathlib import Path
 
 from app.core.exceptions import AppException, ValidationError
 from app.database import AsyncSessionLocal, engine
@@ -18,7 +17,7 @@ from app.schemas.common import ApiResponse
 from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 from sqlalchemy import Column, DateTime, Integer, Text, desc, func, select, text
 from sqlalchemy.orm import declarative_base
 
@@ -199,31 +198,47 @@ def _dimensions_from_aspect_ratio(aspect_ratio: str) -> tuple[int, int]:
     return width, height
 
 
-async def _load_source_image(source_file_id: int, user_id: int) -> dict:
-    from app.services.file_service import check_file_access
-    from app.services.file_upload_service import UPLOAD_ROOT
+async def _load_source_image(file_id: int, user_id: int) -> dict:
+    from app.services.image_derivative_service import resolve_image_source_for_processing
 
     async with AsyncSessionLocal() as db:
-        file = await check_file_access(db, source_file_id, user_id)
-        ext = (file.extension or "").lower()
-        mime_type = file.mime_type or f"image/{ext or 'png'}"
-        if not (mime_type.startswith("image/") or ext in {"png", "jpg", "jpeg", "webp"}):
-            raise ValidationError("source_file_id must point to an image file")
-        source_path = (UPLOAD_ROOT / file.storage_path).resolve()
-        upload_root = UPLOAD_ROOT.resolve()
-        if not source_path.is_relative_to(upload_root) or not source_path.is_file():
-            raise ValidationError("source image file is unavailable")
+        file, source_path, ext, mime_type = await resolve_image_source_for_processing(db, file_id, user_id)
         image_bytes = source_path.read_bytes()
         if not image_bytes:
             raise ValidationError("source image file is empty")
         filename = f"{file.name}.{ext}" if ext else file.name
         return {
-            "file_id": source_file_id,
+            "file_id": file_id,
             "filename": filename,
             "mime_type": mime_type,
             "bytes": image_bytes,
             "size": len(image_bytes),
         }
+
+
+def _parse_source_file_ids(params: dict) -> list[int]:
+    raw = params.get("source_file_ids")
+    if raw is None:
+        raise ValidationError("source_file_ids is required")
+    if not isinstance(raw, list):
+        raise ValidationError("source_file_ids must be an array")
+
+    ids: list[int] = []
+    for index, item in enumerate(raw, start=1):
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValidationError(f"source_file_ids[{index}] must be an integer")
+        file_id = _parse_bounded_int(item, f"source_file_ids[{index}]", 1, 2_147_483_647)
+        if file_id not in ids:
+            ids.append(file_id)
+    if not ids:
+        raise ValidationError("source_file_ids must not be empty")
+    if len(ids) > 8:
+        raise ValidationError("source_file_ids supports at most 8 images")
+    return ids
+
+
+async def _load_source_images(source_file_ids: list[int], user_id: int) -> list[dict]:
+    return [await _load_source_image(file_id, user_id) for file_id in source_file_ids]
 
 
 async def _persist_provider_results(
@@ -234,8 +249,6 @@ async def _persist_provider_results(
     placeholder_explanation: str = "占位图，真实生成待接入",
     publish: bool = False,
 ) -> tuple[list[dict], list[int], list[str], bool]:
-    from app.core.workspace_security import ensure_user_workspace
-
     ts = int(time.time() * 1000)
     request_suffix = uuid.uuid4().hex[:8]
     results = []
@@ -267,37 +280,26 @@ async def _persist_provider_results(
 
             filename = f"{filename_prefix}_{ts}_{request_suffix}_{idx + 1}.png"
             try:
-                if publish:
-                    from app.services.file_upload_service import upload_file
+                from app.services.file_upload_service import upload_file
 
-                    file_obj = io.BytesIO(image_bytes)
-                    upload_result = await upload_file(
-                        db, file_obj, filename, user_id, folder_id=None,
-                    )
-                    file_ids.append(upload_result["id"])
-                    entry: dict = {
-                        "type": "image",
-                        "file_id": upload_result["id"],
-                        "name": upload_result["name"],
-                        "size": upload_result["size"],
-                        "placeholder": result_placeholder,
-                        "published": True,
-                    }
-                else:
-                    workspace = ensure_user_workspace(user_id)
-                    output_dir = workspace / "image-gen"
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    output_path = (output_dir / Path(filename).name).resolve()
-                    output_path.write_bytes(image_bytes)
-                    entry = {
-                        "type": "image",
-                        "workspace_path": str(output_path.relative_to(workspace.resolve())),
-                        "name": filename,
-                        "size": output_path.stat().st_size,
-                        "placeholder": result_placeholder,
-                        "published": False,
-                        "note": "Use terminal-tools:publish to deliver to desktop",
-                    }
+                file_obj = io.BytesIO(image_bytes)
+                upload_result = await upload_file(
+                    db,
+                    file_obj,
+                    filename,
+                    user_id,
+                    folder_id=None,
+                    relative_path=None if publish else "Agent生成草稿/image-gen",
+                )
+                file_ids.append(upload_result["id"])
+                entry: dict = {
+                    "type": "image",
+                    "file_id": upload_result["id"],
+                    "name": upload_result["name"],
+                    "size": upload_result["size"],
+                    "placeholder": result_placeholder,
+                    "published": publish,
+                }
             except Exception as e:
                 err = f"save failed for image {idx + 1}: {e}"
                 persist_errors.append(err)
@@ -338,16 +340,6 @@ def _generation_resource_refs(
                 "provenance": {"module": "image-gen", "request_id": request_id},
             })
             continue
-        relative_locator = str(image.get("workspace_path") or "")
-        refs.append({
-            "type": "artifact",
-            "id": f"{request_id}:{index}",
-            "locator": relative_locator,
-            "mime_type": "image/png",
-            "display_name": str(image.get("name") or f"Generated image {index}"),
-            "access_scope": "user",
-            "provenance": {"module": "image-gen", "request_id": request_id},
-        })
     return refs
 
 
@@ -524,12 +516,7 @@ async def _generate(params: dict, caller: str) -> dict:
 # ---------------------------------------------------------------------------
 
 async def _transform(params: dict, caller: str) -> dict:
-    source_raw = params.get("source_file_id")
-    if source_raw is None:
-        source_raw = params.get("image_file_id")
-    if source_raw is None:
-        source_raw = params.get("file_id")
-    source_file_id = _parse_bounded_int(source_raw, "source_file_id", 1, 2_147_483_647)
+    source_file_ids = _parse_source_file_ids(params)
     prompt = str(params.get("prompt", "")).strip()
     size = str(params.get("size", "1024x1024")).strip()
     aspect_ratio = str(params.get("aspect_ratio", "")).strip() or None
@@ -547,8 +534,7 @@ async def _transform(params: dict, caller: str) -> dict:
     user_id = resolve_caller_user_id(caller)
     publish = _parse_bool(params.get("publish"), default=False)
     width, height = _resolve_dimensions(size, aspect_ratio)
-    source_image = await _load_source_image(source_file_id, user_id)
-
+    source_images = await _load_source_images(source_file_ids, user_id)
     try:
         provider, template_cfg, is_placeholder = resolve_provider(template_key)
     except ValueError:
@@ -578,7 +564,7 @@ async def _transform(params: dict, caller: str) -> dict:
         aspect_ratio=aspect_ratio,
         template_config=template_cfg,
         extra={
-            "source_image": source_image,
+            "source_images": source_images,
             "mode": mode,
             "strength": strength,
             "preserve_subject": preserve_subject,
@@ -669,7 +655,7 @@ async def _transform(params: dict, caller: str) -> dict:
         "degraded_reason": degraded_reason,
         "points_cost": points_cost,
         "balance": balance,
-        "source_file_id": source_file_id,
+        "source_file_ids": source_file_ids,
         "mode": mode,
         "strength": strength,
         "published": publish,
@@ -790,7 +776,7 @@ class GenerateRequest(BaseModel):
 
 
 class TransformRequest(BaseModel):
-    source_file_id: int
+    source_file_ids: list[StrictInt]
     prompt: str
     size: str = "1024x1024"
     aspect_ratio: str | None = None
@@ -877,7 +863,7 @@ register_capability(
         "max_attempts": 1,
         "idempotency": "none",
         "side_effect_level": "create",
-        "output_reference_types": ["file", "artifact", "record"],
+        "output_reference_types": ["file", "record"],
         "parallel_safe": False,
     },
     retrieval={
@@ -890,10 +876,10 @@ register_capability(
 
 register_capability(
     "image-gen", "transform", _transform,
-    description="图生图：读取已有图片file_id作为参考图，按提示词编辑、变体或风格化生成新图片",
+    description="图生图/多图生图：读取已有图片file_id数组作为参考图，按提示词编辑、变体或风格化生成新图片",
     brief="按参考图生成新图片",
     parameters={
-        "source_file_id": {"type": "integer", "description": "源图片文件ID，必须是当前用户可访问的图片文件"},
+        "source_file_ids": {"type": "array", "items": {"type": "integer"}, "description": "源图片文件ID数组，支持1-8张当前用户可访问的图片"},
         "prompt": {"type": "string", "description": "图生图提示词，说明要保留、修改或增强的内容"},
         "size": {"type": "string", "description": "输出尺寸，格式如 1024x1024", "default": "1024x1024"},
         "aspect_ratio": {"type": "string", "description": "输出宽高比，可选 square/portrait/landscape 或如 16:9, 3:4", "default": ""},
@@ -922,12 +908,12 @@ register_capability(
         "max_attempts": 1,
         "idempotency": "none",
         "side_effect_level": "create",
-        "output_reference_types": ["file", "artifact", "record"],
+        "output_reference_types": ["file", "record"],
         "parallel_safe": False,
     },
     retrieval={
-        "aliases": ["图生图", "编辑图片", "图片变体", "风格转换"],
-        "when_to_use": "用户要求基于已有图片进行编辑、变体或风格化时",
+        "aliases": ["图生图", "多图生图", "编辑图片", "图片变体", "风格转换"],
+        "when_to_use": "用户要求基于一张或多张已有图片进行编辑、变体、参考生成或风格化时",
         "when_not_to_use": "用户只需要识别或分析已有图片时",
         "input_reference_types": ["file"],
     },

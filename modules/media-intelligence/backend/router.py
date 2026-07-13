@@ -318,6 +318,29 @@ def _file_display_name(file: object, file_id: int) -> str:
     return f"file-{file_id}"
 
 
+READ_MEDIA_CONTRACT = {
+    "execution_mode": "sync",
+    "resource_class": "local_cpu",
+    "timeout_seconds": 120,
+    "max_attempts": 1,
+    "idempotency": "supported",
+    "side_effect_level": "none",
+    "output_reference_types": ["file", "record"],
+    "parallel_safe": True,
+}
+
+VLM_CONTRACT = {
+    "execution_mode": "sync",
+    "resource_class": "cloud_vlm",
+    "timeout_seconds": 240,
+    "max_attempts": 1,
+    "idempotency": "supported",
+    "side_effect_level": "none",
+    "output_reference_types": ["file", "record"],
+    "parallel_safe": False,
+}
+
+
 register_capability(
     "media-intelligence",
     "analyze_image",
@@ -325,11 +348,18 @@ register_capability(
     description="Analyze an uploaded image through local algorithm, small-model, and optional VLM refine layers",
     brief="Analyze image",
     parameters={
-        "file_id": {"type": "int", "description": "Image file ID"},
+        "file_id": {"type": "integer", "description": "Image file ID"},
         "include_embedding": {"type": "bool", "description": "Return local image fingerprint"},
         "refine": {"type": "bool", "description": "Run VLM refine when configured"},
     },
     min_role="viewer",
+    execution_contract=VLM_CONTRACT,
+    retrieval={
+        "aliases": ["看图", "图片理解", "识图", "VLM看图", "分析图片"],
+        "when_to_use": "用户上传或引用图片后，需要理解图片内容、场景、主体、文字布局或视觉细节时",
+        "when_not_to_use": "用户只需要生成新图片或编辑图片时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(
@@ -339,11 +369,18 @@ register_capability(
     description="Analyze an uploaded video through local algorithm, small-model, and optional VLM refine layers",
     brief="Analyze video",
     parameters={
-        "file_id": {"type": "int", "description": "Video file ID"},
-        "max_keyframes": {"type": "int", "description": "Maximum timeline keyframe markers"},
+        "file_id": {"type": "integer", "description": "Video file ID"},
+        "max_keyframes": {"type": "integer", "description": "Maximum timeline keyframe markers"},
         "refine": {"type": "bool", "description": "Run VLM refine when configured"},
     },
     min_role="viewer",
+    execution_contract=VLM_CONTRACT,
+    retrieval={
+        "aliases": ["视频理解", "分析视频", "视频摘要", "VLM看视频"],
+        "when_to_use": "用户需要分析视频内容、关键帧、画面摘要或时间线信息时",
+        "when_not_to_use": "用户只需要从图片中取字或生成图片时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(
@@ -353,10 +390,17 @@ register_capability(
     description="Extract ffprobe-derived timeline keyframe markers from a video file",
     brief="Extract keyframes",
     parameters={
-        "file_id": {"type": "int", "description": "Video file ID"},
-        "max_keyframes": {"type": "int", "description": "Maximum keyframes"},
+        "file_id": {"type": "integer", "description": "Video file ID"},
+        "max_keyframes": {"type": "integer", "description": "Maximum keyframes"},
     },
     min_role="viewer",
+    execution_contract=READ_MEDIA_CONTRACT,
+    retrieval={
+        "aliases": ["视频关键帧", "抽关键帧", "视频帧"],
+        "when_to_use": "用户需要从视频中抽取时间线关键帧或定位画面片段时",
+        "when_not_to_use": "用户需要完整理解图片或OCR取字时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(
@@ -365,8 +409,15 @@ register_capability(
     _ocr,
     description="Run OCR layer contract for image/video files",
     brief="OCR media",
-    parameters={"file_id": {"type": "int", "description": "Image or video file ID"}},
+    parameters={"file_id": {"type": "integer", "description": "Image or video file ID"}},
     min_role="viewer",
+    execution_contract=READ_MEDIA_CONTRACT,
+    retrieval={
+        "aliases": ["OCR", "图片取字", "识别文字", "提取图片文字", "截图文字识别"],
+        "when_to_use": "用户要求从图片、截图或视频画面中提取文字时",
+        "when_not_to_use": "用户要生成或编辑图片时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(
@@ -376,10 +427,17 @@ register_capability(
     description="Return a local image fingerprint vector",
     brief="Embed image",
     parameters={
-        "file_id": {"type": "int", "description": "Image file ID"},
-        "dimensions": {"type": "int", "description": "Embedding dimensions"},
+        "file_id": {"type": "integer", "description": "Image file ID"},
+        "dimensions": {"type": "integer", "description": "Embedding dimensions"},
     },
     min_role="viewer",
+    execution_contract=READ_MEDIA_CONTRACT,
+    retrieval={
+        "aliases": ["图片向量", "图片指纹", "图片相似"],
+        "when_to_use": "需要为图片生成本地指纹、去重或相似检索特征时",
+        "when_not_to_use": "用户需要自然语言看图说明或OCR文字时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(
@@ -388,8 +446,15 @@ register_capability(
     _detect_objects,
     description="Return object detections or a structured degraded result when no detector is configured",
     brief="Detect objects",
-    parameters={"file_id": {"type": "int", "description": "Image or video file ID"}},
+    parameters={"file_id": {"type": "integer", "description": "Image or video file ID"}},
     min_role="viewer",
+    execution_contract=READ_MEDIA_CONTRACT,
+    retrieval={
+        "aliases": ["目标检测", "识别物体", "物体检测"],
+        "when_to_use": "用户要求列出图片或视频画面中的对象、主体或检测结果时",
+        "when_not_to_use": "用户只需要提取文字或生成图片时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(
@@ -399,10 +464,17 @@ register_capability(
     description="Summarize a media file or existing media-intelligence analysis result",
     brief="Summarize media",
     parameters={
-        "file_id": {"type": "int", "description": "Image or video file ID"},
+        "file_id": {"type": "integer", "description": "Image or video file ID"},
         "analysis": {"type": "object", "description": "Existing analysis result"},
     },
     min_role="viewer",
+    execution_contract=READ_MEDIA_CONTRACT,
+    retrieval={
+        "aliases": ["媒体总结", "图片总结", "视频总结"],
+        "when_to_use": "已有媒体分析结果或用户要求把图片/视频内容总结成文字时",
+        "when_not_to_use": "用户需要对图片做二次生图编辑时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(
@@ -416,4 +488,11 @@ register_capability(
         "prompt": {"type": "string", "description": "Optional refinement instruction"},
     },
     min_role="viewer",
+    execution_contract=VLM_CONTRACT,
+    retrieval={
+        "aliases": ["VLM精修", "视觉模型补充", "多模态复核"],
+        "when_to_use": "已有 media-intelligence 分析结果，需要用 VLM 按提示进一步补充或复核时",
+        "when_not_to_use": "没有现成分析对象，且可以直接 analyze_image 时",
+        "input_reference_types": ["record"],
+    },
 )

@@ -120,6 +120,36 @@ async def test_executor_runs_ready_dependencies_and_binds_resource_reference() -
 
 
 @pytest.mark.asyncio
+async def test_executor_normalizes_legacy_contract_input_schema_aliases() -> None:
+    catalog = _catalog()
+    catalog["candidates"][1]["execution_contract"]["input_schema"] = {
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "int"},
+            "refine": {"type": "bool"},
+        },
+    }
+    plan = _plan([{
+        "id": "open",
+        "capability_id": 2,
+        "capability": "demo__open",
+        "arguments": {"file_id": 42, "refine": True},
+        "completion_check": "The file is opened",
+    }])
+    calls: list[dict] = []
+
+    async def execute(action, arguments, contract):
+        calls.append(arguments)
+        return {"success": True}
+
+    checkpoint = ActionPlanCheckpoint(plan=plan)
+    result = await ActionGraphExecutor(catalog=catalog, execute_callback=execute).execute(checkpoint)
+
+    assert result.status == ActionGraphStatus.COMPLETED
+    assert calls == [{"file_id": 42, "refine": True}]
+
+
+@pytest.mark.asyncio
 async def test_executor_stops_on_failed_action_and_never_blindly_retries() -> None:
     plan = _plan([
         {

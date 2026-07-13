@@ -16,6 +16,7 @@ from .base import BaseProvider
 from .contract import StreamEvent, StreamEventType, stream_event_to_dict
 from .protocol import normalize_openai_payload
 from .stream_parse import error_message, extract_stream_payload, format_error
+from .structured_output import response_format_for_chat_completions, response_format_for_responses_api
 from .tool_call_accumulator import StreamingToolCallAccumulator
 
 logger = logging.getLogger("v2.gateway.openai_compat")
@@ -82,16 +83,7 @@ class OpenAIProvider(BaseProvider):
             if normalized_tools:
                 data["tools"] = normalized_tools
             if response_format:
-                responses_format = dict(response_format)
-                if (
-                    responses_format.get("type") == "json_schema"
-                    and isinstance(responses_format.get("json_schema"), dict)
-                ):
-                    responses_format = {
-                        "type": "json_schema",
-                        **responses_format["json_schema"],
-                    }
-                data["text"] = {"format": responses_format}
+                data["text"] = {"format": response_format_for_responses_api(response_format)}
             return data
         data = {
             "model": model,
@@ -103,7 +95,10 @@ class OpenAIProvider(BaseProvider):
         if normalized_tools:
             data["tools"] = normalized_tools
         if response_format:
-            data["response_format"] = response_format
+            fmt = response_format_for_chat_completions(response_format)
+            if isinstance(fmt, dict) and fmt.get("type") == "json_schema":
+                fmt = {"type": "json_object"}
+            data["response_format"] = fmt
         return data
 
     async def chat(

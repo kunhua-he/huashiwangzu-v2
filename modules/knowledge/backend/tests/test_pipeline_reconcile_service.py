@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -55,6 +55,9 @@ async def _create_run_case(
     marker: str,
     task_id: int | None = None,
     diagnostics: dict | None = None,
+    started_at: datetime | None = None,
+    updated_at: datetime | None = None,
+    stage_status: str = "skipped",
 ) -> tuple[int, int, int | None]:
     await _ensure_framework_ready()
     async with AsyncSessionLocal() as db:
@@ -99,17 +102,19 @@ async def _create_run_case(
             trigger="kb_pipeline_stage",
             status="running",
             diagnostics_json=diagnostics,
-            started_at=datetime.now(timezone.utc),
+            started_at=started_at or datetime.now(timezone.utc),
         )
         db.add(run)
         await db.flush()
+        if updated_at is not None:
+            run.updated_at = updated_at
 
         stage = KbPipelineStageRun(
             run_id=run.id,
             document_id=doc.id,
             owner_id=OWNER_ID,
             stage="raw",
-            status="skipped",
+            status=stage_status,
             reason="source unavailable",
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
@@ -198,6 +203,39 @@ async def test_orphan_pipeline_reconcile_rejects_live_without_task() -> None:
         assert run is not None
         assert run.status == "running"
         assert run.completed_at is None
+    finally:
+        await _cleanup(doc_ids, file_ids)
+
+
+@pytest.mark.asyncio
+async def test_orphan_pipeline_reconcile_closes_stale_terminal_live_run_without_active_task() -> None:
+    marker = uuid.uuid4().hex[:8]
+    doc_ids: list[int] = []
+    file_ids: list[int] = []
+    try:
+        old_started_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=2)
+        doc_id, run_id, file_id = await _create_run_case(
+            file_state="live",
+            marker=marker,
+            started_at=old_started_at,
+            updated_at=old_started_at,
+            stage_status="blocked",
+        )
+        doc_ids.append(doc_id)
+        assert file_id is not None
+        file_ids.append(file_id)
+
+        async with AsyncSessionLocal() as db:
+            preview = await dry_run_orphan_pipeline_run_reconcile(db, run_ids=[run_id])
+            result = await apply_orphan_pipeline_run_reconcile(db, run_ids=[run_id], dry_run=False)
+            run = await db.get(KbPipelineRun, run_id)
+
+        assert preview["would_change_by_category"] == {"stale_live_without_task": 1}
+        assert result["changed_by_category"] == {"stale_live_without_task": 1}
+        assert run is not None
+        assert run.status == "skipped"
+        assert run.reason == "stale_live_without_task"
+        assert run.diagnostics_json["latest_stage"]["status"] == "blocked"
     finally:
         await _cleanup(doc_ids, file_ids)
 

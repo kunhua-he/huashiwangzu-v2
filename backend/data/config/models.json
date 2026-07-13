@@ -129,6 +129,7 @@
           "max_tokens": 8192,
           "system_prompt": "You are a helpful AI assistant.",
           "response_adapter": "deepseek",
+          "structured_output_mode": "json_object",
           "context_budget": null,
           "price_input": 2.0,
           "price_output": 8.0

@@ -251,4 +251,10 @@ register_capability(
     },
     min_role="viewer",
     execution_contract={"side_effect_level": "none", "resource_class": "cloud_vlm", "timeout_seconds": 180},
+    retrieval={
+        "expose_to_agent": False,
+        "when_to_use": "Internal legacy image parser for content and knowledge ingestion.",
+        "when_not_to_use": "Agent user-facing image understanding should use media-intelligence capabilities.",
+        "input_reference_types": ["file"],
+    },
 )

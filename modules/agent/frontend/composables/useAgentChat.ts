@@ -1,6 +1,6 @@
 import { nextTick, onMounted, ref } from 'vue'
 import { initRuntime } from '../../runtime'
-import { apiFetch, apiFetchRaw } from '../api'
+import { apiFetch, apiFetchEventStream } from '../api'
 import type InputArea from '../components/InputArea.vue'
 import {
   collectEvidenceReferences,
@@ -67,7 +67,8 @@ export function useAgentChat(props: AgentEntryProps) {
       messages.value[editIndex].content = newContent
     }
     if (abortController) { abortController.abort() }
-    abortController = new AbortController()
+    const requestController = new AbortController()
+    abortController = requestController
         clearIdleTimer()
         sending.value = true; streaming.value = true; streamingText.value = ''; activeAssistantStreamId.value = null; error.value = ''
         _pendingReferences = []
@@ -79,13 +80,13 @@ export function useAgentChat(props: AgentEntryProps) {
       ensureWorkGroup()
       scrollToBottom()
     try {
-      const resp = await apiFetchRaw(`/agent/conversations/${activeConvId.value}/messages/${messageId}/edit-resubmit`, {
+      const resp = await apiFetchEventStream(`/agent/conversations/${activeConvId.value}/messages/${messageId}/edit-resubmit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: newContent, profile_key: profileKey.value }),
-        signal: abortController.signal,
+        signal: requestController.signal,
       })
-      if (!resp.ok) { error.value = `编辑请求失败 (${resp.status})`; return }
+      if (!resp.ok) { error.value = await responseErrorText(resp, `编辑请求失败 (${resp.status})`); return }
       await processStreamResponse(resp)
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') { console.warn('[Agent] edit-resubmit aborted') }
@@ -93,7 +94,7 @@ export function useAgentChat(props: AgentEntryProps) {
     } finally {
       clearIdleTimer()
       sending.value = false; streaming.value = false
-      abortController = null
+      if (abortController === requestController) abortController = null
       // Do NOT focus the bottom input — the edit is in-place, not a new message
     }
   }
@@ -760,6 +761,15 @@ export function useAgentChat(props: AgentEntryProps) {
           return text || 'AI 助手暂时无法完成回复，请稍后重试。'
         }
 
+        async function responseErrorText(resp: Response, fallback: string): Promise<string> {
+          try {
+            const body = await resp.json() as { error?: unknown; message?: unknown }
+            const message = typeof body.error === 'string' ? body.error : typeof body.message === 'string' ? body.message : ''
+            return message ? `${fallback}: ${message}` : fallback
+          } catch {
+            return fallback
+          }
+        }
 
           /** 共享 SSE 流式处理核心：由 sendMessage 和 handleSubmitEdit 共用 */
           async function processStreamResponse(resp: Response) {
@@ -794,7 +804,6 @@ export function useAgentChat(props: AgentEntryProps) {
                                 }
                                 flushStreamingAsMessage()
                             }
-                            void reader.cancel().catch(() => {})
                             return true
                           }
 
@@ -809,7 +818,6 @@ export function useAgentChat(props: AgentEntryProps) {
                         const rawContent = (evt.content as string) || ''
                         commitAssistantMessage({ content: rawContent, createdAt: new Date().toISOString(), usage: _lastRoundUsage })
                         _lastRoundUsage = null
-                        void reader.cancel().catch(() => {})
                         return true
                       }
 
@@ -959,7 +967,8 @@ export function useAgentChat(props: AgentEntryProps) {
           const text = inputText.value.trim()
           if (!text) return
           if (abortController) { abortController.abort() }
-          abortController = new AbortController()
+          const requestController = new AbortController()
+          abortController = requestController
           clearIdleTimer()
           inputText.value = ''
             sending.value = true; streaming.value = true; streamingText.value = ''; activeAssistantStreamId.value = null; error.value = ''
@@ -972,13 +981,13 @@ export function useAgentChat(props: AgentEntryProps) {
           ensureWorkGroup()
           scrollToBottom()
           try {
-            const resp = await apiFetchRaw('/agent/chat', {
+            const resp = await apiFetchEventStream('/agent/chat', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ conversation_id: activeConvId.value, content: text, profile_key: profileKey.value }),
-              signal: abortController.signal,
+              signal: requestController.signal,
             })
-            if (!resp.ok) { error.value = `请求失败 (${resp.status})`; return }
+            if (!resp.ok) { error.value = await responseErrorText(resp, `请求失败 (${resp.status})`); return }
             await processStreamResponse(resp)
           } catch (e: unknown) {
             if (e instanceof DOMException && e.name === 'AbortError') { console.warn('[Agent] fetch aborted (stop/timeout)') }
@@ -986,7 +995,7 @@ export function useAgentChat(props: AgentEntryProps) {
           } finally {
             clearIdleTimer()
             sending.value = false; streaming.value = false
-            abortController = null
+            if (abortController === requestController) abortController = null
             inputAreaRef.value?.focus()
           }
         }

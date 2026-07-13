@@ -4,8 +4,10 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from app.gateway import router as router_module
+from app.gateway.config import get_model_type_config
 from app.gateway.openai_provider import OpenAIProvider
 from app.gateway.router import ModelGatewayRouter
+from app.gateway.structured_output import response_format_for_responses_api
 
 RESPONSE_FORMAT = {
     "type": "json_schema",
@@ -85,6 +87,17 @@ def test_openai_payload_converts_response_format_for_responses_api() -> None:
     assert "response_format" not in payload
 
 
+def test_structured_output_responses_adapter_does_not_mutate_input() -> None:
+    result = response_format_for_responses_api(RESPONSE_FORMAT)
+
+    assert result == {
+        "type": "json_schema",
+        **RESPONSE_FORMAT["json_schema"],
+    }
+    assert RESPONSE_FORMAT["type"] == "json_schema"
+    assert "json_schema" in RESPONSE_FORMAT
+
+
 @pytest.mark.asyncio
 async def test_gateway_router_passes_response_format_to_provider(
     monkeypatch: pytest.MonkeyPatch,
@@ -94,6 +107,7 @@ async def test_gateway_router_passes_response_format_to_provider(
         "model": "demo-model",
         "temperature": 0.1,
         "max_tokens": 100,
+        "structured_output_mode": "json_object",
     }
     monkeypatch.setattr(router_module, "MODEL_PROFILES", {"demo": profile})
     provider = CapturingProvider()
@@ -118,3 +132,9 @@ async def test_gateway_router_passes_response_format_to_provider(
     assert provider.chat_response_format == RESPONSE_FORMAT
     assert provider.stream_response_format == RESPONSE_FORMAT
     assert events[-1]["type"] == "done"
+
+
+def test_opencode_flash_profile_keeps_structured_output_capability_marker() -> None:
+    profile = get_model_type_config("llm")["profiles"]["deepseek-v4-flash"]
+
+    assert profile["structured_output_mode"] == "json_object"

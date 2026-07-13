@@ -2,7 +2,7 @@ from .app import App
 from .artifact import Artifact, ArtifactOperation, ArtifactVersion
 from .content import ContentPackage, ContentPackageVersion, Resource, ResourceRef
 from .desktop_state import DesktopState
-from .file import File, Folder
+from .file import File, FileDerivative, Folder
 from .file_share import FileShare
 from .file_upload_session import FileUploadSession
 from .gateway_usage import GatewayUsageDaily
@@ -22,7 +22,7 @@ from .role_matrix import RoleMatrix
 from .system import Feedback, Notification, Setting, SystemLog, SystemTaskQueue, Task, UserNotificationRead
 from .user import User
 
-__all__ = ["User", "App", "Folder", "File", "FileUploadSession", "FileShare", "RecycleItem",
+__all__ = ["User", "App", "Folder", "File", "FileDerivative", "FileUploadSession", "FileShare", "RecycleItem",
            "SystemLog", "Notification", "UserNotificationRead", "Feedback", "Task",
            "Setting", "SystemTaskQueue",
            "RoleMatrix", "DesktopState",

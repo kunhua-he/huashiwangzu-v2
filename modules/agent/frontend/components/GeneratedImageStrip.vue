@@ -50,7 +50,7 @@ async function loadImages() {
   const nextUrls: Record<number, string> = {}
   await Promise.all(props.images.map(async image => {
     try {
-      const response = await apiFetchRaw(`/files/download/${image.file_id}`)
+      const response = await apiFetchRaw(`/files/download/${image.file_id}/standard-image`)
       if (!response.ok) throw new Error(`文件下载接口返回 ${response.status}`)
       const blob = await response.blob()
       nextUrls[image.file_id] = URL.createObjectURL(blob)

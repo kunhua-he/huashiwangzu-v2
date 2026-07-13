@@ -91,6 +91,9 @@ async def test_planner_requests_structured_dag_and_binds_catalog_identity() -> N
         "desktop-tools__search_files",
         "desktop-tools__open_file",
     ]
+    planning_context = json.loads(captured["messages"][-1]["content"])
+    assert planning_context["output_contract"]["format"].startswith("Return exactly one JSON object")
+    assert planning_context["output_contract"]["schema"] == response_format["json_schema"]["schema"]
 
 
 @pytest.mark.asyncio

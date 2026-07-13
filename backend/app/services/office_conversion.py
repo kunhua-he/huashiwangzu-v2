@@ -24,6 +24,14 @@ class OfficeConversionTimeoutError(TimeoutError):
     """Raised when LibreOffice conversion exceeds the configured timeout."""
 
 
+class OfficeConversionError(RuntimeError):
+    """Conversion failure with compact, persistable process diagnostics."""
+
+    def __init__(self, message: str, *, diagnostics: dict[str, object]) -> None:
+        self.diagnostics = diagnostics
+        super().__init__(message)
+
+
 @dataclass
 class _GlobalConversionSlot:
     path: Path
@@ -147,7 +155,19 @@ async def convert_file(
         raise RuntimeError("LibreOffice conversion process was not started")
     if proc.returncode != 0:
         output = _decode_process_output(stdout, stderr)
-        raise RuntimeError(f"LibreOffice conversion failed (exit={proc.returncode}): {output}")
+        raise OfficeConversionError(
+            f"LibreOffice conversion failed (exit={proc.returncode}): {output}",
+            diagnostics={
+                "converter": "libreoffice",
+                "binary": Path(soffice).name,
+                "target_format": target_format,
+                "source_name": source.name,
+                "exit_code": proc.returncode,
+                "stdout": _decode_process_output(stdout, b"")[:4000],
+                "stderr": _decode_process_output(b"", stderr)[:4000],
+                "expected_output_name": f"{source.stem}.{target_format}",
+            },
+        )
 
     output_path = outdir / f"{source.stem}.{target_format}"
     if not output_path.exists():
@@ -155,7 +175,21 @@ async def convert_file(
         for candidate in matches:
             if candidate.suffix.lower().lstrip(".") == target_format:
                 return str(candidate)
-        raise RuntimeError(f"Conversion completed but output file not found at: {output_path}")
+        raise OfficeConversionError(
+            f"Conversion completed but output file not found at: {output_path}",
+            diagnostics={
+                "converter": "libreoffice",
+                "binary": Path(soffice).name,
+                "target_format": target_format,
+                "source_name": source.name,
+                "exit_code": proc.returncode,
+                "expected_output_name": output_path.name,
+                "output_directory": outdir.name,
+                "matching_output_names": [candidate.name for candidate in matches[:20]],
+                "stdout": _decode_process_output(stdout, b"")[:4000],
+                "stderr": _decode_process_output(b"", stderr)[:4000],
+            },
+        )
     return str(output_path)
 
 

@@ -87,10 +87,21 @@ async def test_convert_file_nonzero_exit_without_output_has_diagnostic_message(
     monkeypatch.setattr(office_conversion.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     with pytest.raises(
-        RuntimeError,
+        office_conversion.OfficeConversionError,
         match=r"LibreOffice conversion failed \(exit=1\): \(no LibreOffice output\)",
-    ):
+    ) as exc_info:
         await office_conversion.convert_file(source, "xlsx", tmp_path)
+
+    assert exc_info.value.diagnostics == {
+        "converter": "libreoffice",
+        "binary": "soffice",
+        "target_format": "xlsx",
+        "source_name": "broken.xls",
+        "exit_code": 1,
+        "stdout": "(no LibreOffice output)",
+        "stderr": "(no LibreOffice output)",
+        "expected_output_name": "broken.xlsx",
+    }
 
 
 @pytest.mark.asyncio

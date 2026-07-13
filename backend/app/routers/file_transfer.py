@@ -443,6 +443,23 @@ async def download_original(
     return FileResponse(path=str(safe_path), media_type=file.mime_type or "application/octet-stream", filename=full_name)
 
 
+@router.get("/download/{file_id}/standard-image")
+async def download_standard_image(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    """Return the standardized work image for preview/Agent image tools."""
+    from app.services.image_derivative_service import resolve_standard_image_path_for_user
+
+    resolved = await resolve_standard_image_path_for_user(db, file_id, user.id)
+    if not resolved:
+        raise NotFound("Standard image derivative not found")
+    file, safe_path, _ext, mime_type = resolved
+    base_name = f"{file.name}.standard.jpg"
+    return FileResponse(path=str(safe_path), media_type=mime_type, filename=base_name)
+
+
 def _infer_mime(filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     mime_map = {

@@ -152,6 +152,7 @@ def _normalize_retrieval_metadata(value: dict | None) -> dict:
         "when_to_use": str(raw.get("when_to_use") or "").strip(),
         "when_not_to_use": str(raw.get("when_not_to_use") or "").strip(),
         "input_reference_types": sorted({str(item) for item in raw.get("input_reference_types", [])}),
+        "expose_to_agent": bool(raw.get("expose_to_agent", True)),
     }
 
 

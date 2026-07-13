@@ -73,11 +73,14 @@
     },
     {
       "action": "transform",
-      "description": "图生图：读取已有图片file_id作为参考图，按提示词编辑、变体或风格化生成新图片",
+      "description": "图生图/多图生图：读取已有图片file_id数组作为参考图，按提示词编辑、变体、参考或风格化生成新图片",
       "parameters": {
-        "source_file_id": {
-          "type": "integer",
-          "description": "源图片文件ID，必须是当前用户可访问的图片文件"
+        "source_file_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "源图片文件ID数组，支持1-8张当前用户可访问的图片"
         },
         "prompt": {
           "type": "string",

@@ -433,6 +433,12 @@ class ToolLoopRuntime:
                 action_checkpoint=action_checkpoint,
             ):
                 yield event
+            logger.info(
+                "SSE stream completed: conv=%s disconnected=%s error=%s",
+                self.conversation_id,
+                disconnected,
+                bool(runtime_model_error),
+            )
             yield b"data: [DONE]\n\n"
 
     async def _finalize_turn(

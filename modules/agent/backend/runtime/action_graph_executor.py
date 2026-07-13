@@ -9,7 +9,7 @@ from enum import StrEnum
 
 from jsonschema import Draft202012Validator
 
-from ..services.capability_catalog import parameter_schema
+from ..services.capability_catalog import normalize_json_schema, parameter_schema
 from ..services.capability_execution import capability_result_error, capability_result_succeeded
 from .action_plan import (
     ActionObservation,
@@ -204,8 +204,8 @@ class ActionGraphExecutor:
             )
             return
 
-        input_schema = contract.get("input_schema") or parameter_schema(
-            candidate.get("parameters") or {},
+        input_schema = normalize_json_schema(
+            contract.get("input_schema") or parameter_schema(candidate.get("parameters") or {}),
         )
         input_errors = list(Draft202012Validator(input_schema).iter_errors(arguments))
         if input_errors:
@@ -320,6 +320,7 @@ class ActionGraphExecutor:
     ) -> tuple[str, str] | None:
         output_schema = contract.get("output_schema")
         if isinstance(output_schema, dict) and output_schema:
+            output_schema = normalize_json_schema(output_schema)
             payload = result.get("data", result) if isinstance(result, dict) else result
             errors = list(Draft202012Validator(output_schema).iter_errors(payload))
             if errors:

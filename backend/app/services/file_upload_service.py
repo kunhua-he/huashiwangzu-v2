@@ -16,6 +16,16 @@ settings = get_settings()
 UPLOAD_ROOT = Path(settings.UPLOAD_DIR).resolve()
 
 
+async def _ensure_upload_derivatives(db: AsyncSession, file_id: int) -> None:
+    try:
+        from app.services.image_derivative_service import ensure_standard_image_derivative
+
+        await ensure_standard_image_derivative(db, file_id)
+    except Exception:
+        # Upload must not fail because an optional preview/work-image derivative failed.
+        pass
+
+
 async def upload_file(
     db: AsyncSession,
     file_obj: BinaryIO,
@@ -114,6 +124,8 @@ async def upload_file(
         db.add(new_file)
         await db.commit()
         await db.refresh(new_file)
+
+    await _ensure_upload_derivatives(db, new_file.id)
 
     return {
         "id": new_file.id,
@@ -237,6 +249,8 @@ async def replace_file_content(
     await db.commit()
     await db.refresh(file)
 
+    await _ensure_upload_derivatives(db, file.id)
+
     return {
         "id": file.id,
         "name": file.name,
@@ -348,6 +362,8 @@ async def upload_file_from_path(
         await db.commit()
         await db.refresh(new_file)
 
+    await _ensure_upload_derivatives(db, new_file.id)
+
     return {
         "id": new_file.id, "name": new_file.name,
         "extension": new_file.extension, "size": new_file.size,
@@ -368,7 +384,10 @@ def _detect_mime_by_header(file_path: Path, filename: str) -> str:
             "css": "text/css", "js": "application/javascript", "json": "application/json",
             "csv": "text/csv", "xml": "application/xml", "pdf": "application/pdf",
             "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-            "gif": "image/gif", "svg": "image/svg+xml",
+            "jpe": "image/jpeg", "jfif": "image/jpeg", "gif": "image/gif",
+            "svg": "image/svg+xml", "webp": "image/webp", "bmp": "image/bmp",
+            "ico": "image/x-icon", "tif": "image/tiff", "tiff": "image/tiff",
+            "avif": "image/avif",
         }
         return mime_map.get(ext, "application/octet-stream")
 
@@ -382,6 +401,9 @@ def _detect_mime(data: bytes, ext: str) -> str:
             "css": "text/css", "js": "application/javascript", "json": "application/json",
             "csv": "text/csv", "xml": "application/xml", "pdf": "application/pdf",
             "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-            "gif": "image/gif", "svg": "image/svg+xml",
+            "jpe": "image/jpeg", "jfif": "image/jpeg", "gif": "image/gif",
+            "svg": "image/svg+xml", "webp": "image/webp", "bmp": "image/bmp",
+            "ico": "image/x-icon", "tif": "image/tiff", "tiff": "image/tiff",
+            "avif": "image/avif",
         }
         return mime_map.get(ext, "application/octet-stream")

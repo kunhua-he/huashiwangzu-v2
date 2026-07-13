@@ -53,6 +53,17 @@ def test_validator_accepts_authorized_schema_valid_plan() -> None:
     assert validator.validate_plan(_plan({"query": "产品手册", "top_k": 5}))
 
 
+def test_validator_normalizes_legacy_parameter_schema_aliases() -> None:
+    catalog = _catalog()
+    catalog["candidates"][0]["parameters"] = {
+        "query": {"type": "string"},
+        "top_k": {"type": "int"},
+        "refine": {"type": "bool"},
+    }
+    validator = ActionPlanValidator(user_id=4, catalog=catalog)
+    assert validator.validate_plan(_plan({"query": "产品手册", "top_k": 5, "refine": True}))
+
+
 def test_validator_rejects_invalid_argument_type() -> None:
     validator = ActionPlanValidator(user_id=4, catalog=_catalog())
     with pytest.raises(ActionPlanValidationError) as exc_info:

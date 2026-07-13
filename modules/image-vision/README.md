@@ -33,6 +33,7 @@ Image Vision
 - Desktop behavior, format binding, window behavior, and permissions are declared in `manifest.json`.
 - Backend HTTP behavior, if present, is implemented in `backend/router.py`.
 - Runtime module calls, if present, are declared in `manifest.public_actions` and registered by backend capability code.
+- `image-vision.describe` remains available for legacy content/knowledge image parsing. It declares `retrieval.expose_to_agent=false`, so Agent user-facing image understanding should use `media-intelligence` instead.
 
 ## HTTP API / Endpoint Families
 

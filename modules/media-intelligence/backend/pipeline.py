@@ -8,7 +8,7 @@ from typing import Any
 from .providers.base import MediaContext, MediaType, StageResult
 from .providers.registry import get_provider, list_providers
 
-IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "ico"}
+IMAGE_EXTENSIONS = {"jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "ico", "tif", "tiff", "avif"}
 VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "webm", "mkv", "avi"}
 MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 SCHEMA_VERSION = "media-intelligence.analysis.v1"

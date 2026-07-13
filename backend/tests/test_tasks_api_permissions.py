@@ -49,11 +49,15 @@ async def _create_task(
     result: dict | None = None,
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
+    task_type: str | None = None,
+    module: str = "test",
+    document_id: int | None = None,
+    stage_key: str | None = None,
 ) -> int:
     async with AsyncSessionLocal() as db:
         task = SystemTaskQueue(
-            task_type=f"test_task_api_{marker}",
-            module="test",
+            task_type=task_type or f"test_task_api_{marker}",
+            module=module,
             parameters=json.dumps({"marker": marker}),
             status=status,
             priority=0,
@@ -63,6 +67,8 @@ async def _create_task(
             result=json.dumps(result, ensure_ascii=False) if result is not None else None,
             started_at=started_at,
             completed_at=completed_at,
+            document_id=document_id,
+            stage_key=stage_key,
         )
         db.add(task)
         await db.commit()
@@ -305,6 +311,48 @@ async def test_retry_only_accepts_failed_tasks_and_clears_previous_result() -> N
         assert retried.result is None
         assert retried.started_at is None
         assert retried.completed_at is None
+    finally:
+        await _cleanup(marker)
+
+
+@pytest.mark.asyncio
+async def test_retry_reports_active_knowledge_stage_conflict_without_mutating_failed_task() -> None:
+    marker = uuid4().hex
+    admin = await _user("admin")
+    await _cleanup(marker)
+    try:
+        document_id = 9_000_000_000 + int(marker[:6], 16)
+        failed_task_id = await _create_task(
+            f"{marker}_failed",
+            admin.id,
+            task_type="kb_pipeline_stage",
+            module="knowledge",
+            document_id=document_id,
+            stage_key="parse_index",
+            retry_count=5,
+            error_message="Dispatcher lease expired; task released for retry",
+        )
+        active_task_id = await _create_task(
+            f"{marker}_active",
+            admin.id,
+            status="pending",
+            task_type="kb_pipeline_stage",
+            module="knowledge",
+            document_id=document_id,
+            stage_key="parse_index",
+            error_message=None,
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/api/tasks/{failed_task_id}/retry", headers=_headers(admin))
+
+        assert response.status_code == 409
+        assert str(active_task_id) in response.json()["error"]
+        failed = await _get_task(failed_task_id)
+        assert failed.status == "failed"
+        assert failed.retry_count == 5
+        assert failed.error_message == "Dispatcher lease expired; task released for retry"
     finally:
         await _cleanup(marker)
 

@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 from jsonschema import Draft202012Validator
 
-from ..services.capability_catalog import parameter_schema, validate_execution_snapshot
+from ..services.capability_catalog import (
+    normalize_json_schema,
+    parameter_schema,
+    validate_execution_snapshot,
+)
 from .action_plan import ActionObservation, ActionPlan, ActionPlanItem, ActionState
 
 _REFERENCE_RE = re.compile(
@@ -54,7 +58,9 @@ class ActionPlanValidator:
                 ))
                 continue
             contract = candidate.get("execution_contract") or {}
-            schema = contract.get("input_schema") or parameter_schema(candidate.get("parameters") or {})
+            schema = normalize_json_schema(
+                contract.get("input_schema") or parameter_schema(candidate.get("parameters") or {}),
+            )
             validation_arguments = self._plan_validation_arguments(
                 action,
                 schema,

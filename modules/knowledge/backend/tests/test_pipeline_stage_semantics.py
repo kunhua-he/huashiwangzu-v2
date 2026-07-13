@@ -68,6 +68,26 @@ def test_pipeline_stage_lane_keys_match_resource_pools():
     assert pipeline_service.STAGE_LANE_KEYS["graph"] == "llm_analysis"
 
 
+def test_pipeline_failure_diagnostics_preserve_wrapped_conversion_details() -> None:
+    from app.services.office_conversion import OfficeConversionError
+
+    conversion_error = OfficeConversionError(
+        "LibreOffice conversion failed",
+        diagnostics={"exit_code": 1, "stderr": "missing export filter"},
+    )
+    try:
+        raise RuntimeError("PPT parser conversion failed") from conversion_error
+    except RuntimeError as wrapped:
+        chain = pipeline_service._exception_chain_diagnostics(wrapped)
+
+    assert chain[0]["exception_type"] == "RuntimeError"
+    assert chain[1] == {
+        "exception_type": "OfficeConversionError",
+        "message": "LibreOffice conversion failed",
+        "conversion": {"exit_code": 1, "stderr": "missing export filter"},
+    }
+
+
 @pytest.fixture(autouse=True)
 def _live_upload_fixture():
     marker = REPO_ROOT / "data" / "uploads" / TEST_STORAGE_PATH
@@ -1258,6 +1278,46 @@ async def test_pipeline_stage_rolls_back_before_source_check_after_stage_error(m
     assert observed["file_id"] == db.doc.file_id
     assert result["task_status"] == "failed"
     assert result["reason"] == "stage exploded"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_stage_returned_failure_persists_page_diagnostics(monkeypatch):
+    db = _PipelineHandlerDb()
+
+    async def fake_raise_if_source_unavailable(*_args, **_kwargs):
+        return None
+
+    async def fake_run_stage(*_args, **_kwargs):
+        return {
+            "status": "failed",
+            "failed_pages": [{"page": 1, "error": "cannot identify image"}],
+            "pages": [{"page": 1, "status": "failed"}],
+        }
+
+    async def fake_record_stage_artifact(*_args, **_kwargs):
+        return "artifact-hash"
+
+    async def fake_record_stage_run(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(pipeline_service, "AsyncSessionLocal", lambda: _PipelineHandlerSession(db))
+    monkeypatch.setattr(pipeline_service, "raise_if_source_unavailable", fake_raise_if_source_unavailable)
+    monkeypatch.setattr(pipeline_service, "_run_stage", fake_run_stage)
+    monkeypatch.setattr(pipeline_service, "_record_stage_artifact", fake_record_stage_artifact)
+    monkeypatch.setattr(pipeline_service, "_record_stage_run", fake_record_stage_run)
+
+    response = await pipeline_service._pipeline_stage_handler({
+        "document_id": db.doc.id,
+        "user_id": 1,
+        "stage": "page_render",
+        "task_id": 777,
+        "pipeline_run_id": db.run.id,
+    })
+
+    diagnostics = response["result"]["failure_diagnostics"]
+    assert response["task_status"] == "failed"
+    assert diagnostics["exception_chain"][0]["message"] == "failed"
+    assert diagnostics["stage_result"]["failed_pages"] == [{"page": 1, "error": "cannot identify image"}]
 
 
 @pytest.mark.asyncio

@@ -25,12 +25,20 @@ class PlaceholderProvider(ImageProvider):
         return results
 
     async def transform(self, spec: GenSpec) -> list[GenResult]:
-        source = spec.extra.get("source_image") or {}
-        source_bytes = source.get("bytes")
+        source_images = spec.extra.get("source_images")
+        if not isinstance(source_images, list) or not source_images:
+            raise RuntimeError("source image bytes are required")
+        source_bytes_list = [
+            source.get("bytes")
+            for source in source_images[:8]
+            if isinstance(source, dict) and source.get("bytes")
+        ]
+        if not source_bytes_list:
+            raise RuntimeError("source image bytes are required")
         results: list[GenResult] = []
         for _ in range(spec.count):
             buf = io.BytesIO()
-            img = self._make_transform_placeholder(spec.prompt, source_bytes, spec.width, spec.height)
+            img = self._make_transform_placeholder(spec.prompt, source_bytes_list, spec.width, spec.height)
             img.save(buf, format="PNG")
             results.append(GenResult(
                 image_bytes=buf.getvalue(),
@@ -82,7 +90,7 @@ class PlaceholderProvider(ImageProvider):
     @staticmethod
     def _make_transform_placeholder(
         prompt: str,
-        source_bytes: bytes | None,
+        source_bytes_list: list[bytes | None],
         width: int,
         height: int,
     ) -> Image.Image:
@@ -106,22 +114,35 @@ class PlaceholderProvider(ImageProvider):
             font_large = ImageFont.load_default()
             font_small = ImageFont.load_default()
 
-        if source_bytes:
+        thumbs: list[Image.Image] = []
+        for source_bytes in source_bytes_list:
+            if not source_bytes:
+                continue
             try:
                 with Image.open(io.BytesIO(source_bytes)) as source_img:
                     thumb = source_img.convert("RGB")
-                    max_thumb = (max(1, int(width * 0.72)), max(1, int(height * 0.58)))
+                    max_thumb = (max(1, int(width * 0.38)), max(1, int(height * 0.42)))
                     thumb.thumbnail(max_thumb)
-                    x = (width - thumb.width) // 2
-                    y = max(24, int(height * 0.12))
-                    img.paste(thumb, (x, y))
-                    draw.rectangle(
-                        (x, y, x + thumb.width - 1, y + thumb.height - 1),
-                        outline=(180, 180, 180),
-                        width=2,
-                    )
+                    thumbs.append(thumb.copy())
             except Exception:
-                pass
+                continue
+        if thumbs:
+            columns = min(2, len(thumbs))
+            gap = 12
+            total_width = sum(thumb.width for thumb in thumbs[:columns]) + gap * (columns - 1)
+            x = max(12, (width - total_width) // 2)
+            y = max(24, int(height * 0.12))
+            for thumb in thumbs[:4]:
+                if x + thumb.width > width - 12:
+                    x = max(12, (width - total_width) // 2)
+                    y += max(item.height for item in thumbs[:columns]) + gap
+                img.paste(thumb, (x, y))
+                draw.rectangle(
+                    (x, y, x + thumb.width - 1, y + thumb.height - 1),
+                    outline=(180, 180, 180),
+                    width=2,
+                )
+                x += thumb.width + gap
 
         title = "图生图功能开发中"
         prompt_display = prompt if len(prompt) <= 56 else prompt[:53] + "..."

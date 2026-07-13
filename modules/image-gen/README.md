@@ -57,7 +57,7 @@ Total public actions: 4
 |---|---|---|---|
 | `generate` | `editor` | `aspect_ratio`, `count`, `prompt`, `publish`, `size`, `steps`, `template` | 生成图片：根据提示词生成产品图、海报、配图等；Agent 默认写入工作区草稿，`publish=true` 才进入桌面文件系统 |
 | `list_templates` | `viewer` | none | 列出可用生图模板（服务商+模型），含凭据是否齐全标识 |
-| `transform` | `editor` | `aspect_ratio`, `count`, `mode`, `preserve_subject`, `prompt`, `publish`, `size`, `source_file_id`, `steps`, `strength`, `template` | 图生图：读取已有图片file_id作为参考图；Agent 默认写入工作区草稿，`publish=true` 才进入桌面文件系统 |
+| `transform` | `editor` | `aspect_ratio`, `count`, `mode`, `preserve_subject`, `prompt`, `publish`, `size`, `source_file_ids`, `steps`, `strength`, `template` | 图生图/多图生图：读取已有图片 file_id 数组作为参考图，返回统一 framework file_id |
 | `usage_history` | `editor` | `limit` | 查询本人的生图历史记录，含积分消耗 |
 <!-- /DOCS-SYNC -->
 
@@ -78,7 +78,7 @@ Use `db_schema()` for live database details. This module must not directly read 
 
 If this module consumes `file_id`, it must validate file access through framework file access helpers or an approved public capability before reading disk.
 
-Generated images follow the workspace boundary: capability calls default to `publish=false` and return `workspace_path`; explicit `publish=true` or the HTTP app flow creates framework file records visible to the desktop.
+Generated images are always persisted as framework files and returned as `file_id` so later Agent steps can reuse them as ResourceRef inputs. `publish=false` stores them under an Agent draft folder; `publish=true` stores them at the desktop root.
 
 ## Frontend / Backend Structure
 

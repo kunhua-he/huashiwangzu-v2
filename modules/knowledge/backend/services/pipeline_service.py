@@ -143,6 +143,61 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _truncate_diagnostic_text(value: object, *, limit: int = 2000) -> str:
+    text_value = str(value or "").strip()
+    return text_value[:limit]
+
+
+def _exception_chain_diagnostics(exc: BaseException) -> list[dict[str, Any]]:
+    """Preserve wrapped parser/converter causes without emitting unbounded text."""
+    chain: list[dict[str, Any]] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        seen.add(id(current))
+        item: dict[str, Any] = {
+            "exception_type": type(current).__name__,
+            "message": _truncate_diagnostic_text(current),
+        }
+        conversion_diagnostics = getattr(current, "diagnostics", None)
+        if isinstance(conversion_diagnostics, dict):
+            item["conversion"] = _json_safe(conversion_diagnostics)
+        chain.append(item)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+async def _build_failure_diagnostics(
+    db: AsyncSession,
+    *,
+    doc: KbDocument,
+    stage: str,
+    task_id: int | None,
+    pipeline_run_id: int | None,
+    exc: BaseException,
+) -> dict[str, Any]:
+    """Build a persisted, privacy-safe failure envelope for every pipeline stage."""
+    source = await db.get(File, int(doc.file_id))
+    return {
+        "schema_version": "knowledge_pipeline_failure_v1",
+        "task_id": task_id,
+        "pipeline_run_id": pipeline_run_id,
+        "document_id": int(doc.id),
+        "file_id": int(doc.file_id),
+        "stage": stage,
+        "lane": STAGE_LANE_KEYS.get(stage),
+        "source": {
+            "filename": getattr(doc, "filename", None),
+            "extension": getattr(doc, "extension", None),
+            "mime_type": getattr(doc, "mime_type", None),
+            "file_size": getattr(doc, "file_size", None),
+            "storage_path": source.storage_path if source is not None else None,
+            "md5_hash": source.md5_hash if source is not None else None,
+        },
+        "exception_chain": _exception_chain_diagnostics(exc),
+    }
+
+
 def _task_matches(task: SystemTaskQueue, document_id: int, stage: str) -> bool:
     return task.document_id == int(document_id) and str(task.stage_key or "") == stage
 
@@ -329,6 +384,8 @@ async def _record_stage_artifact(
         diagnostics["timing"] = safe_result.get("timing")
     if safe_result.get("pause"):
         diagnostics["pause"] = safe_result.get("pause")
+    if safe_result.get("failure_diagnostics"):
+        diagnostics["failure_diagnostics"] = safe_result.get("failure_diagnostics")
 
     try:
         prompt_hash_value = await resolve_stage_prompt_hash(db, stage)
@@ -670,7 +727,20 @@ async def _pipeline_stage_handler(params: dict) -> dict:
                 mark_document_source_unavailable(doc, source_state.reason)
                 result = {"document_id": document_id, "status": "skipped", "reason": source_state.reason}
             else:
-                result = {"document_id": document_id, "status": "failed", "error": str(exc)}
+                failure_diagnostics = await _build_failure_diagnostics(
+                    db,
+                    doc=doc,
+                    stage=stage,
+                    task_id=task_id,
+                    pipeline_run_id=pipeline_run_id,
+                    exc=exc,
+                )
+                result = {
+                    "document_id": document_id,
+                    "status": "failed",
+                    "error": _truncate_diagnostic_text(exc),
+                    "failure_diagnostics": failure_diagnostics,
+                }
                 if is_model_stage(stage):
                     rate_limit_pause = record_model_rate_limit(stage, error_message=exc)
                     if rate_limit_pause.get("paused"):
@@ -695,9 +765,39 @@ async def _pipeline_stage_handler(params: dict) -> dict:
                             "after_stage": stage,
                             **pause_result,
                         }
-                logger.error("Knowledge pipeline stage failed doc_id=%d stage=%s: %s", document_id, stage, exc)
+                logger.exception(
+                    "Knowledge pipeline stage failed task_id=%s document_id=%d file_id=%d stage=%s diagnostics=%s",
+                    task_id,
+                    document_id,
+                    file_id,
+                    stage,
+                    json.dumps(failure_diagnostics, ensure_ascii=False, default=str),
+                )
 
         status, reason = _stage_status_from_result(result)
+        if status == "failed" and not result.get("failure_diagnostics"):
+            failure_diagnostics = await _build_failure_diagnostics(
+                db,
+                doc=doc,
+                stage=stage,
+                task_id=task_id,
+                pipeline_run_id=pipeline_run_id,
+                exc=RuntimeError(reason),
+            )
+            failure_diagnostics["stage_result"] = {
+                key: _json_safe(result.get(key))
+                for key in ("failed_pages", "pages", "assets", "materialized", "reused", "total_pages", "timing")
+                if key in result
+            }
+            result["failure_diagnostics"] = failure_diagnostics
+            logger.error(
+                "Knowledge pipeline stage returned failure task_id=%s document_id=%d file_id=%d stage=%s diagnostics=%s",
+                task_id,
+                document_id,
+                file_id,
+                stage,
+                json.dumps(failure_diagnostics, ensure_ascii=False, default=str),
+            )
         duration_ms = round((perf_counter() - timer) * 1000)
         stage_result_cache_path = write_stage_result_cache(
             document_id=document_id,

@@ -1,7 +1,7 @@
 import { getApiUrl, authHeaders, handleUnauthorized } from '../runtime'
 
 export async function downloadBlob(fileId: number): Promise<Blob> {
-  const url = getApiUrl(`/files/download/${fileId}`)
+  const url = getApiUrl(`/files/download/${fileId}/standard-image`)
   const resp = await fetch(url, { headers: authHeaders() })
   if (handleUnauthorized(resp.status)) throw new Error('登录已失效，请重新登录')
   if (!resp.ok) throw new Error(`Download returned ${resp.status}`)

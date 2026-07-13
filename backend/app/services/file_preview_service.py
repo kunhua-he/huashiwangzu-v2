@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.file import File
-from app.core.exceptions import NotFound, PermissionDenied, AppException
-from app.services.file_share_service import check_file_access
+
 from app.config import get_settings
+from app.core.exceptions import AppException, NotFound, PermissionDenied
+from app.models.file import File
+from app.services.file_share_service import check_file_access
 
 settings = get_settings()
 
@@ -17,7 +19,10 @@ TEXT_EXTENSIONS = {
     'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd',
     'pl', 'lua', 'r', 'dart', 'dockerfile', 'makefile', 'gradle',
 }
-IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico"}
+IMAGE_EXTS = {
+    "jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "svg", "ico",
+    "tif", "tiff", "avif",
+}
 AUDIO_EXTS = {"mp3", "wav", "aac", "ogg", "flac", "m4a"}
 VIDEO_EXTS = {"mp4", "webm", "mov", "avi", "mkv", "flv"}
 OFFICE_EXTS = {"doc", "docx", "xls", "xlsx", "ppt", "pptx"}
@@ -71,6 +76,24 @@ async def preview_file(db: AsyncSession, file_id: int, user_id: int) -> dict:
             },
         }
 
+    if _is_image_file(ext, file.mime_type):
+        from app.services.image_derivative_service import get_standard_image_derivative
+
+        derivative = await get_standard_image_derivative(db, file_id)
+        if derivative:
+            return {
+                "mime_type": derivative.mime_type,
+                "file_info": {
+                    "id": file.id,
+                    "name": file.name,
+                    "extension": file.extension,
+                    "size": file.size,
+                },
+                "download_url": f"/api/files/download/{file.id}/standard-image",
+                "original_download_url": f"/api/files/download/{file.id}/original",
+                "normalized": True,
+            }
+
     mime_map = _get_mime_map()
     mime_type = mime_map.get(ext, "application/octet-stream")
     return {
@@ -119,11 +142,20 @@ def _get_mime_map() -> dict:
     return {
         "pdf": "application/pdf",
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "jpe": "image/jpeg", "jfif": "image/jpeg",
         "gif": "image/gif", "svg": "image/svg+xml", "webp": "image/webp",
-        "bmp": "image/bmp", "ico": "image/x-icon",
+        "bmp": "image/bmp", "ico": "image/x-icon", "tif": "image/tiff",
+        "tiff": "image/tiff", "avif": "image/avif",
         "mp4": "video/mp4", "webm": "video/webm",
         "mp3": "audio/mpeg", "wav": "audio/wav",
     }
+
+
+def _is_image_file(ext: str, mime_type: str | None) -> bool:
+    mime = (mime_type or "").lower()
+    if mime == "image/svg+xml":
+        return True
+    return ext.lower() in IMAGE_EXTS or mime.startswith("image/")
 
 
 def _get_size_limit(ext: str) -> int:

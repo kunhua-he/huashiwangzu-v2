@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..engine.engine import chat_with_degradation_chain
+from ..services.capability_catalog import normalize_json_schema, parameter_schema
 from .action_plan import ActionPlan, ActionPlanItem, ResourceRefType
 
 ModelCall = Callable[..., Awaitable[dict]]
@@ -79,8 +80,8 @@ def _planning_catalog(candidates: dict[str, dict]) -> list[dict]:
             "capability": name,
             "brief": item.get("brief") or item.get("description") or name,
             "description": item.get("description") or "",
-            "parameters": item.get("parameters") or {},
-            "execution_contract": item.get("execution_contract") or {},
+            "parameters": parameter_schema(item.get("parameters") or {}),
+            "execution_contract": normalize_json_schema(item.get("execution_contract") or {}),
             "retrieval": item.get("retrieval") or {},
         }
         for name, item in candidates.items()
@@ -126,6 +127,7 @@ class ActionPlanner:
             )
             for action_id, value in (observations or {}).items()
         }
+        planner_schema = _planner_schema(list(candidates))
         planning_context = {
             "goal": goal,
             "planning_round": planning_round,
@@ -140,6 +142,10 @@ class ActionPlanner:
                 "Use ${action_id.references[index].id} or .locator for prior outputs.",
                 "Do not repeat a failed action; produce a revised plan or request user input.",
             ],
+            "output_contract": {
+                "format": "Return exactly one JSON object that validates against schema. Do not use Markdown or add prose.",
+                "schema": planner_schema,
+            },
         }
         model_messages = list(messages or [])
         model_messages.append({
@@ -151,7 +157,7 @@ class ActionPlanner:
             "json_schema": {
                 "name": "agent_action_plan",
                 "strict": False,
-                "schema": _planner_schema(list(candidates)),
+                "schema": planner_schema,
             },
         }
         result = await self.model_call(

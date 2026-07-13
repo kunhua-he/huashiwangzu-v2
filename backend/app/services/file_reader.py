@@ -71,7 +71,22 @@ async def read_uploaded_file(
         raise AppException("Unsafe file storage path", status_code=400)
     if not full_path.exists() or not full_path.is_file():
         raise NotFound("File on disk not found")
+    if _is_image_file(ext, file.mime_type):
+        from app.services.image_derivative_service import resolve_standard_image_path_for_user
+
+        derivative = await resolve_standard_image_path_for_user(db, file_id, user_id)
+        if derivative:
+            file, derivative_path, derivative_ext, _mime_type = derivative
+            return file, derivative_path, derivative_ext
     return file, full_path, ext
+
+
+def _is_image_file(ext: str, mime_type: str | None) -> bool:
+    image_exts = {"jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "ico", "tif", "tiff", "avif"}
+    mime = (mime_type or "").lower()
+    if mime == "image/svg+xml":
+        return True
+    return ext.lower() in image_exts or mime.startswith("image/")
 
 
 def decode_text_bytes(raw: bytes) -> str:

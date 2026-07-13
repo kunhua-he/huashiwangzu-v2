@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.models.file import File
+from app.models.system import SystemTaskQueue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,14 +20,23 @@ RECONCILABLE_CATEGORIES = {
 }
 TERMINAL_STATUS = "skipped"
 RECONCILE_ACTOR = "knowledge_orphan_pipeline_run_reconcile"
+STALE_LIVE_WITHOUT_TASK_SECONDS = 3600
+STALE_TERMINAL_STAGE_STATUSES = {"blocked", "done", "degraded", "failed", "skipped"}
 
 
 def _iso(value: Any) -> str | None:
     return value.isoformat() if value else None
 
 
-def _category_for(run: KbPipelineRun, doc: KbDocument | None, file: File | None) -> str:
-    _ = run
+def _category_for(
+    run: KbPipelineRun,
+    doc: KbDocument | None,
+    file: File | None,
+    latest_stage: KbPipelineStageRun | None,
+    *,
+    has_active_task: bool,
+    now: datetime,
+) -> str:
     if doc is None:
         return "doc_missing"
     if doc.deleted:
@@ -35,6 +45,15 @@ def _category_for(run: KbPipelineRun, doc: KbDocument | None, file: File | None)
         return "source_file_missing"
     if file.deleted:
         return "source_file_deleted"
+    stale_since = run.updated_at or run.started_at or run.created_at
+    age_seconds = (now - stale_since).total_seconds() if stale_since else 0.0
+    if (
+        not has_active_task
+        and age_seconds >= STALE_LIVE_WITHOUT_TASK_SECONDS
+        and latest_stage is not None
+        and latest_stage.status in STALE_TERMINAL_STAGE_STATUSES
+    ):
+        return "stale_live_without_task"
     return "live_without_task"
 
 
@@ -43,6 +62,8 @@ def _suggested_action(category: str) -> str:
         return "mark_orphan_run_skipped_source_unavailable"
     if category in {"doc_missing", "doc_deleted"}:
         return "archive_orphan_diagnostic_run"
+    if category == "stale_live_without_task":
+        return "mark_orphan_run_stale_reconciled"
     return "manual_review_live_running_without_task"
 
 
@@ -106,17 +127,41 @@ async def _collect_reconcile_items(
 ) -> tuple[list[KbPipelineRun], list[dict[str, Any]], Counter[str]]:
     runs = await _load_orphan_runs(db, limit=limit, run_ids=run_ids)
     latest_by_run = await _load_latest_stages(db, [int(run.id) for run in runs])
+    document_ids = [int(run.document_id) for run in runs]
+    active_task_document_ids: set[int] = set()
+    if document_ids:
+        active_tasks = await db.execute(
+            select(SystemTaskQueue.document_id).where(
+                SystemTaskQueue.task_type == "kb_pipeline_stage",
+                SystemTaskQueue.document_id.in_(document_ids),
+                SystemTaskQueue.status.in_(("pending", "running")),
+            )
+        )
+        active_task_document_ids = {
+            int(document_id)
+            for document_id in active_tasks.scalars().all()
+            if document_id is not None
+        }
     items: list[dict[str, Any]] = []
     summary: Counter[str] = Counter()
+    now = datetime.now(timezone.utc)
 
     for run in runs:
         doc = await db.get(KbDocument, run.document_id)
         file = await db.get(File, run.file_id)
-        category = _category_for(run, doc, file)
-        summary[category] += 1
-        would_set_status = TERMINAL_STATUS if category in RECONCILABLE_CATEGORIES else None
-        would_set_reason = category if category in RECONCILABLE_CATEGORIES else None
         latest_stage = latest_by_run.get(int(run.id))
+        category = _category_for(
+            run,
+            doc,
+            file,
+            latest_stage,
+            has_active_task=int(run.document_id) in active_task_document_ids,
+            now=now,
+        )
+        summary[category] += 1
+        reconciliable = category in RECONCILABLE_CATEGORIES or category == "stale_live_without_task"
+        would_set_status = TERMINAL_STATUS if reconciliable else None
+        would_set_reason = category if reconciliable else None
         items.append({
             "run_id": run.id,
             "document_id": run.document_id,
@@ -128,6 +173,7 @@ async def _collect_reconcile_items(
             "latest_stage": _latest_stage_payload(latest_stage),
             "run_status": run.status,
             "task_id": run.task_id,
+            "has_active_document_task": int(run.document_id) in active_task_document_ids,
             "started_at": _iso(run.started_at),
             "updated_at": _iso(run.updated_at),
         })
@@ -146,12 +192,12 @@ async def dry_run_orphan_pipeline_run_reconcile(
     would_change_by_category = Counter(
         item["category"]
         for item in items
-        if item["category"] in RECONCILABLE_CATEGORIES
+        if item["category"] in RECONCILABLE_CATEGORIES or item["category"] == "stale_live_without_task"
     )
     skipped_by_category = Counter(
         item["category"]
         for item in items
-        if item["category"] not in RECONCILABLE_CATEGORIES
+        if item["category"] not in RECONCILABLE_CATEGORIES and item["category"] != "stale_live_without_task"
     )
     return {
         "dry_run": True,
@@ -162,7 +208,7 @@ async def dry_run_orphan_pipeline_run_reconcile(
         "skipped_by_category": dict(skipped_by_category),
         "items": items,
         "terminal_status": TERMINAL_STATUS,
-        "note": "Only running kb_pipeline_runs with task_id NULL are considered; live source rows are review-only.",
+        "note": "Only running kb_pipeline_runs with task_id NULL are considered. Live source rows remain review-only unless stale for the configured threshold, have no active document task, and their latest stage is terminal or blocked.",
     }
 
 
@@ -207,7 +253,7 @@ async def apply_orphan_pipeline_run_reconcile(
         run = runs_by_id.get(int(item["run_id"]))
         if run is None:
             continue
-        if category not in RECONCILABLE_CATEGORIES:
+        if category not in RECONCILABLE_CATEGORIES and category != "stale_live_without_task":
             skipped_item = {**item, "skip_reason": "category_not_reconcilable"}
             skipped.append(skipped_item)
             skipped_by_category[category] += 1

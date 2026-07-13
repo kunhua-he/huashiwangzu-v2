@@ -71,6 +71,54 @@ def _search_text(capability: dict) -> str:
     ])
 
 
+def agent_visible_capabilities(capabilities: list[dict]) -> list[dict]:
+    visible: list[dict] = []
+    for capability in capabilities:
+        retrieval = capability.get("retrieval") if isinstance(capability.get("retrieval"), dict) else {}
+        if retrieval.get("expose_to_agent") is False:
+            continue
+        visible.append(capability)
+    return visible
+
+
+def normalize_json_schema(schema: object) -> object:
+    """Normalize legacy module schema aliases into Draft 2020-12 JSON Schema."""
+    type_aliases = {
+        "int": "integer",
+        "integer": "integer",
+        "float": "number",
+        "number": "number",
+        "bool": "boolean",
+        "boolean": "boolean",
+        "array": "array",
+        "object": "object",
+        "string": "string",
+        "str": "string",
+        "null": "null",
+    }
+    if isinstance(schema, list):
+        return [normalize_json_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    normalized: dict[str, object] = {}
+    for key, value in schema.items():
+        normalized_key = str(key)
+        if normalized_key == "type":
+            if isinstance(value, str):
+                declared = value.strip().lower()
+                normalized[normalized_key] = type_aliases.get(declared, value)
+                continue
+            if isinstance(value, list):
+                normalized[normalized_key] = [
+                    type_aliases.get(item.strip().lower(), item) if isinstance(item, str) else item
+                    for item in value
+                ]
+                continue
+        normalized[normalized_key] = normalize_json_schema(value)
+    return normalized
+
+
 def _lexical_scores(query: str, capabilities: list[dict]) -> list[float]:
     query_tokens = _tokens(query)
     if not query_tokens:
@@ -336,7 +384,8 @@ async def retrieve_capabilities(
     desired_reference_types: set[str] | None = None,
 ) -> dict:
     snapshot = await authorized_capability_snapshot(user_id=user_id)
-    capabilities = list(snapshot.get("capabilities") or [])
+    raw_capabilities = list(snapshot.get("capabilities") or [])
+    capabilities = agent_visible_capabilities(raw_capabilities)
     lexical = _lexical_scores(query, capabilities)
     semantic_diagnostics: dict = {"available": False, "reason": "disabled"}
     semantic = [0.0] * len(capabilities)
@@ -413,6 +462,7 @@ async def retrieve_capabilities(
         "principal": snapshot["principal"],
         "query": query,
         "total_authorized": len(capabilities),
+        "total_snapshot_capabilities": len(raw_capabilities),
         "candidates": [item.to_dict() for item in ranked[:bounded_limit]],
         "experience_patterns": experience_patterns,
         "semantic_index": semantic_diagnostics,
@@ -441,11 +491,11 @@ def direct_function_tools(candidates: list[dict]) -> list[dict]:
 
 def parameter_schema(parameters: dict) -> dict:
     if parameters.get("type") == "object":
-        return parameters
+        return normalize_json_schema(parameters)  # type: ignore[return-value]
     properties: dict[str, dict] = {}
     for key, value in parameters.items():
         if isinstance(value, dict):
-            properties[str(key)] = value
+            properties[str(key)] = normalize_json_schema(value)  # type: ignore[assignment]
             continue
         declared = str(value or "").strip().lower()
         type_name = {
@@ -466,7 +516,7 @@ def parameter_schema(parameters: dict) -> dict:
         }:
             field_schema["description"] = str(value)
         properties[str(key)] = field_schema
-    return {"type": "object", "properties": properties}
+    return normalize_json_schema({"type": "object", "properties": properties})  # type: ignore[return-value]
 
 
 async def validate_execution_snapshot(

@@ -36,7 +36,10 @@ class GPTStoreProvider(ImageProvider):
         return images
 
     async def transform(self, spec: GenSpec) -> list[GenResult]:
-        source = spec.extra.get("source_image") or {}
+        source_images = spec.extra.get("source_images")
+        if not isinstance(source_images, list) or not source_images:
+            raise RuntimeError("source image bytes are required")
+        source = source_images[0] if isinstance(source_images[0], dict) else {}
         source_bytes = source.get("bytes")
         if not source_bytes:
             raise RuntimeError("source image bytes are required")
@@ -57,9 +60,6 @@ class GPTStoreProvider(ImageProvider):
         if not model_name:
             raise RuntimeError(f"Image generation profile '{profile_key}' is missing model")
 
-        mime_type = source.get("mime_type") or "image/png"
-        image_b64 = base64.b64encode(source_bytes).decode("ascii")
-        source_data_url = f"data:{mime_type};base64,{image_b64}"
         size = f"{spec.width}x{spec.height}"
 
         prompt = self._build_transform_prompt(spec)
@@ -80,15 +80,25 @@ class GPTStoreProvider(ImageProvider):
         images: list[GenResult] = []
         async with httpx.AsyncClient(**client_kw) as client:
             for _ in range(spec.count):
+                content = [{"type": "input_text", "text": prompt}]
+                for source in source_images[:8]:
+                    if not isinstance(source, dict):
+                        continue
+                    raw_bytes = source.get("bytes")
+                    if not raw_bytes:
+                        continue
+                    mime_type = source.get("mime_type") or "image/png"
+                    image_b64 = base64.b64encode(raw_bytes).decode("ascii")
+                    content.append({
+                        "type": "input_image",
+                        "image_url": f"data:{mime_type};base64,{image_b64}",
+                    })
                 body = {
                     "model": model_name,
                     "input": [
                         {
                             "role": "user",
-                            "content": [
-                                {"type": "input_text", "text": prompt},
-                                {"type": "input_image", "image_url": source_data_url},
-                            ],
+                            "content": content,
                         }
                     ],
                     "tools": [tool_config],

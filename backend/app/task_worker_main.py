@@ -1,8 +1,4 @@
-"""Standalone background task worker process.
-
-This process imports the normal router registry so module task handlers are
-registered once, then runs the framework task worker without serving HTTP.
-"""
+"""Standalone background task Dispatcher process."""
 from __future__ import annotations
 
 import argparse
@@ -11,21 +7,18 @@ import logging
 import os
 import signal
 
-from fastapi import FastAPI
 from sqlalchemy import text as sa_text
 
 from app.database import AsyncSessionLocal, dispose_db, engine, init_db
 from app.models.system import ensure_framework_scheduling_columns
-from app.routers.registry import register_routers
 from app.services.module_logger import setup_module_logging, setup_v2_loggers_for_modules
-from app.services.private_module_service import set_app_instance
-from app.services.task_worker import (
-    process_retire_requested,
-    start_worker,
-    stop_worker,
-    wait_for_process_retire_request,
-    worker_health,
+from app.services.task_dispatcher import (
+    dispatcher_health,
+    execute_claimed_task,
+    start_dispatcher,
+    stop_dispatcher,
 )
+from app.services.task_handler_bootstrap import bootstrap_task_handlers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,41 +26,14 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("v2.task_worker_main")
-
-POOL_LANE_FILTERS: dict[str, str] = {
-    "local": "local_preprocess,derived_index,relation_build",
-    "cloud": "vision_analysis,llm_analysis",
-}
-
+RETIRE_SHUTDOWN_TIMEOUT_SECONDS = float(os.getenv("TASK_WORKER_RETIRE_SHUTDOWN_TIMEOUT_SECONDS", "15"))
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a standalone Huashi task worker")
-    parser.add_argument(
-        "--pool",
-        choices=("all", "local", "cloud"),
-        default=os.getenv("TASK_WORKER_POOL", "all"),
-        help="Restrict this process to a resource pool; all keeps legacy behavior.",
-    )
-    parser.add_argument(
-        "--lane-filter",
-        default=os.getenv("TASK_WORKER_LANE_FILTER", ""),
-        help="Comma-separated lane_key allowlist for this process.",
-    )
+    parser = argparse.ArgumentParser(description="Run the Huashi task Dispatcher")
+    parser.add_argument("--executor-task-id", type=int, default=0)
+    parser.add_argument("--lease-token", default="")
     return parser.parse_args()
-
-
-def _apply_worker_process_filter(args: argparse.Namespace) -> None:
-    pool = str(args.pool or "all").strip().lower()
-    lane_filter = str(args.lane_filter or "").strip()
-    if pool and pool != "all":
-        os.environ["TASK_WORKER_POOL"] = pool
-    if lane_filter:
-        os.environ["TASK_WORKER_LANE_FILTER"] = lane_filter
-    elif pool in POOL_LANE_FILTERS:
-        os.environ["TASK_WORKER_LANE_FILTER"] = POOL_LANE_FILTERS[pool]
-
-
-async def _startup() -> None:
+async def _startup(*, start_dispatcher_process: bool) -> None:
     await init_db()
     await ensure_framework_scheduling_columns()
     try:
@@ -96,17 +62,16 @@ async def _startup() -> None:
         logger.warning("Migration origin_type skipped: %s", exc)
 
     setup_module_logging()
-    app = FastAPI(title="Huashi Wangzu V2 Task Worker")
-    set_app_instance(app)
-    register_routers(app)
+    bootstrap_task_handlers()
     setup_v2_loggers_for_modules()
 
     # Touch the DB after module import so startup fails early if credentials drift.
     async with AsyncSessionLocal() as db:
         await db.execute(sa_text("SELECT 1"))
 
-    start_worker()
-    logger.info("Standalone task worker started: %s", worker_health())
+    if start_dispatcher_process:
+        start_dispatcher()
+        logger.info("Standalone task dispatcher started: %s", dispatcher_health())
 
 
 async def _run_forever() -> None:
@@ -118,27 +83,42 @@ async def _run_forever() -> None:
         except NotImplementedError:
             pass
 
-    await _startup()
+    await _startup(start_dispatcher_process=True)
     stop_task = asyncio.create_task(stop_event.wait())
-    retire_task = asyncio.create_task(wait_for_process_retire_request())
     try:
-        await asyncio.wait(
-            {stop_task, retire_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        await stop_task
     finally:
         stop_task.cancel()
-        retire_task.cancel()
-        await asyncio.gather(stop_task, retire_task, return_exceptions=True)
-        if process_retire_requested():
-            logger.warning("Standalone task worker retiring after memory/cancellation guard")
-        logger.info("Standalone task worker stopping")
-        await stop_worker()
+        await asyncio.gather(stop_task, return_exceptions=True)
+        logger.info("Standalone task dispatcher stopping")
+        try:
+            await asyncio.wait_for(
+                stop_dispatcher(),
+                timeout=max(1.0, RETIRE_SHUTDOWN_TIMEOUT_SECONDS),
+            )
+            await dispose_db()
+        except asyncio.TimeoutError:
+            logger.error(
+                "Standalone task worker shutdown exceeded %.1fs",
+                RETIRE_SHUTDOWN_TIMEOUT_SECONDS,
+            )
+            raise
+
+
+async def _run_executor_once(task_id: int, lease_token: str) -> int:
+    await _startup(start_dispatcher_process=False)
+    try:
+        return await execute_claimed_task(task_id, lease_token)
+    finally:
         await dispose_db()
 
 
 def main() -> None:
-    _apply_worker_process_filter(_parse_args())
+    args = _parse_args()
+    if args.executor_task_id:
+        if not args.lease_token:
+            raise SystemExit("--lease-token is required with --executor-task-id")
+        raise SystemExit(asyncio.run(_run_executor_once(args.executor_task_id, args.lease_token)))
     asyncio.run(_run_forever())
 
 

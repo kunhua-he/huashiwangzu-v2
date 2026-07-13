@@ -1,4 +1,3 @@
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -503,21 +502,23 @@ async def _backfill_missing_memory_links(
 async def _enqueue_post_save(memory_id: int, content: str, source: str | None) -> bool:
     try:
         from app.database import AsyncSessionLocal
-        from app.models.system import SystemTaskQueue
+        from app.services.task_dispatcher import publish_task
 
         async with AsyncSessionLocal() as eq_db:
-            task = SystemTaskQueue(
+            await publish_task(
+                eq_db,
                 task_type="memory_post_save",
-                parameters=json.dumps({
+                module="memory",
+                owner_id=None,
+                body={
                     "memory_id": memory_id,
                     "content": content,
                     "source": source,
-                }),
-                status="pending",
+                },
+                requested_by="system:memory",
+                trigger="memory.post_save",
                 priority=0,
-                module="memory",
             )
-            eq_db.add(task)
             await eq_db.commit()
             return True
     except Exception as e:

@@ -13,7 +13,15 @@ from time import perf_counter
 from typing import Any
 
 from app.database import AsyncSessionLocal
+from app.models.file import File
 from app.models.system import SystemTaskQueue
+from app.services.task_dispatcher import (
+    TaskDefinition,
+    publish_task,
+    register_task_definition,
+    register_task_settlement_handler,
+    unpack_task_parameters,
+)
 from app.services.task_worker import register_task_handler
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,31 +42,23 @@ from .analysis_artifact_service import (
     resolve_stage_prompt_hash,
     stage_schema_version,
 )
-from .cognitive_index_service import derive_document_cognitive_index
 from .document_service import (
     NON_CONTENT_FILE_REASONS,
     SOURCE_UNAVAILABLE_REASONS,
     document_deep_pipeline_complete,
     document_parse_allows_search,
-    document_vector_stage_terminal,
     mark_document_non_content_skipped,
     mark_document_source_unavailable,
-    parse_and_index_document,
 )
-from .entity_service import process_document_entities_from_fusions
-from .fusion_service import fuse_all_pages
 from .model_routing import (
     is_model_stage,
     pause_model_stage_queue,
     record_model_rate_limit,
-    resolve_knowledge_concurrency,
     resolve_knowledge_pipeline_priority,
     should_pause_after_result,
 )
-from .page_asset_service import materialize_page_assets_stage, page_assets_complete
-from .profile_service import generate_document_profile
-from .raw_collection_service import collect_raw_stage
-from .relation_service import compute_file_relations
+from .page_asset_service import page_assets_complete
+from .pipeline_stages import run_pipeline_stage
 from .source_file_state import classify_non_content_file, get_source_file_availability, raise_if_source_unavailable
 from .stage_result_cache_service import delete_stage_result_cache, write_stage_result_cache
 
@@ -98,6 +98,19 @@ STAGE_LANE_KEYS = {
     "cognitive_index": "derived_index",
     "graph": "llm_analysis",
     "relations": "relation_build",
+}
+STAGE_RESOURCE_PROFILES: dict[str, dict[str, Any]] = {
+    "source_validate": {"cpu_cores": 0.1, "rss_estimate_mb": 128, "timeout_seconds": 300},
+    "parse_index": {"cpu_cores": 1.0, "rss_estimate_mb": 1536, "timeout_seconds": 1200},
+    "raw_text": {"cpu_cores": 0.5, "rss_estimate_mb": 512, "timeout_seconds": 900},
+    "page_render": {"cpu_cores": 1.0, "rss_estimate_mb": 2048, "timeout_seconds": 1200},
+    "raw_ocr": {"cloud": True, "provider_key": "knowledge_vlm", "rss_estimate_mb": 256, "timeout_seconds": 900},
+    "raw_vision": {"cloud": True, "provider_key": "knowledge_vlm", "rss_estimate_mb": 256, "timeout_seconds": 900},
+    "fusion": {"cloud": True, "provider_key": "knowledge_llm", "rss_estimate_mb": 256, "timeout_seconds": 1800},
+    "profile": {"cloud": True, "provider_key": "knowledge_llm", "rss_estimate_mb": 256, "timeout_seconds": 1800},
+    "cognitive_index": {"cpu_cores": 0.5, "rss_estimate_mb": 768, "timeout_seconds": 1200},
+    "graph": {"cloud": True, "provider_key": "knowledge_llm", "rss_estimate_mb": 256, "timeout_seconds": 3600},
+    "relations": {"cpu_cores": 0.5, "rss_estimate_mb": 1024, "timeout_seconds": 1800},
 }
 
 
@@ -191,24 +204,23 @@ async def enqueue_pipeline_stage_task(
         "force_raw": bool(force_raw),
         "force_fusion": bool(force_fusion),
     }
-    task = SystemTaskQueue(
+    task = await publish_task(
+        db,
         task_type=PIPELINE_TASK_TYPE,
         module="knowledge",
-        parameters=json.dumps(payload, ensure_ascii=False),
+        owner_id=user_id,
+        body=payload,
+        requested_by=f"user:{user_id}",
+        trigger="knowledge.pipeline.successor",
         priority=resolved_priority,
-        status="pending",
-        creator_id=user_id,
         max_retries=PIPELINE_MAX_RETRIES,
         document_id=int(doc.id),
         stage_key=stage,
         lane_key=STAGE_LANE_KEYS.get(stage, "knowledge"),
         ready_status="ready",
         dependency_key=f"knowledge:{int(doc.id)}:{stage}",
+        resource_profile=STAGE_RESOURCE_PROFILES.get(stage),
     )
-    db.add(task)
-    await db.flush()
-    payload["task_id"] = int(task.id)
-    task.parameters = json.dumps(payload, ensure_ascii=False)
     return {
         "task_id": int(task.id),
         "enqueued": True,
@@ -318,13 +330,23 @@ async def _record_stage_artifact(
     if safe_result.get("pause"):
         diagnostics["pause"] = safe_result.get("pause")
 
+    try:
+        prompt_hash_value = await resolve_stage_prompt_hash(db, stage)
+    except Exception as exc:
+        logger.warning("Prompt hash skipped doc_id=%d stage=%s: %s", int(doc.id), stage, exc)
+        prompt_hash_value = None
+    source_revision = None
+    if hasattr(db, "scalar"):
+        source_revision = await db.scalar(select(File.md5_hash).where(File.id == int(doc.file_id)))
     input_hash = build_input_hash(
         stage=stage,
         document_id=int(doc.id),
         file_id=int(doc.file_id),
         extra={
-            "task_id": task_id,
-            "pipeline_run_id": pipeline_run_id,
+            "source_revision": str(source_revision or ""),
+            "stage_schema_version": stage_schema_version(stage),
+            "prompt_hash": prompt_hash_value,
+            "model_profile": model_profile_from_result(safe_result),
             "document_status": {
                 "parse": getattr(doc, "parse_status", None),
                 "vector": getattr(doc, "vector_status", None),
@@ -337,12 +359,6 @@ async def _record_stage_artifact(
         },
     )
     output_hash = build_output_hash(stage=stage, status=status, payload=safe_result)
-    try:
-        prompt_hash_value = await resolve_stage_prompt_hash(db, stage)
-    except Exception as exc:
-        logger.warning("Prompt hash skipped doc_id=%d stage=%s: %s", int(doc.id), stage, exc)
-        prompt_hash_value = None
-
     await record_analysis_artifact(
         owner_id=int(doc.owner_id),
         document_id=int(doc.id),
@@ -435,7 +451,7 @@ def _stage_needs_work(status: str | None) -> bool:
     return str(status or "pending").lower() in {"", "pending", "running", "collecting", "parsing", "fusing"}
 
 
-async def _enqueue_successors(
+async def settle_pipeline_stage_successors(
     db: AsyncSession,
     *,
     doc: KbDocument,
@@ -445,6 +461,11 @@ async def _enqueue_successors(
     force_raw: bool = False,
     force_fusion: bool = False,
 ) -> list[dict]:
+    """Publish stages unlocked by a committed stage result.
+
+    This is the dispatcher settlement boundary: a future dispatcher may call it
+    after persisting a stage outcome without needing to duplicate DAG rules.
+    """
     enqueued: list[dict] = []
     if hasattr(db, "scalar"):
         fresh_doc = await db.scalar(select(KbDocument).where(KbDocument.id == int(doc.id)))
@@ -511,6 +532,10 @@ async def _enqueue_successors(
     return enqueued
 
 
+# Compatibility for existing callers and focused semantics tests.
+_enqueue_successors = settle_pipeline_stage_successors
+
+
 async def _run_stage(
     db: AsyncSession,
     *,
@@ -521,101 +546,18 @@ async def _run_stage(
     force_raw: bool = False,
     force_fusion: bool = False,
 ) -> dict:
-    if stage == ROOT_STAGE:
-        source_state = await get_source_file_availability(db, int(doc.file_id))
-        if not source_state.available:
-            mark_document_source_unavailable(doc, source_state.reason)
-            await db.commit()
-            return {"document_id": int(doc.id), "status": "skipped", "reason": source_state.reason}
-        if (doc.parse_error or "") in SOURCE_UNAVAILABLE_REASONS:
-            doc.parse_error = None
-        non_content_reason = classify_non_content_file(doc, source_state.physical_path)
-        if non_content_reason:
-            mark_document_non_content_skipped(doc, non_content_reason)
-            await db.commit()
-            return {
-                "document_id": int(doc.id),
-                "file_id": int(doc.file_id),
-                "status": "skipped",
-                "reason": non_content_reason,
-            }
-        return {"document_id": int(doc.id), "status": "done", "reason": "source_available"}
-
-    if stage == "parse_index":
-        if _parse_index_ready(doc) and document_vector_stage_terminal(doc) and not force_raw:
-            return {"document_id": int(doc.id), "status": "skipped", "reason": "already done"}
-        result = await parse_and_index_document(
-            db,
-            document_id=int(doc.id),
-            owner_id=int(doc.owner_id),
-            caller=f"user:{user_id}",
-            extract_graph=False,
-            current_task_id=task_id,
-        )
-        await db.refresh(doc)
-        return {"status": "done" if document_parse_allows_search(doc) else "degraded", **result}
-
-    if stage in RAW_STAGE_TO_ROUND:
-        result = await collect_raw_stage(db, int(doc.id), int(doc.owner_id), int(doc.file_id), int(user_id), stage)
-        if result.get("raw_complete") and str(getattr(doc, "raw_status", "pending") or "pending") == "collecting":
-            doc.raw_status = "done"
-        return result
-
-    if stage == "page_render":
-        return await materialize_page_assets_stage(db, int(doc.id), int(doc.owner_id), int(doc.file_id), int(user_id))
-
-    if stage == "fusion":
-        if str(getattr(doc, "fusion_status", "pending") or "pending") == "done" and not force_fusion:
-            return {"document_id": int(doc.id), "status": "skipped", "reason": "already done"}
-        if not await _ready_for_fusion(db, doc):
-            return {"document_id": int(doc.id), "status": "blocked", "reason": "upstream_not_ready"}
-        return await fuse_all_pages(db, int(doc.id), int(doc.owner_id))
-
-    if stage == "profile":
-        if str(getattr(doc, "profile_status", "pending") or "pending") == "done":
-            return {"document_id": int(doc.id), "status": "skipped", "reason": "already done"}
-        result = await generate_document_profile(db, int(doc.id), int(doc.owner_id))
-        await db.refresh(doc)
-        if result.get("status") == "skipped":
-            doc.profile_status = "degraded"
-        return result
-
-    if stage == "graph":
-        if str(getattr(doc, "graph_status", "pending") or "pending") == "done":
-            return {"document_id": int(doc.id), "status": "skipped", "reason": "already done"}
-        result = await process_document_entities_from_fusions(db, int(doc.id), int(doc.owner_id))
-        await db.refresh(doc)
-        doc.graph_status = "degraded" if result.get("status") == "degraded" else "done"
-        return {"status": doc.graph_status, **result}
-
-    if stage == "cognitive_index":
-        if await _cognitive_index_complete(db, doc):
-            return {"document_id": int(doc.id), "status": "skipped", "reason": "already done"}
-        if not _ready_for_cognitive_index(doc):
-            return {"document_id": int(doc.id), "status": "blocked", "reason": "upstream_not_ready"}
-        limit = resolve_knowledge_concurrency(
-            "cognitive_terms_per_document",
-            200,
-            minimum=20,
-            maximum=1000,
-        )
-        result = await derive_document_cognitive_index(
-            db,
-            owner_id=int(doc.owner_id),
-            document_id=int(doc.id),
-            limit=limit,
-        )
-        return {"status": "done", "document_id": int(doc.id), "limit": limit, **result}
-
-    if stage == "relations":
-        if str(getattr(doc, "relation_status", "pending") or "pending") == "done":
-            return {"document_id": int(doc.id), "status": "skipped", "reason": "already done"}
-        result = await compute_file_relations(db, int(doc.id), int(doc.owner_id))
-        await db.refresh(doc)
-        doc.relation_status = "done"
-        return {"status": "done", **result}
-
-    return {"document_id": int(doc.id), "status": "failed", "error": f"unknown stage {stage}"}
+    return await run_pipeline_stage(
+        stage,
+        db=db,
+        doc=doc,
+        user_id=user_id,
+        task_id=task_id,
+        force_raw=force_raw,
+        force_fusion=force_fusion,
+        ready_for_fusion=_ready_for_fusion,
+        ready_for_cognitive_index=_ready_for_cognitive_index,
+        cognitive_index_complete=_cognitive_index_complete,
+    )
 
 
 def _stage_status_from_result(result: dict) -> tuple[str, str]:
@@ -814,31 +756,9 @@ async def _pipeline_stage_handler(params: dict) -> dict:
                     diagnostics={"stage": stage, "result": result},
                 )
             else:
-                successors = await _enqueue_successors(
-                    db,
-                    doc=doc,
-                    user_id=user_id,
-                    completed_stage=stage,
-                    pipeline_run_id=pipeline_run_id,
-                    force_raw=force_raw,
-                    force_fusion=force_fusion,
-                )
-                await _release_stage_transaction(db, document_id=document_id, stage=stage)
-                doc = await db.scalar(select(KbDocument).where(KbDocument.id == document_id)) or doc
-                if stage == "relations":
-                    await _finish_pipeline_run(db, pipeline_run_id, "done", diagnostics={"last_stage": stage})
-                elif not successors:
-                    await db.refresh(doc)
-                    if document_deep_pipeline_complete(doc, source_available=True):
-                        await _finish_pipeline_run(db, pipeline_run_id, "done", diagnostics={"last_stage": stage})
-                    elif status == "degraded" and stage in {"profile", "graph", "fusion"}:
-                        await _finish_pipeline_run(
-                            db,
-                            pipeline_run_id,
-                            "degraded",
-                            reason=reason,
-                            diagnostics={"last_stage": stage, "result": result},
-                        )
+                # The handler owns stage work only. The Dispatcher invokes the
+                # settlement callback after this result is durable and fenced.
+                result["dispatcher_settlement"] = "required"
         elif status == "failed":
             await _finish_pipeline_run(db, pipeline_run_id, "failed", reason=reason, diagnostics={"stage": stage, "result": result})
 
@@ -881,4 +801,53 @@ async def _pipeline_stage_handler(params: dict) -> dict:
         }
 
 
+async def _settle_pipeline_task(
+    db: AsyncSession,
+    task: SystemTaskQueue,
+    result: dict[str, Any],
+) -> None:
+    """Publish DAG successors in the Dispatcher's fenced settlement transaction."""
+    status, reason = _stage_status_from_result(result)
+    if status not in {"done", "degraded", "skipped"}:
+        return
+    if should_pause_after_result(result) or (status == "skipped" and _is_terminal_skip(reason)):
+        return
+    params = unpack_task_parameters(task.parameters)
+    document_id = int(task.document_id or params.get("document_id") or 0)
+    if document_id <= 0:
+        return
+    doc = await db.scalar(select(KbDocument).where(KbDocument.id == document_id))
+    if doc is None or doc.deleted:
+        return
+    user_id = int(params.get("user_id") or task.creator_id or doc.owner_id)
+    stage = str(task.stage_key or params.get("stage") or ROOT_STAGE)
+    pipeline_run_id = int(result.get("pipeline_run_id") or params.get("pipeline_run_id") or 0) or None
+    successors = await settle_pipeline_stage_successors(
+        db,
+        doc=doc,
+        user_id=user_id,
+        completed_stage=stage,
+        pipeline_run_id=pipeline_run_id,
+        force_raw=bool(params.get("force_raw", False)),
+        force_fusion=bool(params.get("force_fusion", False)),
+    )
+    if stage == "relations":
+        await _finish_pipeline_run(db, pipeline_run_id, "done", diagnostics={"last_stage": stage})
+    elif not successors:
+        await db.refresh(doc)
+        if document_deep_pipeline_complete(doc, source_available=True):
+            await _finish_pipeline_run(db, pipeline_run_id, "done", diagnostics={"last_stage": stage})
+        elif status == "degraded" and stage in {"profile", "graph", "fusion"}:
+            await _finish_pipeline_run(
+                db,
+                pipeline_run_id,
+                "degraded",
+                reason=reason,
+                diagnostics={"last_stage": stage, "result": result},
+            )
+    result["successors"] = successors
+
+
+register_task_definition(TaskDefinition(task_type=PIPELINE_TASK_TYPE, default_lane="local_preprocess", rss_estimate_mb=512))
 register_task_handler(PIPELINE_TASK_TYPE, _pipeline_stage_handler)
+register_task_settlement_handler(PIPELINE_TASK_TYPE, _settle_pipeline_task)

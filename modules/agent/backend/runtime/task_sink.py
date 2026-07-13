@@ -823,20 +823,20 @@ class RuntimeTaskSink:
 
         Returns the task ID, or None on failure.
         """
-        import json
         try:
             from app.database import AsyncSessionLocal as _AsyncSessionLocal
-            from app.models.system import SystemTaskQueue
+            from app.services.task_dispatcher import publish_task
             async with _AsyncSessionLocal() as _s:
-                task = SystemTaskQueue(
+                task = await publish_task(
+                    _s,
                     task_type=task_type,
-                    parameters=json.dumps(parameters, ensure_ascii=False, default=str),
-                    status="pending",
-                    priority=0,
                     module="agent",
-                    creator_id=self.owner_id,
+                    owner_id=self.owner_id,
+                    body=parameters,
+                    requested_by=f"user:{self.owner_id}",
+                    trigger="agent.runtime.task_sink",
+                    priority=0,
                 )
-                _s.add(task)
                 await _s.commit()
                 await _s.refresh(task)
                 logger.info("Background task submitted: type=%s conv=%d task_id=%s", task_type, self.conversation_id, task.id)

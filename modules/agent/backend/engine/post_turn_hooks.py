@@ -240,21 +240,22 @@ class PostTurnHooks:
         logger.debug("profile_evolve: conv=%s owner=%s", conversation_id, owner_id)
 
         from app.database import AsyncSessionLocal
-        from app.models.system import SystemTaskQueue
+        from app.services.task_dispatcher import publish_task
 
         async with AsyncSessionLocal() as session:
-            task = SystemTaskQueue(
+            await publish_task(
+                session,
                 task_type="profile_evolve",
-                parameters=json.dumps({
+                module="agent",
+                owner_id=owner_id,
+                body={
                     "conversation_id": conversation_id,
                     "owner_id": owner_id,
-                }),
-                status="pending",
+                },
+                requested_by=f"user:{owner_id}",
+                trigger="agent.profile_evolve",
                 priority=0,
-                module="agent",
-                creator_id=owner_id,
             )
-            session.add(task)
             await session.commit()
 
     async def _hook_prompt_suggestion(

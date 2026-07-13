@@ -74,6 +74,7 @@ dev_toolkit/config.local.json
 
 # Auto-generated runtime diagnostics (never commit)
 backend/data/agent/*.json
+backend/data/config/knowledge_model_rate_limit_state.json
 
 # Auto-generated memory embeddings cache
 dev_toolkit/memory_embeddings.json

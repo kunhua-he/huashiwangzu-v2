@@ -41,6 +41,8 @@ Rules:
 
 ## Health And Queue Semantics
 
+知识库后台管道的唯一目标架构见[知识库后台任务统一调度目标架构](knowledge-task-dispatcher-architecture.md)。该规范定义单一 Dispatcher、持久任务契约、租约协议、资源分配、执行器生命周期和一次切换纪律。
+
 - `/api/health` is the backend health entry.
 - `/api/system/status` and release tools must use the same worker health semantics.
 - Worker/task handlers must treat `{error: ...}` or `success=false` as failure, not completed.

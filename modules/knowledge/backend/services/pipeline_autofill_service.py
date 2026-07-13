@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
-from app.database import AsyncSessionLocal
 from app.models.file import File
 from app.models.system import SystemTaskQueue
-from app.services.task_worker import register_task_handler
-from sqlalchemy import and_, or_, select, text
+from app.services.task_dispatcher import register_dispatcher_reconciler
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import KbDocument
@@ -18,9 +16,6 @@ from .document_service import KNOWLEDGE_PIPELINE_MAX_RETRIES, enqueue_incomplete
 
 logger = logging.getLogger("v2.knowledge").getChild("pipeline_autofill")
 
-PIPELINE_AUTOFILL_TASK_TYPE = "kb_pipeline_autofill"
-PIPELINE_AUTOFILL_LOCK_KEY = 1262633051
-PIPELINE_AUTOFILL_RECUR = "hourly"
 SPECIAL_FAILURE_MARKERS = (
     "model_refusal",
     "model refused",
@@ -36,39 +31,8 @@ def _is_special_failure(error_message: str | None) -> bool:
 
 
 async def ensure_pipeline_autofill_task(db: AsyncSession) -> dict[str, Any]:
-    """Ensure one recurring autofill task exists so gaps are repaired without UI help."""
-    acquired = await db.scalar(text("SELECT pg_try_advisory_xact_lock(:lock_key)"), {"lock_key": PIPELINE_AUTOFILL_LOCK_KEY})
-    if not acquired:
-        return {"ensured": False, "reason": "lock_busy"}
-
-    result = await db.execute(
-        select(SystemTaskQueue)
-        .where(
-            SystemTaskQueue.module == "knowledge",
-            SystemTaskQueue.task_type == PIPELINE_AUTOFILL_TASK_TYPE,
-            SystemTaskQueue.status.in_(("pending", "running")),
-        )
-        .order_by(SystemTaskQueue.id.desc())
-        .limit(1)
-    )
-    existing = result.scalar_one_or_none()
-    if existing is not None:
-        return {"ensured": True, "created": False, "task_id": int(existing.id)}
-
-    task = SystemTaskQueue(
-        task_type=PIPELINE_AUTOFILL_TASK_TYPE,
-        module="knowledge",
-        parameters=json.dumps({"limit_per_owner": 500, "failed_retry_limit": 200}, ensure_ascii=False),
-        status="pending",
-        priority=1,
-        max_retries=KNOWLEDGE_PIPELINE_MAX_RETRIES,
-        recur=PIPELINE_AUTOFILL_RECUR,
-        next_run_at=datetime.now(timezone.utc),
-    )
-    db.add(task)
-    await db.flush()
-    await db.commit()
-    return {"ensured": True, "created": True, "task_id": int(task.id)}
+    """Compatibility status for callers from before Dispatcher reconciliation."""
+    return {"ensured": True, "controller": "dispatcher_reconciler"}
 
 
 async def _requeue_retryable_failed_tasks(db: AsyncSession, *, limit: int) -> dict[str, Any]:
@@ -122,7 +86,7 @@ async def _requeue_retryable_failed_tasks(db: AsyncSession, *, limit: int) -> di
         task.error_message = None
         task.result = json.dumps({
             "status": "requeued",
-            "requeued_by": PIPELINE_AUTOFILL_TASK_TYPE,
+            "requeued_by": "dispatcher_reconciler",
             "previous_error_message": previous_error,
             "retry_count_preserved": int(task.retry_count or 0),
         }, ensure_ascii=False)
@@ -197,15 +161,8 @@ async def pipeline_autofill_once(
     }
 
 
-async def _pipeline_autofill_handler(params: dict) -> dict:
-    limit_per_owner = int(params.get("limit_per_owner") or 500)
-    failed_retry_limit = int(params.get("failed_retry_limit") or 200)
-    async with AsyncSessionLocal() as db:
-        return await pipeline_autofill_once(
-            db,
-            limit_per_owner=limit_per_owner,
-            failed_retry_limit=failed_retry_limit,
-        )
+async def _dispatcher_reconcile(db: AsyncSession) -> None:
+    await pipeline_autofill_once(db, limit_per_owner=500, failed_retry_limit=200)
 
 
-register_task_handler(PIPELINE_AUTOFILL_TASK_TYPE, _pipeline_autofill_handler)
+register_dispatcher_reconciler("knowledge_pipeline", _dispatcher_reconcile)

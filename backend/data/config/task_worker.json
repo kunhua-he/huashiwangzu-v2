@@ -1,51 +1,45 @@
 {
-  "worker_lanes_per_process": 10,
-  "max_lanes_per_process": 256,
-  "worker_process_mode": "all",
-  "worker_process_slots": 20,
-  "worker_min_processes": 0,
-  "worker_idle_exit_seconds": 30,
-  "worker_scale_pending_per_process": 10,
-  "claim_lock_scope": "group",
-  "claim_candidate_scan_limit": 600,
-  "serialize_claims": false,
-  "poll_interval_seconds": 2.0,
-  "running_timeout_seconds": 1200,
-  "stale_recovery_interval_seconds": 30.0,
-  "config_reload_seconds": 5.0,
-  "worker_total_memory_limit_mb": 73728,
-  "worker_memory_check_seconds": 5,
-  "reclaim_running_on_startup": true,
-  "startup_reclaim_min_age_seconds": 10,
-  "stage_concurrency": {
-    "kb_pipeline_stage": {
-      "source_validate": 4,
-      "parse_index": 6,
-      "raw_text": 4,
-      "page_render": 2,
-      "raw_ocr": 160,
-      "raw_vision": 160,
-      "fusion": 160,
-      "profile": 160,
-      "cognitive_index": 1,
-      "graph": 160,
-      "relations": 2
+  "dispatcher": {
+    "idle_poll_seconds": 8,
+    "active_poll_seconds": 1,
+    "reconcile_seconds": 60,
+    "lease_seconds": 45,
+    "heartbeat_seconds": 5,
+    "max_executors": 48,
+    "cpu_caution_percent": 80,
+    "memory_caution_percent": 80,
+    "memory_emergency_percent": 90,
+    "memory_reserve_mb": 2048,
+    "gpu_caution_percent": 80,
+    "gpu_emergency_percent": 90,
+    "lane_limits": {
+      "local_preprocess": 4,
+      "derived_index": 2,
+      "relation_build": 2,
+      "vision_analysis": 40,
+      "llm_analysis": 40,
+      "general": 2
+    },
+    "provider_limits": {
+      "knowledge_llm": 40,
+      "knowledge_vlm": 40,
+      "qwen_embedding": 2
+    },
+    "stage_timeouts_seconds": {
+      "kb_pipeline_stage": {
+        "source_validate": 300,
+        "parse_index": 1200,
+        "raw_text": 900,
+        "page_render": 1200,
+        "raw_ocr": 900,
+        "raw_vision": 900,
+        "fusion": 1800,
+        "profile": 1800,
+        "cognitive_index": 1200,
+        "graph": 3600,
+        "relations": 1800
+      }
     }
-  },
-  "stage_dispatch_order": {
-    "kb_pipeline_stage": [
-      "source_validate",
-      "parse_index",
-      "raw_text",
-      "page_render",
-      "raw_ocr",
-      "raw_vision",
-      "fusion",
-      "profile",
-      "cognitive_index",
-      "graph",
-      "relations"
-    ]
   },
   "paused_task_types": [
     "kb_enterprise_import"
@@ -55,49 +49,25 @@
       "fusion",
       "graph",
       "profile",
-      "raw_ocr",
       "raw_vision"
     ]
   },
   "paused_lanes": {
     "kb_pipeline_stage": []
   },
-  "lane_concurrency": {
-    "kb_pipeline_stage": {
-      "local_preprocess": 16,
-      "vision_analysis": 160,
-      "llm_analysis": 160,
-      "derived_index": 2,
-      "relation_build": 2
-    }
-  },
-  "config_note": "Knowledge tasks dispatch by explicit stage_key columns. Uvicorn web processes run with TASK_WORKER_AUTOSTART=0. scripts/backend_watchdog.sh dynamically starts standalone task_worker_main processes only when there are executable, non-paused pending tasks. worker_process_slots is the max worker process count unless TASK_WORKER_PROCESSES overrides it; worker_min_processes=0 lets idle workers exit after worker_idle_exit_seconds. worker_scale_pending_per_process controls scale-out pressure, so 10 pending executable tasks request about 1 worker process. Each worker still hot-reloads this JSON every 5s. worker_total_memory_limit_mb=73728 lets the worker group use up to about 72GB RSS before watchdog restarts only the worker group. claim_lock_scope=group avoids one global DB claim lock; workers claim through row locks plus short stage-group locks so different resource pools can fill in parallel. lane_concurrency is the resource-pool budget: local_preprocess is local CPU/disk/conversion work capped near local CPU capacity, vision_analysis is VLM/OCR cloud vision work, llm_analysis is LLM fusion/profile/graph work, derived_index and relation_build are downstream DB work. The worker scheduler chooses the most underfilled resource pool first, then applies stage_dispatch_order only inside that pool, so entry/local/VLM/LLM/relation lanes cannot starve each other. dynamic_stage_concurrency redistributes a lane budget across only the active stages in that lane by fair share plus backlog weight. Changing DB pool env values still requires backend restart; worker scaling config is read by the watchdog loop.",
+  "config_note": "唯一控制器是 app.task_worker_main 启动的 Dispatcher。它每 1 秒（有执行器）或 8 秒（空闲）检查持久任务表，以 lease 领取任务并派生一次性 executor 进程。paused_task_types、paused_stages 和 paused_lanes 会阻止新领取；正在运行的可中断任务会在下一次心跳被释放回 pending 并标记 paused_by_config。lane_limits 是本地和云端资源池的硬上限，provider_limits 是云模型供应商的全局并发上限。当前云端 LLM/VLM 各允许 40 路，48 个总 executor 会为本地阶段留出余量；CPU、内存或 GPU 触及阈值时不会继续扩张。GPU 读取未知时 Dispatcher 采用配置上限，不把未知数据伪装成准确监控。",
   "model_auto_pause": {
     "enabled": true,
     "stage": "raw_vision",
-    "group": "vlm",
+    "group": "llm_vlm",
     "paused_stages": [
-      "raw_ocr",
+      "fusion",
+      "graph",
+      "profile",
       "raw_vision"
     ],
     "reason": "manual_pause_by_user",
-    "error_message": "User requested temporary pause of LLM/VLM background work",
-    "updated_at": "2026-07-11T03:17:00.152741+00:00"
-  },
-  "dynamic_stage_concurrency": {
-    "kb_pipeline_stage": {
-      "vision_analysis": {
-        "enabled": true,
-        "min_per_stage": 1,
-        "max_per_stage": 160,
-        "fair_share_ratio": 0.6
-      },
-      "llm_analysis": {
-        "enabled": true,
-        "min_per_stage": 1,
-        "max_per_stage": 160,
-        "fair_share_ratio": 0.6
-      }
-    }
+    "error_message": "User requested temporary pause of LLM and VLM background work because cloud model quota is unavailable.",
+    "updated_at": "2026-07-13T00:00:00+00:00"
   }
 }

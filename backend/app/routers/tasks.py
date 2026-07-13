@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
@@ -14,6 +13,7 @@ from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.system import SystemTaskQueueResponse, WorkerStatusResponse
 from app.services.task_debt_governance_service import DEFAULT_DEBT_GOVERNANCE_LIMIT, govern_task_queue_debt
+from app.services.task_dispatcher import publish_task
 from app.services.task_queue_audit_service import (
     audit_task_queue,
     reconcile_orphan_running,
@@ -193,15 +193,16 @@ async def submit_task(
 ):
     if not has_task_handler(payload.task_type):
         raise ValidationError(f"No handler registered for task_type '{payload.task_type}'")
-    task = SystemTaskQueue(
+    task = await publish_task(
+        db,
         task_type=payload.task_type,
         module=payload.module,
-        parameters=json.dumps(payload.parameters, ensure_ascii=False) if payload.parameters else None,
+        owner_id=user.id,
+        body=payload.parameters or {},
+        requested_by=f"user:{user.id}",
+        trigger="api.tasks.submit",
         priority=payload.priority,
-        status="pending",
-        creator_id=user.id,
     )
-    db.add(task)
     await db.commit()
     await db.refresh(task)
     return ApiResponse(data=SystemTaskQueueResponse.model_validate(task))

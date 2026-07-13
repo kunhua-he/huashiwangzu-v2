@@ -1,12 +1,11 @@
 """Durable external source inventory for knowledge imports."""
 from __future__ import annotations
 
-import json
 import uuid
 from pathlib import Path
 from typing import Any
 
-from app.models.system import SystemTaskQueue
+from app.services.task_dispatcher import publish_task
 from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -239,23 +238,21 @@ async def enqueue_source_manifest_import(
             continue
         params = {
             "owner_id": int(owner_id),
-            "source_root": str(root),
-            "source_path": str(source_path),
-            "relative_path": item.relative_path,
             "target_root_name": clean_target_root,
             "skip_existing_md5": bool(skip_existing_md5),
             "source_manifest_id": int(item.id),
         }
-        task = SystemTaskQueue(
+        task = await publish_task(
+            db,
             task_type=ENTERPRISE_IMPORT_FILE_TASK,
             module="knowledge",
-            parameters=json.dumps(params, ensure_ascii=False),
+            owner_id=int(owner_id),
+            body=params,
+            requested_by=f"user:{int(owner_id)}",
+            trigger="knowledge.source_manifest.import",
             priority=int(priority),
-            status="pending",
-            creator_id=int(owner_id),
+            dependency_key=f"knowledge:source-manifest:{int(item.id)}",
         )
-        db.add(task)
-        await db.flush()
         item.import_status = "queued"
         item.import_task_id = int(task.id)
         item.target_root_name = clean_target_root

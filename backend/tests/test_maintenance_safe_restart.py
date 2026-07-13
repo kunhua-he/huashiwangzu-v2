@@ -6,7 +6,7 @@ from app.database import AsyncSessionLocal
 from app.main import app
 from app.models.system import Setting, SystemTaskQueue
 from app.models.user import User
-from app.services import task_worker
+from app.services import task_dispatcher, task_worker
 from app.services.auth import create_access_token
 from app.services.maintenance_service import (
     MAINTENANCE_SETTING_KEY,
@@ -150,7 +150,7 @@ async def test_startup_complete_recovers_restarting_to_normal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_worker_does_not_claim_pending_task_while_draining() -> None:
+async def test_dispatcher_does_not_claim_pending_task_while_draining() -> None:
     marker = uuid4().hex
     admin = await _user("admin")
     await _cleanup(marker)
@@ -175,9 +175,11 @@ async def test_task_worker_does_not_claim_pending_task_while_draining() -> None:
             db.add(task)
             await db.commit()
 
-            claimed = await task_worker._claim_one_task(
+            task_worker.register_task_handler(task.task_type, task_worker._echo_handler)
+            claimed = await task_dispatcher.claim_next_task(
                 db,
-                task_worker._parse_worker_config({"claim_lock_scope": "process"}),
+                owner="maintenance-test",
+                config=task_dispatcher.DispatcherConfig(max_executors=1, lane_limits={"general": 1}),
             )
             await db.refresh(task)
 

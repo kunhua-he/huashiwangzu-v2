@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import mimetypes
 import os
 import shutil
@@ -13,7 +12,6 @@ from app.config import get_settings
 from app.core.exceptions import ValidationError
 from app.database import AsyncSessionLocal
 from app.models.file import File, Folder
-from app.models.system import SystemTaskQueue
 from app.services.file_upload_service import upload_file_from_path
 from app.services.task_worker import register_task_handler
 from sqlalchemy import select
@@ -357,35 +355,38 @@ async def enqueue_enterprise_source_import(
 ) -> dict:
     root = resolve_enterprise_source_root(source_root)
     bounded_batch_size = max(1, min(int(batch_size or 1000), 5000))
-    parameters = {
-        "owner_id": owner_id,
-        "source_root": str(root),
-        "target_root_name": target_root_name,
-        "extensions": extensions or [],
-        "skip_existing_md5": skip_existing_md5,
-        "batch_size": bounded_batch_size,
-        "priority": int(priority),
-    }
-    task = SystemTaskQueue(
-        task_type=ENTERPRISE_IMPORT_SCAN_TASK,
-        module="knowledge",
-        parameters=json.dumps(parameters, ensure_ascii=False),
-        priority=priority,
-        status="pending",
-        creator_id=owner_id,
+    # Physical paths are persisted only in the module-owned manifest. Queue
+    # rows carry manifest IDs, never a filesystem address.
+    from .source_manifest_service import enqueue_source_manifest_import, scan_source_manifest
+
+    scan = await scan_source_manifest(
+        db,
+        owner_id=owner_id,
+        source_root=str(root),
+        target_root_name=target_root_name,
+        extensions=extensions,
+        limit=bounded_batch_size,
     )
-    db.add(task)
+    queued = await enqueue_source_manifest_import(
+        db,
+        owner_id=owner_id,
+        source_root=str(root),
+        target_root_name=target_root_name,
+        extensions=extensions,
+        limit=bounded_batch_size,
+        priority=priority,
+        skip_existing_md5=skip_existing_md5,
+    )
     await db.commit()
-    await db.refresh(task)
     return {
-        "enqueued": True,
-        "task_id": int(task.id),
-        "task_type": task.task_type,
-        "mode": "scan_then_enqueue_files",
+        "enqueued": int(queued.get("enqueued") or 0) > 0,
+        "mode": "manifest_then_enqueue_files",
         "source_root": str(root),
         "target_root_name": target_root_name,
         "batch_size": bounded_batch_size,
         "extensions": sorted(_normalize_extensions(extensions)),
+        "scan": scan,
+        "queue": queued,
     }
 
 
@@ -413,14 +414,27 @@ async def _mark_source_manifest(
 
 
 async def _import_one_enterprise_source_file(params: dict) -> dict:
+    source_manifest_id = int(params.get("source_manifest_id") or 0)
     owner_id = int(params.get("owner_id") or params.get("creator_id") or 0)
+    source_root: Path
+    source_path: Path
+    if source_manifest_id > 0:
+        async with AsyncSessionLocal() as manifest_db:
+            manifest = await manifest_db.get(KbSourceFileManifest, source_manifest_id)
+            if manifest is None:
+                return {"skipped": True, "reason": "source_manifest_missing"}
+            owner_id = int(manifest.owner_id)
+            source_root = resolve_enterprise_source_root(str(manifest.source_root))
+            source_path = Path(str(manifest.source_path)).expanduser().resolve()
+    else:
+        # Compatibility only for pre-dispatcher rows. New publishers always
+        # pass source_manifest_id and never a physical path in queue JSON.
+        source_root = resolve_enterprise_source_root(str(params.get("source_root") or ""))
+        source_path = Path(str(params.get("source_path") or "")).expanduser().resolve()
     if owner_id <= 0:
         raise ValidationError("owner_id is required")
-    source_root = resolve_enterprise_source_root(str(params.get("source_root") or ""))
-    source_path = Path(str(params.get("source_path") or "")).expanduser().resolve()
     target_root_name = str(params.get("target_root_name") or "企业微盘导入")
     skip_existing_md5 = bool(params.get("skip_existing_md5", True))
-    source_manifest_id = int(params.get("source_manifest_id") or 0)
 
     if source_path.is_symlink():
         if source_manifest_id > 0:
@@ -595,33 +609,27 @@ async def _enterprise_import_task_handler(params: dict) -> dict:
     batch_size = max(1, min(int(params.get("batch_size") or 1000), 5000))
     priority = int(params.get("priority") or 8)
     allowed_extensions = _normalize_extensions(extensions)
-    queued = 0
-    scanned = 0
-
     async with AsyncSessionLocal() as db:
-        for source_path in _iter_source_files(source_root, allowed_extensions):
-            scanned += 1
-            relative_path = source_path.relative_to(source_root)
-            file_params = {
-                "owner_id": owner_id,
-                "source_root": str(source_root),
-                "source_path": str(source_path),
-                "relative_path": str(relative_path),
-                "target_root_name": target_root_name,
-                "skip_existing_md5": skip_existing_md5,
-            }
-            task = SystemTaskQueue(
-                task_type=ENTERPRISE_IMPORT_FILE_TASK,
-                module="knowledge",
-                parameters=json.dumps(file_params, ensure_ascii=False),
-                priority=priority,
-                status="pending",
-                creator_id=owner_id,
-            )
-            db.add(task)
-            queued += 1
-            if queued % batch_size == 0:
-                await db.commit()
+        from .source_manifest_service import enqueue_source_manifest_import, scan_source_manifest
+
+        scan = await scan_source_manifest(
+            db,
+            owner_id=owner_id,
+            source_root=str(source_root),
+            target_root_name=target_root_name,
+            extensions=sorted(allowed_extensions),
+            limit=batch_size,
+        )
+        queue = await enqueue_source_manifest_import(
+            db,
+            owner_id=owner_id,
+            source_root=str(source_root),
+            target_root_name=target_root_name,
+            extensions=sorted(allowed_extensions),
+            limit=batch_size,
+            priority=priority,
+            skip_existing_md5=skip_existing_md5,
+        )
         await db.commit()
 
     return {
@@ -630,8 +638,8 @@ async def _enterprise_import_task_handler(params: dict) -> dict:
         "source_root": str(source_root),
         "target_root_name": target_root_name,
         "extensions": sorted(allowed_extensions),
-        "scanned": scanned,
-        "queued": queued,
+        "scanned": int(scan.get("scanned") or 0),
+        "queued": int(queue.get("enqueued") or 0),
         "file_task_type": ENTERPRISE_IMPORT_FILE_TASK,
     }
 

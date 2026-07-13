@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import nullcontext
 from typing import Any
 
-from app.gateway.config import get_model_type_config
 from app.database import AsyncSessionLocal
+from app.gateway.config import get_model_type_config
 from app.models.file import File
 from app.models.system import SystemTaskQueue
 from app.services.model_services import get_embedding_profile_contract, get_embeddings
+from app.services.model_watchdog.watchdog import use_model
+from app.services.task_dispatcher import publish_task
 from app.services.task_worker import register_task_handler
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +57,7 @@ def resolve_chunk_embedding_contract(profile_key: str | None = None) -> dict[str
         "rerank_full_vector": bool(profile.get("rerank_full_vector", dimensions > 2000)),
         "model": profile.get("model"),
         "provider": profile.get("provider"),
+        "watchdog": profile.get("watchdog"),
     }
 
 
@@ -255,23 +259,21 @@ async def enqueue_chunk_embedding_backfill_task(
         "priority": int(priority),
         "embedded_total": max(0, int(embedded_total or 0)),
     }
-    task = SystemTaskQueue(
+    task = await publish_task(
+        db,
         task_type=CHUNK_EMBEDDING_BACKFILL_TASK_TYPE,
         module="knowledge",
-        parameters=json.dumps(payload, ensure_ascii=False),
+        owner_id=int(owner_id),
+        body=payload,
+        requested_by=f"user:{int(owner_id)}",
+        trigger="knowledge.chunk_embedding.backfill",
         priority=int(priority),
-        status="pending",
-        creator_id=int(owner_id),
         max_retries=5,
         stage_key=resolved_profile,
         lane_key="derived_index",
         ready_status="ready",
         dependency_key=dependency_key,
     )
-    db.add(task)
-    await db.flush()
-    payload["task_id"] = int(task.id)
-    task.parameters = json.dumps(payload, ensure_ascii=False)
     return {
         "enqueued": True,
         "task_id": int(task.id),
@@ -356,23 +358,26 @@ async def backfill_chunk_embeddings(
     embedded = 0
     skipped = 0
     failed_batches = 0
-    for offset in range(0, len(chunks), batch_size):
-        batch = chunks[offset:offset + batch_size]
-        texts = [chunk.text or "" for chunk in batch]
-        try:
-            embeddings = await get_embeddings(texts, profile_key=contract["profile_key"])
-        except Exception as exc:
-            failed_batches += 1
-            skipped += len(batch)
-            logger.warning("Chunk embedding batch failed profile=%s offset=%d: %s", contract["profile_key"], offset, exc)
-            continue
-        for chunk, embedding in zip(batch, embeddings, strict=False):
-            scanned += 1
-            if await upsert_chunk_embedding(db, chunk=chunk, embedding=embedding, contract=contract):
-                embedded += 1
-            else:
-                skipped += 1
-        await db.flush()
+    watchdog_name = str(contract.get("watchdog") or "").strip()
+    usage_context = use_model(watchdog_name) if watchdog_name else nullcontext()
+    with usage_context:
+        for offset in range(0, len(chunks), batch_size):
+            batch = chunks[offset:offset + batch_size]
+            texts = [chunk.text or "" for chunk in batch]
+            try:
+                embeddings = await get_embeddings(texts, profile_key=contract["profile_key"])
+            except Exception as exc:
+                failed_batches += 1
+                skipped += len(batch)
+                logger.warning("Chunk embedding batch failed profile=%s offset=%d: %s", contract["profile_key"], offset, exc)
+                continue
+            for chunk, embedding in zip(batch, embeddings, strict=False):
+                scanned += 1
+                if await upsert_chunk_embedding(db, chunk=chunk, embedding=embedding, contract=contract):
+                    embedded += 1
+                else:
+                    skipped += 1
+            await db.flush()
     await db.commit()
     return {
         "dry_run": False,

@@ -20,6 +20,17 @@ pipeline_debt_service = importlib.import_module("modules.knowledge.backend.servi
 TEST_STORAGE_PATH = "_knowledge_tests/live-source.txt"
 
 
+def test_pipeline_debt_uses_dispatcher_task_envelope_body() -> None:
+    params = pipeline_debt_service._load_task_parameters(json.dumps({
+        "schema_version": 1,
+        "task_type": "kb_pipeline_stage",
+        "module": "knowledge",
+        "body": {"document_id": 123, "stage": "graph"},
+    }))
+
+    assert params == {"document_id": 123, "stage": "graph"}
+
+
 class _Doc:
     id = 1
     file_id = 10

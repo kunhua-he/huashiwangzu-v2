@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, BigInteger, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -104,6 +104,45 @@ class SystemTaskQueue(Base, TimestampMixin):
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="当这个时间到了才该跑（可空=即时任务）")
     recur: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="周期表达: daily/hourly/weekly 或 cron")
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="预计算的下次运行时间")
+    # Dispatcher ownership. A running task is valid only while its lease is live.
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_class: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resource_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    executor_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class TaskAttemptMetric(Base, TimestampMixin):
+    """Immutable resource and outcome ledger for one leased task attempt."""
+
+    __tablename__ = "framework_task_attempt_metrics"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    lease_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    module: Mapped[str] = mapped_column(String(64), default="")
+    stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lane_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    executor_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cpu_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rss_start_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rss_peak_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rss_end_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    io_read_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    io_write_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    gpu_memory_peak_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    observation_confidence: Mapped[str] = mapped_column(String(32), default="unknown")
+    metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 @dataclass(frozen=True)
@@ -155,6 +194,15 @@ async def ensure_framework_scheduling_columns() -> None:
         _TaskQueueColumnMigration("ready_status", "ALTER TABLE framework_system_task_queues ADD COLUMN ready_status VARCHAR(32) DEFAULT 'ready'"),
         _TaskQueueColumnMigration("dependency_key", "ALTER TABLE framework_system_task_queues ADD COLUMN dependency_key VARCHAR(128)"),
         _TaskQueueColumnMigration("blocked_reason", "ALTER TABLE framework_system_task_queues ADD COLUMN blocked_reason TEXT"),
+        _TaskQueueColumnMigration("lease_token", "ALTER TABLE framework_system_task_queues ADD COLUMN lease_token VARCHAR(64)"),
+        _TaskQueueColumnMigration("lease_owner", "ALTER TABLE framework_system_task_queues ADD COLUMN lease_owner VARCHAR(128)"),
+        _TaskQueueColumnMigration("lease_expires_at", "ALTER TABLE framework_system_task_queues ADD COLUMN lease_expires_at TIMESTAMPTZ"),
+        _TaskQueueColumnMigration("heartbeat_at", "ALTER TABLE framework_system_task_queues ADD COLUMN heartbeat_at TIMESTAMPTZ"),
+        _TaskQueueColumnMigration("attempt", "ALTER TABLE framework_system_task_queues ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0"),
+        _TaskQueueColumnMigration("retry_at", "ALTER TABLE framework_system_task_queues ADD COLUMN retry_at TIMESTAMPTZ"),
+        _TaskQueueColumnMigration("failure_class", "ALTER TABLE framework_system_task_queues ADD COLUMN failure_class VARCHAR(32)"),
+        _TaskQueueColumnMigration("resource_profile", "ALTER TABLE framework_system_task_queues ADD COLUMN resource_profile JSON"),
+        _TaskQueueColumnMigration("executor_pid", "ALTER TABLE framework_system_task_queues ADD COLUMN executor_pid INTEGER"),
     ]
     indexes = [
         (
@@ -168,6 +216,18 @@ async def ensure_framework_scheduling_columns() -> None:
         (
             "idx_framework_task_queue_doc_stage",
             "CREATE INDEX idx_framework_task_queue_doc_stage ON framework_system_task_queues(task_type, document_id, stage_key, status)",
+        ),
+        (
+            "idx_framework_task_queue_lease",
+            "CREATE INDEX idx_framework_task_queue_lease ON framework_system_task_queues(status, lease_expires_at) WHERE status = 'running'",
+        ),
+        (
+            "idx_framework_task_queue_retry",
+            "CREATE INDEX idx_framework_task_queue_retry ON framework_system_task_queues(status, retry_at) WHERE status = 'pending'",
+        ),
+        (
+            "uq_framework_kb_active_stage",
+            "CREATE UNIQUE INDEX uq_framework_kb_active_stage ON framework_system_task_queues(task_type, document_id, stage_key) WHERE task_type = 'kb_pipeline_stage' AND status IN ('pending', 'running')",
         ),
     ]
     try:
@@ -283,6 +343,40 @@ async def ensure_framework_scheduling_columns() -> None:
                 if not await _task_queue_index_exists(db, index_name):
                     await db.execute(text(index_ddl))
                     changed = True
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS framework_task_attempt_metrics (
+                    id BIGSERIAL PRIMARY KEY,
+                    task_id BIGINT NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    lease_token VARCHAR(64) NOT NULL,
+                    task_type VARCHAR(64) NOT NULL,
+                    module VARCHAR(64) DEFAULT '',
+                    stage_key VARCHAR(64),
+                    lane_key VARCHAR(64),
+                    executor_pid INTEGER,
+                    exit_code INTEGER,
+                    status VARCHAR(32) NOT NULL,
+                    started_at TIMESTAMPTZ NOT NULL,
+                    completed_at TIMESTAMPTZ,
+                    duration_ms INTEGER,
+                    cpu_seconds DOUBLE PRECISION,
+                    rss_start_mb DOUBLE PRECISION,
+                    rss_peak_mb DOUBLE PRECISION,
+                    rss_end_mb DOUBLE PRECISION,
+                    io_read_bytes BIGINT,
+                    io_write_bytes BIGINT,
+                    gpu_memory_peak_mb DOUBLE PRECISION,
+                    observation_confidence VARCHAR(32) DEFAULT 'unknown',
+                    metrics_json JSON,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(task_id, attempt, lease_token)
+                )
+            """))
+            await db.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_framework_task_attempt_metrics_task
+                ON framework_task_attempt_metrics(task_id, attempt DESC)
+            """))
             await db.commit()
             if changed:
                 logger.info("Task queue DAG migration applied missing columns/indexes")

@@ -27,21 +27,18 @@ async def check_database(db: AsyncSession) -> dict:
 
 
 async def check_worker() -> dict:
-    """Check for background task worker using task_worker module.
-
-    Uses the same worker_health() as /api/health, not process name scanning.
-    """
-    from app.services.task_worker import worker_health
-    wh = worker_health()
+    """Check the single task Dispatcher without scanning process names."""
+    from app.services.task_dispatcher import dispatcher_health
+    wh = dispatcher_health()
     running = wh.get("running", False)
     external = os.getenv("TASK_WORKER_AUTOSTART", "1").strip().lower() in {"0", "false", "no", "off"}
     healthy = running or external
     if running:
-        message = "Background worker is running"
+        message = "Background task dispatcher is running"
     elif external:
-        message = "Background worker uses external watchdog supervision"
+        message = "Background task dispatcher uses external watchdog supervision"
     else:
-        message = "Background worker is not running"
+        message = "Background task dispatcher is not running"
     return {
         "status": healthy,
         "message": message,

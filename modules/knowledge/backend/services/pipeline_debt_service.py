@@ -8,6 +8,7 @@ from typing import Any
 
 from app.models.file import File
 from app.models.system import SystemTaskQueue
+from app.services.task_dispatcher import unpack_task_parameters
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,13 +61,10 @@ PIPELINE_QUEUE_TASK_TYPES = ("kb_pipeline_stage", "kb_pipeline")
 
 
 def _load_task_parameters(raw: str | None) -> dict[str, Any]:
-    if not raw:
-        return {}
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+        return unpack_task_parameters(raw)
+    except ValueError:
         return {}
-    return data if isinstance(data, dict) else {}
 
 
 def _classify_task(
@@ -212,6 +210,14 @@ async def _load_running_pipeline_tasks(
         SystemTaskQueue.module == "knowledge",
         SystemTaskQueue.task_type.in_(PIPELINE_QUEUE_TASK_TYPES),
         SystemTaskQueue.status == "running",
+        # Dispatcher-owned leases are live work, not historical debt.  The
+        # recovery endpoint may only touch legacy/no-lease or expired-lease
+        # rows; otherwise it could race the single Dispatcher.
+        or_(
+            SystemTaskQueue.lease_token.is_(None),
+            SystemTaskQueue.lease_expires_at.is_(None),
+            SystemTaskQueue.lease_expires_at < datetime.now(timezone.utc),
+        ),
     ]
     if task_ids:
         filters.append(SystemTaskQueue.id.in_(task_ids))

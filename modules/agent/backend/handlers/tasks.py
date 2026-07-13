@@ -168,7 +168,7 @@ async def _submit_slow_tool_task(
     Returns: task_id
     """
     from app.database import AsyncSessionLocal
-    from app.models.system import SystemTaskQueue
+    from app.services.task_dispatcher import publish_task
 
     task_params = {
         "conversation_id": conversation_id,
@@ -183,12 +183,16 @@ async def _submit_slow_tool_task(
         "idempotency_key": idempotency_key,
     }
     async with AsyncSessionLocal() as db:
-        task = SystemTaskQueue(
+        task = await publish_task(
+            db,
             task_type="agent_execute_slow_tool",
-            parameters=json.dumps(task_params, ensure_ascii=False),
-            status="pending", priority=0, module="agent", creator_id=user_id,
+            module="agent",
+            owner_id=user_id,
+            body=task_params,
+            requested_by=f"user:{user_id}",
+            trigger="agent.slow_tool",
+            priority=0,
         )
-        db.add(task)
         await db.commit()
         await db.refresh(task)
         return task.id

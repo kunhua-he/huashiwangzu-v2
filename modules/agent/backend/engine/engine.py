@@ -161,18 +161,19 @@ async def trigger_dream(owner_id: int) -> None:
     if _dream_counter % _DREAM_INTERVAL == 0:
         try:
             from app.database import AsyncSessionLocal
-            from app.models.system import SystemTaskQueue
+            from app.services.task_dispatcher import publish_task
 
             async with AsyncSessionLocal() as db:
-                task = SystemTaskQueue(
+                await publish_task(
+                    db,
                     task_type="memory_dream",
-                    parameters=json.dumps({"owner_id": owner_id}),
-                    status="pending",
-                    priority=0,
                     module="agent",
-                    creator_id=owner_id,
+                    owner_id=owner_id,
+                    body={"owner_id": owner_id},
+                    requested_by=f"user:{owner_id}",
+                    trigger="agent.memory_dream",
+                    priority=0,
                 )
-                db.add(task)
                 await db.commit()
         except Exception as e:
             logger.warning("dream enqueue failed (non-fatal): %s", e)

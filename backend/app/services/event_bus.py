@@ -88,12 +88,17 @@ async def _ensure_event_log_table():
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     completed_at TIMESTAMPTZ,
                     processing_started_at TIMESTAMPTZ,
-                    module_results JSONB DEFAULT '[]'::jsonb
+                    module_results JSONB DEFAULT '[]'::jsonb,
+                    dedup_key VARCHAR(256)
                 )
             """))
             await db.execute(text("""
                 ALTER TABLE framework_event_log
                 ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ
+            """))
+            await db.execute(text("""
+                ALTER TABLE framework_event_log
+                ADD COLUMN IF NOT EXISTS dedup_key VARCHAR(256)
             """))
             await db.execute(text("""
                 CREATE INDEX IF NOT EXISTS ix_framework_event_log_status
@@ -104,9 +109,64 @@ async def _ensure_event_log_table():
                 ON framework_event_log(next_retry_at)
                 WHERE status = 'pending'
             """))
+            await db.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_framework_event_log_dedup_key
+                ON framework_event_log(dedup_key)
+                WHERE dedup_key IS NOT NULL
+            """))
             await db.commit()
     except Exception as e:
         logger.warning("Event log table creation failed (may already exist): %s", e)
+
+
+async def append_event_in_transaction(
+    db,
+    *,
+    event_name: str,
+    payload: dict,
+    caller: str,
+    caller_role: str = "viewer",
+    dedup_key: str | None = None,
+) -> int:
+    """Append a pending event using the caller's transaction.
+
+    Dispatcher settlement uses this instead of ``emit_module_event`` so an
+    artifact/result write and its wakeup event either commit together or not
+    at all. Delivery remains asynchronous and is deliberately not performed
+    here.
+    """
+    from sqlalchemy import text
+
+    normalized_key = str(dedup_key or "").strip() or None
+    row = await db.execute(
+        text("""
+            INSERT INTO framework_event_log
+                (event_name, payload, caller, caller_role, status, max_retries, dedup_key)
+            VALUES (:event_name, CAST(:payload AS jsonb), :caller, :caller_role, 'pending', :max_retries, :dedup_key)
+            ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
+            RETURNING id
+        """),
+        {
+            "event_name": event_name,
+            "payload": json.dumps(payload, ensure_ascii=False, default=str),
+            "caller": caller,
+            "caller_role": caller_role,
+            "max_retries": MAX_RETRIES,
+            "dedup_key": normalized_key,
+        },
+    )
+    created_id = row.scalar_one_or_none()
+    if created_id is not None:
+        return int(created_id)
+    if normalized_key is None:
+        raise RuntimeError("event append did not return an id")
+    existing_id = await db.scalar(
+        text("SELECT id FROM framework_event_log WHERE dedup_key = :dedup_key"),
+        {"dedup_key": normalized_key},
+    )
+    if existing_id is None:
+        raise RuntimeError("event dedup lookup failed")
+    return int(existing_id)
 
 
 async def emit_module_event(

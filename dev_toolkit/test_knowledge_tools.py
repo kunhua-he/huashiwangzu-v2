@@ -22,6 +22,27 @@ def test_knowledge_tool_component_exports_pipeline_and_source_gap_tools() -> Non
     assert knowledge_tools.handles_tool("knowledge_source_manifest_enqueue") is True
 
 
+def test_embedding_progress_summary_reports_completed_remaining_rate_and_eta() -> None:
+    result = knowledge_tools._summarize_embedding_progress([
+        {
+            "owner_id": 4,
+            "eligible_chunks": 1000,
+            "completed_embeddings": 400,
+            "running_tasks": 1,
+            "pending_tasks": 1,
+            "recent_completed_tasks": 10,
+            "recent_embedded_chunks": 120,
+            "recent_elapsed_seconds": 60,
+        },
+    ])
+
+    owner = result["owners"][0]
+    assert owner["remaining"] == 600
+    assert owner["chunks_per_minute"] == 120
+    assert owner["estimated_remaining_minutes"] == 5
+    assert result["totals"]["completion_rate"] == 40
+
+
 def test_source_gap_extension_normalization_defaults_to_documents_and_images() -> None:
     extensions = knowledge_source_gap.normalize_extensions(None)
 

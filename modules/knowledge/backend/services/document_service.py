@@ -1,5 +1,4 @@
 """知识库文档管理服务：资料登记、解析入库、页级融合、索引状态。"""
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -7,6 +6,7 @@ from app.core.exceptions import AppException, NotFound, ValidationError
 from app.models.file import File
 from app.services.file_reader import resolve_caller_user_id as resolve_user_id  # noqa: F401
 from app.services.file_service import check_file_access
+from app.services.task_dispatcher import publish_task, unpack_task_parameters
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.exc import IntegrityError
@@ -204,10 +204,10 @@ async def _find_inflight_task(db: AsyncSession, document_id: int, task_type: str
     )
     for task in result.scalars().all():
         try:
-            params = json.loads(task.parameters or "{}")
-        except json.JSONDecodeError:
+            params = unpack_task_parameters(task.parameters)
+        except ValueError:
             continue
-        if int(params.get("document_id", 0) or 0) == int(document_id):
+        if int(task.document_id or params.get("document_id") or 0) == int(document_id):
             return task
     return None
 
@@ -236,12 +236,12 @@ async def _find_other_inflight_pipeline_stage(
         if current_task_id is not None and int(task.id) == int(current_task_id):
             continue
         try:
-            params = json.loads(task.parameters or "{}")
-        except json.JSONDecodeError:
+            params = unpack_task_parameters(task.parameters)
+        except ValueError:
             continue
         if (
-            int(params.get("document_id", 0) or 0) == int(document_id)
-            and str(params.get("stage") or "") == stage
+            int(task.document_id or params.get("document_id") or 0) == int(document_id)
+            and str(task.stage_key or params.get("stage") or "") == stage
         ):
             return task
     return None
@@ -297,8 +297,6 @@ async def enqueue_pipeline_task(
     priority: int = 5,
 ) -> dict:
     """Enqueue the unified knowledge DAG root task."""
-    from app.models.system import SystemTaskQueue
-
     await db.execute(
         text("SELECT pg_advisory_xact_lock(:namespace, :document_id)"),
         {"namespace": 1262633036, "document_id": int(doc.id) % 2147483647},
@@ -306,8 +304,8 @@ async def enqueue_pipeline_task(
     existing = await _find_inflight_pipeline_task(db, int(doc.id))
     if existing:
         try:
-            existing_params = json.loads(existing.parameters or "{}")
-        except json.JSONDecodeError:
+            existing_params = unpack_task_parameters(existing.parameters)
+        except ValueError:
             existing_params = {}
         return {
             "task_id": existing.id,
@@ -317,19 +315,21 @@ async def enqueue_pipeline_task(
             "next_task": "kb_pipeline_stage",
         }
 
-    task = SystemTaskQueue(
+    task = await publish_task(
+        db,
         task_type="kb_pipeline_stage",
         module="knowledge",
-        parameters=json.dumps({
+        owner_id=user_id,
+        body={
             "document_id": doc.id,
             "user_id": user_id,
             "stage": "source_validate",
             "force_raw": force_raw,
             "force_fusion": force_fusion,
-        }, ensure_ascii=False),
+        },
+        requested_by=f"user:{user_id}",
+        trigger="knowledge.document.enqueue",
         priority=resolve_knowledge_pipeline_priority("source_validate", priority),
-        status="pending",
-        creator_id=user_id,
         max_retries=KNOWLEDGE_PIPELINE_MAX_RETRIES,
         document_id=int(doc.id),
         stage_key="source_validate",
@@ -337,16 +337,6 @@ async def enqueue_pipeline_task(
         ready_status="ready",
         dependency_key=f"knowledge:{int(doc.id)}:source_validate",
     )
-    db.add(task)
-    await db.flush()
-    task.parameters = json.dumps({
-        "document_id": doc.id,
-        "user_id": user_id,
-        "stage": "source_validate",
-        "force_raw": force_raw,
-        "force_fusion": force_fusion,
-        "task_id": task.id,
-    }, ensure_ascii=False)
     return {
         "task_id": task.id,
         "enqueued": True,

@@ -44,6 +44,7 @@ llm_diagnostics = _load_service("llm_diagnostics")
 model_routing = _load_service("model_routing")
 page_asset_service = _load_service("page_asset_service")
 pipeline_service = _load_service("pipeline_service")
+source_validate_stage = importlib.import_module(f"{pipeline_service.__package__}.pipeline_stages.source_validate")
 raw_collection_service = _load_service("raw_collection_service")
 source_file_state = _load_service("source_file_state")
 stage_result_cache_service = _load_service("stage_result_cache_service")
@@ -1189,7 +1190,7 @@ async def test_pipeline_stage_cache_survives_main_commit_failure(tmp_path, monke
     monkeypatch.setattr(pipeline_service, "_run_stage", fake_run_stage)
     monkeypatch.setattr(pipeline_service, "_record_stage_artifact", fake_record_stage_artifact)
     monkeypatch.setattr(pipeline_service, "_record_stage_run", fake_record_stage_run)
-    monkeypatch.setattr(pipeline_service, "_enqueue_successors", fake_enqueue_successors)
+    monkeypatch.setattr(pipeline_service, "settle_pipeline_stage_successors", fake_enqueue_successors)
     monkeypatch.setattr(pipeline_service, "document_deep_pipeline_complete", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(pipeline_service, "write_stage_result_cache", fake_write_stage_result_cache)
     monkeypatch.setattr(pipeline_service, "delete_stage_result_cache", fake_delete_stage_result_cache)
@@ -1343,11 +1344,45 @@ async def test_pipeline_stage_artifact_records_exact_dag_stage(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_stage_artifact_input_hash_ignores_queue_attempt_identity(monkeypatch):
+    input_hashes: list[str] = []
+
+    async def fake_record_analysis_artifact(**kwargs):
+        input_hashes.append(kwargs["input_hash"])
+        return 88
+
+    async def fake_prompt_hash(_db, _stage):
+        return "prompt:graph"
+
+    monkeypatch.setattr(pipeline_service, "record_analysis_artifact", fake_record_analysis_artifact)
+    monkeypatch.setattr(pipeline_service, "resolve_stage_prompt_hash", fake_prompt_hash)
+    doc = _FakeDocument()
+    result = {"status": "done", "nodes": 3}
+
+    for task_id, pipeline_run_id in ((777, 1000), (778, 1001)):
+        await pipeline_service._record_stage_artifact(
+            object(),
+            doc=doc,
+            task_id=task_id,
+            pipeline_run_id=pipeline_run_id,
+            stage="graph",
+            status="done",
+            started_at=datetime.now(timezone.utc),
+            result=result,
+            duration_ms=123,
+        )
+
+    assert len(input_hashes) == 2
+    assert input_hashes[0] == input_hashes[1]
+
+
+@pytest.mark.asyncio
 async def test_source_validate_skips_office_lock_files(monkeypatch):
     async def fake_source_available(*_args, **_kwargs):
         return SimpleNamespace(available=True, physical_path=None)
 
-    monkeypatch.setattr(pipeline_service, "get_source_file_availability", fake_source_available)
+    monkeypatch.setattr(source_validate_stage, "get_source_file_availability", fake_source_available)
+    monkeypatch.setattr(source_validate_stage, "check_file_access", fake_source_available)
 
     db = _EmptyParseDb()
     db.doc.filename = "~$亚捷招商话术"
@@ -1374,7 +1409,8 @@ async def test_source_validate_skips_windows_recycle_metadata_files(monkeypatch)
     async def fake_source_available(*_args, **_kwargs):
         return SimpleNamespace(available=True, physical_path=None)
 
-    monkeypatch.setattr(pipeline_service, "get_source_file_availability", fake_source_available)
+    monkeypatch.setattr(source_validate_stage, "get_source_file_availability", fake_source_available)
+    monkeypatch.setattr(source_validate_stage, "check_file_access", fake_source_available)
 
     db = _EmptyParseDb()
     db.doc.filename = "$IAH7BC8"

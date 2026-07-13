@@ -908,7 +908,7 @@ async def test_chat_stops_fallback_on_protocol_error(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profile() -> None:
+async def test_configured_llm_chain_uses_gpt55_knowledge_default() -> None:
     llm_cfg = get_model_type_config("llm")
     vision_cfg = get_model_type_config("vision")
     profiles = llm_cfg["profiles"]
@@ -917,21 +917,21 @@ async def test_configured_llm_chain_keeps_global_default_and_exposes_gpt55_profi
     knowledge_routing = models_config["module_routing"]["knowledge"]
     fallback_policies = models_config["fallback_policies"]
 
-    assert llm_cfg["primary"] == "deepseek-v4-flash"
+    assert llm_cfg["primary"] == "gpt-5.5-knowledge"
     assert llm_cfg["fallback_chain"][:2] == ["gemma-4", "ollama-local"]
     assert profiles["deepseek-v4-flash"]["provider"] == "opencode"
     assert profiles["gpt-5.5-knowledge"]["provider"] == "gptstore-text"
     assert profiles["gpt-5.5-knowledge"]["retry_strategy"] == "fixed"
     assert profiles["gpt-5.5-knowledge"]["retry_delay_seconds"] == 30
     assert profiles["gpt-5.5-knowledge"]["fallback_policy"] == "knowledge_text_primary"
-    assert fallback_policies["knowledge_text_primary"]["chain"] == ["deepseek-v4-flash"]
+    assert fallback_policies["knowledge_text_primary"]["chain"] == []
     assert vision_profiles["gpt-5.5-vision"]["fallback_policy"] == "knowledge_vision_primary"
     assert fallback_policies["knowledge_vision_primary"]["chain"] == []
     assert vision_cfg["fallback_chain"] == []
-    assert knowledge_routing["default_profile"] == "deepseek-v4-flash"
-    assert knowledge_routing["fallback_profile"] == "deepseek-v4-pro"
+    assert knowledge_routing["default_profile"] == "gpt-5.5-knowledge"
+    assert knowledge_routing["fallback_profile"] == "gpt-5.5-knowledge"
     assert knowledge_routing["stages"]["raw_vision"] == "gpt-5.5-vision"
-    assert knowledge_routing["stages"]["fusion"] == "deepseek-v4-flash"
+    assert knowledge_routing["stages"]["fusion"] == "gpt-5.5-knowledge"
     assert models_config["watchdog_defaults"]["auto_unload"] is True
     assert models_config["watchdog_defaults"]["idle_timeout_seconds"] == 180
     assert models_config["watchdog_defaults"]["startup_stall_timeout_seconds"] == 180
@@ -1460,3 +1460,46 @@ async def test_describe_image_falls_back_from_explicit_vision_profile(monkeypatc
     assert result == "本地视觉描述"
     assert mimo.calls == 1
     assert local.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_describe_image_accepts_successful_responses_payload_with_null_error(monkeypatch) -> None:
+    class ResponsesProvider:
+        async def chat(self, messages, model, temperature=0.7, max_tokens=4096, tools=None):
+            return {
+                "object": "response",
+                "status": "completed",
+                "error": None,
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "视觉成功"}],
+                }],
+            }
+
+    profiles = {
+        "vision-test": {
+            "provider": "test",
+            "model": "gpt-5.5",
+            "temperature": 0.2,
+            "max_tokens": 64,
+        },
+    }
+    monkeypatch.setattr(gateway_router_module, "_VISION_PRIMARY", "vision-test")
+    monkeypatch.setattr(gateway_router_module, "_VISION_FALLBACK", [])
+    monkeypatch.setattr(gateway_router_module, "_VISION_PROFILES", profiles)
+    monkeypatch.setattr(
+        gateway_router_module,
+        "prepare_vision_image_for_model_from_config",
+        lambda image_bytes, mime_type: (image_bytes, mime_type, {"send_blocked": False}),
+    )
+    router = ModelGatewayRouter.__new__(ModelGatewayRouter)
+    router._providers = {"test": ResponsesProvider()}
+
+    result = await router.describe_image_detailed(
+        image_bytes=b"image",
+        profile_key="vision-test",
+        mime_type="image/png",
+    )
+
+    assert result["content"] == "视觉成功"
+    assert result["diagnostics"]["selected_profile"] == "vision-test"

@@ -54,7 +54,7 @@ def tool_definitions() -> list[Any]:
     return [
         Tool(
             name="knowledge_pipeline_snapshot",
-            description="汇总知识库管道阶段队列、DB连接状态、最近失败和模型调用日志，用于批量分析巡检。",
+            description="汇总知识库管道阶段队列、向量回填进度、DB连接状态、最近失败和模型调用日志，用于批量分析巡检。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -426,6 +426,90 @@ async def main():
             order by coalesce(completed_at, updated_at) desc nulls last, source, id desc
             limit :limit
         '''), {"limit": STAGE_METRIC_WINDOW})).mappings().all()
+        embedding_progress_rows = (await db.execute(text('''
+            WITH eligible AS (
+                SELECT c.owner_id, count(*)::bigint AS eligible_chunks
+                FROM kb_chunks c
+                JOIN kb_documents d ON d.id = c.document_id
+                JOIN framework_file_items f ON f.id = d.file_id
+                WHERE c.text <> ''
+                  AND d.deleted IS FALSE
+                  AND f.deleted IS FALSE
+                GROUP BY c.owner_id
+            ), active AS (
+                SELECT owner_id, count(*)::bigint AS completed_embeddings
+                FROM kb_chunk_embeddings
+                WHERE embedding_model = 'qwen3-embedding-8b'
+                  AND embedding_version = 1
+                  AND embedding_dim = 4096
+                  AND status = 'active'
+                GROUP BY owner_id
+            ), task_rows AS (
+                SELECT
+                    id,
+                    CASE
+                        WHEN parameters ~ '^\\s*\\{' THEN COALESCE(
+                            NULLIF(parameters::jsonb #>> '{body,owner_id}', ''),
+                            NULLIF(parameters::jsonb ->> 'owner_id', '')
+                        )
+                        ELSE NULL
+                    END AS owner_value,
+                    status,
+                    started_at,
+                    completed_at,
+                    CASE
+                        WHEN result ~ '^\\s*\\{' THEN COALESCE(
+                            NULLIF(result::jsonb #>> '{result,embedded}', '')::bigint,
+                            0
+                        )
+                        ELSE 0
+                    END AS embedded
+                FROM framework_system_task_queues
+                WHERE task_type = 'kb_chunk_embedding_backfill'
+            ), tasks AS (
+                SELECT
+                    owner_value::bigint AS owner_id,
+                    status,
+                    started_at,
+                    completed_at,
+                    embedded,
+                    row_number() OVER (
+                        PARTITION BY owner_value
+                        ORDER BY completed_at DESC NULLS LAST, id DESC
+                    ) AS recent_rank
+                FROM task_rows
+                WHERE owner_value ~ '^\\d+$'
+            ), task_summary AS (
+                SELECT
+                    owner_id,
+                    count(*) FILTER (WHERE status = 'running')::bigint AS running_tasks,
+                    count(*) FILTER (WHERE status = 'pending')::bigint AS pending_tasks,
+                    count(*) FILTER (WHERE status = 'completed' AND recent_rank <= 20)::bigint AS recent_completed_tasks,
+                    COALESCE(sum(embedded) FILTER (WHERE status = 'completed' AND recent_rank <= 20), 0)::bigint AS recent_embedded_chunks,
+                    COALESCE(sum(EXTRACT(EPOCH FROM (completed_at - started_at))) FILTER (
+                        WHERE status = 'completed'
+                          AND recent_rank <= 20
+                          AND started_at IS NOT NULL
+                          AND completed_at IS NOT NULL
+                          AND completed_at >= started_at
+                    ), 0)::double precision AS recent_elapsed_seconds
+                FROM tasks
+                GROUP BY owner_id
+            )
+            SELECT
+                COALESCE(e.owner_id, a.owner_id, t.owner_id) AS owner_id,
+                COALESCE(e.eligible_chunks, 0)::bigint AS eligible_chunks,
+                COALESCE(a.completed_embeddings, 0)::bigint AS completed_embeddings,
+                COALESCE(t.running_tasks, 0)::bigint AS running_tasks,
+                COALESCE(t.pending_tasks, 0)::bigint AS pending_tasks,
+                COALESCE(t.recent_completed_tasks, 0)::bigint AS recent_completed_tasks,
+                COALESCE(t.recent_embedded_chunks, 0)::bigint AS recent_embedded_chunks,
+                COALESCE(t.recent_elapsed_seconds, 0)::double precision AS recent_elapsed_seconds
+            FROM eligible e
+            FULL JOIN active a ON a.owner_id = e.owner_id
+            FULL JOIN task_summary t ON t.owner_id = COALESCE(e.owner_id, a.owner_id)
+            ORDER BY owner_id
+        '''))).mappings().all()
 
     by_stage = {row["stage_key"]: row for row in rows}
     totals = {"pending": 0, "ready": 0, "running": 0, "failed": 0, "completed": 0, "total": 0}
@@ -479,6 +563,7 @@ async def main():
             }
             for row in stage_metric_rows
         ],
+        "embedding_progress_rows": [dict(row) for row in embedding_progress_rows],
     }, ensure_ascii=False, default=str))
 
 asyncio.run(main())
@@ -502,7 +587,9 @@ asyncio.run(main())
         }
     snapshot = json.loads(stdout.decode("utf-8"))
     metric_rows = snapshot.pop("recent_stage_metric_rows", [])
+    embedding_rows = snapshot.pop("embedding_progress_rows", [])
     snapshot["recent_stage_metrics"] = _summarize_stage_metrics(metric_rows)
+    snapshot["embedding_progress"] = _summarize_embedding_progress(embedding_rows)
     worker_config = _load_worker_config(repo_root)
     snapshot["worker_config"] = worker_config
     snapshot["worker_operational_note"] = (
@@ -514,6 +601,81 @@ asyncio.run(main())
     )
     _annotate_queue_limits(snapshot, worker_config)
     return snapshot
+
+
+def _summarize_embedding_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize the Qwen chunk-embedding sidecar using the backfill service's count contract."""
+    owners: list[dict[str, Any]] = []
+    total_keys = (
+        "eligible_chunks",
+        "completed_embeddings",
+        "remaining",
+        "running_tasks",
+        "pending_tasks",
+        "recent_completed_tasks",
+        "recent_embedded_chunks",
+        "recent_elapsed_seconds",
+    )
+    totals: dict[str, int | float] = {key: 0 for key in total_keys}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        eligible = max(0, int(row.get("eligible_chunks") or 0))
+        completed = max(0, int(row.get("completed_embeddings") or 0))
+        remaining = max(0, eligible - completed)
+        recent_embedded = max(0, int(row.get("recent_embedded_chunks") or 0))
+        recent_elapsed_seconds = max(0.0, float(row.get("recent_elapsed_seconds") or 0.0))
+        chunks_per_minute = (
+            round(recent_embedded / recent_elapsed_seconds * 60, 2)
+            if recent_embedded > 0 and recent_elapsed_seconds > 0
+            else None
+        )
+        estimated_remaining_minutes = (
+            round(remaining / chunks_per_minute, 1)
+            if chunks_per_minute and remaining > 0
+            else 0.0 if remaining == 0 else None
+        )
+        owner = {
+            "owner_id": int(row.get("owner_id") or 0),
+            "eligible_chunks": eligible,
+            "completed_embeddings": completed,
+            "remaining": remaining,
+            "running_tasks": max(0, int(row.get("running_tasks") or 0)),
+            "pending_tasks": max(0, int(row.get("pending_tasks") or 0)),
+            "recent_completed_tasks": max(0, int(row.get("recent_completed_tasks") or 0)),
+            "recent_embedded_chunks": recent_embedded,
+            "recent_elapsed_seconds": round(recent_elapsed_seconds, 2),
+            "chunks_per_minute": chunks_per_minute,
+            "estimated_remaining_minutes": estimated_remaining_minutes,
+        }
+        owners.append(owner)
+        for key in total_keys:
+            totals[key] += owner[key]
+
+    overall_rate = (
+        round(float(totals["recent_embedded_chunks"]) / float(totals["recent_elapsed_seconds"]) * 60, 2)
+        if totals["recent_embedded_chunks"] and totals["recent_elapsed_seconds"]
+        else None
+    )
+    overall_remaining = int(totals["remaining"])
+    totals["chunks_per_minute"] = overall_rate
+    totals["estimated_remaining_minutes"] = (
+        round(overall_remaining / overall_rate, 1)
+        if overall_rate and overall_remaining > 0
+        else 0.0 if overall_remaining == 0 else None
+    )
+    totals["completion_rate"] = round(
+        int(totals["completed_embeddings"]) / int(totals["eligible_chunks"]) * 100,
+        2,
+    ) if totals["eligible_chunks"] else 0.0
+    return {
+        "profile_key": "qwen3-embedding-8b",
+        "embedding_version": 1,
+        "dimensions": 4096,
+        "vector_store": "kb_chunk_embeddings",
+        "owners": owners,
+        "totals": totals,
+    }
 
 
 def _summarize_stage_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -622,12 +784,16 @@ def _load_worker_config(repo_root: Path) -> dict[str, Any]:
     return {
         "loaded": True,
         "path": str(path),
+        "dispatcher": data.get("dispatcher") or {},
         "worker_lanes_per_process": data.get("worker_lanes_per_process"),
         "worker_process_slots": data.get("worker_process_slots"),
         "max_lanes_per_process": data.get("max_lanes_per_process"),
         "poll_interval_seconds": data.get("poll_interval_seconds"),
         "stage_concurrency": (data.get("stage_concurrency") or {}).get("kb_pipeline_stage", {}),
-        "lane_concurrency": (data.get("lane_concurrency") or {}).get("kb_pipeline_stage", {}),
+        "lane_concurrency": (
+            (data.get("dispatcher") or {}).get("lane_limits")
+            or (data.get("lane_concurrency") or {}).get("kb_pipeline_stage", {})
+        ),
         "paused_stages": (data.get("paused_stages") or {}).get("kb_pipeline_stage", []),
         "paused_lanes": (data.get("paused_lanes") or {}).get("kb_pipeline_stage", []),
     }

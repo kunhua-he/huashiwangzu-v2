@@ -13,8 +13,8 @@ from tenacity.wait import wait_base
 from app.gateway.config import (
     DEFAULT_MODEL,
     MODEL_PROFILES,
-    get_models_config,
     get_model_type_config,
+    get_models_config,
     get_provider_configs,
 )
 from app.gateway.protocol import is_protocol_error_text
@@ -653,7 +653,7 @@ class ModelGatewayRouter:
                         max_tokens=profile.get("max_tokens", 4096),
                         tools=None,
                     )
-                if "error" in raw:
+                if raw.get("error"):
                     raise RuntimeError(raw.get("content") or raw.get("error"))
                 if profile.get("provider") in ("local",):
                     content = raw.get("content", "")

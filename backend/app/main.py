@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
     from app.services.app_service import sync_apps_from_manifest
     from app.services.maintenance_service import mark_startup_complete_if_needed
     from app.services.private_module_service import restore_active_private_modules, set_app_instance
-    from app.services.task_worker import start_worker, stop_worker
+    from app.services.task_dispatcher import start_dispatcher, stop_dispatcher
 
     # Register private module service app reference
     set_app_instance(app)
@@ -70,10 +70,10 @@ async def lifespan(app: FastAPI):
 
     task_worker_autostart = os.getenv("TASK_WORKER_AUTOSTART", "1").strip().lower()
     if task_worker_autostart in {"0", "false", "no", "off"}:
-        logger.info("Background task worker autostart disabled for this process")
+        logger.info("Background task dispatcher autostart disabled for this process")
     else:
-        start_worker()
-        logger.info("Background task worker started")
+        start_dispatcher()
+        logger.info("Background task dispatcher started")
 
     # After modules are loaded, set up per-module file handlers
     from app.services.module_logger import setup_v2_loggers_for_modules
@@ -109,7 +109,7 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, "_event_retry_task"):
         app.state._event_retry_task.cancel()
     if task_worker_autostart not in {"0", "false", "no", "off"}:
-        await stop_worker()
+        await stop_dispatcher()
     await dispose_db()
 
 
@@ -162,7 +162,7 @@ async def health_check():
     from app.routers.registry import get_module_load_errors
     from app.schemas.common import ApiResponse
     from app.services.module_registry import semantic_failure_reason
-    from app.services.task_worker import worker_health
+    from app.services.task_dispatcher import dispatcher_health
 
     database_status = "ok"
     task_queue_summary = None
@@ -241,7 +241,7 @@ async def health_check():
     except Exception:
         event_bus_ok = False
 
-    worker = worker_health()
+    worker = dispatcher_health()
     event_bus_status = "ok" if event_bus_ok else "error"
     task_queue_ok = not (
         task_queue_summary
@@ -249,6 +249,30 @@ async def health_check():
     )
     status = "ok"
     worker_external = os.getenv("TASK_WORKER_AUTOSTART", "1").strip().lower() in {"0", "false", "no", "off"}
+    if worker_external and database_status == "ok":
+        try:
+            async with engine.connect() as conn:
+                leader_present = await conn.scalar(text("""
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_locks
+                        WHERE locktype = 'advisory'
+                          AND granted
+                          AND classid = 0
+                          AND objid = :lock_key
+                    )
+                """), {"lock_key": 94022025})
+                leased_count = await conn.scalar(text("""
+                    SELECT count(*)
+                    FROM framework_system_task_queues
+                    WHERE status = 'running'
+                      AND lease_expires_at > NOW()
+                """))
+            worker["external_leader"] = bool(leader_present)
+            worker["active_leases"] = int(leased_count or 0)
+            worker["running"] = bool(leader_present)
+        except Exception:
+            worker["external_leader"] = None
     if (
         database_status != "ok"
         or module_errors

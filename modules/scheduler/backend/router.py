@@ -102,14 +102,13 @@ def _encode_task_parameters(title: str, action_description: str, creator_id: int
 
 
 def _decode_task_parameters(raw: str | None) -> dict:
-    if not raw:
-        return {}
     try:
-        value = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
+        from app.services.task_dispatcher import unpack_task_parameters
+
+        return unpack_task_parameters(raw)
+    except ValueError:
         logger.warning("Invalid scheduler task parameters JSON ignored")
         return {}
-    return value if isinstance(value, dict) else {}
 
 
 def _task_signature(
@@ -223,17 +222,24 @@ async def _create_scheduler_task(
         scheduled_at=scheduled_dt,
         recur=normalized_recur,
     )
-    task = SystemTaskQueue(
+    from app.services.task_dispatcher import publish_task
+
+    task = await publish_task(
+        db,
         task_type="scheduled_agent_job",
-        parameters=_encode_task_parameters(normalized_title, normalized_action, creator_id),
-        status="pending",
         module="scheduler",
-        creator_id=creator_id,
+        owner_id=creator_id,
+        body={
+            "title": normalized_title,
+            "action_description": normalized_action,
+            "creator_id": creator_id,
+        },
+        requested_by=f"user:{creator_id}",
+        trigger="scheduler.create",
         scheduled_at=scheduled_dt,
         recur=normalized_recur,
         next_run_at=scheduled_dt,
     )
-    db.add(task)
     await db.commit()
     await db.refresh(task)
     return task

@@ -1,22 +1,16 @@
 """engine编排壳：暴露装配上下文()等给 router。批4：compressor、fallback_chain接入。批5：工具编排、三层记忆、快照、skills注入。"""
-import json
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .budget_allocator import DiminishingBudgetTracker
 from .compressor import compress_middle_with_snapshot as _compress_with_snapshot
 from .compressor import hard_truncate_tail as _hard_truncate_tail
 from .event_store import read_events
-from .experience_memory import experience_feedback as _experience_feedback
-from .experience_memory import save_experience as _experience_save
 from .fallback_chain import chat_stream_with_fallback as _chat_stream_with_fallback
 from .fallback_chain import chat_with_fallback as _chat_with_fallback
 from .layered_memory import fuse as _layered_memory_fuse
 from .layered_memory import recall as _layered_memory_recall
 from .layered_memory import record as _layered_memory_record
-from .post_turn_hooks import PostTurnHooks
-from .tool_orchestrator import ToolOrchestrator
 
 logger = logging.getLogger("v2.agent").getChild("engine.engine")
 
@@ -42,38 +36,6 @@ async def assemble_context(
 
 
 # ── 批5：模块级单例 ──────────────────────────────────────────────
-
-_orchestrator: ToolOrchestrator | None = None
-_hooks: PostTurnHooks | None = None
-_budget_tracker: DiminishingBudgetTracker | None = None
-
-
-def get_orchestrator(max_concurrency: int = 8) -> ToolOrchestrator:
-    global _orchestrator
-    if _orchestrator is None:
-        _orchestrator = ToolOrchestrator(max_concurrency=max_concurrency)
-    return _orchestrator
-
-
-def get_budget_tracker() -> DiminishingBudgetTracker:
-    global _budget_tracker
-    if _budget_tracker is None:
-        _budget_tracker = DiminishingBudgetTracker()
-    return _budget_tracker
-
-
-def get_hooks() -> PostTurnHooks:
-    global _hooks
-    if _hooks is None:
-        _hooks = PostTurnHooks()
-        # Start the background maintenance loop on first hook access.
-        # This ensures the global hooks lifecycle starts with the first
-        # real conversation turn rather than at module import time (which
-        # may run before the async event loop is ready).
-        from .post_turn_hooks import setup_global_hooks
-        setup_global_hooks()
-    return _hooks
-
 
 # ── 已实现接口（批2 事实记忆） ──────────────────────────────
 
@@ -186,10 +148,17 @@ async def chat_with_degradation_chain(
     profile_key: str,
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
+    response_format: dict | None = None,
 ) -> dict:
     """Call the framework gateway once; gateway owns model fallback."""
     try:
-        return await _chat_with_fallback(messages, profile_key, tools, conversation_id=conversation_id)
+        return await _chat_with_fallback(
+            messages,
+            profile_key,
+            tools,
+            conversation_id=conversation_id,
+            response_format=response_format,
+        )
     except Exception as e:
         logger.error("gateway chat failed: %s", e)
         return {"error": str(e), "content": f"(模型调用失败：{e})"}
@@ -200,59 +169,18 @@ async def chat_stream_with_degradation_chain(
     profile_key: str,
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
+    response_format: dict | None = None,
 ):
     """Stream gateway events directly; gateway owns model fallback."""
     try:
-        async for event in _chat_stream_with_fallback(messages, profile_key, tools, conversation_id=conversation_id):
+        async for event in _chat_stream_with_fallback(
+            messages,
+            profile_key,
+            tools,
+            conversation_id=conversation_id,
+            response_format=response_format,
+        ):
             yield event
     except Exception as e:
         logger.error("gateway stream chat failed: %s", e)
         yield {"type": "error", "content": f"(流式模型调用失败：{e})"}
-
-
-# ── 批3 成功经验：蒸馏 + 结算 ──────────────────────────────
-
-async def distill_experience(
-    trigger_condition: str,
-    steps: list[dict],
-    tools_used: list[str] | None = None,
-    source_conversation_id: int | None = None,
-    owner_id: int = 0,
-) -> None:
-    """fire-and-forget：对话成功后，把成功路径蒸馏成一条经验存入经验库。
-
-    降级：失败不影响主对话。
-    """
-    try:
-        steps_str = json.dumps(steps, ensure_ascii=False)
-        tools_str = json.dumps(tools_used, ensure_ascii=False) if tools_used else None
-        await _experience_save(
-            trigger_condition=trigger_condition,
-            steps=steps_str,
-            tools_used=tools_str,
-            source_conversation_id=source_conversation_id,
-            caller=f"user:{owner_id}" if owner_id else "system:engine",
-        )
-    except Exception as e:
-        logger.warning("蒸馏经验 failed (non-fatal): %s", e)
-
-
-async def settle_experience(
-    experience_id: int,
-    success: bool,
-    note: str | None = None,
-    owner_id: int = 0,
-) -> None:
-    """fire-and-forget：对话结束后，对用过的经验做成功/失败反馈。
-
-    降级：失败不影响主对话。
-    """
-    try:
-        await _experience_feedback(
-            experience_id=experience_id,
-            success=success,
-            note=note,
-            caller=f"user:{owner_id}" if owner_id else "system:engine",
-        )
-    except Exception as e:
-        logger.warning("经验结算 failed (non-fatal): %s", e)

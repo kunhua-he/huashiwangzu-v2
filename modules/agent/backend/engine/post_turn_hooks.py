@@ -192,15 +192,6 @@ class PostTurnHooks:
             ))
         )
 
-        # ══ Workflow mining: enqueue background analysis ──────────
-        if tool_events and not any(e.get("event_type") == "error" for e in tool_events):
-            asyncio.create_task(
-                _safe_run("workflow_mine", self._hook_workflow_mine(
-                    owner_id=owner_id,
-                    conversation_id=conversation_id,
-                ))
-            )
-
         return summary
 
     async def _hook_memory_distill(
@@ -290,27 +281,6 @@ class PostTurnHooks:
                 },
                 llm_response_id=None,
             )
-
-    async def _hook_workflow_mine(
-        self,
-        owner_id: int,
-        conversation_id: int,
-    ) -> None:
-        """Enqueue background workflow mining for this user after a successful turn.
-
-        The actual mining runs asynchronously via a task worker, not inline.
-        """
-        try:
-            from app.database import AsyncSessionLocal
-
-            from .workflow_recipe_service import run_mining_job
-
-            async with AsyncSessionLocal() as session:
-                result = await run_mining_job(session, owner_id=owner_id)
-                if result.get("mined", 0) > 0:
-                    logger.info("workflow_mining: mined %d recipes for owner %s", result["mined"], owner_id)
-        except Exception as e:
-            logger.warning("workflow_mining hook failed (non-fatal): %s", e)
 
     async def _hook_context_snapshot(
         self,

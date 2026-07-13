@@ -867,45 +867,6 @@ async def ensure_workflow_tables(db: AsyncSession) -> None:
         logger.warning("Migration: workflow ledger table check failed: %s", e)
 
 
-async def ensure_workflow_recipes_table(db: AsyncSession) -> None:
-    """Create agent_workflow_recipes table (idempotent)."""
-    try:
-        await db.execute(text(
-            "CREATE TABLE IF NOT EXISTS agent_workflow_recipes ("
-            "  id BIGSERIAL PRIMARY KEY,"
-            "  owner_id INTEGER NOT NULL,"
-            "  name VARCHAR(256) DEFAULT '',"
-            "  description TEXT DEFAULT '',"
-            "  intent_label VARCHAR(128) DEFAULT '',"
-            "  trigger_condition TEXT DEFAULT '',"
-            "  steps JSONB DEFAULT '[]'::jsonb,"
-            "  tools_used JSONB DEFAULT '[]'::jsonb,"
-            "  status VARCHAR(16) DEFAULT 'proposal',"
-            "  version INTEGER DEFAULT 1,"
-            "  success_weight DOUBLE PRECISION DEFAULT 0.0,"
-            "  fail_count INTEGER DEFAULT 0,"
-            "  avg_duration_ms DOUBLE PRECISION,"
-            "  avg_tool_count DOUBLE PRECISION,"
-            "  last_used_at TIMESTAMPTZ,"
-            "  confidence DOUBLE PRECISION DEFAULT 0.0,"
-            "  source_conversation_id BIGINT,"
-            "  source_trajectory_id BIGINT,"
-            "  source_experience_id BIGINT,"
-            "  enabled BOOLEAN DEFAULT TRUE,"
-            "  created_at TIMESTAMPTZ DEFAULT NOW(),"
-            "  updated_at TIMESTAMPTZ DEFAULT NOW()"
-            ")"
-        ))
-        await db.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_workflow_recipes_owner ON agent_workflow_recipes(owner_id)"
-        ))
-        await db.commit()
-        logger.info("Migration: ensured agent_workflow_recipes table")
-    except Exception as e:
-        await db.rollback()
-        logger.warning("Migration: workflow_recipes table creation failed: %s", e)
-
-
 async def ensure_skill_registry_table(db: AsyncSession) -> None:
     """Create skill governance tables (idempotent)."""
     try:
@@ -1188,7 +1149,6 @@ async def run_init(db: AsyncSession) -> None:
     await ensure_checkpoint_table(db)
     await ensure_workflow_tables(db)
     await ensure_profile_v2_tables(db)
-    await ensure_workflow_recipes_table(db)
     await ensure_tool_guide_tables(db)
     await ensure_default_tool_guides_seed(db)
     await ensure_compaction_table(db)

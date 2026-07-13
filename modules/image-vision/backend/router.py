@@ -250,4 +250,5 @@ register_capability(
         "prompt": {"type": "string", "description": "Optional semantic focus when VLM is used"},
     },
     min_role="viewer",
+    execution_contract={"side_effect_level": "none", "resource_class": "cloud_vlm", "timeout_seconds": 180},
 )

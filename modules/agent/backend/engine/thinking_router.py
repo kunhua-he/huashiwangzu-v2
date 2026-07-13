@@ -16,8 +16,6 @@ from app.gateway import service as gateway_service
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .experience_memory import match_experience as _match_experience
-
 logger = logging.getLogger("v2.agent").getChild("engine.thinking_router")
 
 THINKING_LEVELS = ("none", "low", "medium", "high", "deep")
@@ -77,10 +75,6 @@ async def route_thinking_level(
     signal_result = await _match_signal_history(db, text_input, owner_id=owner_id)
     if signal_result:
         return signal_result
-
-    history_result = await _match_history(text_input, owner_id=owner_id)
-    if history_result:
-        return history_result
 
     return ThinkingRouteResult(
         level="medium", source="fallback", confidence=0.0,
@@ -217,35 +211,6 @@ async def _match_signal_history(db: AsyncSession, user_input: str, *, owner_id: 
     level = max(positive_scores, key=positive_scores.get)
     confidence = min(max(positive_scores[level], 0.0), 1.0)
     return ThinkingRouteResult(level=level, source="signals", confidence=confidence, reason=best_reason)
-
-
-async def _match_history(user_input: str, *, owner_id: int) -> ThinkingRouteResult | None:
-    # Reuse existing experience store as a lightweight recall source.
-    experiences = await _match_experience(user_input, limit=3, caller=f"user:{owner_id}")
-    if not experiences:
-        return None
-
-    scores: dict[str, float] = {}
-    best_reason = ""
-    best_confidence = 0.0
-    for exp in experiences:
-        level = _normalize_level(exp.get("thinking_level") or exp.get("metadata", {}).get("thinking_level"))
-        if level not in THINKING_LEVELS:
-            continue
-        similarity = float(exp.get("similarity", 0.0) or 0.0)
-        weight = float(exp.get("net_weight", exp.get("success_weight", 1) or 1) or 1)
-        score = similarity * max(weight, 0.1)
-        scores[level] = scores.get(level, 0.0) + score
-        if score > best_confidence:
-            best_confidence = score
-            best_reason = f"history match id={exp.get('id')} sim={similarity:.2f} weight={weight:.2f}"
-
-    if not scores:
-        return None
-
-    level = max(scores, key=scores.get)
-    confidence = min(max(scores[level], 0.0), 1.0)
-    return ThinkingRouteResult(level=level, source="history", confidence=confidence, reason=best_reason)
 
 
 async def _ask_llm_once(

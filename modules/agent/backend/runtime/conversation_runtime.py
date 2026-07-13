@@ -26,7 +26,7 @@ from ..engine.thinking_router import record_implicit_thinking_signal, record_thi
 from ..init_db import ensure_user_profile, run_init
 from ..schemas import ChatRequest
 from ..services import conversation_service as conv_svc
-from ..services import tool_discovery
+from ..services.capability_catalog import retrieve_capabilities
 from .checkpointer import PostgresCheckpointSaver
 from .intent_preflight import IntentPreflightRunner
 from .runtime_policy import RuntimePolicy
@@ -49,6 +49,32 @@ class ConversationRuntime:
 
     def __init__(self, policy: RuntimePolicy | None = None) -> None:
         self.policy = policy or RuntimePolicy.default()
+
+    async def _build_capability_catalog(
+        self,
+        *,
+        user_id: int,
+        query: str,
+        conversation_id: int,
+    ) -> dict:
+        return await retrieve_capabilities(
+            user_id=user_id,
+            query=query,
+            limit=8,
+            conversation_id=conversation_id,
+        )
+
+    @staticmethod
+    def _resume_catalog_query(channel_values: dict, payload_content: str, messages: list[dict]) -> str:
+        stored = channel_values.get("capability_catalog") or {}
+        if isinstance(stored, dict) and str(stored.get("query") or "").strip():
+            return str(stored["query"])
+        if payload_content.strip():
+            return payload_content
+        for message in reversed(messages):
+            if message.get("role") == "user" and str(message.get("content") or "").strip():
+                return str(message["content"])
+        return "继续完成当前任务"
 
     async def execute(
         self,
@@ -79,6 +105,8 @@ class ConversationRuntime:
 
         profile_key = payload.profile_key or "deepseek-v4-flash"
         user_message_id: int | None = None
+        engine_diag: dict = {}
+        capability_catalog: dict
 
         # ── Resume path: restore from checkpoint ────────────────────
         channel_values: dict | None = None
@@ -93,13 +121,33 @@ class ConversationRuntime:
                     detail=f"Checkpoint {payload.resume_checkpoint_id} not found",
                 )
             messages = cp["channel_values"]["messages"]
-            cp["channel_values"]["resume_from_step"] = cp["step"]
+            cp["channel_values"]["resume_from_step"] = int(
+                (cp.get("resume_cursor") or {}).get("round", cp["step"]),
+            )
             channel_values = cp["channel_values"]
-            tools = tool_discovery.build_tools(user.role)
+            channel_values["parent_checkpoint_id"] = cp["checkpoint_id"]
+            previous_catalog = channel_values.get("capability_catalog") or {}
+            catalog_query = self._resume_catalog_query(channel_values, payload.content, messages)
+            capability_catalog = await self._build_capability_catalog(
+                user_id=user.id,
+                query=catalog_query,
+                conversation_id=payload.conversation_id,
+            )
+            channel_values["capability_catalog"] = capability_catalog
+            if (
+                isinstance(previous_catalog, dict)
+                and previous_catalog.get("catalog_hash")
+                and previous_catalog.get("catalog_hash") != capability_catalog.get("catalog_hash")
+            ):
+                channel_values["catalog_resume_state"] = {
+                    "status": "stale_retrieved",
+                    "previous_catalog_hash": previous_catalog.get("catalog_hash"),
+                    "current_catalog_hash": capability_catalog.get("catalog_hash"),
+                }
             logger.info(
-                "Resuming conv=%d from checkpoint=%s step=%d with %d messages",
+                "Resuming conv=%d from checkpoint=%s step=%d with %d messages catalog=%s",
                 payload.conversation_id, payload.resume_checkpoint_id,
-                cp["step"], len(messages),
+                cp["step"], len(messages), capability_catalog.get("catalog_hash", "")[:12],
             )
         else:
             # ── Normal flow: persist user message ───────────────────
@@ -211,9 +259,18 @@ class ConversationRuntime:
                 logger.warning("Record thinking feedback failed (non-fatal): %s", feedback_exc)
 
             _tools_t0 = time.monotonic()
-            tools = tool_discovery.build_tools(user.role)
-            logger.info("[PREFLIGHT_TIMING] tool_discovery.build_tools: %dms",
-                        round((time.monotonic() - _tools_t0) * 1000))
+            capability_catalog = await self._build_capability_catalog(
+                user_id=user.id,
+                query=payload.content,
+                conversation_id=payload.conversation_id,
+            )
+            logger.info(
+                "[PREFLIGHT_TIMING] authorized capability Top-K: %dms candidates=%d total=%d hash=%s",
+                round((time.monotonic() - _tools_t0) * 1000),
+                len(capability_catalog.get("candidates") or []),
+                int(capability_catalog.get("total_authorized") or 0),
+                str(capability_catalog.get("catalog_hash") or "")[:12],
+            )
 
         # ── Wire sub-runtimes lazily inside the SSE stream so preflight does not block the HTTP response ──
         async def _event_stream():
@@ -270,8 +327,9 @@ class ConversationRuntime:
                 suppress_thinking=(engine_diag.get("thinking_level") == "none") if not channel_values else False,
                 user_role=user.role,
                 initial_usage=stream_preflight.usage if stream_preflight else None,
+                capability_catalog=capability_catalog,
             )
-            async for event in loop.run(messages, tools, sink, channel_values=channel_values):
+            async for event in loop.run(messages, sink, channel_values=channel_values):
                 yield event
 
         logger.info("[PREFLIGHT_TIMING] execute() pre-stream total: %dms (conv=%d, resume=%s)",
@@ -405,7 +463,11 @@ class ConversationRuntime:
         except Exception as feedback_exc:
             logger.warning("Record edit-resubmit thinking feedback failed (non-fatal): %s", feedback_exc)
 
-        tools = tool_discovery.build_tools(user.role)
+        capability_catalog = await self._build_capability_catalog(
+            user_id=user.id,
+            query=content,
+            conversation_id=conversation_id,
+        )
 
         # Wire sub-runtimes lazily inside the SSE stream so preflight does not block the HTTP response.
         async def _event_stream():
@@ -458,8 +520,9 @@ class ConversationRuntime:
                 suppress_thinking=engine_diag.get("thinking_level") == "none",
                 user_role=user.role,
                 initial_usage=stream_preflight.usage if stream_preflight else None,
+                capability_catalog=capability_catalog,
             )
-            async for event in loop.run(messages, tools, sink):
+            async for event in loop.run(messages, sink):
                 yield event
 
         return StreamingResponse(_event_stream(), media_type="text/event-stream")
@@ -502,9 +565,7 @@ class ConversationRuntime:
                     "answer_shape": result.answer_shape,
                     "confidence": result.confidence,
                     "intent_summary": result.intent_summary[:300],
-                    "first_actions": result.tool_strategy.first_actions,
                     "suggested_queries": result.tool_strategy.suggested_queries[:5],
-                    "matched_experience_count": len(result.matched_experiences),
                     "verifier": result.verifier,
                     "error": result.error,
                     "user_role": user_role,
@@ -530,8 +591,7 @@ class ConversationRuntime:
             return False
         if result.answer_shape != "clarification":
             return False
-        actions = result.tool_strategy.first_actions or []
-        return actions == ["clarify"] and result.evidence_policy.should_ask_clarification
+        return result.evidence_policy.should_ask_clarification
 
     def _clarification_text(self, result) -> str:
         missing = result.missing_slots[:3] if result and result.missing_slots else []

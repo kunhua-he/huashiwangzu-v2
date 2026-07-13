@@ -223,18 +223,35 @@ async def _cap_delete(params: dict, caller: str) -> dict:
 
 
 async def _cap_save_experience(params: dict, caller: str) -> dict:
-    trigger_condition = memory_service._require_non_empty_text(params.get("trigger_condition", ""), "trigger_condition")
-    steps = params.get("steps", "")
+    trigger_condition = memory_service._require_non_empty_text(
+        params.get("goal_signature") or params.get("trigger_condition", ""),
+        "goal_signature",
+    )
+    steps = params.get("action_pattern", params.get("steps", ""))
+    if not steps:
+        raise ValidationError("action_pattern or steps required")
     tools_used = params.get("tools_used")
     source_conversation_id = params.get("source_conversation_id")
     caller_owner_id = memory_service._parse_user_id(caller)
+    requested_scope = params.get("scope_type", params.get("scope"))
+    requested_scope_id = params.get("scope_id", params.get("owner_id"))
     target_owner_id, scope = experience_service._resolve_experience_write_scope(
         caller,
         caller_owner_id if caller_owner_id else None,
-        params.get("scope"),
-        params.get("owner_id"),
+        requested_scope,
+        requested_scope_id,
     )
     await memory_service._ensure_init()
+    principal_context = None
+    capability_snapshot = None
+    if caller_owner_id:
+        from app.services.module_registry import authorized_capability_snapshot
+        from app.services.permission_service import resolve_principal_context
+
+        async with AsyncSessionLocal() as principal_db:
+            principal_context = await resolve_principal_context(principal_db, caller_owner_id)
+            await principal_db.commit()
+        capability_snapshot = await authorized_capability_snapshot(user_id=caller_owner_id)
     async with AsyncSessionLocal() as db:
         result = await experience_service._save_experience(
             db,
@@ -244,6 +261,18 @@ async def _cap_save_experience(params: dict, caller: str) -> dict:
             source_conversation_id,
             owner_id=target_owner_id,
             scope=scope,
+            scope_id=(
+                experience_service._coerce_optional_positive_int(requested_scope_id, "scope_id")
+                if scope not in {
+                    experience_service.EXPERIENCE_SCOPE_USER,
+                    experience_service.EXPERIENCE_SCOPE_GLOBAL,
+                }
+                else None
+            ),
+            principal_context=principal_context,
+            capability_snapshot=capability_snapshot,
+            preconditions=params.get("preconditions") or {},
+            completion_evidence=params.get("completion_evidence") or {},
         )
     return {"success": True, "data": result}
 
@@ -257,6 +286,16 @@ async def _cap_match_experience(params: dict, caller: str) -> dict:
         raise PermissionDenied("无法解析调用者身份")
     team_owner_ids = experience_service._parse_team_owner_ids(params.get("team_owner_ids")) if is_system else []
     await memory_service._ensure_init()
+    principal_context = None
+    capability_snapshot = None
+    if owner_id:
+        from app.services.module_registry import authorized_capability_snapshot
+        from app.services.permission_service import resolve_principal_context
+
+        async with AsyncSessionLocal() as principal_db:
+            principal_context = await resolve_principal_context(principal_db, owner_id)
+            await principal_db.commit()
+        capability_snapshot = await authorized_capability_snapshot(user_id=owner_id)
     async with AsyncSessionLocal() as db:
         results = await experience_service._match_experience(
             db,
@@ -264,6 +303,11 @@ async def _cap_match_experience(params: dict, caller: str) -> dict:
             limit,
             owner_id=owner_id if owner_id else None,
             team_owner_ids=team_owner_ids,
+            principal_context=principal_context,
+            capability_snapshot=capability_snapshot,
+            conversation_id=experience_service._coerce_optional_positive_int(
+                params.get("conversation_id"), "conversation_id"
+            ),
         )
     return {"success": True, "data": results}
 
@@ -282,6 +326,16 @@ async def _cap_experience_feedback(params: dict, caller: str) -> dict:
         raise PermissionDenied("无法解析调用者身份")
     team_owner_ids = experience_service._parse_team_owner_ids(params.get("team_owner_ids")) if is_system else []
     await memory_service._ensure_init()
+    principal_context = None
+    capability_snapshot = None
+    if owner_id:
+        from app.services.module_registry import authorized_capability_snapshot
+        from app.services.permission_service import resolve_principal_context
+
+        async with AsyncSessionLocal() as principal_db:
+            principal_context = await resolve_principal_context(principal_db, owner_id)
+            await principal_db.commit()
+        capability_snapshot = await authorized_capability_snapshot(user_id=owner_id)
     async with AsyncSessionLocal() as db:
         result = await experience_service._experience_feedback(
             db,
@@ -290,6 +344,32 @@ async def _cap_experience_feedback(params: dict, caller: str) -> dict:
             note,
             owner_id=owner_id if owner_id else None,
             team_owner_ids=team_owner_ids,
+            principal_context=principal_context,
+            capability_snapshot=capability_snapshot,
+            conversation_id=experience_service._coerce_optional_positive_int(
+                params.get("conversation_id"), "conversation_id"
+            ),
+        )
+    return {"success": True, "data": result}
+
+
+async def _cap_review_experience(params: dict, caller: str) -> dict:
+    experience_id = experience_service._coerce_optional_positive_int(
+        params.get("experience_id"), "experience_id"
+    )
+    if experience_id is None:
+        raise ValidationError("experience_id required")
+    reviewer_id = memory_service._parse_user_id(caller)
+    if not reviewer_id and not caller.startswith("system:"):
+        raise PermissionDenied("无法解析审核人身份")
+    await memory_service._ensure_init()
+    async with AsyncSessionLocal() as db:
+        result = await experience_service._review_experience(
+            db,
+            experience_id,
+            str(params.get("decision") or ""),
+            reviewer_id,
+            str(params.get("note") or "") or None,
         )
     return {"success": True, "data": result}
 
@@ -317,10 +397,10 @@ async def _cap_overview_stats(params: dict, caller: str) -> dict:
             result["memory"] = {"error": str(e)}
         try:
             exp_count = await db.scalar(text("SELECT COUNT(*) FROM memory_experiences"))
-            exp_active = await db.scalar(text("SELECT COUNT(*) FROM memory_experiences WHERE active = true"))
-            exp_inactive = await db.scalar(text("SELECT COUNT(*) FROM memory_experiences WHERE active = false"))
-            exp_avg_weight = await db.scalar(text("SELECT COALESCE(AVG(success_weight), 0) FROM memory_experiences WHERE active = true"))
-            exp_total_fails = await db.scalar(text("SELECT COALESCE(SUM(fail_count), 0) FROM memory_experiences"))
+            exp_active = await db.scalar(text("SELECT COUNT(*) FROM memory_experiences WHERE status IN ('verified', 'active')"))
+            exp_inactive = await db.scalar(text("SELECT COUNT(*) FROM memory_experiences WHERE status NOT IN ('verified', 'active')"))
+            exp_avg_weight = await db.scalar(text("SELECT COALESCE(AVG(success_count), 0) FROM memory_experiences WHERE status IN ('verified', 'active')"))
+            exp_total_fails = await db.scalar(text("SELECT COALESCE(SUM(failure_count), 0) FROM memory_experiences"))
             result["experience"] = {
                 "total_count": exp_count or 0,
                 "active_count": exp_active or 0,

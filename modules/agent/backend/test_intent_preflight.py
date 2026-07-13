@@ -11,8 +11,7 @@ def test_operation_path_is_rule_first_and_not_clarify_only() -> None:
 
     assert result.task_category == "operation_path"
     assert result.answer_shape == "menu_path"
-    assert result.tool_strategy.first_actions != ["clarify"]
-    assert "answer_with_caveat" in result.tool_strategy.first_actions
+    assert result.evidence_policy.needs_internal_knowledge is True
 
 
 def test_creation_routes_to_direct_answer() -> None:
@@ -20,7 +19,7 @@ def test_creation_routes_to_direct_answer() -> None:
 
     assert result.task_category == "creation"
     assert result.answer_shape == "direct_answer"
-    assert result.tool_strategy.first_actions == ["direct_answer"]
+    assert result.evidence_policy.can_answer_from_general_knowledge is True
 
 
 def test_external_research_requires_source_strategy() -> None:
@@ -29,7 +28,7 @@ def test_external_research_requires_source_strategy() -> None:
     assert result.task_category == "external_research"
     assert result.evidence_policy.needs_external_web is True
     assert result.risk_policy.requires_citation is True
-    assert "external_research" in result.tool_strategy.first_actions
+    assert result.tool_strategy.suggested_queries
 
 
 def test_internal_knowledge_routes_to_internal_retrieval() -> None:
@@ -37,8 +36,7 @@ def test_internal_knowledge_routes_to_internal_retrieval() -> None:
 
     assert result.task_category == "internal_knowledge"
     assert result.evidence_policy.needs_internal_knowledge is True
-    assert "internal_retrieval" in result.tool_strategy.first_actions
-    assert "same_meaning_retrieval" in result.tool_strategy.avoid_actions
+    assert result.tool_strategy.suggested_queries
 
 
 @pytest.mark.asyncio
@@ -49,7 +47,6 @@ async def test_internal_knowledge_injection_contains_stop_condition() -> None:
         owner_id=1,
         profile_key="deepseek-v4-flash",
         policy=policy,
-        match_experience_fn=_fake_match_experience,
     )
     result = _rule_classify("公司内部流程怎么查")
 
@@ -57,14 +54,14 @@ async def test_internal_knowledge_injection_contains_stop_condition() -> None:
 
     assert "停止条件" in injection
     assert "已有与请求相关的证据结果" in injection
-    assert "不要用同义查询重复检索同一证据源" in injection
+    assert "没有足够证据时不要断言" in injection
 
 
 def test_too_vague_request_is_clarification_shape() -> None:
     result = _rule_classify("帮我弄一下")
 
     assert result.answer_shape == "clarification"
-    assert result.tool_strategy.first_actions == ["clarify"]
+    assert result.evidence_policy.should_ask_clarification is True
 
 
 @pytest.mark.asyncio
@@ -85,7 +82,6 @@ async def test_rules_mode_does_not_call_llm() -> None:
         profile_key="deepseek-v4-flash",
         policy=policy,
         chat_fn=fake_chat,
-        match_experience_fn=_fake_match_experience,
     )
 
     result = await runner.run("某个系统里哪个页面可以看到数据？")
@@ -94,31 +90,7 @@ async def test_rules_mode_does_not_call_llm() -> None:
     assert calls == 0
 
 
-@pytest.mark.asyncio
-async def test_runner_matches_experience_from_rule_queries() -> None:
-    policy = RuntimePolicy.default()
-    runner = IntentPreflightRunner(
-        conversation_id=1,
-        owner_id=1,
-        profile_key="deepseek-v4-flash",
-        policy=policy,
-        match_experience_fn=_fake_match_experience,
-    )
-    result = _rule_classify("某系统哪里看某功能？")
-
-    matched = await runner._match_experiences("某系统哪里看某功能？", result)
-
-    assert matched
-    assert matched[0]["trigger_condition"] == "确认系统功能入口"
-
-
 def test_parse_json_object_strips_markdown_fence() -> None:
     parsed = _parse_json_object('```json\n{"task_category":"creation"}\n```')
 
     assert parsed["task_category"] == "creation"
-
-
-async def _fake_match_experience(query: str, limit: int, caller: str) -> list[dict]:
-    if "系统" in query and ("功能" in query or "入口" in query or "页面" in query):
-        return [{"id": 7, "trigger_condition": "确认系统功能入口", "steps": "[]"}]
-    return []

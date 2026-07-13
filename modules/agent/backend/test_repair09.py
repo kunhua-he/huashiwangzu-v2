@@ -7,6 +7,7 @@ import json
 
 import pytest
 from app.database import AsyncSessionLocal
+from app.schemas.platform_resource import ResourceRef
 from sqlalchemy import text as sa_text
 
 from modules.agent.backend.engine.budget_allocator import (
@@ -14,7 +15,13 @@ from modules.agent.backend.engine.budget_allocator import (
     get_effective_context_budget,
 )
 from modules.agent.backend.engine.compressor import _find_tool_pairs
-from modules.agent.backend.engine.workflow_recipe_service import _text_intent_similarity
+from modules.agent.backend.runtime.action_plan import (
+    ActionObservation,
+    ActionPlan,
+    ActionPlanCheckpoint,
+    ActionPlanItem,
+    ActionState,
+)
 from modules.agent.backend.runtime.task_sink import RuntimeTaskSink
 from modules.agent.backend.services.profile_evolve import _make_fingerprint
 
@@ -182,19 +189,6 @@ async def test_session_rollback_after_error():
         await db.rollback()
 
 
-# ── Test 5: Two different-phrasing text inputs → high similarity ─────────
-
-def test_text_intent_similarity_matches_same_intent():
-    """P1-1: _text_intent_similarity() matches same intent in different words."""
-    score = _text_intent_similarity("Create an Excel file with sales data",
-                                     "Generate a xlsx spreadsheet for sales")
-    assert score >= 0.2, f"Similar intent should score >=0.2, got {score}"
-
-    score2 = _text_intent_similarity("What is the weather today",
-                                     "Delete all files")
-    assert score2 < 0.3, f"Different intents should score <0.3, got {score2}"
-
-
 # ── Test 6: Failed tool result → not eligible for workflow mining ────────
 
 @pytest.mark.asyncio
@@ -285,106 +279,59 @@ def test_find_tool_pairs_by_tool_call_id():
             )
 
 
-# ── Test 9: Completion evidence four cases ───────────────────────────────
+# ── Test 9: Completion evidence uses the structured action contract ─────
 
 @pytest.mark.asyncio
 async def test_completion_evidence_cases():
-    """P1-5: Four evidence scenarios produce correct results."""
+    """P1-5: evidence comes from observations, never tool-name inference."""
     sink = RuntimeTaskSink(conversation_id=0, owner_id=0)
-
-    # Case 1: Write success, no read → read_back_verified=False
-    ev1 = [
-        {"type": "tool_call", "name": "desktop-tools__create_file",
-         "tool_call_id": "c1", "arguments": {"file_name": "test.txt"}},
-    ]
-    tr1 = [
-        {"type": "tool_result", "tool_call_id": "c1",
-         "result": {"success": True, "data": {"file_id": 100}}},
-    ]
-    evidence1 = await sink.generate_completion_evidence(ev1, tr1)
-    write_ev = [e for e in evidence1 if e.get("tool_name", "").endswith("create_file")]
-    assert len(write_ev) == 1
-    assert write_ev[0]["tool_reported_success"] is True
-    assert write_ev[0]["read_back_verified"] is False
-
-    # Case 2: Write + read that fails → read_back_verified=False
-    ev2 = [
-        {"type": "tool_call", "name": "desktop-tools__update_file",
-         "tool_call_id": "c2", "arguments": {"file_id": 100}},
-        {"type": "tool_call", "name": "desktop-tools__get_file_detail",
-         "tool_call_id": "c3", "arguments": {"file_id": 100}},
-    ]
-    tr2 = [
-        {"type": "tool_result", "tool_call_id": "c2",
-         "result": {"success": True, "data": {"file_id": 100}}},
-        {"type": "tool_result", "tool_call_id": "c3",
-         "result": {"success": False, "error": "permission denied"}},
-    ]
-    evidence2 = await sink.generate_completion_evidence(ev2, tr2)
-    update_failed = [e for e in evidence2 if "update_file" in e.get("tool_name", "")]
-    assert len(update_failed) == 1
-    assert update_failed[0]["read_back_verified"] is False
-
-    # Case 3: Write + read succeeds and content matches → read_back_verified=True
-    ev3 = [
-        {"type": "tool_call", "name": "desktop-tools__update_file",
-         "tool_call_id": "c4", "arguments": {"file_id": 101, "content": "updated"}},
-        {"type": "tool_call", "name": "desktop-tools__get_file_detail",
-         "tool_call_id": "c5", "arguments": {"file_id": 101}},
-    ]
-    tr3 = [
-        {"type": "tool_result", "tool_call_id": "c4",
-         "result": {"success": True, "data": {"file_id": 101}}},
-        {"type": "tool_result", "tool_call_id": "c5",
-         "result": {"success": True, "data": {"file_id": 101, "content": "updated"}}},
-    ]
-    evidence3 = await sink.generate_completion_evidence(ev3, tr3)
-    update_items = [e for e in evidence3 if "update_file" in e.get("tool_name", "")]
-    assert len(update_items) == 1
-    assert update_items[0]["read_back_verified"] is True
-
-    # Same artifact but mismatched content is not verified.
-    tr3[1]["result"]["data"]["content"] = "old"
-    mismatch = await sink.generate_completion_evidence(ev3, tr3)
-    mismatch_items = [e for e in mismatch if "update_file" in e.get("tool_name", "")]
-    assert len(mismatch_items) == 1
-    assert mismatch_items[0]["read_back_verified"] is False
-
-    # Case 4: Write-only (no read tool at all) → read_back_verified=False
-    ev4 = [
-        {"type": "tool_call", "name": "desktop-tools__generate_report",
-         "tool_call_id": "c6", "arguments": {"title": "report"}},
-    ]
-    tr4 = [
-        {"type": "tool_result", "tool_call_id": "c6",
-         "result": {"success": True, "data": {"file_id": 102}}},
-    ]
-    evidence4 = await sink.generate_completion_evidence(ev4, tr4)
-    for item in evidence4:
-        assert item["read_back_verified"] is False, (
-            f"Write-only should not be verified: {item}"
-        )
-    # Case 5: Live runtime shape may have no tool_call_id; ordered fallback
-    # must still correlate calls/results instead of returning empty evidence.
-    runtime_shape = [
-        {"type": "tool_call", "name": "desktop-tools__update_file",
-         "arguments": {"file_id": 103, "content": "new"}},
-        {"type": "tool_result", "name": "desktop-tools__update_file",
-         "result": {"success": True, "data": {"file_id": 103}}},
-        {"type": "tool_call", "name": "desktop-tools__read_file",
-         "arguments": {"file_id": 103}},
-        {"type": "tool_result", "name": "desktop-tools__read_file",
-         "result": {"success": True, "data": {"file_id": 103, "content": "old"}}},
-    ]
-    runtime_evidence = await sink.generate_completion_evidence(
-        runtime_shape,
-        [e for e in runtime_shape if e["type"] == "tool_result"],
+    plan = ActionPlan(
+        goal="Create a report",
+        catalog_hash="catalog-hash-1234567890",
+        principal_version="principal-version-1",
+        actions=[ActionPlanItem(
+            id="create",
+            capability_id=1,
+            capability="desktop-tools__generate_report",
+            arguments={"title": "report"},
+            completion_check="A file reference is returned",
+            expected_references=["file"],
+        )],
+        final_completion_check="The requested report exists",
     )
-    runtime_items = [e for e in runtime_evidence if "update_file" in e.get("tool_name", "")]
-    assert len(runtime_items) == 1
-    assert runtime_items[0]["artifact_ids"] == ["103"]
-    assert runtime_items[0]["tool_reported_success"] is True
-    assert runtime_items[0]["read_back_verified"] is False
+    checkpoint = ActionPlanCheckpoint(
+        plan=plan,
+        observations={
+            "create": ActionObservation(
+                action_id="create",
+                state=ActionState.COMPLETED,
+                references=[ResourceRef(type="file", id=102)],
+            ),
+        },
+    )
+
+    evidence = await sink.generate_completion_evidence(checkpoint)
+
+    assert evidence == [{
+        "action_id": "create",
+        "capability_id": 1,
+        "capability": "desktop-tools__generate_report",
+        "state": "completed",
+        "completion_check": "A file reference is returned",
+        "contract_verified": True,
+        "resource_refs": [{
+            "id": 102,
+            "type": "file",
+            "label": "",
+            "version": None,
+            "locator": "",
+            "mime_type": "",
+            "display_name": "",
+            "access_scope": "user",
+            "provenance": {},
+        }],
+        "error_class": "",
+    }]
 
 
 # ── Test 10: Profile signal fingerprint dedup ────────────────────────────
@@ -400,19 +347,6 @@ async def test_profile_signal_fingerprint_dedup():
 
     assert fp1 == fp2, "Same inputs must produce same fingerprint"
     assert fp1 != fp3, "Different message IDs must produce different fingerprint"
-
-
-# ── Test 11: Text intent similarity works cross-phrasing ─────────────────
-
-def test_text_intent_similarity():
-    """P1-1: _text_intent_similarity() matches same intent in different words."""
-    from modules.agent.backend.engine.workflow_recipe_service import _text_intent_similarity
-
-    score1 = _text_intent_similarity("Create an Excel file", "Generate a xlsx spreadsheet")
-    assert score1 >= 0.2, f"Similar intent should score >=0.2, got {score1}"
-
-    score2 = _text_intent_similarity("What is the weather today", "Delete all files")
-    assert score2 < 0.3, f"Different intents should score <0.3, got {score2}"
 
 
 # ── Test 12: get_effective_context_budget returns 48k when null ──────────

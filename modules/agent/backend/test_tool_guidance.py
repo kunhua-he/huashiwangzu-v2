@@ -35,17 +35,6 @@ assert spec and spec.loader
 tgs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tgs)
 
-# ── Load tool discovery service via importlib ──
-
-TOOL_DISCOVERY_PATH = REPO_DIR / "modules/agent/backend/services/tool_discovery.py"
-td_spec = importlib.util.spec_from_file_location(
-    "modules.agent.backend.services.tool_discovery", TOOL_DISCOVERY_PATH
-)
-assert td_spec and td_spec.loader
-tool_discovery = importlib.util.module_from_spec(td_spec)
-td_spec.loader.exec_module(tool_discovery)
-
-
 # ── Load browser-tools handlers via importlib ──
 
 BROWSER_PATH = REPO_DIR / "modules/browser-tools/backend/handlers/browser.py"
@@ -233,9 +222,9 @@ async def test_render_empty_for_unmatched(monkeypatch):
 # ── Test 5: Active version uniqueness (DB index) ───────────────────
 
 
-def test_default_meta_tool_guides_seeded():
+def test_default_guides_do_not_seed_removed_meta_tools():
     tool_names = {item["tool_name"] for item in tgs.DEFAULT_TOOL_GUIDES}
-    assert {"skill_list", "skill_describe", "skill_use"}.issubset(tool_names)
+    assert not {"skill_list", "skill_describe", "skill_use"} & tool_names
     for item in tgs.DEFAULT_TOOL_GUIDES:
         assert item["scope"] == "global"
         assert item["agent_code"] == "default"
@@ -279,126 +268,6 @@ async def test_render_appends_global_and_user_guidance(monkeypatch):
     assert "GLOBAL SAFETY CONTRACT" in guidance
     assert "USER PUBLISH PREFERENCE" in guidance
     assert guidance.index("GLOBAL SAFETY CONTRACT") < guidance.index("USER PUBLISH PREFERENCE")
-
-
-@pytest.mark.asyncio
-async def test_skill_list_returns_display_name(monkeypatch):
-    monkeypatch.setattr(
-        tool_discovery,
-        "list_capabilities",
-        lambda role=None: [{
-            "module": "media-asr",
-            "action": "transcribe_video",
-            "description": "Transcribe video",
-            "brief": "视频转文字",
-            "parameters": {},
-            "min_role": "editor",
-        }],
-    )
-
-    result = await tool_discovery.handle_skill_list({}, "editor")
-
-    assert result["skills"] == [{
-        "display_name": "视频转文字",
-        "name": "media-asr__transcribe_video",
-        "brief": "视频转文字",
-    }]
-
-
-@pytest.mark.asyncio
-async def test_skill_describe_returns_display_name(monkeypatch):
-    monkeypatch.setattr(
-        tool_discovery,
-        "list_capabilities",
-        lambda role=None: [{
-            "module": "terminal-tools",
-            "action": "publish",
-            "description": "Publish file",
-            "parameters": {},
-            "min_role": "viewer",
-        }],
-    )
-
-    class FakeSession:
-        async def __aenter__(self):
-            return object()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeSessionLocal:
-        def __call__(self):
-            return FakeSession()
-
-    from app import database as app_database
-
-    from modules.agent.backend.services import tool_guidance_service
-
-    async def fake_render(*args, **kwargs):
-        return "PUBLISH GUIDANCE"
-
-    monkeypatch.setattr(app_database, "AsyncSessionLocal", FakeSessionLocal())
-    monkeypatch.setattr(tool_guidance_service, "render_tool_guidance", fake_render)
-
-    result = await tool_discovery.handle_skill_describe(
-        {"name": "terminal-tools__publish"},
-        "viewer",
-        owner_id=4,
-        agent_code="erp_chat",
-    )
-    assert result["name"] == "terminal-tools__publish"
-    assert result["display_name"] == "Publish file"
-    assert result["tool_guidance"] == "PUBLISH GUIDANCE"
-
-
-@pytest.mark.asyncio
-async def test_skill_use_accepts_top_level_and_json_args(monkeypatch):
-    calls = []
-
-    async def fake_call_capability(module, action, args, *, caller, caller_role):
-        calls.append({
-            "module": module,
-            "action": action,
-            "args": args,
-            "caller": caller,
-            "caller_role": caller_role,
-        })
-        return {"success": True, "data": {"results": []}}
-
-    async def fake_record_skill_invocation(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(tool_discovery, "call_capability", fake_call_capability)
-    monkeypatch.setattr(tool_discovery, "record_skill_invocation", fake_record_skill_invocation)
-
-    cases = [
-        (
-            {"name": "knowledge__search", "query": "产品手册", "top_k": 3},
-            {"query": "产品手册", "top_k": 3},
-        ),
-        (
-            {"name": "knowledge__search", "args": "{}", "query": "产品手册", "top_k": 3},
-            {"query": "产品手册", "top_k": 3},
-        ),
-        (
-            {"name": "knowledge__search", "args": '{"q":"产品手册"}', "top_k": 3},
-            {"q": "产品手册", "top_k": 3},
-        ),
-        (
-            {"name": "knowledge__search", "args": {"query": "产品手册"}, "top_k": 3},
-            {"query": "产品手册", "top_k": 3},
-        ),
-    ]
-
-    for params, expected_args in cases:
-        await tool_discovery.handle_skill_use(params, caller="user:5", caller_role="viewer")
-        assert calls[-1] == {
-            "module": "knowledge",
-            "action": "search",
-            "args": expected_args,
-            "caller": "user:5",
-            "caller_role": "viewer",
-        }
 
 
 # ── Test 6: browser-tools URL allow/deny boundaries ────────────────

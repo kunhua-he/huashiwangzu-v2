@@ -13,7 +13,6 @@ AGENT_TASK_TYPES = [
     "memory_dream",
     "memory_distill",
     "agent_execute_slow_tool",
-    "workflow_mine",
     "agent_context_compact",
 ]
 
@@ -37,7 +36,6 @@ def test_register_agent_tasks_keeps_profile_evolve_registered() -> None:
             "memory_dream": reloaded_tasks._handle_memory_dream,
             "memory_distill": reloaded_tasks._handle_memory_distill,
             "agent_execute_slow_tool": reloaded_tasks._handle_slow_tool,
-            "workflow_mine": reloaded_tasks._handle_workflow_mine,
             "agent_context_compact": reloaded_tasks._handle_context_compact,
         }
         for task_type, handler in expected_handlers.items():

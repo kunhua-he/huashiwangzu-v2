@@ -13,6 +13,17 @@ from ..init_db import run_init
 from ..services import workflow_seed_service as seed_svc
 from ..services import workflow_service as svc
 
+_READ_WORKFLOW_ACTIONS = {
+    "get_workflow_status",
+    "list_workflows",
+    "get_workflow_governance_summary",
+    "list_workflow_steps",
+    "list_workflow_artifacts",
+    "get_multi_agent_summary",
+}
+_READ_CONTRACT = {"side_effect_level": "none", "parallel_safe": True}
+_WRITE_CONTRACT = {"side_effect_level": "workspace_write", "idempotency": "supported"}
+
 
 async def _caller_context(db: AsyncSession, caller: str) -> tuple[int, bool]:
     caller_id = resolve_caller_user_id(caller)
@@ -486,4 +497,7 @@ for _module, _action, _handler, _description, _brief, _parameters, _min_role in 
         brief=_brief,
         parameters=_parameters or {"run_id": {"type": "integer", "description": "workflow run id"}},
         min_role=_min_role,
+        execution_contract=(
+            _READ_CONTRACT if _action in _READ_WORKFLOW_ACTIONS else _WRITE_CONTRACT
+        ),
     )

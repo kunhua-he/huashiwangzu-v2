@@ -24,12 +24,7 @@ _EXTERNAL_TOOL_PREFIXES = (
 
 
 def effective_tool_name(tool: dict) -> str:
-    name = str(tool.get("name") or "")
-    args = tool.get("args") or tool.get("arguments") or {}
-    if name != "skill_use" or not isinstance(args, dict):
-        return name
-    target = args.get("name")
-    return str(target or name)
+    return str(tool.get("name") or "")
 
 
 def _explicit_error_class(result: dict) -> str | None:

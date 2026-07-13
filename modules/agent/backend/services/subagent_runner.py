@@ -1,82 +1,23 @@
-"""子 Agent 单任务执行器（从 _cap_spawn_subagent 提取）。
-
-职责单一：
-1. 接收一个 task 描述，构造 system prompt
-2. 工具过滤 + 读写守卫
-3. 运行 tool loop（可重入、可重试）
-4. 返回 task_result dict
-"""
+"""Subagent adapter for the canonical structured action runtime."""
 from __future__ import annotations
 
 import json
 import logging
 
 from app.database import AsyncSessionLocal
-from app.gateway.router import gateway_router
 
 from ..prompt_seeds import SUBAGENT_SYSTEM_KEY
-from ..services import tool_discovery
+from ..runtime.action_plan import ActionObservation, ActionPlanCheckpoint, ActionPlanItem, ActionState
+from ..runtime.action_planner import ActionPlanner
+from ..runtime.action_runtime import ActionRuntimeStatus, StructuredActionRuntime
+from ..runtime.tool_failure_normalizer import normalize_tool_result_for_model
+from ..services.capability_catalog import retrieve_capabilities
+from ..services.capability_execution import parse_capability_name
 from ..services.runtime_prompt_provider import render_system_prompt
-from .model_client import final_clean_content, parse_inline_tool_calls
 
 logger = logging.getLogger("v2.agent").getChild("subagent_runner")
 
-READ_ONLY_TOOLS = {"skill_list", "skill_describe"}
-_READ_PREFIXES = ("knowledge__", "memory__recall", "web-tools__", "desktop-tools__")
-
 SUBAGENT_MAX_ROUNDS = 4
-
-
-def _is_read_only_tool(name: str) -> bool:
-    if name in READ_ONLY_TOOLS:
-        return True
-    for prefix in _READ_PREFIXES:
-        if name.startswith(prefix):
-            return True
-    return False
-
-
-def _is_allowed_without_write(name: str, args: dict) -> bool:
-    if name == "skill_use":
-        target_name = str(args.get("name") or "")
-        return _is_read_only_tool(target_name)
-    return _is_read_only_tool(name)
-
-
-def _tool_result_error(result: object) -> str | None:
-    if not isinstance(result, dict):
-        return None
-    if result.get("success") is False:
-        return str(result.get("error") or "success=false")
-    if result.get("error"):
-        return str(result["error"])
-    inner = result.get("data", result)
-    if isinstance(inner, dict):
-        if inner.get("success") is False:
-            return str(inner.get("error") or "success=false")
-        if inner.get("error"):
-            return str(inner["error"])
-    return None
-
-
-def _j(obj) -> str:
-    return json.dumps(obj, ensure_ascii=False, default=str)
-
-
-def _tool_calls_for_history(tool_calls: list[dict]) -> list[dict]:
-    """Normalize tool calls for LLM history."""
-    normalized = []
-    for item in tool_calls:
-        fn = item.get("function", item)
-        args = fn.get("arguments") or {}
-        if not isinstance(args, str):
-            args = _j(args)
-        normalized.append({
-            "id": item.get("id", ""),
-            "type": item.get("type", "function"),
-            "function": {"name": fn.get("name", ""), "arguments": args},
-        })
-    return normalized
 
 
 async def _build_system_prompt(
@@ -85,7 +26,6 @@ async def _build_system_prompt(
     task_write_enabled: bool = False,
     max_rounds: int = SUBAGENT_MAX_ROUNDS,
 ) -> str:
-    """构建子 Agent system prompt。"""
     context_section = f"参考上下文：\n{combined_context[:2000]}\n\n" if combined_context else ""
     write_guard_section = "" if task_write_enabled else "注意：你只能使用读/检索类工具，不能修改或写入数据。\n"
     async with AsyncSessionLocal() as db:
@@ -101,6 +41,42 @@ async def _build_system_prompt(
         )
 
 
+def _tool_names(tools: list | None) -> set[str] | None:
+    if tools is None:
+        return None
+    return {
+        str((item.get("function") or item).get("name") or "")
+        for item in tools
+        if isinstance(item, dict)
+    }
+
+
+def _filter_catalog(
+    catalog: dict,
+    *,
+    task_write_enabled: bool,
+    base_tools: list | None,
+    task_tools_param: list | None,
+) -> dict:
+    allowed = _tool_names(base_tools)
+    if task_tools_param:
+        requested = {str(item) for item in task_tools_param}
+        allowed = requested if allowed is None else allowed & requested
+
+    candidates = []
+    for item in catalog.get("candidates") or []:
+        if not isinstance(item, dict):
+            continue
+        name = f"{item.get('module')}__{item.get('action')}"
+        contract = item.get("execution_contract") or {}
+        if allowed is not None and name not in allowed:
+            continue
+        if not task_write_enabled and str(contract.get("side_effect_level") or "none") != "none":
+            continue
+        candidates.append(item)
+    return {**catalog, "candidates": candidates}
+
+
 async def run_single_task(
     task_desc: str,
     task_context: str = "",
@@ -113,174 +89,143 @@ async def run_single_task(
     caller_role: str = "viewer",
     owner_id: int | None = None,
     retry_prompt: str = "",
+    planner: ActionPlanner | None = None,
 ) -> dict:
-    """执行一个子 Agent 任务，返回 task_result。
+    """Execute one subagent task through the same Planner/Executor as chat."""
+    resolved_owner_id = owner_id
+    if resolved_owner_id is None and caller.startswith("user:"):
+        try:
+            resolved_owner_id = int(caller.split(":", 1)[1])
+        except ValueError:
+            resolved_owner_id = None
+    if resolved_owner_id is None:
+        raise ValueError("owner_id is required for SQL-authorized subagent tools")
 
-    可重入设计：gate 校验失败后，调用方传入 retry_prompt，
-    会在 messages 中追加一条 user 消息要求修正。
-    """
     combined = (
         f"{extra_context}\n\n{task_context}"
         if extra_context and task_context
         else (task_context or extra_context or "")
     )
     system_prompt = await _build_system_prompt(
-        task_desc, combined, task_write_enabled, max_rounds,
+        task_desc,
+        combined,
+        task_write_enabled,
+        max_rounds,
     )
-
-    # 工具过滤
-    filtered = base_tools or tool_discovery.build_tools(caller_role)
-    if task_tools_param:
-        allowed = set(task_tools_param) | READ_ONLY_TOOLS
-        task_tools = [t for t in filtered
-                      if t.get("function", {}).get("name", "") in allowed]
-    else:
-        task_tools = filtered
-
-    # 构造初始 messages（retry_prompt 非空表示这是重试）
-    messages = [{"role": "system", "content": system_prompt}]
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": task_desc},
+    ]
     if retry_prompt:
         messages.append({"role": "user", "content": retry_prompt})
 
-    return await _execute_tool_loop(
-        messages=messages,
-        task_tools=task_tools,
-        max_rounds=max_rounds,
-        task_write_enabled=task_write_enabled,
-        caller=caller,
-        caller_role=caller_role,
-        owner_id=owner_id,
-        task_desc=task_desc,
-    )
-
-
-async def _execute_tool_loop(
-    messages: list[dict],
-    task_tools: list[dict],
-    max_rounds: int,
-    task_write_enabled: bool,
-    caller: str,
-    caller_role: str,
-    owner_id: int | None,
-    task_desc: str,
-) -> dict:
-    """内部工具循环 — 可被 gate 重试复用（传入更多 messages）。"""
-    full_content = ""
-    rounds_used = 0
-    task_error = None
-    tool_error = None
-    tool_call_trace: list[dict] = []
-    tool_result_trace: list[dict] = []
-
-    for _round in range(max_rounds):
-        tool_cfg = (
-            {"messages": messages, "tools": task_tools}
-            if task_tools
-            else {"messages": messages}
+    async def load_catalog() -> dict:
+        snapshot = await retrieve_capabilities(
+            user_id=resolved_owner_id,
+            query=task_desc,
+            limit=8,
         )
-        result = await gateway_router.chat(**tool_cfg)
+        return _filter_catalog(
+            snapshot,
+            task_write_enabled=task_write_enabled,
+            base_tools=base_tools,
+            task_tools_param=task_tools_param,
+        )
 
-        if result.get("error"):
-            task_error = result["error"]
-            break
+    catalog = await load_catalog()
+    tool_calls: list[dict] = []
+    tool_results: list[dict] = []
 
-        content = result.get("content", "")
-        tool_calls = result.get("tool_calls") or []
+    async def execute_action(
+        action: ActionPlanItem,
+        arguments: dict,
+        contract: dict,
+    ) -> object:
+        from app.services.module_registry import call_capability
 
-        if not tool_calls:
-            clean_content, inline_calls = parse_inline_tool_calls(content)
-            if inline_calls:
-                result["content"] = clean_content
-                tool_calls = inline_calls
+        module_key, capability_action = parse_capability_name(action.capability)
+        result = await call_capability(
+            module_key,
+            capability_action,
+            arguments,
+            caller=caller or f"user:{resolved_owner_id}",
+            caller_role=caller_role,
+            trusted_user_role=(caller or f"user:{resolved_owner_id}").startswith("user:"),
+        )
+        normalized, _ = normalize_tool_result_for_model(result, action.capability)
+        return normalized
 
-        if not tool_calls:
-            full_content = content
-            rounds_used = _round + 1
-            break
+    async def on_plan(checkpoint: ActionPlanCheckpoint) -> None:
+        for action in checkpoint.plan.actions:
+            if checkpoint.observations.get(action.id) is not None:
+                continue
+            tool_calls.append({
+                "round": checkpoint.planning_round,
+                "action_id": action.id,
+                "name": action.capability,
+                "arguments": action.arguments,
+            })
 
-        messages.append({
-            "role": "assistant",
-            "content": content,
-            "tool_calls": _tool_calls_for_history(tool_calls),
+    async def on_observation(
+        checkpoint: ActionPlanCheckpoint,
+        action: ActionPlanItem,
+        observation: ActionObservation,
+        result: object | None,
+    ) -> None:
+        if observation.state not in {
+            ActionState.COMPLETED,
+            ActionState.FAILED,
+            ActionState.BLOCKED,
+            ActionState.CANCELLED,
+        }:
+            return
+        tool_results.append({
+            "round": checkpoint.planning_round,
+            "action_id": action.id,
+            "name": action.capability,
+            "result": result if result is not None else observation.model_dump(mode="json"),
+            "state": observation.state.value,
+            "error_class": observation.error_class,
         })
 
-        for tc in tool_calls:
-            fn = tc.get("function", tc)
-            name = fn.get("name", "")
-            try:
-                args = fn.get("arguments") or {}
-                if isinstance(args, str):
-                    args = json.loads(args)
-            except Exception:
-                args = {}
-            tool_call_id = str(tc.get("id", "") or "")
-            tool_call_trace.append({
-                "round": _round + 1,
-                "name": name,
-                "tool_call_id": tool_call_id,
-                "arguments": args,
-            })
+    runtime = StructuredActionRuntime(
+        owner_id=resolved_owner_id,
+        profile_key="deepseek-v4-flash",
+        catalog=catalog,
+        execute_action=execute_action,
+        max_planning_rounds=max_rounds,
+        refresh_catalog=load_catalog,
+        on_plan=on_plan,
+        on_observation=on_observation,
+        planner=planner,
+    )
+    result = await runtime.run(
+        goal=task_desc,
+        messages=messages,
+    )
 
-            if not task_write_enabled and not _is_allowed_without_write(name, args):
-                blocked_name = str(args.get("name") or name) if name == "skill_use" else name
-                tool_result = {
-                    "error": f"工具 '{blocked_name}' 需要写入权限，当前未启用。请在调用时设置 write_enabled=True",
-                }
-            elif name == "skill_list":
-                tool_result = await tool_discovery.handle_skill_list(args, caller_role)
-            elif name == "skill_describe":
-                tool_result = await tool_discovery.handle_skill_describe(
-                    args,
-                    caller_role,
-                    owner_id=owner_id,
-                    agent_code="subagent",
-                )
-            elif name == "skill_use":
-                tool_result = await tool_discovery.handle_skill_use(
-                    args, caller=caller, caller_role=caller_role,
-                )
-            else:
-                from app.services.module_registry import call_capability
-                module_key, action = tool_discovery.parse_tool_name(name)
-                tool_result = await call_capability(
-                    module_key,
-                    action,
-                    args,
-                    caller=caller,
-                    caller_role=caller_role,
-                    trusted_user_role=caller.startswith("user:"),
-                )
-            tool_result_trace.append({
-                "round": _round + 1,
-                "name": name,
-                "tool_call_id": tool_call_id,
-                "result": tool_result,
-            })
-            tool_error = tool_error or _tool_result_error(tool_result)
-
-            messages.append({
-                "role": "tool",
-                "name": name,
-                "content": _j(tool_result),
-                "tool_call_id": tool_call_id,
-            })
-
-    if not full_content:
-        for msg in reversed(messages):
-            if msg["role"] == "assistant":
-                full_content = msg.get("content", "") or ""
-                break
-
-    full_content = final_clean_content(full_content)
-    if not full_content and tool_error and not task_error:
-        task_error = tool_error
-
+    task_error = result.failure_reason or None
+    if result.status == ActionRuntimeStatus.NEED_USER_INPUT:
+        task_error = "need_user_input"
+    conclusion = result.answer.strip()
+    if not conclusion and tool_results:
+        conclusion = _result_conclusion(tool_results)
     return {
         "task": task_desc,
-        "status": "error" if task_error else "completed",
+        "status": (
+            "completed"
+            if result.status in {ActionRuntimeStatus.DIRECT_ANSWER, ActionRuntimeStatus.COMPLETED}
+            else "error"
+        ),
         "error": task_error,
-        "conclusion": full_content or "子 Agent 未生成结论",
-        "rounds_used": rounds_used,
-        "tool_calls": tool_call_trace,
-        "tool_results": tool_result_trace,
+        "conclusion": conclusion or "子 Agent 未生成结论",
+        "rounds_used": result.planning_rounds,
+        "tool_calls": tool_calls,
+        "tool_results": tool_results,
+        "need_user_input": result.need_user_input,
     }
+
+
+def _result_conclusion(tool_results: list[dict]) -> str:
+    latest = tool_results[-1].get("result")
+    return json.dumps(latest, ensure_ascii=False, default=str)[:4000]

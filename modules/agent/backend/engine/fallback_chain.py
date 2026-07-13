@@ -16,12 +16,18 @@ async def chat_with_fallback(
     profile_key: str,
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
+    response_format: dict | None = None,
 ) -> dict:
     _ = conversation_id
+    kwargs = {
+        "messages": messages,
+        "profile_key": profile_key,
+        "tools": tools,
+    }
+    if response_format is not None:
+        kwargs["response_format"] = response_format
     return await gateway_router.chat(
-        messages=messages,
-        profile_key=profile_key,
-        tools=tools,
+        **kwargs,
     )
 
 
@@ -42,11 +48,17 @@ async def chat_stream_with_fallback(
     profile_key: str,
     tools: list[dict] | None = None,
     conversation_id: int | None = None,
+    response_format: dict | None = None,
 ) -> AsyncGenerator[dict, None]:
     _ = conversation_id
+    kwargs = {
+        "messages": messages,
+        "profile_key": profile_key,
+        "tools": tools,
+    }
+    if response_format is not None:
+        kwargs["response_format"] = response_format
     async for event in gateway_router.chat_stream(
-        messages=messages,
-        profile_key=profile_key,
-        tools=tools,
+        **kwargs,
     ):
         yield event

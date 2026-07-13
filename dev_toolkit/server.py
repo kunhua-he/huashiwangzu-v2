@@ -29,6 +29,9 @@ try:
     from dev_toolkit.agent_board_tools import handle_tool as agent_board_handle_tool
     from dev_toolkit.agent_board_tools import handles_tool as agent_board_handles_tool
     from dev_toolkit.agent_board_tools import tool_definitions as agent_board_tool_definitions
+    from dev_toolkit.agent_runtime_tools import handle_tool as agent_runtime_handle_tool
+    from dev_toolkit.agent_runtime_tools import handles_tool as agent_runtime_handles_tool
+    from dev_toolkit.agent_runtime_tools import tool_definitions as agent_runtime_tool_definitions
     from dev_toolkit.asset_lifecycle_tools import handle_tool as asset_lifecycle_handle_tool
     from dev_toolkit.asset_lifecycle_tools import handles_tool as asset_lifecycle_handles_tool
     from dev_toolkit.asset_lifecycle_tools import tool_definitions as asset_lifecycle_tool_definitions
@@ -113,6 +116,9 @@ except ModuleNotFoundError:
     from agent_board_tools import handle_tool as agent_board_handle_tool
     from agent_board_tools import handles_tool as agent_board_handles_tool
     from agent_board_tools import tool_definitions as agent_board_tool_definitions
+    from agent_runtime_tools import handle_tool as agent_runtime_handle_tool
+    from agent_runtime_tools import handles_tool as agent_runtime_handles_tool
+    from agent_runtime_tools import tool_definitions as agent_runtime_tool_definitions
     from asset_lifecycle_tools import handle_tool as asset_lifecycle_handle_tool
     from asset_lifecycle_tools import handles_tool as asset_lifecycle_handles_tool
     from asset_lifecycle_tools import tool_definitions as asset_lifecycle_tool_definitions
@@ -1898,6 +1904,7 @@ async def list_tools() -> list[Tool]:
         *tool_usage_tool_definitions(),
         *user_profile_tool_definitions(),
         *tool_job_tool_definitions(),
+        *agent_runtime_tool_definitions(),
         *agent_board_tool_definitions(),
         *asset_lifecycle_tool_definitions(),
         *opencode_tool_definitions(),
@@ -1953,6 +1960,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await user_profile_handle_tool(REPO_ROOT, USER_PROFILE_PATH, name, arguments)
         elif tool_job_handles_tool(name):
             result = await tool_job_handle_tool(REPO_ROOT, name, arguments)
+        elif agent_runtime_handles_tool(name):
+            result = await agent_runtime_handle_tool(REPO_ROOT, name, arguments)
         elif agent_board_handles_tool(name):
             result = await agent_board_handle_tool(REPO_ROOT, name, arguments)
         elif asset_lifecycle_handles_tool(name):

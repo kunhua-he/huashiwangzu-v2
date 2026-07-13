@@ -26,7 +26,8 @@ ADMIN_SRC = (HANDLERS_DIR / "admin.py").read_text("utf-8")
 ROUTER_SRC = (AGENT_DIR / "router.py").read_text("utf-8")
 CONVERSATION_RUNTIME_SRC = (RUNTIME_DIR / "conversation_runtime.py").read_text("utf-8")
 TOOL_LOOP_RUNTIME_SRC = (RUNTIME_DIR / "tool_loop_runtime.py").read_text("utf-8")
-ORCHESTRATOR_SRC = (ENGINE_DIR / "tool_orchestrator.py").read_text("utf-8")
+ACTION_RUNTIME_SRC = (RUNTIME_DIR / "action_runtime.py").read_text("utf-8")
+ACTION_EXECUTOR_SRC = (RUNTIME_DIR / "action_graph_executor.py").read_text("utf-8")
 WORKFLOW_SRC = (ENGINE_DIR / "workflow_strategy.py").read_text("utf-8")
 THREE_LAYER_MEMORY_SRC = (ENGINE_DIR / "context_injectors" / "three_layer_memory.py").read_text("utf-8")
 WORKFLOW_INJECTOR_SRC = (ENGINE_DIR / "context_injectors" / "workflow.py").read_text("utf-8")
@@ -52,11 +53,14 @@ class TestChatToolMemoryChain:
     def test_conversation_runtime_calls_assemble_context(self):
         assert "assemble_context" in CONVERSATION_RUNTIME_SRC
 
-    def test_conversation_runtime_invokes_tool_discovery(self):
-        assert "tool_discovery.build_tools" in CONVERSATION_RUNTIME_SRC
+    def test_conversation_runtime_uses_authorized_capability_catalog(self):
+        assert "retrieve_capabilities" in CONVERSATION_RUNTIME_SRC
+        assert "direct_function_tools" not in CONVERSATION_RUNTIME_SRC
+        assert "tool_discovery.build_tools" not in CONVERSATION_RUNTIME_SRC
 
-    def test_tool_loop_uses_orchestrator(self):
-        assert "get_orchestrator()" in TOOL_LOOP_RUNTIME_SRC
+    def test_tool_loop_uses_canonical_structured_runtime(self):
+        assert "StructuredActionRuntime" in TOOL_LOOP_RUNTIME_SRC
+        assert "ActionGraphExecutor" in ACTION_RUNTIME_SRC
 
     def test_conversation_runtime_persists_events(self):
         assert "record_event" in CONVERSATION_RUNTIME_SRC
@@ -81,30 +85,28 @@ class TestChatToolMemoryChain:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestToolOrchestratorChain:
-    """Verify tool orchestrator classifies and dispatches tools correctly."""
+class TestActionGraphExecutorChain:
+    """Verify the one contract-driven action executor."""
 
-    def test_orchestrator_has_explicit_metadata(self):
-        assert "_EXPLICIT_METADATA" in ORCHESTRATOR_SRC
+    def test_executor_validates_actions(self):
+        assert "ActionPlanValidator" in ACTION_EXECUTOR_SRC
 
-    def test_orchestrator_read_tools_are_read_only(self):
-        for entry in ["read_only=True", "concurrency_safe=True"]:
-            assert entry in ORCHESTRATOR_SRC
+    def test_executor_parallelizes_only_declared_read_actions(self):
+        assert 'contract.get("parallel_safe") is True' in ACTION_EXECUTOR_SRC
+        assert 'contract.get("side_effect_level") or "none"' in ACTION_EXECUTOR_SRC
 
-    def test_orchestrator_write_tools_require_serial(self):
-        assert "requires_serial=True" in ORCHESTRATOR_SRC
+    def test_executor_enforces_contract_timeout(self):
+        assert "asyncio.wait_for" in ACTION_EXECUTOR_SRC
 
-    def test_orchestrator_has_fallback_for_unknown(self):
-        assert "defaulting to write+serial" in ORCHESTRATOR_SRC
+    def test_executor_records_terminal_failure(self):
+        assert "ActionState.FAILED" in ACTION_EXECUTOR_SRC
 
-    def test_orchestrator_semaphore_protected(self):
-        assert "Semaphore" in ORCHESTRATOR_SRC
+    def test_executor_semaphore_protected(self):
+        assert "Semaphore" in ACTION_EXECUTOR_SRC
 
-    def test_orchestrator_preserves_order(self):
-        assert "preserve original order" in ORCHESTRATOR_SRC.lower() or "results: list[dict | None] = [None] * len(tools)" in ORCHESTRATOR_SRC
-
-    def test_orchestrator_safe_execute(self):
-        assert "except Exception as exc" in ORCHESTRATOR_SRC
+    def test_runtime_replans_instead_of_running_a_second_loop(self):
+        assert "for planning_round in range" in ACTION_RUNTIME_SRC
+        assert "_execute_tool_loop" not in ACTION_RUNTIME_SRC
 
 
 # ═══════════════════════════════════════════════════════════════════════

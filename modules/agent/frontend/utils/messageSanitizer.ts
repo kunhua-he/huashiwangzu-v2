@@ -1,19 +1,8 @@
 import type { DesktopEventWindow, RefItem, SanitizedMessage } from '../types'
+import { uniqueRefs } from './resourceReferences'
 
 function normalizeRefTitle(title: string): string {
   return title.replace(/^\d+[.)、]\s*/, '').trim()
-}
-
-export function uniqueRefs(refs: RefItem[]): RefItem[] {
-  const seen = new Set<string>()
-  const out: RefItem[] = []
-  for (const ref of refs) {
-    const key = ref.url || `${ref.type}:${ref.title || ref.source || ''}`
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    out.push(ref)
-  }
-  return out
 }
 
 export function sanitizeAssistantMessage(text: string): SanitizedMessage {
@@ -30,7 +19,17 @@ export function sanitizeAssistantMessage(text: string): SanitizedMessage {
     while ((match = linkRe.exec(sourceBlock)) !== null) {
       const title = normalizeRefTitle((match[1] || match[4] || match[2] || match[3] || '').replace(/<[^>]+>/g, ''))
       const url = match[2] || match[3]
-      if (title || url) references.push({ type: 'web', title: title || url, source: title || url, excerpt: '', url })
+      if (title || url) {
+        references.push({
+          type: 'url',
+          id: url,
+          display_name: title || url,
+          locator: url,
+          mime_type: 'text/html',
+          access_scope: 'user',
+          provenance: {},
+        })
+      }
     }
     if (references.length) {
       if (htmlSourceMatch?.[0]) {

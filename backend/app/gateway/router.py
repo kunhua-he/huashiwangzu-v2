@@ -194,12 +194,17 @@ async def _call_with_unified_retry(
             raw = None
             with attempt:
                 try:
+                    provider_kwargs = {
+                        "messages": req.messages,
+                        "model": model,
+                        "temperature": req.temperature,
+                        "max_tokens": req.max_tokens,
+                        "tools": req.tools,
+                    }
+                    if req.response_format is not None:
+                        provider_kwargs["response_format"] = req.response_format
                     raw = await provider.chat(
-                        messages=req.messages,
-                        model=model,
-                        temperature=req.temperature,
-                        max_tokens=req.max_tokens,
-                        tools=req.tools,
+                        **provider_kwargs,
                     )
                     duration_ms = (time.monotonic() - start_time) * 1000
                 except Exception as exc:
@@ -369,6 +374,7 @@ class ModelGatewayRouter:
         profile_key: str = DEFAULT_MODEL,
         tools: list[dict] | None = None,
         budget: RetryBudget | None = None,
+        response_format: dict | None = None,
     ) -> dict:
         if messages_contain_image_payload(messages):
             error = (
@@ -426,6 +432,7 @@ class ModelGatewayRouter:
                 "tools": tools,
                 "temperature": profile["temperature"],
                 "max_tokens": profile["max_tokens"],
+                "response_format": response_format,
             })
 
             effective_budget = _retry_budget_from_profile(profile, budget)
@@ -486,6 +493,7 @@ class ModelGatewayRouter:
         messages: list[dict],
         profile_key: str = DEFAULT_MODEL,
         tools: list[dict] | None = None,
+        response_format: dict | None = None,
     ) -> AsyncGenerator[dict, None]:
         if messages_contain_image_payload(messages):
             yield {
@@ -523,13 +531,16 @@ class ModelGatewayRouter:
             emitted_content = False
             try:
                 with _watchdog_usage_context(profile):
-                    async for event in provider.chat_stream(
-                        messages=messages,
-                        model=profile["model"],
-                        temperature=profile["temperature"],
-                        max_tokens=profile["max_tokens"],
-                        tools=tools,
-                    ):
+                    provider_kwargs = {
+                        "messages": messages,
+                        "model": profile["model"],
+                        "temperature": profile["temperature"],
+                        "max_tokens": profile["max_tokens"],
+                        "tools": tools,
+                    }
+                    if response_format is not None:
+                        provider_kwargs["response_format"] = response_format
+                    async for event in provider.chat_stream(**provider_kwargs):
                         if event.get("type") == "error":
                             last_error = str(event.get("content") or "")
                             if is_protocol_error_text(last_error) or emitted_content:

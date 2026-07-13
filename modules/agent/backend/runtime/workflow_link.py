@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from uuid import uuid4
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .._utils import artifact_refs_from_value
 from ..services import workflow_service as workflow_svc
 from ..services.action_policy import _sanitize_tool_arg_value, classify_side_effect_level
-from ..services.tool_discovery import parse_tool_name
+from ..services.capability_execution import parse_capability_name
 
 
 def _truncate(value: str, limit: int = 240) -> str:
@@ -44,20 +45,14 @@ def _tool_args(tool: dict) -> dict:
 
 
 def _effective_tool_name(tool: dict) -> str:
-    name = str(tool.get("name") or "")
-    args = _tool_args(tool)
-    if name == "skill_use":
-        inner = str(args.get("name") or "").strip()
-        if inner:
-            return inner
-    return name
+    return str(tool.get("name") or "")
 
 
 def _target_for_tool(tool_name: str) -> tuple[str | None, str | None]:
     if "__" not in tool_name:
         return None, None
     try:
-        return parse_tool_name(tool_name)
+        return parse_capability_name(tool_name)
     except Exception:
         module_key, action = tool_name.split("__", 1)
         return module_key, action
@@ -123,10 +118,13 @@ def should_open_workflow_from_preflight(preflight: dict | None) -> bool:
     category = str(preflight.get("task_category") or "")
     if category in {"smalltalk", "creation"}:
         return False
-    first_actions = list((preflight.get("tool_strategy") or {}).get("first_actions") or [])
-    if first_actions == ["clarify"]:
+    if str(preflight.get("answer_shape") or "") == "clarification":
         return False
-    return any(action not in {"direct_answer", "answer_with_caveat", "clarify"} for action in first_actions)
+    evidence = preflight.get("evidence_policy") or {}
+    return any(
+        bool(evidence.get(key))
+        for key in ("needs_internal_knowledge", "needs_external_web", "needs_file_context")
+    )
 
 
 @dataclass
@@ -234,8 +232,48 @@ class WorkflowRuntimeLink:
             return self.llm_to_ledger_call[llm_tool_call_id]
         tool_name = _effective_tool_name(tool)
         target_module, action = _target_for_tool(tool_name)
-        side_effect_level = classify_side_effect_level(tool_name)
-        approval_policy = "requires_confirmation" if side_effect_level in {"outbound", "admin_config"} else "auto"
+        raw_contract = tool.get("execution_contract")
+        structured_contract = isinstance(raw_contract, dict)
+        contract = raw_contract if structured_contract else {}
+        if structured_contract:
+            contract_declared = contract.get("contract_declared") is True
+            risk_declared = contract.get("risk_declared") is True
+            risk_declared = contract_declared and risk_declared
+            if risk_declared:
+                side_effect_level = str(contract.get("side_effect_level") or "unknown")
+                approval_policy = str(contract.get("approval_policy") or "block")
+            else:
+                side_effect_level = "unknown"
+                approval_policy = "block"
+            idempotency_policy = str(contract.get("idempotency") or "none")
+        else:
+            # Historical callers without a structured catalog snapshot retain
+            # the old display/ledger classification only at this adapter.
+            side_effect_level = classify_side_effect_level(tool_name)
+            approval_policy = (
+                "requires_confirmation"
+                if side_effect_level in {"outbound", "admin_config"}
+                else "auto"
+            )
+            idempotency_policy = None
+            contract_declared = False
+            risk_declared = False
+        arguments = _tool_args(tool)
+        idempotency_key = None
+        if idempotency_policy in {"required", "supported"}:
+            stable_payload = json.dumps(
+                {
+                    "agent_run_id": self.agent_run_id,
+                    "tool_call_id": llm_tool_call_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+                separators=(",", ":"),
+            )
+            idempotency_key = f"agent-action-{hashlib.sha256(stable_payload.encode()).hexdigest()}"
         call = await workflow_svc.record_tool_call(
             db,
             run_id=self.run_id,
@@ -243,16 +281,25 @@ class WorkflowRuntimeLink:
             tool_name=tool_name,
             target_module=target_module,
             action=action,
-            arguments=_tool_args(tool),
+            arguments=arguments,
             caller=f"user:{self.owner_id}" if self.owner_id else "system:agent",
             side_effect_level=side_effect_level,
             approval_policy=approval_policy,
             status="running",
+            idempotency_key=idempotency_key,
+            idempotency_policy=idempotency_policy,
             agent_run_id=self.agent_run_id,
             extra_meta={
                 "conversation_id": self.conversation_id,
                 "llm_tool_call_id": llm_tool_call_id,
                 "raw_tool_name": tool.get("name"),
+                "execution_contract": {
+                    "contract_declared": contract_declared,
+                    "risk_declared": risk_declared,
+                    "side_effect_level": side_effect_level,
+                    "approval_policy": approval_policy,
+                    "idempotency": idempotency_policy or "legacy",
+                },
             },
         )
         if llm_tool_call_id:

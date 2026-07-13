@@ -6,7 +6,6 @@ Registered by bootstrap.register_agent_tasks():
   - memory_distill: _handle_memory_distill
   - knowledge_retrieval_reflect: _handle_knowledge_retrieval_reflect
   - agent_execute_slow_tool: _handle_slow_tool
-  - workflow_mine: _handle_workflow_mine
   - agent_context_compact: _handle_context_compact
 """
 
@@ -18,7 +17,10 @@ import time
 
 from app.services.module_registry import call_capability, call_capability_as_system
 
-from ..services import tool_discovery
+from ..services.capability_execution import (
+    parse_capability_name,
+    record_capability_invocation,
+)
 
 logger = logging.getLogger("v2.agent").getChild("handlers.tasks")
 
@@ -224,39 +226,19 @@ async def _handle_slow_tool(params: dict) -> dict:
     usage_skill_name = tool_name
     started = time.perf_counter()
     try:
-        if tool_name.startswith("skill_use__"):
-            inner_name = skill_args.get("name", "")
-            usage_skill_name = inner_name or tool_name
-            inner_args = skill_args.get("args", {})
-            if isinstance(inner_args, str):
-                import json as _j2
-                try:
-                    inner_args = _j2.loads(inner_args) if inner_args.strip() else {}
-                except Exception:
-                    inner_args = {}
-            if not isinstance(inner_args, dict):
-                inner_args = {}
-            tool_result = await call_capability(
-                *tool_discovery.parse_tool_name(inner_name),
-                inner_args,
-                caller=caller,
-                caller_role=caller_role,
-                trusted_user_role=caller.startswith("user:"),
-            )
-        else:
-            tool_result = await call_capability(
-                *tool_discovery.parse_tool_name(tool_name),
-                skill_args,
-                caller=caller,
-                caller_role=caller_role,
-                trusted_user_role=caller.startswith("user:"),
-            )
+        tool_result = await call_capability(
+            *parse_capability_name(tool_name),
+            skill_args,
+            caller=caller,
+            caller_role=caller_role,
+            trusted_user_role=caller.startswith("user:"),
+        )
     except Exception as exc:
         tool_result = {"error": str(exc)}
     if isinstance(tool_result, dict) and tool_result.get("error"):
         failed_error = str(tool_result["error"])
     if usage_skill_name:
-        await tool_discovery.record_skill_invocation(
+        await record_capability_invocation(
             usage_skill_name,
             success=not bool(failed_error),
             duration_ms=(time.perf_counter() - started) * 1000,
@@ -416,31 +398,6 @@ async def _handle_slow_tool(params: dict) -> dict:
         except Exception as persist_exc:
             logger.error("Failed to persist slow tool result: %s", persist_exc)
             return {"success": False, "status": "failed", "error": str(persist_exc)}
-
-
-# ── Workflow mining ──
-
-async def _handle_workflow_mine(params: dict) -> dict:
-    """Handle workflow_mine task from SystemTaskQueue."""
-    owner_id = params.get("owner_id")
-    if not owner_id:
-        return {"error": "Missing owner_id"}
-    try:
-        from app.database import AsyncSessionLocal
-
-        from ..engine.workflow_recipe_service import run_mining_job
-        async with AsyncSessionLocal() as db:
-            result = await run_mining_job(
-                db,
-                owner_id=owner_id,
-                trajectory_id=params.get("trajectory_id"),
-            )
-            if result.get("mined", 0) > 0:
-                logger.info("Workflow mining: mined %d recipes for owner %s", result["mined"], owner_id)
-            return result
-    except Exception as e:
-        logger.warning("Workflow mining handler failed: %s", e)
-        return {"error": str(e)}
 
 
 # ── Async context compaction ──

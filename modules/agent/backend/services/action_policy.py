@@ -61,6 +61,30 @@ ADMIN_ACTIONS: set[str] = {
     "agent__update_enterprise_prompt",
 }
 
+_NO_APPROVAL_POLICIES = {"none", "auto"}
+_CONFIRMATION_POLICIES = {
+    "confirm",
+    "requires_confirmation",
+    "requires_user",
+    "requires_admin",
+}
+_BLOCK_POLICIES = {"block", "deny"}
+_KNOWN_SIDE_EFFECT_LEVELS = {
+    "none",
+    "readonly",
+    "create",
+    "update",
+    "delete",
+    "write",
+    "workspace_write",
+    "outbound",
+    "admin",
+    "admin_config",
+    "irreversible",
+}
+_APPROVAL_REQUIRED_EFFECTS = {"outbound", "admin", "admin_config", "irreversible"}
+_IDEMPOTENCY_POLICIES = {"required", "supported", "none"}
+
 
 def _match_sensitive(tool_name: str) -> bool:
     """Check if a tool name requires approval.
@@ -178,6 +202,7 @@ async def check_action_allowed(
     workflow_step_id: int | None = None,
     workflow_tool_call_id: int | None = None,
     workflow_resume_target: dict | None = None,
+    execution_contract: dict | None = None,
 ) -> dict:
     """Check whether a tool action is allowed under the agent's policy.
 
@@ -187,6 +212,76 @@ async def check_action_allowed(
         {"allowed": False, "action": "confirm", "approval_id": int,
          "tool_name": str, "tool_args": str} — needs admin approval
     """
+    structured_contract = execution_contract is not None
+    if structured_contract:
+        contract = execution_contract if isinstance(execution_contract, dict) else {}
+        contract_declared = contract.get("contract_declared") is True
+        risk_declared = contract.get("risk_declared") is True
+        side_effect_level = str(contract.get("side_effect_level") or "").strip().lower()
+        approval_policy = str(contract.get("approval_policy") or "").strip().lower()
+        idempotency = str(contract.get("idempotency") or "").strip().lower()
+        if not contract_declared or not risk_declared or not side_effect_level:
+            return {
+                "allowed": False,
+                "action": "block",
+                "reason": "Capability execution contract does not declare side_effect_level.",
+                "error_class": "execution_contract_incomplete",
+            }
+        if side_effect_level not in _KNOWN_SIDE_EFFECT_LEVELS:
+            return {
+                "allowed": False,
+                "action": "block",
+                "reason": "Capability execution contract has an invalid side_effect_level.",
+                "error_class": "execution_contract_invalid",
+            }
+        if idempotency not in _IDEMPOTENCY_POLICIES:
+            return {
+                "allowed": False,
+                "action": "block",
+                "reason": "Capability execution contract has an invalid idempotency policy.",
+                "error_class": "execution_contract_invalid",
+            }
+        known_approval_policies = (
+            _NO_APPROVAL_POLICIES | _CONFIRMATION_POLICIES | _BLOCK_POLICIES
+        )
+        if approval_policy not in known_approval_policies:
+            return {
+                "allowed": False,
+                "action": "block",
+                "reason": "Capability execution contract has an invalid approval_policy.",
+                "error_class": "execution_contract_invalid",
+            }
+        if (
+            side_effect_level in _APPROVAL_REQUIRED_EFFECTS
+            and approval_policy in _NO_APPROVAL_POLICIES
+        ):
+            return {
+                "allowed": False,
+                "action": "block",
+                "reason": (
+                    "Outbound/admin capability contract must require approval or block execution."
+                ),
+                "error_class": "execution_contract_unsafe",
+            }
+        if approval_policy in _BLOCK_POLICIES:
+            return {
+                "allowed": False,
+                "action": "block",
+                "reason": f"Action '{tool_name}' is blocked by its execution contract.",
+                "error_class": "execution_contract_blocked",
+            }
+        is_sensitive = approval_policy in _CONFIRMATION_POLICIES
+    else:
+        # Historical non-structured callers have no contract snapshot. Keep the
+        # old name policy only at this compatibility boundary.
+        side_effect_level = classify_side_effect_level(tool_name)
+        approval_policy = (
+            "requires_confirmation"
+            if _match_sensitive(tool_name) or tool_name in ADMIN_ACTIONS
+            else "none"
+        )
+        is_sensitive = approval_policy in _CONFIRMATION_POLICIES
+
     # System principal hard blocks are reserved for future irreversible tools.
     if user_id == 0 and tool_name in SYSTEM_HARD_BLOCKED_ACTIONS:
         return {
@@ -195,12 +290,13 @@ async def check_action_allowed(
             "reason": f"Action '{tool_name}' is hard blocked for system principal (no user context)",
         }
 
-    # 1. Check if the action requires approval. Local recoverable actions do not.
-    is_sensitive = _match_sensitive(tool_name) or tool_name in ADMIN_ACTIONS
-
-    # 2. If not sensitive, always allow
+    # Local recoverable actions do not require approval.
     if not is_sensitive:
-        return {"allowed": True}
+        return {
+            "allowed": True,
+            "side_effect_level": side_effect_level,
+            "approval_policy": approval_policy,
+        }
 
     # 3. Read the agent's sensitive_action_policy from agent_configs
     from ..models import AgentConfig
@@ -233,9 +329,12 @@ async def check_action_allowed(
                 tool_call_id=workflow_tool_call_id,
                 requested_by=user_id,
                 agent_code=agent_code,
-                reason=f"Sensitive action requires confirmation: {tool_name}",
+                reason=(
+                    f"Execution contract requires confirmation: {tool_name} "
+                    f"({side_effect_level})"
+                ),
                 request_type="tool_call",
-                risk_level="sensitive",
+                risk_level=side_effect_level or "sensitive",
                 decision_scope="single_call",
                 resume_target=workflow_resume_target or {
                     "workflow_run_id": workflow_run_id,
@@ -281,9 +380,17 @@ async def check_action_allowed(
             "tool_args": approval.tool_args,
         }
     else:
-        # Unknown policy → fallback to allow
-        logger.warning("Unknown sensitive_action_policy '%s' for agent '%s', allowing", policy, agent_code)
-        return {"allowed": True}
+        logger.warning(
+            "Unknown sensitive_action_policy '%s' for agent '%s'; blocking safely",
+            policy,
+            agent_code,
+        )
+        return {
+            "allowed": False,
+            "action": "block",
+            "reason": "Unknown agent approval policy; execution blocked safely.",
+            "error_class": "approval_policy_invalid",
+        }
 
 
 async def resolve_approval(

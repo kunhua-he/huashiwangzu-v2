@@ -64,6 +64,7 @@ class OpenAIProvider(BaseProvider):
     def _build_payload(
         self, messages: list[dict], model: str, temperature: float,
         max_tokens: int, stream: bool, tools: list[dict] | None,
+        response_format: dict | None = None,
     ) -> dict:
         normalized_messages, normalized_tools = normalize_openai_payload(messages, tools)
         if self.api_protocol == "responses":
@@ -80,6 +81,17 @@ class OpenAIProvider(BaseProvider):
                 data["instructions"] = instructions
             if normalized_tools:
                 data["tools"] = normalized_tools
+            if response_format:
+                responses_format = dict(response_format)
+                if (
+                    responses_format.get("type") == "json_schema"
+                    and isinstance(responses_format.get("json_schema"), dict)
+                ):
+                    responses_format = {
+                        "type": "json_schema",
+                        **responses_format["json_schema"],
+                    }
+                data["text"] = {"format": responses_format}
             return data
         data = {
             "model": model,
@@ -90,13 +102,18 @@ class OpenAIProvider(BaseProvider):
         }
         if normalized_tools:
             data["tools"] = normalized_tools
+        if response_format:
+            data["response_format"] = response_format
         return data
 
     async def chat(
         self, messages: list[dict], model: str, temperature: float = 0.7,
         max_tokens: int = 4096, tools: list[dict] | None = None,
+        response_format: dict | None = None,
     ) -> dict:
-        payload = self._build_payload(messages, model, temperature, max_tokens, False, tools)
+        payload = self._build_payload(
+            messages, model, temperature, max_tokens, False, tools, response_format,
+        )
         recovery = _auth_recovery_settings(self.auth_recovery)
         timeout = float(self.auth_recovery.get("timeout_seconds") or 120)
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
@@ -159,10 +176,13 @@ class OpenAIProvider(BaseProvider):
     async def chat_stream(
         self, messages: list[dict], model: str, temperature: float = 0.7,
         max_tokens: int = 4096, tools: list[dict] | None = None,
+        response_format: dict | None = None,
     ) -> AsyncGenerator[dict, None]:
         adapter = get_adapter(model)
         accumulator = StreamingToolCallAccumulator()
-        payload = self._build_payload(messages, model, temperature, max_tokens, True, tools)
+        payload = self._build_payload(
+            messages, model, temperature, max_tokens, True, tools, response_format,
+        )
         try:
             async with httpx.AsyncClient(timeout=300, trust_env=False) as client:
                 async with client.stream("POST", self.api_url, json=payload, headers=self._headers(payload, model)) as resp:

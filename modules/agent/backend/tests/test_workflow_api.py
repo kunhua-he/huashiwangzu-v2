@@ -9,7 +9,7 @@ from app.database import AsyncSessionLocal
 from app.main import app
 from app.models.user import User
 from app.services.auth import create_access_token
-from app.services.module_registry import call_capability
+from app.services.module_registry import call_capability, call_capability_for_user
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -212,12 +212,11 @@ async def test_workflow_capability_admin_can_list_all_owners(
     )
     cleanup_runs.extend([first.id, second.id])
 
-    listed = await call_capability(
+    listed = await call_capability_for_user(
         "agent",
         "list_workflows",
         {"limit": 100},
-        caller=f"user:{admin.id}",
-        caller_role="admin",
+        user=admin,
     )
     listed_ids = {item["id"] for item in listed["items"]}
     assert first.id in listed_ids

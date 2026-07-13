@@ -21,6 +21,14 @@ from ..services import tool_guidance_service as tgs
 
 logger = logging.getLogger("v2.agent").getChild("handlers.tool_guidance")
 
+_READ_CONTRACT = {"side_effect_level": "none", "parallel_safe": True}
+_WRITE_CONTRACT = {"side_effect_level": "workspace_write", "idempotency": "supported"}
+_ADMIN_CONTRACT = {
+    "side_effect_level": "admin_config",
+    "approval_policy": "requires_confirmation",
+    "idempotency": "supported",
+}
+
 
 async def _cap_list_tool_guides(params: dict, caller: str) -> dict:
     """List tool guides with optional filters."""
@@ -186,6 +194,7 @@ register_capability(
         "status": {"type": "string", "description": "状态过滤"},
     },
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "get_tool_guide", _cap_get_tool_guide,
@@ -193,6 +202,7 @@ register_capability(
     brief="查看工具指引",
     parameters={"guide_id": {"type": "integer", "description": "指引 ID"}},
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "propose_tool_guide", _cap_propose_tool_guide,
@@ -208,6 +218,7 @@ register_capability(
         "acceptance_policy": {"type": "object", "description": "验收策略"},
     },
     min_role="editor",
+    execution_contract=_WRITE_CONTRACT,
 )
 register_capability(
     "agent", "activate_tool_guide", _cap_activate_tool_guide,
@@ -215,6 +226,7 @@ register_capability(
     brief="激活工具指引",
     parameters={"guide_id": {"type": "integer", "description": "指引或候选 ID"}},
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "disable_tool_guide", _cap_disable_tool_guide,
@@ -222,6 +234,7 @@ register_capability(
     brief="禁用工具指引",
     parameters={"guide_id": {"type": "integer", "description": "指引 ID"}},
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "rollback_tool_guide", _cap_rollback_tool_guide,
@@ -232,6 +245,7 @@ register_capability(
         "version": {"type": "integer", "description": "目标版本号"},
     },
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "render_tool_guidance", _cap_render_tool_guidance,
@@ -243,6 +257,7 @@ register_capability(
         "max_tokens": {"type": "integer", "description": "最大 token 数"},
     },
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "classify_and_degrade", _cap_classify_and_degrade,
@@ -255,4 +270,5 @@ register_capability(
         "user_input": {"type": "string", "description": "用户输入，用于匹配降级 recipe"},
     },
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )

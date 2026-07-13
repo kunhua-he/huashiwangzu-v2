@@ -18,9 +18,23 @@ from app.services.file_reader import resolve_caller_user_id
 from app.services.module_registry import register_capability
 
 from ..services import conversation_service as conv_svc
-from ..services import tool_discovery
 
 logger = logging.getLogger("v2.agent").getChild("handlers.tool")
+
+_READ_CONTRACT = {"side_effect_level": "none", "parallel_safe": True}
+_WRITE_CONTRACT = {"side_effect_level": "workspace_write", "idempotency": "supported"}
+_APPEND_CONTRACT = {"side_effect_level": "workspace_write", "idempotency": "none"}
+_ADMIN_CONTRACT = {
+    "side_effect_level": "admin_config",
+    "approval_policy": "requires_confirmation",
+    "idempotency": "supported",
+}
+_SUBAGENT_CONTRACT = {
+    "side_effect_level": "workspace_write",
+    "resource_class": "long",
+    "timeout_seconds": 1800,
+    "idempotency": "none",
+}
 
 
 # ── Capability: agent:get_system_prompt ──
@@ -133,12 +147,7 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
         if not trajectory_session_id:
             trajectory_session_id = f"subagent_{abs(trajectory_conversation_id)}"
 
-    base_tools = tool_discovery.build_tools(caller_role)
     allowed_tools = params.get("tools") or []
-    if allowed_tools:
-        allowed_set = set(allowed_tools) | {"skill_list", "skill_describe", "skill_use"}
-        base_tools = [t for t in base_tools
-                      if t.get("function", {}).get("name", "") in allowed_set]
 
     results: list[dict] = []
     trajectory: list[dict] = []
@@ -154,7 +163,8 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
 
         result = await run_single_task(
             task_desc=desc, task_context=ctx, extra_context=extra_context,
-            base_tools=base_tools, task_tools_param=task_tools,
+            base_tools=None,
+            task_tools_param=(task_tools or allowed_tools or None),
             task_write_enabled=task_write, max_rounds=max_rounds,
             caller=caller, caller_role=caller_role, owner_id=owner_id,
         )
@@ -174,7 +184,8 @@ async def _cap_spawn_subagent(params: dict, caller: str) -> dict:
                     prompt_parts.append("\n请修正后重新回答。")
                     result = await run_single_task(
                         task_desc=desc, task_context=ctx, extra_context=extra_context,
-                        base_tools=base_tools, task_tools_param=task_tools,
+                        base_tools=None,
+                        task_tools_param=(task_tools or allowed_tools or None),
                         task_write_enabled=task_write, max_rounds=max_rounds,
                         caller=caller, caller_role=caller_role,
                         owner_id=owner_id,
@@ -532,6 +543,7 @@ register_capability(
     brief="读取系统提示词",
     parameters={},
     min_role="admin",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "update_system_prompt", _cap_update_system_prompt,
@@ -539,6 +551,7 @@ register_capability(
     brief="更新系统提示词",
     parameters={"content": {"type": "string", "description": "新的系统提示词内容"}},
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "get_enterprise_prompt", _cap_get_enterprise_prompt,
@@ -546,6 +559,7 @@ register_capability(
     brief="读取企业提示词",
     parameters={},
     min_role="admin",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "update_enterprise_prompt", _cap_update_enterprise_prompt,
@@ -553,6 +567,7 @@ register_capability(
     brief="更新企业提示词",
     parameters={"content": {"type": "string", "description": "新的企业提示词内容"}},
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "get_my_profile", _cap_get_my_profile,
@@ -560,6 +575,7 @@ register_capability(
     brief="读取我的画像",
     parameters={},
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "update_my_profile", _cap_update_my_profile,
@@ -578,6 +594,7 @@ register_capability(
         },
     },
     min_role="viewer",
+    execution_contract=_WRITE_CONTRACT,
 )
 register_capability(
     "agent", "spawn_subagent", _cap_spawn_subagent,
@@ -598,6 +615,7 @@ register_capability(
         "gate_retry": {"type": "integer", "description": "门控失败最多重试次数，默认 1"},
     },
     min_role="viewer",
+    execution_contract=_SUBAGENT_CONTRACT,
 )
 
 # ── V2.0 new capabilities ──
@@ -615,6 +633,7 @@ register_capability(
         "scope": {"type": "string", "description": "作用域"},
     },
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "get_role_profiles", _cap_get_role_profiles,
@@ -622,6 +641,7 @@ register_capability(
     brief="列出岗位画像",
     parameters={},
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "get_role_profile", _cap_get_role_profile,
@@ -629,6 +649,7 @@ register_capability(
     brief="查看岗位画像",
     parameters={"role_key": {"type": "string", "description": "岗位标识"}},
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "upsert_role_profile", _cap_upsert_role_profile,
@@ -639,6 +660,7 @@ register_capability(
                  "focus_areas": {"type": "array", "items": {"type": "string"}},
                  "allowed_tools": {"type": "array", "items": {"type": "string"}}},
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "get_enterprise_profile", _cap_get_enterprise_profile,
@@ -646,6 +668,7 @@ register_capability(
     brief="查看企业画像",
     parameters={},
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "upsert_enterprise_profile", _cap_upsert_enterprise_profile,
@@ -655,6 +678,7 @@ register_capability(
                  "business_rules": {"type": "array", "items": {"type": "string"}},
                  "communication_style": {"type": "string"}},
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "list_market_profiles", _cap_list_market_profiles,
@@ -662,6 +686,7 @@ register_capability(
     brief="列出市场画像",
     parameters={"profile_type": {"type": "string", "description": "可选过滤：product/brand/competitor"}},
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "upsert_market_profile", _cap_upsert_market_profile,
@@ -671,6 +696,7 @@ register_capability(
                  "name": {"type": "string"}, "attributes": {"type": "object"},
                  "tags": {"type": "array", "items": {"type": "string"}}},
     min_role="admin",
+    execution_contract=_ADMIN_CONTRACT,
 )
 register_capability(
     "agent", "record_profile_signal", _cap_record_profile_signal,
@@ -679,6 +705,7 @@ register_capability(
     parameters={"signal_type": {"type": "string"}, "signal_data": {"type": "object"},
                  "confidence": {"type": "number"}, "target_profile_type": {"type": "string"}},
     min_role="viewer",
+    execution_contract=_APPEND_CONTRACT,
 )
 register_capability(
     "agent", "list_profile_signals", _cap_list_profile_signals,
@@ -687,6 +714,7 @@ register_capability(
     parameters={"signal_type": {"type": "string", "description": "可选过滤"},
                  "applied": {"type": "boolean", "description": "可选过滤是否已应用"}},
     min_role="viewer",
+    execution_contract=_READ_CONTRACT,
 )
 register_capability(
     "agent", "record_trajectory", _cap_record_trajectory,
@@ -695,6 +723,7 @@ register_capability(
     parameters={"session_id": {"type": "string"}, "conversation_id": {"type": "integer"},
                  "user_input": {"type": "string"}},
     min_role="viewer",
+    execution_contract=_WRITE_CONTRACT,
 )
 register_capability(
     "agent", "list_trajectories", _cap_list_trajectories,
@@ -703,4 +732,5 @@ register_capability(
     parameters={"conversation_id": {"type": "integer", "description": "可选过滤"},
                  "session_id": {"type": "string", "description": "可选过滤"}},
     min_role="admin",
+    execution_contract=_READ_CONTRACT,
 )

@@ -77,7 +77,6 @@ def build_path_trace_summary(
 
 def _intent_payload(intent_preflight: Mapping[str, object] | None) -> dict:
     source = intent_preflight or {}
-    strategy = source.get("tool_strategy") if isinstance(source.get("tool_strategy"), Mapping) else {}
     evidence = source.get("evidence_policy") if isinstance(source.get("evidence_policy"), Mapping) else {}
     risk = source.get("risk_policy") if isinstance(source.get("risk_policy"), Mapping) else {}
     return {
@@ -86,7 +85,6 @@ def _intent_payload(intent_preflight: Mapping[str, object] | None) -> dict:
         "summary": _clip(_str(source.get("intent_summary") or ""), 300),
         "confidence": _number(source.get("confidence")),
         "domain_terms": _string_list(source.get("domain_terms")),
-        "first_actions": _string_list(strategy.get("first_actions") if isinstance(strategy, Mapping) else None),
         "requires_citation": bool(risk.get("requires_citation")) if isinstance(risk, Mapping) else False,
         "needs_internal_knowledge": bool(evidence.get("needs_internal_knowledge")) if isinstance(evidence, Mapping) else False,
         "needs_external_web": bool(evidence.get("needs_external_web")) if isinstance(evidence, Mapping) else False,
@@ -227,8 +225,6 @@ def _timeline_payload(timeline: Sequence[Mapping[str, object]]) -> dict:
 
 def _planned_async_tasks(tool_events: Sequence[Mapping[str, object]]) -> list[str]:
     tasks = ["memory_distill", "profile_evolve", "agent_context_compact"]
-    if tool_events and _all_tools_successful(tool_events):
-        tasks.append("workflow_mine")
     if _has_query_context_id(tool_events):
         tasks.append("knowledge_retrieval_reflect")
     return tasks

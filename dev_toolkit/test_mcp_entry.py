@@ -14,6 +14,7 @@ from mcp import ClientSession  # noqa: E402
 from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: E402
 
 REQUIRED_TOOLS = {
+    "agent_runtime_snapshot",
     "agent_board_claim",
     "db_reverse_audit",
     "knowledge_pipeline_snapshot",

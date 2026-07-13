@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, ValidationError
@@ -17,6 +17,7 @@ MAINTENANCE_SETTING_KEY = "platform.maintenance"
 VALID_STATUSES = {"normal", "draining", "restarting", "failed"}
 BLOCKING_UPLOAD_STATUSES = {"pending", "uploading", "uploaded"}
 ACTIVE_UPLOAD_WINDOW_SECONDS = 30 * 60
+RESTARTABLE_BACKGROUND_MODULES = frozenset({"knowledge"})
 
 
 def restart_signal_path() -> Path:
@@ -109,6 +110,29 @@ async def get_restart_blockers(db: AsyncSession) -> dict[str, Any]:
         }
         for row in running_rows.all()
     ]
+    restartable_running_count = int(await db.scalar(
+        select(func.count(SystemTaskQueue.id)).where(
+            SystemTaskQueue.status == "running",
+            SystemTaskQueue.module.in_(RESTARTABLE_BACKGROUND_MODULES),
+        )
+    ) or 0)
+    blocking_running_count = int(await db.scalar(
+        select(func.count(SystemTaskQueue.id)).where(
+            SystemTaskQueue.status == "running",
+            or_(
+                SystemTaskQueue.module.is_(None),
+                SystemTaskQueue.module.not_in(RESTARTABLE_BACKGROUND_MODULES),
+            ),
+        )
+    ) or 0)
+    restartable_task_sample = [
+        row for row in running_sample
+        if row.get("module") in RESTARTABLE_BACKGROUND_MODULES
+    ]
+    blocking_task_sample = [
+        row for row in running_sample
+        if row.get("module") not in RESTARTABLE_BACKGROUND_MODULES
+    ]
 
     active_since = datetime.now(timezone.utc) - timedelta(seconds=ACTIVE_UPLOAD_WINDOW_SECONDS)
     upload_count = int(await db.scalar(
@@ -154,12 +178,26 @@ async def get_restart_blockers(db: AsyncSession) -> dict[str, Any]:
         for row in upload_sample
         if row.get("owner_id") is not None
     })
+    blocking_active_user_ids = sorted({
+        int(row["creator_id"])
+        for row in blocking_task_sample
+        if row.get("creator_id") is not None
+    } | {
+        int(row["owner_id"])
+        for row in upload_sample
+        if row.get("owner_id") is not None
+    })
     return {
         "running_tasks": running_count,
+        "restartable_running_tasks": restartable_running_count,
+        "blocking_running_tasks": blocking_running_count,
         "active_upload_sessions": upload_count,
         "active_user_ids": active_user_ids,
-        "blocking_count": running_count + upload_count,
+        "blocking_active_user_ids": blocking_active_user_ids,
+        "blocking_count": blocking_running_count + upload_count,
         "running_task_sample": running_sample,
+        "restartable_task_sample": restartable_task_sample,
+        "blocking_task_sample": blocking_task_sample,
         "active_upload_sample": upload_sample,
     }
 

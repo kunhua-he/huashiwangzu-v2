@@ -14,9 +14,9 @@ Design principles:
 """
 from __future__ import annotations
 
-from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field
+
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 
 class ResourceType(str, Enum):
@@ -31,6 +31,10 @@ class ResourceType(str, Enum):
     run_record = "run_record"
     step_record = "step_record"
     definition = "definition"
+    file = "file"
+    task = "task"
+    url = "url"
+    record = "record"
 
 
 class ResourceRef(BaseModel):
@@ -41,9 +45,29 @@ class ResourceRef(BaseModel):
     something" contract.
     """
     id: int | str
-    resource_type: ResourceType
+    resource_type: ResourceType = Field(
+        validation_alias=AliasChoices("resource_type", "type"),
+        serialization_alias="type",
+    )
     label: str = ""
     version: str | None = None
+    locator: str = ""
+    mime_type: str = ""
+    display_name: str = ""
+    access_scope: str = "user"
+    provenance: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def normalize_display_name(self) -> "ResourceRef":
+        if not self.display_name and self.label:
+            self.display_name = self.label
+        if not self.label and self.display_name:
+            self.label = self.display_name
+        return self
+
+    @property
+    def type(self) -> ResourceType:
+        return self.resource_type
 
 
 class ResourceMetadata(BaseModel):

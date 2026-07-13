@@ -104,25 +104,29 @@ def test_dream_params() -> None:
 
 
 def test_save_experience_params() -> None:
-    """save_experience: trigger_condition and steps required; scope defaults to user."""
+    """save_experience keeps old inputs while accepting structured pattern fields."""
     params = {
         "trigger_condition": "user asks about theme",
         "steps": '[{"intent":"recall","tool":"memory:recall"}]',
-        "scope": "user",
+        "scope_type": "user",
+        "preconditions": {"input_type": "query"},
+        "completion_evidence": {"reference_type": "record"},
     }
     assert isinstance(params["trigger_condition"], str) and len(params["trigger_condition"]) > 0
     assert isinstance(params["steps"], str) and len(params["steps"]) > 0
-    assert params["scope"] in {"user", "team", "global"}
+    assert params["scope_type"] in {
+        "global", "organization", "department", "position", "user", "conversation",
+    }
     print("  [SAVE_EXPERIENCE] Parameter contract valid")
 
 
 def test_match_experience_params() -> None:
     """match_experience: query required, limit/team_owner_ids optional."""
-    params = {"query": "user asks about theme", "limit": 2, "team_owner_ids": [7, 8]}
+    params = {"query": "user asks about theme", "limit": 2, "conversation_id": 9}
     assert "query" in params
     assert isinstance(params["query"], str) and len(params["query"]) > 0
     assert isinstance(params["limit"], int) and params["limit"] > 0
-    assert all(isinstance(owner_id, int) for owner_id in params["team_owner_ids"])
+    assert isinstance(params["conversation_id"], int)
     print("  [MATCH_EXPERIENCE] Parameter contract valid")
 
 
@@ -136,12 +140,20 @@ def test_experience_feedback_params() -> None:
         "experience_id": 10,
         "success": False,
         "note": "Failed to apply",
-        "team_owner_ids": [7],
+        "conversation_id": 9,
     }
     assert "note" in params_with_note
     assert isinstance(params_with_note["note"], str)
-    assert all(isinstance(owner_id, int) for owner_id in params_with_note["team_owner_ids"])
+    assert isinstance(params_with_note["conversation_id"], int)
     print("  [EXPERIENCE_FEEDBACK] Parameter contract valid")
+
+
+def test_review_experience_params() -> None:
+    """High-risk shared patterns require an explicit admin decision."""
+    params = {"experience_id": 10, "decision": "approve", "note": "verified"}
+    assert params["decision"] in {"approve", "reject"}
+    assert isinstance(params["experience_id"], int)
+    print("  [REVIEW_EXPERIENCE] Parameter contract valid")
 
 
 def test_overview_stats_params() -> None:
@@ -234,18 +246,27 @@ def test_experience_output_shape() -> None:
     """Experience object output shape contract."""
     experience = {
         "id": 1,
-        "owner_id": 7,
-        "scope": "user",
-        "trigger_condition": "user asks about theme",
-        "steps": '[{"intent":"recall","tool":"memory:recall"}]',
-        "success_weight": 3,
-        "fail_count": 0,
+        "scope_type": "user",
+        "scope_id": 7,
+        "goal_signature": "user asks about theme",
+        "action_pattern": [{"capability": "memory__recall", "depends_on": []}],
+        "capability_ids": [10],
+        "capability_contract_hashes": {"memory__recall": "abc"},
+        "success_count": 3,
+        "failure_count": 0,
+        "status": "verified",
     }
-    required = {"id", "owner_id", "scope", "trigger_condition", "steps", "success_weight", "fail_count"}
+    required = {
+        "id", "scope_type", "scope_id", "goal_signature", "action_pattern",
+        "capability_ids", "capability_contract_hashes", "success_count",
+        "failure_count", "status",
+    }
     for field in required:
         assert field in experience, f"Missing required field: {field}"
-    assert experience["scope"] in {"user", "team", "global"}
-    assert isinstance(experience["success_weight"], int) and experience["success_weight"] >= 0
+    assert experience["scope_type"] in {
+        "global", "organization", "department", "position", "user", "conversation",
+    }
+    assert isinstance(experience["success_count"], int) and experience["success_count"] >= 0
     print("  [EXPERIENCE] Output shape valid")
 
 
@@ -321,11 +342,11 @@ def test_memory_quality_guard_source_contracts() -> None:
     assert "CAST(:query_vec AS vector(1024))" in memory_src
     assert "_coerce_limit" in memory_src
     assert "DELETE FROM memory_chunks WHERE memory_record_id = :id" in memory_src
-    assert ":note_payload IS NULL" not in experience_src
-    assert '"has_note": note_payload is not None' in experience_src
     assert "def _coerce_bool" in experience_src
     assert "def _normalize_json_text" in experience_src
-    assert "trigger_condition ILIKE :keyword" in experience_src
+    assert "MemoryExperience.capability_ids.contained_by(authorized_ids)" in experience_src
+    assert "MemoryExperience.goal_signature.ilike" in experience_src
+    assert "_visibility_condition(scopes)" in experience_src
     assert "experience_id = experience_service._coerce_optional_positive_int" in capability_src
     assert "success = experience_service._coerce_bool" in capability_src
     assert "UPDATE memory_stable_rules SET hit_count = hit_count + 1" in capability_src
@@ -395,6 +416,7 @@ def main() -> None:
     test_save_experience_params()
     test_match_experience_params()
     test_experience_feedback_params()
+    test_review_experience_params()
     test_overview_stats_params()
     test_backfill_embeddings_params()
     test_recall_stable_rules_params()

@@ -251,4 +251,5 @@ register_capability(
     brief="解析 PPT/PPTX 文档",
     parameters={"file_id": {"type": "int"}},
     min_role="viewer",
+    execution_contract={"side_effect_level": "none", "resource_class": "local_cpu", "timeout_seconds": 180, "parallel_safe": True},
 )

@@ -168,7 +168,7 @@
     },
     {
       "action": "save_experience",
-      "description": "保存一条成功经验（包含触发条件、有序步骤、工具列表），自动向量化并去重",
+      "description": "保存结构化成功经验；自动脱敏、绑定 capability contract，并按 principal 生成分层候选",
       "parameters": {
         "trigger_condition": {
           "type": "string",
@@ -177,6 +177,17 @@
         "steps": {
           "type": "string",
           "description": "JSON 有序步骤"
+        },
+        "goal_signature": {
+          "type": "string",
+          "description": "脱敏后的结构化目标签名；优先于旧 trigger_condition"
+        },
+        "action_pattern": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "capability identity 与依赖组成的结构化动作模式；优先于旧 steps"
         },
         "tools_used": {
           "type": "string",
@@ -189,13 +200,30 @@
         "scope": {
           "type": "string",
           "description": "经验范围：user/team/global"
+        },
+        "scope_type": {
+          "type": "string",
+          "enum": ["global", "organization", "department", "position", "user", "conversation"],
+          "description": "结构化经验作用域；优先于旧 scope 字段"
+        },
+        "scope_id": {
+          "type": "integer",
+          "description": "组织、部门、岗位或会话作用域 ID"
+        },
+        "preconditions": {
+          "type": "object",
+          "description": "去具体资源的结构化前置条件"
+        },
+        "completion_evidence": {
+          "type": "object",
+          "description": "去具体资源的完成证据"
         }
       },
       "min_role": "viewer"
     },
     {
       "action": "match_experience",
-      "description": "语义匹配当前用户输入相关的成功经验（纯语义，零硬编码规则）",
+      "description": "在 SQL principal 可见并集内召回 contract 仍兼容的结构化成功经验",
       "parameters": {
         "query": {
           "type": "string",
@@ -211,6 +239,10 @@
             "type": "integer"
           },
           "description": "系统通路可传的团队 owner id 列表"
+        },
+        "conversation_id": {
+          "type": "integer",
+          "description": "当前会话 ID，用于会话级经验隔离"
         }
       },
       "min_role": "viewer"
@@ -237,9 +269,33 @@
             "type": "integer"
           },
           "description": "系统通路可传的团队 owner id 列表"
+        },
+        "conversation_id": {
+          "type": "integer",
+          "description": "当前会话 ID，用于会话级经验隔离"
         }
       },
       "min_role": "viewer"
+    },
+    {
+      "action": "review_experience",
+      "description": "审核达到晋升门槛的高风险共享经验候选；批准后才可进入召回",
+      "parameters": {
+        "experience_id": {
+          "type": "integer",
+          "description": "待审核经验 ID"
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["approve", "reject"],
+          "description": "审核决定"
+        },
+        "note": {
+          "type": "string",
+          "description": "审核备注"
+        }
+      },
+      "min_role": "admin"
     },
     {
       "action": "overview_stats",

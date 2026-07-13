@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -144,21 +143,125 @@ async def test_side_effect_tool_gets_idempotency_key(
 
 
 @pytest.mark.asyncio
+async def test_structured_ledger_uses_contract_not_tool_name(
+    db: AsyncSession,
+    cleanup_runtime_records: dict[str, list],
+) -> None:
+    sink = await _linked_sink(db, cleanup_runtime_records, owner_id=8816)
+
+    call_id = await sink.workflow_record_tool_started(
+        db,
+        {
+            "name": "external__upload",
+            "tool_call_id": "call_contract_readonly",
+            "args": {"value": "local-only"},
+            "execution_contract": {
+                "contract_declared": True,
+                "risk_declared": True,
+                "side_effect_level": "none",
+                "approval_policy": "none",
+                "idempotency": "none",
+            },
+        },
+    )
+    call = await db.get(AgentToolCall, call_id)
+    assert call is not None
+    assert call.side_effect_level == "none"
+    assert call.approval_policy == "none"
+    assert call.idempotency_key is None
+    assert call.extra_meta["idempotency_policy"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_structured_ledger_marks_missing_risk_contract_as_blocked_unknown(
+    db: AsyncSession,
+    cleanup_runtime_records: dict[str, list],
+) -> None:
+    sink = await _linked_sink(db, cleanup_runtime_records, owner_id=8818)
+
+    call_id = await sink.workflow_record_tool_started(
+        db,
+        {
+            "name": "im__send",
+            "tool_call_id": "call_missing_contract",
+            "args": {"message": "hello"},
+            "execution_contract": {
+                "contract_declared": False,
+                "risk_declared": False,
+                "side_effect_level": "none",
+                "approval_policy": "none",
+                "idempotency": "none",
+            },
+        },
+    )
+    call = await db.get(AgentToolCall, call_id)
+    assert call is not None
+    assert call.side_effect_level == "unknown"
+    assert call.approval_policy == "block"
+    assert call.idempotency_key is None
+
+
+@pytest.mark.asyncio
+async def test_structured_ledger_generates_stable_key_only_when_contract_supports_it(
+    db: AsyncSession,
+    cleanup_runtime_records: dict[str, list],
+) -> None:
+    sink = await _linked_sink(db, cleanup_runtime_records, owner_id=8817)
+    tool = {
+        "name": "neutral__action",
+        "tool_call_id": "call_contract_outbound",
+        "args": {"message": "hello"},
+        "execution_contract": {
+            "contract_declared": True,
+            "risk_declared": True,
+            "side_effect_level": "outbound",
+            "approval_policy": "requires_confirmation",
+            "idempotency": "required",
+        },
+    }
+
+    call_id = await sink.workflow_record_tool_started(db, tool)
+    repeated_call_id = await sink.workflow_record_tool_started(db, tool)
+    call = await db.get(AgentToolCall, call_id)
+    assert call is not None
+    assert repeated_call_id == call_id
+    assert call.side_effect_level == "outbound"
+    assert call.approval_policy == "requires_confirmation"
+    assert call.idempotency_key
+    assert call.idempotency_key.startswith("agent-action-")
+    assert call.extra_meta["idempotency_policy"] == "required"
+
+
+@pytest.mark.asyncio
 async def test_policy_approval_links_workflow_payload_and_resume_target(
     db: AsyncSession,
     cleanup_runtime_records: dict[str, list],
 ) -> None:
     sink = await _linked_sink(db, cleanup_runtime_records, owner_id=8804)
+    contract = {
+        "contract_declared": True,
+        "risk_declared": True,
+        "side_effect_level": "outbound",
+        "approval_policy": "requires_confirmation",
+        "idempotency": "required",
+    }
     call_id = await sink.workflow_record_tool_started(
         db,
-        {"name": "im__send", "tool_call_id": "call_approval", "args": {"text": "hello"}},
+        {
+            "name": "neutral__action",
+            "tool_call_id": "call_approval",
+            "args": {"text": "hello"},
+            "execution_contract": contract,
+        },
     )
     call = await db.get(AgentToolCall, call_id)
     assert call is not None
+    assert call.side_effect_level == "outbound"
+    assert call.approval_policy == "requires_confirmation"
 
     result = await check_action_allowed(
         db,
-        "im__send",
+        "neutral__action",
         "workflow_runtime_test_agent",
         8804,
         conversation_id=sink.conversation_id,
@@ -172,6 +275,7 @@ async def test_policy_approval_links_workflow_payload_and_resume_target(
             "tool_call_id": call.id,
             "provider_tool_call_id": "call_approval",
         },
+        execution_contract=contract,
     )
     assert result["allowed"] is False
     assert result["action"] == "confirm"
@@ -184,6 +288,23 @@ async def test_policy_approval_links_workflow_payload_and_resume_target(
     assert approval.tool_call_id == call.id
     assert approval.payload_hash == call.arguments_hash
     assert approval.resume_target["provider_tool_call_id"] == "call_approval"
+
+    await sink.workflow_mark_tool_result(
+        db,
+        {
+            "type": "tool_result",
+            "name": "neutral__action",
+            "tool_call_id": "call_approval",
+            "result": {
+                "success": False,
+                "approval_required": True,
+                "approval_id": approval.id,
+            },
+        },
+    )
+    call = await db.get(AgentToolCall, call.id)
+    assert call is not None
+    assert call.status == "waiting_approval"
 
 
 @pytest.mark.asyncio
@@ -243,7 +364,9 @@ async def test_slow_tool_task_carries_workflow_resume_context(db: AsyncSession) 
     try:
         task = await db.get(SystemTaskQueue, task_id)
         assert task is not None
-        params = json.loads(task.parameters)
+        from app.services.task_dispatcher import unpack_task_parameters
+
+        params = unpack_task_parameters(task.parameters)
         assert params["workflow_run_id"] == 101
         assert params["workflow_step_id"] == 202
         assert params["tool_call_id"] == 303

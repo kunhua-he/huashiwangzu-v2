@@ -6,6 +6,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy import func as sa_func
 from sqlalchemy import text as sa_text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -75,19 +76,34 @@ class MemoryLink(Base, TimestampMixin):
 
 
 class MemoryExperience(Base):
-    """经验记忆：成功/失败的解决路径。默认用户级，global 仅保存 curated 经验。"""
+    """Structured, scope-aware projection of verified execution experience."""
     __tablename__ = "memory_experiences"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, comment="scope=user/team 时的 owner id；global 为空")
-    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="user", server_default=sa_text("'user'"), comment="user/team/global")
-    trigger_condition: Mapped[str] = mapped_column(Text, nullable=False, comment="触发条件（自然语言描述）")
-    trigger_embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True, comment="触发条件的 embedding")
-    steps: Mapped[str] = mapped_column(Text, nullable=False, comment="JSON 有序步骤：每步=意图+工具名+关键参数模式")
-    tools_used: Mapped[str] = mapped_column(Text, nullable=True, comment="JSON 列表：用到的能力列表")
-    success_weight: Mapped[int] = mapped_column(Integer, default=1, server_default=sa_text("1"), comment="成功权重")
-    fail_count: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"), comment="失败次数")
-    fail_notes: Mapped[str | None] = mapped_column(Text, nullable=True, comment="JSON 列表：什么情况失败了、为什么")
-    source_conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="来源对话 id")
-    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_text("true"), comment="是否启用（dream 可停用低质经验）")
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False, default="user", server_default=sa_text("'user'"))
+    scope_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    goal_signature: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=sa_text("''"))
+    goal_embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
+    preconditions: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=sa_text("'{}'::jsonb"))
+    action_pattern: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=sa_text("'[]'::jsonb"))
+    completion_evidence: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=sa_text("'{}'::jsonb"))
+    capability_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False, default=list, server_default=sa_text("'{}'::integer[]"))
+    capability_contract_hashes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=sa_text("'{}'::jsonb"))
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=sa_text("1"))
+    distinct_user_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=sa_text("1"))
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=sa_text("0"))
+    failure_notes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=sa_text("'[]'::jsonb"))
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    source_conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    contributor_user_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False, default=list, server_default=sa_text("'{}'::integer[]"))
+    contributor_department_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False, default=list, server_default=sa_text("'{}'::integer[]"))
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.5, server_default=sa_text("0.5"))
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="candidate", server_default=sa_text("'candidate'"))
+    risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="none", server_default=sa_text("'none'"))
+    privacy_status: Mapped[str] = mapped_column(String(32), nullable=False, default="sanitized", server_default=sa_text("'sanitized'"))
+    requires_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_text("false"))
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sa_func.now(), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sa_func.now(), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

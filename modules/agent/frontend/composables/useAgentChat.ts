@@ -9,8 +9,8 @@ import {
 import {
   sanitizeAssistantMessage,
   triggerDesktopRefresh,
-  uniqueRefs,
 } from '../utils/messageSanitizer'
+import { normalizeRefItems, uniqueRefs } from '../utils/resourceReferences'
 import { openDesktopFileFromToolResult } from '../utils/desktopFileOpen'
 import type {
   AgentEntryProps,
@@ -153,7 +153,7 @@ export function useAgentChat(props: AgentEntryProps) {
     messagesLoading.value = true
     try {
       const raw = await apiFetch<MsgItem[]>(`/agent/conversations/${id}/messages`)
-      messages.value = expandTimeline(raw)
+      messages.value = expandTimeline(raw.map(normalizeMessageReferences))
     } catch (e: unknown) {
       console.error('[Agent] load messages failed:', e)
       messageLoadError.value = '消息加载失败：' + String((e as Error).message || e)
@@ -242,6 +242,11 @@ export function useAgentChat(props: AgentEntryProps) {
       }
     }
     return out
+  }
+
+  function normalizeMessageReferences(message: MsgItem): MsgItem {
+    const references = normalizeRefItems(message.references)
+    return references.length ? { ...message, references } : { ...message, references: undefined }
   }
 
   function hasImageToolResult(result: unknown): boolean {
@@ -861,7 +866,7 @@ export function useAgentChat(props: AgentEntryProps) {
 
 
                       } else if (etype === 'references') {
-                const refs = Array.isArray(evt.references) ? evt.references as RefItem[] : []
+                const refs = normalizeRefItems(evt.references)
                 if (refs.length) {
                   let attached = false
                   for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -991,7 +996,7 @@ export function useAgentChat(props: AgentEntryProps) {
     messagesLoading.value = true
     try {
       const raw = await apiFetch<MsgItem[]>(`/agent/conversations/${convId}/messages`)
-      messages.value = expandTimeline(raw)
+      messages.value = expandTimeline(raw.map(normalizeMessageReferences))
     } catch (e: unknown) {
       console.error('[Agent] reload messages failed:', e)
       messageLoadError.value = '消息加载失败：' + String((e as Error).message || e)

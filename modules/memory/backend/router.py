@@ -370,25 +370,34 @@ register_capability(
 
 register_capability(
     "memory", "save_experience", cap_mod._cap_save_experience,
-    description="保存一条成功经验（包含触发条件、有序步骤、工具列表），自动向量化并去重",
+    description="保存结构化成功经验；自动脱敏、绑定 capability contract，并按 principal 生成分层候选",
     brief="保存成功经验",
     parameters={
         "type": "object",
         "properties": {
             "trigger_condition": {"type": "string", "description": "触发条件（自然语言描述，如'用户想查看桌面目录'）"},
             "steps": {"type": "string", "description": "JSON 有序步骤：每步=意图+工具名+关键参数"},
+            "goal_signature": {"type": "string", "description": "脱敏后的结构化目标签名；优先于旧 trigger_condition"},
+            "action_pattern": {"type": "array", "items": {"type": "object"}, "description": "capability identity 与依赖组成的结构化动作模式；优先于旧 steps"},
             "tools_used": {"type": "string", "description": "JSON 列表：用到的能力列表"},
             "source_conversation_id": {"type": "integer", "description": "来源对话 id（可选）"},
             "scope": {"type": "string", "description": "经验范围：默认 user；global 仅系统 curated 通路可写"},
+            "scope_type": {"type": "string", "enum": ["global", "organization", "department", "position", "user", "conversation"], "description": "结构化经验作用域；优先于旧 scope 字段"},
+            "scope_id": {"type": "integer", "description": "组织、部门、岗位或会话作用域 ID"},
+            "preconditions": {"type": "object", "description": "去具体资源的结构化前置条件"},
+            "completion_evidence": {"type": "object", "description": "去具体资源的完成证据"},
         },
-        "required": ["trigger_condition", "steps"],
+        "anyOf": [
+            {"required": ["goal_signature", "action_pattern"]},
+            {"required": ["trigger_condition", "steps"]},
+        ],
     },
     min_role="viewer",
 )
 
 register_capability(
     "memory", "match_experience", cap_mod._cap_match_experience,
-    description="语义匹配当前用户输入相关的成功经验（纯语义，零硬编码规则）",
+    description="在 SQL principal 可见并集内召回 contract 仍兼容的结构化成功经验",
     brief="匹配成功经验",
     parameters={
         "type": "object",
@@ -396,6 +405,7 @@ register_capability(
             "query": {"type": "string", "description": "当前用户输入（语义匹配）"},
             "limit": {"type": "integer", "description": "返回条数上限（默认 2）"},
             "team_owner_ids": {"type": "array", "items": {"type": "integer"}, "description": "系统通路可传的团队 owner id 列表"},
+            "conversation_id": {"type": "integer", "description": "当前会话 ID，用于会话级经验隔离"},
         },
         "required": ["query"],
     },
@@ -413,10 +423,27 @@ register_capability(
             "success": {"type": "boolean", "description": "是否成功"},
             "note": {"type": "string", "description": "失败时的备注（可选）"},
             "team_owner_ids": {"type": "array", "items": {"type": "integer"}, "description": "系统通路可传的团队 owner id 列表"},
+            "conversation_id": {"type": "integer", "description": "当前会话 ID，用于会话级经验隔离"},
         },
         "required": ["experience_id", "success"],
     },
     min_role="viewer",
+)
+
+register_capability(
+    "memory", "review_experience", cap_mod._cap_review_experience,
+    description="审核达到晋升门槛的高风险共享经验候选；批准后才可进入召回",
+    brief="审核共享经验",
+    parameters={
+        "type": "object",
+        "properties": {
+            "experience_id": {"type": "integer", "description": "待审核经验 ID"},
+            "decision": {"type": "string", "enum": ["approve", "reject"], "description": "审核决定"},
+            "note": {"type": "string", "description": "审核备注"},
+        },
+        "required": ["experience_id", "decision"],
+    },
+    min_role="admin",
 )
 
 register_capability(

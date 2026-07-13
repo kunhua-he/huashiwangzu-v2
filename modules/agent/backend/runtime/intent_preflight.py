@@ -9,7 +9,6 @@ from typing import Awaitable, Callable
 from app.database import AsyncSessionLocal
 from app.gateway import service as gateway_service
 
-from ..engine.experience_memory import match_experience
 from ..prompt_seeds import INTENT_PREFLIGHT_KEY
 from ..services.runtime_prompt_provider import RuntimePromptProvider
 from .runtime_policy import RuntimePolicy
@@ -17,7 +16,6 @@ from .runtime_policy import RuntimePolicy
 logger = logging.getLogger("v2.agent").getChild("runtime.intent_preflight")
 
 ChatFn = Callable[[list[dict], str], Awaitable[dict]]
-MatchExperienceFn = Callable[[str, int, str], Awaitable[list[dict]]]
 
 EVIDENCE_SENSITIVE_SHAPES = {
     "menu_path",
@@ -40,7 +38,6 @@ _CLARIFY_ONLY_RE = re.compile(r"^(帮我弄一下|处理一下|搞一下|看一�
 
 @dataclass
 class EvidencePolicy:
-    prefer_success_experience: bool = True
     needs_internal_knowledge: bool = False
     needs_external_web: bool = False
     needs_file_context: bool = False
@@ -50,8 +47,6 @@ class EvidencePolicy:
 
 @dataclass
 class ToolStrategy:
-    first_actions: list[str] = field(default_factory=list)
-    avoid_actions: list[str] = field(default_factory=list)
     suggested_queries: list[str] = field(default_factory=list)
 
 
@@ -75,7 +70,6 @@ class IntentPreflightResult:
     evidence_policy: EvidencePolicy = field(default_factory=EvidencePolicy)
     tool_strategy: ToolStrategy = field(default_factory=ToolStrategy)
     risk_policy: RiskPolicy = field(default_factory=RiskPolicy)
-    matched_experiences: list[dict] = field(default_factory=list)
     verifier: dict = field(default_factory=dict)
     usage: dict = field(default_factory=dict)
     triggered: bool = True
@@ -102,14 +96,12 @@ class IntentPreflightRunner:
         policy: RuntimePolicy,
         *,
         chat_fn: ChatFn | None = None,
-        match_experience_fn: MatchExperienceFn | None = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.owner_id = owner_id
         self.profile_key = profile_key
         self.policy = policy
         self._chat_fn = chat_fn or self._default_chat
-        self._match_experience_fn = match_experience_fn or self._default_match_experience
 
     async def run(self, user_input: str) -> IntentPreflightResult:
         if not self.policy.intent_preflight_enabled:
@@ -118,7 +110,6 @@ class IntentPreflightRunner:
             result = _rule_classify(user_input)
             if _should_use_llm_fallback(result, self.policy):
                 result = await self._classify_with_llm(user_input)
-            result.matched_experiences = await self._match_experiences(user_input, result)
             return result
         except Exception as exc:
             logger.warning("Intent preflight failed (non-fatal): %s", exc)
@@ -127,14 +118,12 @@ class IntentPreflightRunner:
     async def build_injection(self, result: IntentPreflightResult) -> str:
         if not result.triggered or result.error:
             return ""
-        if result.task_category in {"smalltalk", "creation"} and not result.matched_experiences:
+        if result.task_category in {"smalltalk", "creation"}:
             return ""
         hints = [
             f"任务类型：{result.task_category}",
             f"答案形态：{result.answer_shape}",
         ]
-        if result.tool_strategy.first_actions:
-            hints.append("建议动作：" + " → ".join(result.tool_strategy.first_actions[:4]))
         stop_hint = _stop_condition_hint(result)
         if stop_hint:
             hints.append("停止条件：" + stop_hint)
@@ -143,8 +132,6 @@ class IntentPreflightRunner:
             hints.append("避免：" + avoid_hint)
         if result.risk_policy.must_not_overclaim:
             hints.append("边界：无证据时避免过度断言，可带不确定性说明。")
-        if result.matched_experiences:
-            hints.append("已命中成功经验，若不冲突可优先参考。")
         return "\n\n---\n\n【本轮路由提示】" + "；".join(hints)
 
     async def _classify_with_llm(self, user_input: str) -> IntentPreflightResult:
@@ -162,35 +149,11 @@ class IntentPreflightRunner:
         _accumulate_usage(result.usage, response.get("usage"))
         return result
 
-    async def _match_experiences(self, user_input: str, result: IntentPreflightResult) -> list[dict]:
-        queries = _dedupe_texts([
-            user_input,
-            result.intent_summary,
-            " ".join([result.task_category, result.answer_shape, *result.domain_terms]),
-            *result.tool_strategy.suggested_queries[:2],
-        ])
-        matched: list[dict] = []
-        seen: set[str] = set()
-        caller = f"user:{self.owner_id}" if self.owner_id else "system:agent"
-        for query in queries[:4]:
-            for item in await self._match_experience_fn(query, 2, caller):
-                key = str(item.get("id") or item.get("trigger_condition") or item)
-                if key in seen:
-                    continue
-                seen.add(key)
-                matched.append(item)
-                if len(matched) >= 3:
-                    return matched
-        return matched
-
     async def _needs_verifier(self, result: IntentPreflightResult) -> bool:
         return bool(self.policy.intent_preflight_use_verifier and self.policy.intent_preflight_max_llm_calls >= 2)
 
     async def _default_chat(self, messages: list[dict], profile_key: str) -> dict:
         return await gateway_service.chat(messages=messages, profile_key=profile_key)
-
-    async def _default_match_experience(self, query: str, limit: int, caller: str) -> list[dict]:
-        return await match_experience(query=query, limit=limit, caller=caller)
 
 
 def _rule_classify(user_input: str) -> IntentPreflightResult:
@@ -204,7 +167,6 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             missing_slots=["具体对象", "要完成的动作"],
             confidence=0.9,
             evidence_policy=EvidencePolicy(should_ask_clarification=True, can_answer_from_general_knowledge=False),
-            tool_strategy=ToolStrategy(first_actions=["clarify"]),
             risk_policy=RiskPolicy(hallucination_risk="medium", must_not_overclaim=True, if_no_evidence="ask_clarification"),
         )
     if _SMALLTALK_RE.search(text):
@@ -216,7 +178,6 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             "direct_answer",
             terms,
             confidence=0.85,
-            tool_strategy=ToolStrategy(first_actions=["direct_answer"]),
         )
     if _DOCUMENT_RE.search(text):
         return IntentPreflightResult(
@@ -226,7 +187,7 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             terms,
             confidence=0.8,
             evidence_policy=EvidencePolicy(needs_file_context=True, can_answer_from_general_knowledge=False),
-            tool_strategy=ToolStrategy(first_actions=["file_context", "direct_answer"], suggested_queries=_queries(text, terms)),
+            tool_strategy=ToolStrategy(suggested_queries=_queries(text, terms)),
             risk_policy=RiskPolicy(hallucination_risk="medium", requires_citation=True, must_not_overclaim=True),
         )
     if _CODING_RE.search(text):
@@ -236,7 +197,6 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             "code",
             terms,
             confidence=0.8,
-            tool_strategy=ToolStrategy(first_actions=["direct_answer"]),
         )
     if _TROUBLESHOOT_RE.search(text):
         return IntentPreflightResult(
@@ -245,7 +205,6 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             "plan",
             terms,
             confidence=0.78,
-            tool_strategy=ToolStrategy(first_actions=["direct_answer", "clarify"]),
             risk_policy=RiskPolicy(hallucination_risk="medium", must_not_overclaim=True),
         )
     if _EXTERNAL_RE.search(text):
@@ -256,7 +215,7 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             terms,
             confidence=0.82,
             evidence_policy=EvidencePolicy(needs_external_web=True, can_answer_from_general_knowledge=False),
-            tool_strategy=ToolStrategy(first_actions=["external_research", "answer_with_caveat"], suggested_queries=_queries(text, terms)),
+            tool_strategy=ToolStrategy(suggested_queries=_queries(text, terms)),
             risk_policy=RiskPolicy(hallucination_risk="medium", requires_citation=True, must_not_overclaim=True, if_no_evidence="search_more"),
         )
     if _OPERATION_RE.search(text):
@@ -267,11 +226,7 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             terms,
             confidence=0.78,
             evidence_policy=EvidencePolicy(needs_internal_knowledge=True, needs_external_web=True, can_answer_from_general_knowledge=True),
-            tool_strategy=ToolStrategy(
-                first_actions=["match_experience", "internal_retrieval", "external_research", "answer_with_caveat"],
-                avoid_actions=["do_not_overclaim_specific_paths_without_evidence"],
-                suggested_queries=_queries(text, terms),
-            ),
+            tool_strategy=ToolStrategy(suggested_queries=_queries(text, terms)),
             risk_policy=RiskPolicy(hallucination_risk="medium", requires_citation=False, must_not_overclaim=True, if_no_evidence="answer_with_caveat"),
         )
     if _INTERNAL_RE.search(text):
@@ -282,11 +237,7 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             terms,
             confidence=0.8,
             evidence_policy=EvidencePolicy(needs_internal_knowledge=True, can_answer_from_general_knowledge=False),
-            tool_strategy=ToolStrategy(
-                first_actions=["match_experience", "internal_retrieval"],
-                avoid_actions=["duplicate_skill_discovery", "same_meaning_retrieval"],
-                suggested_queries=_queries(text, terms),
-            ),
+            tool_strategy=ToolStrategy(suggested_queries=_queries(text, terms)),
             risk_policy=RiskPolicy(hallucination_risk="medium", requires_citation=True, must_not_overclaim=True, if_no_evidence="say_uncertain"),
         )
     if _SUMMARY_RE.search(text):
@@ -296,7 +247,6 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
             "summary",
             terms,
             confidence=0.75,
-            tool_strategy=ToolStrategy(first_actions=["direct_answer"]),
         )
     return IntentPreflightResult(
         intent_summary="普通可回答问题",
@@ -304,7 +254,7 @@ def _rule_classify(user_input: str) -> IntentPreflightResult:
         answer_shape="direct_answer",
         domain_terms=terms,
         confidence=0.65,
-        tool_strategy=ToolStrategy(first_actions=["direct_answer", "answer_with_caveat"], suggested_queries=_queries(text, terms)),
+        tool_strategy=ToolStrategy(suggested_queries=_queries(text, terms)),
     )
 
 
@@ -332,21 +282,13 @@ def _stop_condition_hint(result: IntentPreflightResult) -> str:
         return "文件内容已覆盖用户要求的范围时立即总结或回答，不重复读取同一材料。"
     if evidence.needs_external_web:
         return "已有足够公开来源支持核心结论时立即回答并列出来源，不为同一未知点反复搜索。"
-    if result.tool_strategy.first_actions == ["direct_answer"]:
-        return "无需外部证据即可完成时直接回答。"
     return "当前未知点已被验证且可以形成答案时立即回答。"
 
 
 def _avoid_redundant_exploration_hint(result: IntentPreflightResult) -> str:
-    actions = set(result.tool_strategy.avoid_actions)
-    hints: list[str] = []
-    if "duplicate_skill_discovery" in actions:
-        hints.append("已知道可用能力后不要重复 skill_list/skill_describe")
-    if "same_meaning_retrieval" in actions:
-        hints.append("不要用同义查询重复检索同一证据源")
-    if "do_not_overclaim_specific_paths_without_evidence" in actions:
-        hints.append("没有证据时不要断言具体入口或路径")
-    return "；".join(hints)
+    if result.risk_policy.must_not_overclaim:
+        return "没有足够证据时不要断言具体事实、入口或路径"
+    return ""
 
 
 def _extract_domain_terms(text: str) -> list[str]:
@@ -405,7 +347,6 @@ def _result_from_payload(payload: dict) -> IntentPreflightResult:
         missing_slots=_string_list(payload.get("missing_slots")),
         confidence=_float_between(payload.get("confidence"), 0.0, 1.0),
         evidence_policy=EvidencePolicy(
-            prefer_success_experience=bool(evidence.get("prefer_success_experience", True)),
             needs_internal_knowledge=bool(evidence.get("needs_internal_knowledge", False)),
             needs_external_web=bool(evidence.get("needs_external_web", False)),
             needs_file_context=bool(evidence.get("needs_file_context", False)),
@@ -413,8 +354,6 @@ def _result_from_payload(payload: dict) -> IntentPreflightResult:
             should_ask_clarification=bool(evidence.get("should_ask_clarification", False)),
         ),
         tool_strategy=ToolStrategy(
-            first_actions=_string_list(strategy.get("first_actions")),
-            avoid_actions=_string_list(strategy.get("avoid_actions")),
             suggested_queries=_string_list(strategy.get("suggested_queries")),
         ),
         risk_policy=RiskPolicy(
@@ -430,18 +369,6 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()][:8]
-
-
-def _dedupe_texts(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for value in values:
-        normalized = value.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        out.append(normalized)
-    return out
 
 
 def _float_between(value: object, low: float, high: float) -> float:

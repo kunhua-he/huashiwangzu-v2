@@ -4,32 +4,86 @@ Consolidates assistant message persistence, event flushing, timeline
 storage, and hook triggering — all the scatter-shot DB work that used
 to live at the bottom of ``event_stream()`` in ``chat.py``.
 
-Also records Agent asset entries: when a tool result contains a
-``file_id``, a ``FileAsset`` record is created so the file is
-traceable back to the conversation, tool, and tool call that produced it.
+Also projects validated ``ResourceRef`` values into message metadata,
+completion evidence, experience patterns, and Agent asset entries.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 
 from app.database import AsyncSessionLocal
+from app.schemas.platform_resource import ResourceRef, ResourceType
+from app.services.module_registry import call_capability
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .._utils import references_from_tool_events
 from ..engine.event_store import record_event as _record_event
 from ..engine.failure_diagnostics import record_failure as _record_failure
 from ..engine.path_trace import build_path_trace_summary
 from ..runtime.content_gate import (
-    extract_inline_references,
-    extract_success_path,
     final_clean_content,
 )
 from ..services import conversation_service as conv_svc
+from .action_plan import ActionPlanCheckpoint, ActionState
 from .workflow_link import WorkflowRuntimeLink
 
 logger = logging.getLogger("v2.agent").getChild("runtime.task_sink")
+
+_EXPERIENCE_PATH_RE = re.compile(r"(?:[A-Za-z]:\\|/)[^\s\"']+")
+_EXPERIENCE_URL_RE = re.compile(r"https?://[^\s\"']+", re.IGNORECASE)
+_EXPERIENCE_EMAIL_RE = re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b")
+_EXPERIENCE_RESOURCE_ID_RE = re.compile(
+    r"\b(?:file|document|resource|record|task|artifact|chunk|owner|user)_id\s*[:=#]?\s*[A-Za-z0-9_-]+",
+    re.IGNORECASE,
+)
+_EXPERIENCE_FILE_RE = re.compile(
+    r"\b[^\s/\\]+\.(?:pdf|docx?|xlsx?|pptx?|txt|md|csv|png|jpe?g|webp)\b",
+    re.IGNORECASE,
+)
+_EXPERIENCE_LONG_NUMBER_RE = re.compile(r"\b\d{4,}\b")
+
+
+def resource_refs_from_checkpoint(
+    checkpoint: ActionPlanCheckpoint | None,
+) -> list[ResourceRef]:
+    """Return validated references in deterministic plan order."""
+    if checkpoint is None:
+        return []
+    references: list[ResourceRef] = []
+    seen: set[tuple[str, str, str]] = set()
+    for action in checkpoint.plan.actions:
+        observation = checkpoint.observations.get(action.id)
+        if observation is None or observation.state != ActionState.COMPLETED:
+            continue
+        for reference in observation.references:
+            key = (reference.type.value, str(reference.id), reference.locator)
+            if key in seen:
+                continue
+            seen.add(key)
+            references.append(reference)
+    return references
+
+
+def _resource_ref_payloads(references: list[ResourceRef]) -> list[dict]:
+    return [
+        reference.model_dump(mode="json", by_alias=True)
+        for reference in references
+    ]
+
+
+def _sanitized_goal_signature(goal: str, capability_path: str) -> str:
+    value = _EXPERIENCE_PATH_RE.sub("<path>", str(goal or ""))
+    value = _EXPERIENCE_URL_RE.sub("<url>", value)
+    value = _EXPERIENCE_EMAIL_RE.sub("<email>", value)
+    value = _EXPERIENCE_RESOURCE_ID_RE.sub("<resource_id>", value)
+    value = _EXPERIENCE_FILE_RE.sub("<file>", value)
+    value = _EXPERIENCE_LONG_NUMBER_RE.sub("<number>", value)
+    value = " ".join(value.split())[:700]
+    if not value:
+        value = "Completed reusable action plan"
+    return f"{value}; capability path: {capability_path}"[:1000]
 
 
 def _coerce_json_like(value: object) -> object:
@@ -283,26 +337,13 @@ class RuntimeTaskSink:
         tool_events: list[dict],
         timeline: list[dict],
         usage: dict | None = None,
+        resource_refs: list[ResourceRef] | None = None,
     ) -> int | None:
         """Save the assistant message, meta, and return the message id."""
         if not full_content:
             return None
 
         clean_content = final_clean_content("".join(full_content))
-        inline_references = extract_inline_references("".join(full_content))
-        success_path = extract_success_path("".join(full_content))
-        if success_path:
-            try:
-                from ..engine.experience_memory import save_experience
-                await save_experience(
-                    trigger_condition=self._experience_trigger(clean_content),
-                    steps=self._experience_steps(success_path, tool_events),
-                    tools_used=self._tools_used(tool_events),
-                    source_conversation_id=self.conversation_id,
-                    caller=f"user:{self.owner_id}" if self.owner_id else "system:agent",
-                )
-            except Exception as exc:
-                logger.warning("success path extraction save failed (non-fatal): %s", exc)
         if not clean_content:
             logger.warning(
                 "persist_assistant skipped — content cleared to empty by final_clean_content "
@@ -315,14 +356,13 @@ class RuntimeTaskSink:
         )
         safe_events = json.loads(json.dumps(tool_events, default=str))
         safe_timeline = json.loads(json.dumps(timeline, default=str))
-        footer_references = inline_references or references_from_tool_events(tool_events)
         await conv_svc.add_message_meta(
             db,
             owner_id=self.owner_id,
             conversation_id=self.conversation_id,
             message_id=msg.id,
             thinking="\n".join(thinking_parts) if thinking_parts else "",
-            references=footer_references,
+            references=_resource_ref_payloads(resource_refs or []),
             tool_events=safe_events,
             timeline=safe_timeline,
             usage=usage,
@@ -346,59 +386,13 @@ class RuntimeTaskSink:
                     timeline=safe_timeline,
                     usage=usage,
                     message_id=msg.id,
-                    sync_success_path_save_possible=bool(success_path),
+                    sync_success_path_save_possible=False,
                 ),
                 llm_response_id=None,
             )
         except Exception as exc:
             logger.warning("path trace summary record failed (non-fatal): %s", exc)
         return msg.id
-
-    def _experience_trigger(self, clean_content: str) -> str:
-        parts = []
-        if self.user_input:
-            parts.append(f"用户原始问题：{self.user_input[:300]}")
-        intent = str(self.intent_preflight.get("intent_summary") or "")
-        if intent:
-            parts.append(f"意图摘要：{intent[:300]}")
-        task_category = str(self.intent_preflight.get("task_category") or "")
-        answer_shape = str(self.intent_preflight.get("answer_shape") or "")
-        if task_category or answer_shape:
-            parts.append(f"任务类型：{task_category}/{answer_shape}")
-        if not parts:
-            parts.append(clean_content[:300] or "assistant_success_path")
-        return "\n".join(parts)[:1000]
-
-    def _experience_steps(self, success_path: str, tool_events: list[dict]) -> str:
-        try:
-            parsed = json.loads(success_path)
-            if isinstance(parsed, list):
-                return json.dumps(parsed, ensure_ascii=False, default=str)
-        except (json.JSONDecodeError, TypeError):
-            pass
-        steps: list[dict] = []
-        task_category = self.intent_preflight.get("task_category")
-        if task_category:
-            steps.append({"type": "intent", "task_category": task_category, "summary": self.intent_preflight.get("intent_summary", "")})
-        for event in tool_events:
-            if event.get("type") == "tool_call":
-                steps.append({"type": "tool", "tool_name": event.get("name", "")})
-        steps.append({"type": "success_path", "text": success_path})
-        return json.dumps(steps, ensure_ascii=False, default=str)
-
-    @staticmethod
-    def _tools_used(tool_events: list[dict]) -> str | None:
-        names: list[str] = []
-        seen: set[str] = set()
-        for event in tool_events:
-            if event.get("type") != "tool_call":
-                continue
-            name = str(event.get("name") or "").strip()
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            names.append(name)
-        return json.dumps(names, ensure_ascii=False) if names else None
 
     async def persist_pending_events(
         self,
@@ -445,7 +439,7 @@ class RuntimeTaskSink:
 
         Cheap hooks (context_snapshot, prompt_suggestion, cleanup_archive)
         run inline. Expensive/async hooks (memory_distill, profile_evolve,
-        workflow_mine) are submitted to SystemTaskQueue for durable
+        experience learning) are submitted to SystemTaskQueue for durable
         cross-worker execution.
         """
         try:
@@ -510,8 +504,6 @@ class RuntimeTaskSink:
                     logger.warning("cleanup_archive failed (non-fatal): %s", exc)
 
             # ── Expensive hooks: SystemTaskQueue ──────────────────
-            tool_success = self.check_tool_success(tool_events)
-
             await self.submit_background_task(
                 "memory_distill",
                 {"conversation_id": self.conversation_id, "owner_id": self.owner_id,
@@ -525,13 +517,6 @@ class RuntimeTaskSink:
                 {"conversation_id": self.conversation_id, "owner_id": self.owner_id,
                  "trajectory_id": trajectory_id, "turn_index": turn_index},
             )
-
-            if tool_events and tool_success and trajectory_id is not None:
-                await self.submit_background_task(
-                    "workflow_mine",
-                    {"owner_id": self.owner_id, "conversation_id": self.conversation_id,
-                     "trajectory_id": trajectory_id, "turn_index": turn_index},
-                )
 
             query_context_ids = extract_query_context_ids(tool_events)
             if query_context_ids:
@@ -624,195 +609,108 @@ class RuntimeTaskSink:
 
     async def generate_completion_evidence(
         self,
-        tool_events: list[dict],
-        tool_results: list[dict],
+        checkpoint: ActionPlanCheckpoint | None,
     ) -> list[dict]:
-        """Generate structured completion evidence from tool events.
-
-        Each entry records:
-        - operation: inferred action type (create/update/replace/delete/other)
-        - artifact_ids: file or resource IDs involved
-        - tool_reported_success: whether the tool returned success
-        - read_back_verified: whether a subsequent read tool confirmed
-        - errors: any error messages
-
-        Rules:
-        - Tool call and its result are correlated by ``tool_call_id`` when
-          available, with ordered call/result pairing as a fallback for the
-          live runtime shape that can contain blank IDs.
-        - ``tool_reported_success`` comes from **the corresponding result**,
-          not from the tool name.
-        - Artifact IDs are extracted from **both** call arguments and
-          successful result data (result often contains the actual file_id).
-        - ``read_back_verified`` is ``True`` only when the read tool
-          call **and** its result both succeed **and** the returned
-          artifact matches the written one.
-        - If no read-back is possible, ``read_back_verified`` stays ``False``
-          (never default to ``True``).
-        """
+        """Project validator-backed action observations into completion evidence."""
+        if checkpoint is None:
+            return []
         evidence: list[dict] = []
-        # Ordered ``(key, call_event, result_event)`` rows. The key is the
-        # real tool_call_id when present, otherwise a synthetic sequence key.
-        # Keeping order is required for read-back verification.
-        call_rows: list[tuple[str, dict, dict | None]] = []
-        id_to_row: dict[str, int] = {}
-
-        for ev in tool_events:
-            if ev.get("type") != "tool_call":
-                continue
-            tcid = str(ev.get("tool_call_id", "") or ev.get("id", ""))
-            if tcid and tcid != "None":
-                key = tcid
-                id_to_row[key] = len(call_rows)
-            else:
-                key = f"seq_{len(call_rows)}"
-            call_rows.append((key, ev, None))
-
-        sequential_results: list[dict] = []
-        for tr in tool_results:
-            tcid = str(tr.get("tool_call_id", "") or tr.get("id", ""))
-            if tcid and tcid != "None" and tcid in id_to_row:
-                row_idx = id_to_row[tcid]
-                key, call_ev, _old_result = call_rows[row_idx]
-                call_rows[row_idx] = (key, call_ev, tr)
-            else:
-                sequential_results.append(tr)
-
-        seq_idx = 0
-        for row_idx, (key, call_ev, result_ev) in enumerate(call_rows):
-            if result_ev is not None:
-                continue
-            if seq_idx >= len(sequential_results):
-                break
-            call_rows[row_idx] = (key, call_ev, sequential_results[seq_idx])
-            seq_idx += 1
-
-        call_results: dict[str, tuple[dict, dict | None]] = {
-            key: (call_ev, result_ev)
-            for key, call_ev, result_ev in call_rows
-        }
-
-        write_ids: dict[str, str] = {}  # artifact_id → operation
-
-        for tcid, (call_ev, result_ev) in call_results.items():
-            name = str(call_ev.get("name", "") or "")
-            is_write = any(kw in name.lower() for kw in ("create", "update", "replace", "delete", "write", "save", "upload", "generate"))
-            is_read = any(kw in name.lower() for kw in ("read", "detail", "list", "preview", "check", "get", "view", "open"))
-            if not is_write and not is_read:
-                continue
-
-            # Determine success from the result (not the call)
-            tool_ok = result_ev is not None
-            errors: list[str] = []
-            if result_ev is None:
-                errors.append("missing_tool_result")
-            else:
-                tool_ok = not self._is_tool_result_error(result_ev.get("result", {}))
-                if not tool_ok:
-                    res = result_ev.get("result", {})
-                    if isinstance(res, dict):
-                        err_msg = str(res.get("error", "") or res.get("message", "") or "unknown error")
-                        errors.append(err_msg[:200])
-
-            # Extract artifact_ids from call arguments AND from successful result
-            args = call_ev.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            artifact_ids = set()
-            for id_key in ("file_id", "document_id", "id", "resource_id", "target_id"):
-                vid = args.get(id_key)
-                if vid is not None:
-                    artifact_ids.add(str(vid))
-
-            if result_ev and tool_ok:
-                res = result_ev.get("result", {})
-                if isinstance(res, dict):
-                    inner = res.get("data", res)
-                    if isinstance(inner, dict):
-                        for id_key in ("file_id", "document_id", "id", "resource_id", "target_id"):
-                            vid = inner.get(id_key)
-                            if vid is not None:
-                                artifact_ids.add(str(vid))
-
-            aid_list = sorted(artifact_ids)
-
-            if is_write:
-                for aid in aid_list:
-                    write_ids[aid] = "update" if "update" in name.lower() or "replace" in name.lower() else "create" if "create" in name.lower() or "generate" in name.lower() else "delete" if "delete" in name.lower() else "write"
+        for action in checkpoint.plan.actions:
+            observation = checkpoint.observations.get(action.id)
+            if observation is None:
                 evidence.append({
-                    "tool_call_id": tcid,
-                    "tool_name": name,
-                    "operation": "update" if "update" in name.lower() or "replace" in name.lower()
-                                 else "create" if "create" in name.lower() or "generate" in name.lower()
-                                 else "delete" if "delete" in name.lower()
-                                 else "write",
-                    "artifact_ids": aid_list,
-                    "tool_reported_success": tool_ok,
-                    "read_back_verified": False,
-                    "errors": errors,
+                    "action_id": action.id,
+                    "capability": action.capability,
+                    "state": ActionState.PENDING.value,
+                    "completion_check": action.completion_check,
+                    "contract_verified": False,
+                    "resource_refs": [],
+                    "error_class": "missing_observation",
                 })
-            elif is_read:
                 continue
-
-        # Read-back verification: only if the read result also succeeded
-        # AND artifact matches what was written
-        _ordered_calls = list(call_results.items())
-        _call_order = {tcid: idx for idx, (tcid, _) in enumerate(_ordered_calls)}
-        for tcid, (call_ev, result_ev) in _ordered_calls:
-            name = str(call_ev.get("name", "") or "")
-            is_read = any(kw in name.lower() for kw in ("read", "detail", "list", "preview", "check", "get", "view", "open"))
-            if not is_read or result_ev is None:
-                continue
-            tool_ok = not self._is_tool_result_error(result_ev.get("result", {}))
-            if not tool_ok:
-                continue
-
-            args = call_ev.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            for id_key in ("file_id", "document_id", "id", "resource_id", "target_id"):
-                vid = args.get(id_key)
-                if vid is not None and str(vid) in write_ids:
-                    for ev_item in evidence:
-                        if str(vid) not in ev_item.get("artifact_ids", []):
-                            continue
-                        write_tcid = str(ev_item.get("tool_call_id", ""))
-                        if _call_order.get(tcid, -1) <= _call_order.get(write_tcid, -1):
-                            continue
-
-                        write_call = call_results.get(write_tcid, ({}, None))[0]
-                        expected = write_call.get("arguments", {})
-                        if isinstance(expected, str):
-                            try:
-                                expected = json.loads(expected)
-                            except (json.JSONDecodeError, TypeError):
-                                expected = {}
-                        read_result = result_ev.get("result", {})
-                        actual = read_result.get("data", read_result) if isinstance(read_result, dict) else {}
-                        verify_keys = (
-                            "content", "text", "value", "name", "version",
-                            "checksum", "url", "long_url", "status",
-                        )
-                        comparable = [
-                            key for key in verify_keys
-                            if isinstance(expected, dict) and key in expected
-                        ]
-                        matches = bool(comparable) and all(
-                            isinstance(actual, dict)
-                            and key in actual
-                            and actual[key] == expected[key]
-                            for key in comparable
-                        )
-                        if matches:
-                            ev_item["read_back_verified"] = True
-
+            evidence.append({
+                "action_id": action.id,
+                "capability_id": action.capability_id,
+                "capability": action.capability,
+                "state": observation.state.value,
+                "completion_check": action.completion_check,
+                "contract_verified": observation.state == ActionState.COMPLETED,
+                "resource_refs": _resource_ref_payloads(observation.references),
+                "error_class": observation.error_class,
+            })
         return evidence
+
+    async def submit_completed_experience(
+        self,
+        checkpoint: ActionPlanCheckpoint | None,
+    ) -> dict:
+        """Submit a sanitized action pattern after the full DAG has completed."""
+        if checkpoint is None or self.owner_id <= 0:
+            return {"submitted": False, "reason": "missing_checkpoint_or_owner"}
+        if checkpoint.experience_submitted:
+            return {
+                "submitted": False,
+                "reason": "already_submitted",
+                "experience_id": checkpoint.experience_id,
+            }
+        if any(
+            checkpoint.observations.get(action.id) is None
+            or checkpoint.observations[action.id].state != ActionState.COMPLETED
+            for action in checkpoint.plan.actions
+        ):
+            return {"submitted": False, "reason": "plan_not_completed"}
+
+        action_pattern = [
+            {
+                "id": action.id,
+                "capability": action.capability,
+                "depends_on": list(action.depends_on),
+                "expected_references": [item.value for item in action.expected_references],
+            }
+            for action in checkpoint.plan.actions
+        ]
+        reference_types = sorted({
+            reference.type.value
+            for reference in resource_refs_from_checkpoint(checkpoint)
+        })
+        capability_path = " -> ".join(action.capability for action in checkpoint.plan.actions)
+        payload = {
+            "goal_signature": _sanitized_goal_signature(checkpoint.plan.goal, capability_path),
+            "action_pattern": action_pattern,
+            "source_conversation_id": self.conversation_id if self.conversation_id > 0 else None,
+            "scope_type": "user",
+            "preconditions": {
+                "action_count": len(action_pattern),
+                "dependency_edge_count": sum(len(action.depends_on) for action in checkpoint.plan.actions),
+            },
+            "completion_evidence": {
+                "all_actions_completed": True,
+                "completed_action_count": len(action_pattern),
+                "reference_types": reference_types,
+            },
+        }
+        try:
+            result = await call_capability(
+                "memory",
+                "save_experience",
+                payload,
+                caller=f"user:{self.owner_id}",
+                caller_role="viewer",
+                actor="system:agent-engine",
+            )
+        except Exception as exc:
+            logger.warning("structured experience save failed (non-fatal): %s", exc)
+            return {"submitted": False, "reason": str(exc)}
+        if not isinstance(result, dict) or result.get("success") is False:
+            return {"submitted": False, "reason": "capability_failed", "result": result}
+        result_data = result.get("data", result)
+        checkpoint.experience_submitted = True
+        if isinstance(result_data, dict):
+            try:
+                checkpoint.experience_id = int(result_data.get("id") or 0) or None
+            except (TypeError, ValueError):
+                checkpoint.experience_id = None
+        return {"submitted": True, "result": result_data}
 
     async def submit_background_task(
         self,
@@ -865,36 +763,30 @@ class RuntimeTaskSink:
 
     async def record_assets(
         self,
-        tool_results: list[dict],
+        resource_refs: list[ResourceRef],
         skip_file_ids: set[int] | None = None,
     ) -> list[int]:
-        """Scan tool results for file_id outputs and create asset records.
-
-        Each tool result dict should have keys:
-            name: str         — tool name (e.g. "office-gen__docx")
-            result: dict      — tool result, may contain "file_id"
-            tool_call_id: str — unique tool call identifier
-
-        Returns list of created asset IDs.
-        """
-        if not tool_results:
+        """Create Agent assets for canonical file references only."""
+        if not resource_refs:
             return []
         asset_ids: list[int] = []
         try:
             from app.services.asset_service import create_asset
 
             async with AsyncSessionLocal() as _ad:
-                for tr in tool_results:
-                    result_data = tr.get("result", {})
-                    if isinstance(result_data, dict):
-                        inner = result_data.get("data", result_data)
-                        file_id = inner.get("file_id") if isinstance(inner, dict) else None
-                    else:
-                        file_id = None
-                    if not file_id:
+                for reference in resource_refs:
+                    if reference.type != ResourceType.file:
+                        continue
+                    try:
+                        file_id = int(reference.id)
+                    except (TypeError, ValueError):
+                        logger.warning("Asset create skipped for non-numeric file ResourceRef id=%r", reference.id)
                         continue
                     if skip_file_ids and file_id in skip_file_ids:
                         continue
+                    provenance = reference.provenance or {}
+                    capability = str(provenance.get("capability") or "")
+                    action_id = str(provenance.get("action_id") or "")
                     try:
                         asset = await create_asset(
                             _ad,
@@ -902,19 +794,19 @@ class RuntimeTaskSink:
                             owner_id=self.owner_id,
                             asset_type="generated",
                             conversation_id=self.conversation_id,
-                            tool_name=tr.get("name", ""),
-                            tool_call_id=tr.get("tool_call_id") or "",
+                            tool_name=capability,
+                            tool_call_id=action_id,
                         )
                         asset_ids.append(asset.id)
                         logger.info(
                             "Asset auto-created: id=%d file_id=%d tool=%s conv=%d",
-                            asset.id, file_id, tr.get("name", ""),
+                            asset.id, file_id, capability,
                             self.conversation_id,
                         )
                     except Exception as _ae:
                         logger.warning(
                             "Asset create skipped for file_id=%d tool=%s (non-fatal): %s",
-                            file_id, tr.get("name", ""), _ae,
+                            file_id, capability, _ae,
                         )
         except Exception as exc:
             logger.warning(

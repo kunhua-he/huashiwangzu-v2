@@ -43,20 +43,55 @@ async def run_init() -> None:
                 logger.warning("ALTER non-fatal: %s", e)
         # Idempotent ALTER for experience table
         exp_alters = [
-            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS owner_id INTEGER",
-            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS scope VARCHAR(16)",
-            "UPDATE memory_experiences SET scope = 'global' WHERE scope IS NULL",
-            "ALTER TABLE memory_experiences ALTER COLUMN scope SET DEFAULT 'user'",
-            "ALTER TABLE memory_experiences ALTER COLUMN scope SET NOT NULL",
-            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS trigger_embedding vector(1024)",
-            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS tools_used TEXT",
-            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS fail_notes TEXT",
             "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS source_conversation_id BIGINT",
-            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true",
             "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()",
             "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
-            "ALTER TABLE memory_experiences ALTER COLUMN success_weight SET DEFAULT 1",
-            "ALTER TABLE memory_experiences ALTER COLUMN fail_count SET DEFAULT 0",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS scope_type VARCHAR(32) DEFAULT 'user'",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS scope_id BIGINT",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS goal_signature TEXT DEFAULT ''",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS goal_embedding vector(1024)",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS preconditions JSONB DEFAULT '{}'::jsonb",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS action_pattern JSONB DEFAULT '[]'::jsonb",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS completion_evidence JSONB DEFAULT '{}'::jsonb",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS capability_ids INTEGER[] DEFAULT '{}'::integer[]",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS capability_contract_hashes JSONB DEFAULT '{}'::jsonb",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS success_count INTEGER DEFAULT 1",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS distinct_user_count INTEGER DEFAULT 1",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS failure_count INTEGER DEFAULT 0",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS failure_notes JSONB DEFAULT '[]'::jsonb",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS contributor_user_ids INTEGER[] DEFAULT '{}'::integer[]",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS contributor_department_ids INTEGER[] DEFAULT '{}'::integer[]",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS confidence FLOAT DEFAULT 0.5",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS last_verified_at TIMESTAMPTZ",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'candidate'",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS risk_level VARCHAR(32) DEFAULT 'none'",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS privacy_status VARCHAR(32) DEFAULT 'sanitized'",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS requires_review BOOLEAN DEFAULT false",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS reviewed_by INTEGER",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ",
+            "ALTER TABLE memory_experiences ADD COLUMN IF NOT EXISTS review_note TEXT",
+            "ALTER TABLE memory_experiences ALTER COLUMN scope_type SET NOT NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN goal_signature SET NOT NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN preconditions SET NOT NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN action_pattern SET NOT NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN completion_evidence SET NOT NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN capability_ids SET NOT NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN capability_contract_hashes SET NOT NULL",
+            "ALTER TABLE memory_experiences ALTER COLUMN status SET NOT NULL",
+            "DROP INDEX IF EXISTS ux_memory_experiences_active_scope_content",
+            "DROP INDEX IF EXISTS ix_memory_experiences_scope_owner",
+            "DROP INDEX IF EXISTS ix_memory_experiences_trigger_embedding",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS owner_id CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS scope CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS trigger_condition CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS trigger_embedding CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS steps CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS tools_used CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS success_weight CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS fail_count CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS fail_notes CASCADE",
+            "ALTER TABLE memory_experiences DROP COLUMN IF EXISTS active CASCADE",
         ]
         for alter in exp_alters:
             try:
@@ -152,13 +187,17 @@ async def run_init() -> None:
 
         try:
             await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_memory_experiences_scope_owner "
-                "ON memory_experiences (scope, owner_id)"
+                "CREATE INDEX IF NOT EXISTS ix_memory_experiences_pattern_scope "
+                "ON memory_experiences (scope_type, scope_id, status)"
             ))
             await conn.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ux_memory_experiences_active_scope_content "
-                "ON memory_experiences (scope, COALESCE(owner_id, 0), md5(trigger_condition), md5(steps)) "
-                "WHERE active = true"
+                "CREATE INDEX IF NOT EXISTS ix_memory_experiences_capability_ids "
+                "ON memory_experiences USING GIN (capability_ids)"
+            ))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_memory_experiences_scope_pattern "
+                "ON memory_experiences (scope_type, COALESCE(scope_id, 0), md5(goal_signature), md5(action_pattern::text)) "
+                "WHERE status NOT IN ('rejected', 'suspended')"
             ))
         except Exception as e:
             logger.warning("Experience scope indexes non-fatal: %s", e)
@@ -166,8 +205,8 @@ async def run_init() -> None:
         # Create vector index for experience embedding
         try:
             await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_memory_experiences_trigger_embedding "
-                "ON memory_experiences USING ivfflat (trigger_embedding vector_cosine_ops) WITH (lists = 100)"
+                "CREATE INDEX IF NOT EXISTS ix_memory_experiences_goal_embedding "
+                "ON memory_experiences USING ivfflat (goal_embedding vector_cosine_ops) WITH (lists = 100)"
             ))
         except Exception as e:
             logger.warning("Experience vector index creation non-fatal: %s", e)

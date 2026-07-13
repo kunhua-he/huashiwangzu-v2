@@ -36,11 +36,12 @@ from .schemas import (
     WorkflowToolCallRequest,
     WorkflowVerificationRequest,
 )
-from .services import agent_config_service, tool_discovery
+from .services import agent_config_service
 from .services import conversation_service as conv_svc
 from .services import prompt_service as prompt_svc
 from .services import workflow_seed_service as workflow_seed_svc
 from .services import workflow_service as workflow_svc
+from .services.capability_catalog import direct_function_tools
 
 logger = logging.getLogger("v2.agent").getChild("router")
 
@@ -73,7 +74,10 @@ async def list_profiles(user: User = Depends(require_permission("viewer"))):
 
 @router.get("/tools")
 async def list_tools(user: User = Depends(require_permission("viewer"))):
-    tools = tool_discovery.build_tools(user.role)
+    from app.services.module_registry import authorized_capability_snapshot
+
+    snapshot = await authorized_capability_snapshot(user_id=user.id)
+    tools = direct_function_tools(snapshot.get("capabilities") or [])
     return ApiResponse(data=tools)
 
 

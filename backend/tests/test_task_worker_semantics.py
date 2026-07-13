@@ -202,6 +202,48 @@ async def test_missing_lease_running_task_is_recovered() -> None:
         await _cleanup(task_type)
 
 
+@pytest.mark.asyncio
+async def test_graceful_dispatcher_shutdown_requeues_without_consuming_retry() -> None:
+    task_type = f"test_dispatch_shutdown_{uuid4().hex}"
+    try:
+        async with AsyncSessionLocal() as db:
+            task = await task_dispatcher.publish_task(
+                db,
+                task_type=task_type,
+                module="knowledge",
+                owner_id=None,
+                body={"marker": task_type},
+                requested_by="test",
+                trigger="pytest",
+            )
+            task.status = "running"
+            task.retry_count = 2
+            task.lease_token = "shutdown-test-lease"
+            task.lease_owner = "dispatcher:test"
+            task.lease_expires_at = task_dispatcher._now() + timedelta(seconds=60)
+            task.started_at = task_dispatcher._now()
+            task_id = int(task.id)
+            await db.commit()
+
+        async with AsyncSessionLocal() as db:
+            released = await task_dispatcher.release_running_lease_for_shutdown(
+                db,
+                task_id=task_id,
+                lease_token="shutdown-test-lease",
+            )
+            await db.commit()
+            recovered = await db.get(SystemTaskQueue, task_id)
+
+        assert released is True
+        assert recovered is not None
+        assert recovered.status == "pending"
+        assert recovered.retry_count == 2
+        assert recovered.lease_token is None
+        assert recovered.blocked_reason == "dispatcher_shutdown_requeue"
+    finally:
+        await _cleanup(task_type)
+
+
 def test_handler_registry_only_owns_execution_not_scheduler() -> None:
     failed, reason = task_worker._result_is_semantic_failure({"status": "failed", "error": "boom"})
     assert failed is True and reason == "boom"

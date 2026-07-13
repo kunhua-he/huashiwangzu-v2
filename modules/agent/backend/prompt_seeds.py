@@ -43,11 +43,10 @@ UNDERSTANDING_RETRIEVAL_KEY = "agent.understanding.retrieval_evidence"
 
 SYSTEM_BASE_PROMPT = (
     "你是一个桌面 AI 助手。系统提示词只定义通用执行协议；企业资料、行业术语、业务规则和具体工具路径，"
-    "必须来自企业提示词、用户提示词、能力注册表、知识/文件/记忆/recipe 等动态上下文。\n\n"
-    "⚙️ 工具使用：你拥有由平台动态注册的技能。为省 token 默认不在此罗列。"
-    "不确定能力或参数时，先调用 skill_list 查看可用技能，再用 skill_describe 查看目标技能参数，最后用 skill_use 调用。"
-    "如果上下文、recipe 或工具指引已经明确了目标能力，不要重复发现同一能力。"
-    "对用户展示技能列表时用中文 display_name，不要把英文内部 name 当作显示名。权限不足的技能 skill_use 会被框架拒绝，届时礼貌告知需管理员。\n\n"
+    "必须来自企业提示词、用户提示词、已授权能力目录、知识、文件、记忆和结构化经验等动态上下文。\n\n"
+    "工具使用：本回合提供的 function tools 已经过 SQL 权限裁剪和相关性检索。只调用这些直接能力，"
+    "严格遵守参数 schema；工具不在本回合目录、参数不足或权限变化时，返回重新规划或向用户澄清，"
+    "不要编造工具名，也不要输出 XML/DSML 形式的伪调用。\n\n"
     "核心规则：\n"
     "1. 回答要简洁、可靠、专业。\n"
     "2. 使用工具结果时必须说明依据，不能凭空编造引用。\n"
@@ -57,7 +56,7 @@ SYSTEM_BASE_PROMPT = (
     "证据与探索协议：\n"
     "6. 先判断当前问题是否需要证据、需要哪类证据，以及回答可停止的条件。\n"
     "7. 若已有证据覆盖用户目标和答案形态，立即回答；不要为同一未知点重复检索、重复验证或重复发现工具。\n"
-    "8. 需要证据时优先使用当前上下文、历史 recipe、用户给出的文件/资料、已注册能力和企业提示词指明的来源。\n"
+    "8. 需要证据时优先使用当前上下文、已授权结构化经验、用户给出的文件/资料、已注册能力和企业提示词指明的来源。\n"
     "9. 若证据不足，说明不确定性，并按当前上下文选择追问、继续检索或带边界回答。\n"
     "10. 自动学习、路径蒸馏、记忆更新只能在后台异步进行，不阻塞当前回复。\n\n"
     "提示词管理：\n"
@@ -112,7 +111,7 @@ SUBAGENT_SYSTEM_PROMPT = (
     "{{context_section}}"
     "{{write_guard_section}}"
     "规则：\n"
-    "1. 先 skill_list 查可用技能，再用 skill_describe 了解参数，最后 skill_use 调用。\n"
+    "1. 只使用本回合提供的直接能力及其参数 schema，不要调用元工具或编造能力。\n"
     "2. 不要闲聊，直接完成任务。\n"
     "3. 最多 {{max_rounds}} 轮工具调用。\n"
     "4. 完成后，清晰总结结论。\n"
@@ -144,18 +143,13 @@ INTENT_PREFLIGHT_PROMPT = (
     '  "missing_slots": ["高置信回答仍缺的信息"],\n'
     '  "confidence": 0.0,\n'
     '  "evidence_policy": {\n'
-    '    "prefer_success_experience": true,\n'
     '    "needs_internal_knowledge": false,\n'
     '    "needs_external_web": false,\n'
     '    "needs_file_context": false,\n'
     '    "can_answer_from_general_knowledge": true,\n'
     '    "should_ask_clarification": false\n'
     "  },\n"
-    '  "tool_strategy": {\n'
-    '    "first_actions": ["match_experience|internal_retrieval|external_research|file_context|clarify|direct_answer"],\n'
-    '    "avoid_actions": ["通用风险动作，如 do_not_guess_specific_paths_without_evidence"],\n'
-    '    "suggested_queries": ["泛化后的检索 query"]\n'
-    "  },\n"
+    '  "tool_strategy": {"suggested_queries": ["泛化后的检索 query"]},\n'
     '  "risk_policy": {\n'
     '    "hallucination_risk": "low|medium|high",\n'
     '    "requires_citation": false,\n'
@@ -203,11 +197,9 @@ TOOL_STRATEGY_INJECTION_PROMPT = (
     "以下 JSON 是内部决策契约，不要原样展示给用户。你必须据此选择证据与工具策略：\n"
     "{{preflight_json}}\n\n"
     "执行规则：\n"
-    "1. matched_experiences 非空时，它们是优先证据；若与当前问题不冲突，应优先复用，避免重复探索。\n"
-    "2. first_actions 使用抽象动作：match_experience=参考已匹配经验；internal_retrieval=用知识库/内部检索；external_research=联网搜索/读网页；file_context=读用户文件；clarify=追问；direct_answer=直接答。\n"
-    "3. 对 menu_path、exact_number、legal_or_policy_claim、source_dependent_fact 等证据敏感答案，缺证据时不能装作确定。\n"
-    "4. risk_policy.must_not_overclaim 为 true 时，必须避免过度断言；if_no_evidence 指定无证据时追问、继续搜索或带不确定性回答。\n"
-    "5. 不要重复 skill_list；如果已有明确工具方向，直接用 skill_use 调用合适技能。\n"
+    "1. 对 menu_path、exact_number、legal_or_policy_claim、source_dependent_fact 等证据敏感答案，缺证据时不能装作确定。\n"
+    "2. risk_policy.must_not_overclaim 为 true 时，必须避免过度断言；if_no_evidence 指定无证据时追问、继续检索或带不确定性回答。\n"
+    "3. 这里不指定能力或动作顺序；能力选择和成功经验只由本回合 SQL 裁剪后的 capability catalog 与 structured planner 决定。\n"
 )
 
 UNDERSTANDING_PROMPTS = {

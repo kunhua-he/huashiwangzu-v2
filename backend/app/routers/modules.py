@@ -5,7 +5,11 @@ from app.core.exceptions import ValidationError
 from app.middleware.auth import require_permission
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.services.module_registry import call_capability_for_user, list_capabilities, semantic_failure_reason
+from app.services.module_registry import (
+    authorized_capability_snapshot,
+    call_capability_for_user,
+    semantic_failure_reason,
+)
 
 router = APIRouter(prefix="/api/modules", tags=["modules"])
 
@@ -32,4 +36,5 @@ async def module_call(payload: ModuleCallRequest, user: User = Depends(require_p
 
 @router.get("/capabilities")
 async def capabilities(user: User = Depends(require_permission("viewer"))):
-    return ApiResponse(data=list_capabilities(role=user.role, caller=f"user:{user.id}"))
+    snapshot = await authorized_capability_snapshot(user_id=user.id)
+    return ApiResponse(data=snapshot["capabilities"])

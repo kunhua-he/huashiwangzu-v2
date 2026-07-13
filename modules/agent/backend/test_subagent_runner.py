@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -14,169 +13,193 @@ if str(REPO_ROOT) not in sys.path:
 
 
 @pytest.mark.asyncio
-async def test_subagent_skill_describe_receives_owner_id(
+async def test_subagent_executes_exposed_direct_read_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.services import module_registry
+
+    from modules.agent.backend.runtime import action_plan_validator
+    from modules.agent.backend.runtime.action_plan import ActionPlan
+    from modules.agent.backend.runtime.action_planner import (
+        ActionPlanningResult,
+        PlannerDecisionType,
+    )
     from modules.agent.backend.services import subagent_runner
 
-    captured_owner_ids: list[int | None] = []
-    call_count = 0
+    captured_calls: list[dict] = []
 
-    async def fake_chat(**kwargs: object) -> dict:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return {
-                "content": "",
-                "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": "skill_describe",
-                        "arguments": json.dumps({"name": "knowledge__search"}),
-                    },
-                }],
-            }
-        return {"content": "done", "tool_calls": []}
+    class Planner:
+        async def decide(self, **kwargs: object) -> ActionPlanningResult:
+            return ActionPlanningResult(
+                decision=PlannerDecisionType.ACTION_GRAPH,
+                plan=ActionPlan.model_validate({
+                    "goal": "search knowledge",
+                    "catalog_hash": "a" * 64,
+                    "principal_version": "b" * 16,
+                    "actions": [{
+                        "id": "search",
+                        "capability_id": 1,
+                        "capability": "knowledge__search",
+                        "arguments": {"query": "agent"},
+                        "completion_check": "Search completes",
+                    }],
+                    "final_completion_check": "Search completes",
+                }),
+            )
 
-    async def fake_handle_skill_describe(
+    async def fake_call_capability(
+        module: str,
+        action: str,
         params: dict,
-        role: str,
-        owner_id: int | None = None,
-        agent_code: str = "default",
+        **kwargs: object,
     ) -> dict:
-        captured_owner_ids.append(owner_id)
-        return {"name": params["name"], "agent_code": agent_code}
+        captured_calls.append({"module": module, "action": action, "params": params, **kwargs})
+        return {"success": True, "data": {"results": []}}
 
-    monkeypatch.setattr(subagent_runner.gateway_router, "chat", fake_chat)
+    async def fake_catalog(**kwargs: object) -> dict:
+        return {
+            "catalog_hash": "a" * 64,
+            "principal": {"profile_version": "b" * 16},
+            "candidates": [{
+                "capability_id": 1,
+                "module": "knowledge",
+                "action": "search",
+                "parameters": {"query": {"type": "string"}},
+                "execution_contract": {"side_effect_level": "none"},
+            }],
+        }
+
+    async def validate_snapshot(**kwargs: object) -> dict:
+        return {}
+
+    async def system_prompt(*args: object, **kwargs: object) -> str:
+        return "test"
+
+    monkeypatch.setattr(subagent_runner, "retrieve_capabilities", fake_catalog)
+    monkeypatch.setattr(subagent_runner, "_build_system_prompt", system_prompt)
+    monkeypatch.setattr(action_plan_validator, "validate_execution_snapshot", validate_snapshot)
     monkeypatch.setattr(
-        subagent_runner.tool_discovery,
-        "handle_skill_describe",
-        fake_handle_skill_describe,
+        module_registry,
+        "call_capability",
+        fake_call_capability,
     )
 
-    result = await subagent_runner._execute_tool_loop(
-        messages=[{"role": "system", "content": "test"}],
-        task_tools=[],
+    result = await subagent_runner.run_single_task(
+        task_desc="search knowledge",
         max_rounds=2,
         task_write_enabled=False,
         caller="user:55",
         caller_role="viewer",
         owner_id=55,
-        task_desc="describe a skill",
+        planner=Planner(),  # type: ignore[arg-type]
     )
 
     assert result["status"] == "completed"
-    assert result["conclusion"] == "done"
-    assert captured_owner_ids == [55]
-    assert result["tool_calls"][0]["name"] == "skill_describe"
-    assert result["tool_results"][0]["result"]["name"] == "knowledge__search"
+    assert captured_calls[0]["module"] == "knowledge"
+    assert captured_calls[0]["action"] == "search"
+    assert captured_calls[0]["caller"] == "user:55"
+    assert result["tool_calls"][0]["name"] == "knowledge__search"
 
 
 @pytest.mark.asyncio
-async def test_subagent_write_guard_blocks_skill_use_write_capability(
+async def test_subagent_write_guard_blocks_direct_write_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from modules.agent.backend.runtime.action_planner import (
+        ActionPlanningResult,
+        PlannerDecisionType,
+    )
     from modules.agent.backend.services import subagent_runner
 
-    async def fake_chat(**kwargs: object) -> dict:
+    class Planner:
+        async def decide(self, **kwargs: object) -> ActionPlanningResult:
+            assert not kwargs["catalog"]["candidates"]  # type: ignore[index]
+            return ActionPlanningResult(
+                decision=PlannerDecisionType.DIRECT_ANSWER,
+                answer="Write access is disabled.",
+            )
+
+    async def fake_catalog(**kwargs: object) -> dict:
         return {
-            "content": "",
-            "tool_calls": [{
-                "id": "call_write",
-                "type": "function",
-                "function": {
-                    "name": "skill_use",
-                    "arguments": json.dumps({
-                        "name": "agent__update_my_profile",
-                        "args": {"profile_data": {"tone": "formal"}},
-                    }),
-                },
+            "catalog_hash": "a" * 64,
+            "principal": {"profile_version": "b" * 16},
+            "candidates": [{
+                "capability_id": 2,
+                "module": "agent",
+                "action": "update_my_profile",
+                "execution_contract": {"side_effect_level": "update"},
             }],
         }
 
-    async def forbidden_handle_skill_use(*args: object, **kwargs: object) -> dict:
-        raise AssertionError("write capability should be blocked before skill_use dispatch")
+    async def system_prompt(*args: object, **kwargs: object) -> str:
+        return "test"
 
-    monkeypatch.setattr(subagent_runner.gateway_router, "chat", fake_chat)
-    monkeypatch.setattr(
-        subagent_runner.tool_discovery,
-        "handle_skill_use",
-        forbidden_handle_skill_use,
-    )
-
-    result = await subagent_runner._execute_tool_loop(
-        messages=[{"role": "system", "content": "test"}],
-        task_tools=[],
+    monkeypatch.setattr(subagent_runner, "retrieve_capabilities", fake_catalog)
+    monkeypatch.setattr(subagent_runner, "_build_system_prompt", system_prompt)
+    result = await subagent_runner.run_single_task(
+        task_desc="try to update profile",
         max_rounds=1,
         task_write_enabled=False,
         caller="user:55",
         caller_role="viewer",
         owner_id=55,
-        task_desc="try to update profile",
+        planner=Planner(),  # type: ignore[arg-type]
     )
 
-    assert result["status"] == "error"
-    assert "写入权限" in result["error"]
-    assert "agent__update_my_profile" in result["error"]
-    assert result["tool_results"][0]["name"] == "skill_use"
-    assert "写入权限" in result["tool_results"][0]["result"]["error"]
+    assert result["status"] == "completed"
+    assert result["tool_calls"] == []
+    assert result["conclusion"] == "Write access is disabled."
 
 
 @pytest.mark.asyncio
-async def test_subagent_write_guard_allows_skill_use_read_capability(
+async def test_subagent_rejects_tool_outside_authorized_catalog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from modules.agent.backend.runtime.action_planner import (
+        ActionPlanningResult,
+        PlannerDecisionType,
+    )
     from modules.agent.backend.services import subagent_runner
 
-    call_count = 0
-    captured_params: list[dict] = []
+    class Planner:
+        async def decide(self, **kwargs: object) -> ActionPlanningResult:
+            assert not kwargs["catalog"]["candidates"]  # type: ignore[index]
+            return ActionPlanningResult(
+                decision=PlannerDecisionType.DIRECT_ANSWER,
+                answer="No authorized capability is available.",
+            )
 
-    async def fake_chat(**kwargs: object) -> dict:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return {
-                "content": "",
-                "tool_calls": [{
-                    "id": "call_read",
-                    "type": "function",
-                    "function": {
-                        "name": "skill_use",
-                        "arguments": json.dumps({
-                            "name": "knowledge__search",
-                            "args": {"query": "agent"},
-                        }),
-                    },
-                }],
-            }
-        return {"content": "read done", "tool_calls": []}
+    async def fake_catalog(**kwargs: object) -> dict:
+        return {
+            "catalog_hash": "a" * 64,
+            "principal": {"profile_version": "b" * 16},
+            "candidates": [{
+                "capability_id": 1,
+                "module": "knowledge",
+                "action": "search",
+                "execution_contract": {"side_effect_level": "none"},
+            }],
+        }
 
-    async def fake_handle_skill_use(params: dict, caller: str, caller_role: str) -> dict:
-        captured_params.append(params)
-        return {"success": True, "data": {"results": []}}
+    async def system_prompt(*args: object, **kwargs: object) -> str:
+        return "test"
 
-    monkeypatch.setattr(subagent_runner.gateway_router, "chat", fake_chat)
-    monkeypatch.setattr(
-        subagent_runner.tool_discovery,
-        "handle_skill_use",
-        fake_handle_skill_use,
-    )
-
-    result = await subagent_runner._execute_tool_loop(
-        messages=[{"role": "system", "content": "test"}],
-        task_tools=[],
+    monkeypatch.setattr(subagent_runner, "retrieve_capabilities", fake_catalog)
+    monkeypatch.setattr(subagent_runner, "_build_system_prompt", system_prompt)
+    result = await subagent_runner.run_single_task(
+        task_desc="search knowledge",
+        base_tools=[],
         max_rounds=2,
         task_write_enabled=False,
         caller="user:55",
         caller_role="viewer",
         owner_id=55,
-        task_desc="search knowledge",
+        planner=Planner(),  # type: ignore[arg-type]
     )
 
     assert result["status"] == "completed"
-    assert result["conclusion"] == "read done"
-    assert captured_params == [{"name": "knowledge__search", "args": {"query": "agent"}}]
+    assert result["conclusion"] == "No authorized capability is available."
+    assert result["tool_results"] == []
 
 
 @pytest.mark.asyncio

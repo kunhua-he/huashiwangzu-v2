@@ -29,6 +29,66 @@ def test_outbound_actions_require_approval(tool_name: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_policy_blocks_missing_risk_contract_without_name_fallback() -> None:
+    async with AsyncSessionLocal() as db:
+        result = await check_action_allowed(
+            db,
+            "knowledge__search",
+            "test_structured_contract",
+            user_id=42,
+            execution_contract={
+                "contract_declared": False,
+                "risk_declared": False,
+                "side_effect_level": "none",
+                "approval_policy": "none",
+                "idempotency": "none",
+            },
+        )
+    assert result["allowed"] is False
+    assert result["error_class"] == "execution_contract_incomplete"
+
+
+@pytest.mark.asyncio
+async def test_structured_policy_uses_contract_instead_of_sensitive_tool_name() -> None:
+    async with AsyncSessionLocal() as db:
+        result = await check_action_allowed(
+            db,
+            "external__upload",
+            "test_structured_contract",
+            user_id=42,
+            execution_contract={
+                "contract_declared": True,
+                "risk_declared": True,
+                "side_effect_level": "none",
+                "approval_policy": "none",
+                "idempotency": "none",
+            },
+        )
+    assert result["allowed"] is True
+    assert result["side_effect_level"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_structured_policy_rejects_unsafe_outbound_contract() -> None:
+    async with AsyncSessionLocal() as db:
+        result = await check_action_allowed(
+            db,
+            "neutral__action",
+            "test_structured_contract",
+            user_id=42,
+            execution_contract={
+                "contract_declared": True,
+                "risk_declared": True,
+                "side_effect_level": "outbound",
+                "approval_policy": "none",
+                "idempotency": "required",
+            },
+        )
+    assert result["allowed"] is False
+    assert result["error_class"] == "execution_contract_unsafe"
+
+
+@pytest.mark.asyncio
 async def test_approval_queue_stores_redacted_tool_args() -> None:
     agent_code = "test_action_policy_args"
     tool_args = {

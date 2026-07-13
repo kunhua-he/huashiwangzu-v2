@@ -1,14 +1,14 @@
-"""Regression tests for Agent tool failure normalization."""
+"""Regression tests for structured Agent action failures."""
+from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
 
 import pytest
 
-from .engine.tool_orchestrator import ToolMetadata
-from .runtime import tool_loop_runtime
+from .runtime import action_plan_validator, tool_loop_runtime
+from .runtime.action_plan import ActionPlan
+from .runtime.action_planner import ActionPlanningResult, PlannerDecisionType
 from .runtime.runtime_policy import RuntimePolicy
-from .runtime.stream_emitter import StreamEmitter
 from .runtime.tool_failure_normalizer import (
     effective_tool_name,
     normalize_tool_result_for_model,
@@ -54,11 +54,8 @@ def test_normalize_nested_timeout_preserves_transport_success() -> None:
     assert signal["source"] == "data"
 
 
-def test_effective_tool_name_uses_skill_target() -> None:
-    assert effective_tool_name(
-        {"name": "skill_use", "args": {"name": "web-tools__fetch"}},
-    ) == "web-tools__fetch"
-    assert effective_tool_name({"name": "skill_list", "args": {}}) == "skill_list"
+def test_effective_tool_name_is_the_direct_capability_name() -> None:
+    assert effective_tool_name({"name": "web-tools__fetch", "args": {}}) == "web-tools__fetch"
 
 
 class _DummySession:
@@ -76,6 +73,8 @@ class _FakeSink:
     workflow_link = None
     workflow_run_id = None
     workflow_step_id = None
+    agent_run_id = None
+    user_input = "run capability"
 
     async def record_failure(self, *args: object, **kwargs: object) -> None:
         return None
@@ -83,19 +82,10 @@ class _FakeSink:
     async def persist_assistant(self, *args: object, **kwargs: object) -> int:
         return 123
 
-    async def persist_pending_events(
-        self,
-        db: object,
-        pending_events: list[dict],
-        persisted_event_count: int,
-    ) -> int:
-        return len(pending_events)
+    async def persist_pending_events(self, *args: object, **kwargs: object) -> int:
+        return 1
 
-    async def generate_completion_evidence(
-        self,
-        tool_events: list[dict],
-        tool_results: list[dict],
-    ) -> list[dict]:
+    async def generate_completion_evidence(self, *args: object, **kwargs: object) -> list[dict]:
         return []
 
     def check_tool_success(self, tool_events: list[dict]) -> bool:
@@ -107,240 +97,160 @@ class _FakeSink:
     async def run_post_turn_hooks(self, *args: object, **kwargs: object) -> None:
         return None
 
-    async def record_assets(self, *args: object, **kwargs: object) -> list[int]:
-        return []
+    async def workflow_record_tool_started(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def workflow_mark_tool_result(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def workflow_record_runtime_failure(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def workflow_complete_turn(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def submit_completed_experience(self, *args: object, **kwargs: object) -> dict:
+        return {"submitted": False}
 
 
-class _FakeOrchestrator:
-    def determine_tool_metadata(self, tool_name: str) -> ToolMetadata:
-        return ToolMetadata(name_pattern=tool_name, read_only=True, concurrency_safe=True)
+class _Planner:
+    def __init__(self, plan: ActionPlan) -> None:
+        self.plan = plan
 
-    async def execute_batch(self, tools: list[dict], execute_fn: object) -> list[dict]:
-        return [
-            {
-                "name": "skill_use",
-                "tool_call_id": "call_1",
-                "result": {"success": False, "error": "Connection refused"},
+    async def decide(self, **kwargs: object) -> ActionPlanningResult:
+        return ActionPlanningResult(
+            decision=PlannerDecisionType.ACTION_GRAPH,
+            plan=self.plan,
+        )
+
+
+def _catalog(*, timeout_seconds: float = 1) -> dict:
+    return {
+        "catalog_hash": "a" * 64,
+        "principal": {"profile_version": "b" * 16},
+        "candidates": [{
+            "capability_id": 1,
+            "module": "web-tools",
+            "action": "fetch",
+            "parameters": {"url": {"type": "string"}},
+            "execution_contract": {
+                "side_effect_level": "none",
+                "timeout_seconds": timeout_seconds,
             },
-        ]
+        }],
+    }
 
 
-class _ExecutingOrchestrator:
-    def determine_tool_metadata(self, tool_name: str) -> ToolMetadata:
-        return ToolMetadata(name_pattern=tool_name, read_only=True, concurrency_safe=True)
+def _plan() -> ActionPlan:
+    return ActionPlan.model_validate({
+        "goal": "Fetch the page",
+        "catalog_hash": "a" * 64,
+        "principal_version": "b" * 16,
+        "actions": [{
+            "id": "fetch",
+            "capability_id": 1,
+            "capability": "web-tools__fetch",
+            "arguments": {"url": "https://example.invalid"},
+            "completion_check": "Fetch completes",
+        }],
+        "final_completion_check": "Fetch completes",
+    })
 
-    async def execute_batch(self, tools: list[dict], execute_fn: object) -> list[dict]:
-        results = []
-        for tool in tools:
-            result = await execute_fn(tool)
-            results.append({
-                "name": tool.get("name", ""),
-                "tool_call_id": tool.get("tool_call_id", ""),
-                "result": result,
-            })
-        return results
 
-
-def _decode_sse_event(event: object) -> dict | None:
+def _decode_sse(event: object) -> dict | None:
     if not isinstance(event, bytes):
         return None
-    text = event.decode("utf-8")
-    if not text.startswith("data: "):
+    value = event.decode("utf-8")
+    if not value.startswith("data: ") or value.startswith("data: [DONE]"):
         return None
-    payload = text[6:].strip()
-    if payload == "[DONE]":
-        return None
-    return json.loads(payload)
+    return json.loads(value[6:].strip())
+
+
+async def _allow_snapshot(**kwargs: object) -> dict:
+    return {}
+
+
+async def _allow_policy(*args: object, **kwargs: object) -> dict:
+    return {"allowed": True}
 
 
 @pytest.mark.asyncio
-async def test_run_marks_external_tool_failure_events(
+async def test_runtime_emits_failed_observation_without_retrying(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_stream_until_tool_or_done(
-        self: ToolLoopRuntime,
-        messages: list[dict],
-        tools: list[dict] | None,
-        full: list[str],
-        thinking_parts: list[str],
-        timeline: list[dict],
-        emitter: StreamEmitter,
-    ) -> AsyncIterator[object]:
-        yield {
-            "type": "_stream_result",
-            "result": {
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "skill_use",
-                            "arguments": {
-                                "name": "web-tools__fetch",
-                                "args": {"url": "https://example.invalid"},
-                            },
-                        },
-                    },
-                ],
-                "usage": {},
-            },
-        }
+    from app.services import module_registry
 
-    async def fake_generate_final_summary(
-        self: ToolLoopRuntime,
-        messages: list[dict],
-        tool_events: list[dict],
-        timeline: list[dict],
-        full: list[str],
-    ) -> AsyncIterator[object]:
-        if False:
-            yield None
+    calls = 0
 
-    monkeypatch.setattr(
-        ToolLoopRuntime,
-        "_stream_until_tool_or_done",
-        fake_stream_until_tool_or_done,
-    )
-    monkeypatch.setattr(
-        ToolLoopRuntime,
-        "_generate_final_summary",
-        fake_generate_final_summary,
-    )
+    async def fail_capability(*args: object, **kwargs: object) -> dict:
+        nonlocal calls
+        calls += 1
+        return {"success": False, "error": "Connection refused"}
+
     monkeypatch.setattr(tool_loop_runtime, "AsyncSessionLocal", lambda: _DummySession())
-    monkeypatch.setattr(tool_loop_runtime, "get_orchestrator", lambda: _FakeOrchestrator())
-
+    monkeypatch.setattr(tool_loop_runtime, "check_action_allowed", _allow_policy)
+    monkeypatch.setattr(action_plan_validator, "validate_execution_snapshot", _allow_snapshot)
+    monkeypatch.setattr(module_registry, "call_capability", fail_capability)
     runtime = ToolLoopRuntime(
         conversation_id=1,
         owner_id=1,
-        policy=RuntimePolicy(max_tool_rounds=1, enable_single_pass_streaming_tools=True),
+        policy=RuntimePolicy(max_tool_rounds=1, enable_checkpointer=False),
+        capability_catalog=_catalog(),
+        planner=_Planner(_plan()),  # type: ignore[arg-type]
     )
-    messages = [{"role": "user", "content": "fetch a page"}]
-    events: list[object] = []
 
-    async for event in runtime.run(
-        messages,
-        [{"type": "function", "function": {"name": "skill_use"}}],
-        _FakeSink(),  # type: ignore[arg-type]
-    ):
-        events.append(event)
-
-    decoded_events = [_decode_sse_event(event) for event in events]
-    assert any(
+    events = [
         event
-        and event.get("type") == "tool_result"
-        and event.get("hard_failure") is True
-        and event.get("error_class") == "network_error"
-        for event in decoded_events
-    )
-    tool_messages = [message for message in messages if message.get("role") == "tool"]
-    assert tool_messages
-    assert '"success": false' in tool_messages[0]["content"]
-    assert '"failure_kind": "hard"' in tool_messages[0]["content"]
-
-
-@pytest.mark.asyncio
-async def test_fast_tool_batch_emits_heartbeat_and_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_stream_until_tool_or_done(
-        self: ToolLoopRuntime,
-        messages: list[dict],
-        tools: list[dict] | None,
-        full: list[str],
-        thinking_parts: list[str],
-        timeline: list[dict],
-        emitter: StreamEmitter,
-    ) -> AsyncIterator[object]:
-        yield {
-            "type": "_stream_result",
-            "result": {
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "skill_list",
-                            "arguments": {},
-                        },
-                    },
-                ],
-                "usage": {},
-            },
-        }
-
-    async def fake_generate_final_summary(
-        self: ToolLoopRuntime,
-        messages: list[dict],
-        tool_events: list[dict],
-        timeline: list[dict],
-        full: list[str],
-    ) -> AsyncIterator[object]:
-        if False:
-            yield None
-
-    async def fake_check_action_allowed(*args: object, **kwargs: object) -> dict:
-        return {"allowed": True}
-
-    async def slow_skill_list(*args: object, **kwargs: object) -> dict:
-        await tool_loop_runtime.asyncio.sleep(0.05)
-        return {"skills": []}
-
-    monkeypatch.setattr(
-        ToolLoopRuntime,
-        "_stream_until_tool_or_done",
-        fake_stream_until_tool_or_done,
-    )
-    monkeypatch.setattr(
-        ToolLoopRuntime,
-        "_generate_final_summary",
-        fake_generate_final_summary,
-    )
-    monkeypatch.setattr(tool_loop_runtime, "AsyncSessionLocal", lambda: _DummySession())
-    monkeypatch.setattr(tool_loop_runtime, "get_orchestrator", lambda: _ExecutingOrchestrator())
-    monkeypatch.setattr(tool_loop_runtime, "check_action_allowed", fake_check_action_allowed)
-    monkeypatch.setattr(tool_loop_runtime.tool_discovery, "handle_skill_list", slow_skill_list)
-
-    runtime = ToolLoopRuntime(
-        conversation_id=1,
-        owner_id=1,
-        policy=RuntimePolicy(
-            max_tool_rounds=1,
-            enable_single_pass_streaming_tools=True,
-            fast_tool_timeout_seconds=0.02,
-        ),
-    )
-    messages = [{"role": "user", "content": "list skills"}]
-    events: list[object] = []
-
-    async for event in runtime.run(
-        messages,
-        [{"type": "function", "function": {"name": "skill_list"}}],
-        _FakeSink(),  # type: ignore[arg-type]
-    ):
-        events.append(event)
-
-    decoded_events = [_decode_sse_event(event) for event in events]
-    assert any(
-        event
-        and event.get("type") == "tool_group"
-        and event.get("execution_mode") == "serial"
-        and event.get("tool_count") == 1
-        for event in decoded_events
-    )
-    heartbeat_nodes = [
-        (event.get("node"), event.get("status"))
-        for event in decoded_events
-        if event and event.get("type") == "tool_heartbeat"
+        async for event in runtime.run(
+            [{"role": "user", "content": "fetch"}],
+            _FakeSink(),  # type: ignore[arg-type]
+        )
     ]
-    assert ("policy_check", "started") in heartbeat_nodes
-    assert ("skill_list", "started") in heartbeat_nodes
-    assert ("tool_execution", "timeout") in heartbeat_nodes
+    decoded = [_decode_sse(event) for event in events]
+
+    assert calls == 1
     assert any(
+        item
+        and item.get("type") == "tool_result"
+        and item.get("status") == "failed"
+        for item in decoded
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_uses_capability_contract_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import module_registry
+
+    async def slow_capability(*args: object, **kwargs: object) -> dict:
+        await tool_loop_runtime.asyncio.sleep(0.05)
+        return {"success": True}
+
+    monkeypatch.setattr(tool_loop_runtime, "AsyncSessionLocal", lambda: _DummySession())
+    monkeypatch.setattr(tool_loop_runtime, "check_action_allowed", _allow_policy)
+    monkeypatch.setattr(action_plan_validator, "validate_execution_snapshot", _allow_snapshot)
+    monkeypatch.setattr(module_registry, "call_capability", slow_capability)
+    runtime = ToolLoopRuntime(
+        conversation_id=1,
+        owner_id=1,
+        policy=RuntimePolicy(max_tool_rounds=1, enable_checkpointer=False),
+        capability_catalog=_catalog(timeout_seconds=0.01),
+        planner=_Planner(_plan()),  # type: ignore[arg-type]
+    )
+
+    events = [
         event
-        and event.get("type") == "tool_result"
-        and event.get("error_class") == "timeout"
-        and event.get("hard_failure") is True
-        for event in decoded_events
+        async for event in runtime.run(
+            [{"role": "user", "content": "fetch"}],
+            _FakeSink(),  # type: ignore[arg-type]
+        )
+    ]
+    decoded = [_decode_sse(event) for event in events]
+
+    assert any(
+        item
+        and item.get("type") == "tool_result"
+        and item.get("error_class") == "timeout"
+        for item in decoded
     )

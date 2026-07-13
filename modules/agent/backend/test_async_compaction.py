@@ -269,11 +269,11 @@ class TestBudgetClipping:
 
 
 class TestThinkingRouterNoLLM:
-    """Thinking router must not call LLM when rules/signals/history miss."""
+    """Thinking router must not call LLM when rules and signals miss."""
 
     @pytest.mark.asyncio
     async def test_fallback_returns_medium_without_llm(self):
-        """When no rule/signal/history matches, default to medium, no LLM."""
+        """When no rule or signal matches, default to medium without an LLM."""
         from unittest.mock import MagicMock
 
         from .engine.thinking_router import ThinkingRouteResult, route_thinking_level
@@ -291,12 +291,10 @@ class TestThinkingRouterNoLLM:
         db = AsyncMock()
         db.execute.return_value = exec_result
 
-        with patch("modules.agent.backend.engine.thinking_router._match_experience",
-                   new_callable=AsyncMock, return_value=None):
-            result = await route_thinking_level(
-                db, input_text, owner_id=1, conversation_id=1,
-                profile_key="test", agent_code="test",
-            )
+        result = await route_thinking_level(
+            db, input_text, owner_id=1, conversation_id=1,
+            profile_key="test", agent_code="test",
+        )
         assert isinstance(result, ThinkingRouteResult)
         assert result.level == "medium"
         assert result.source == "fallback"

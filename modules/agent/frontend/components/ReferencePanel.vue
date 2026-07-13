@@ -21,7 +21,7 @@
 
     <div class="ref-list">
       <article
-        v-for="(r, idx) in references" :key="idx"
+        v-for="r in references" :key="referenceKey(r)"
         class="ref-card"
         :class="{ active: r === activeRef }"
         @click="$emit('select', r)"
@@ -33,28 +33,34 @@
           </svg>
         </div>
         <strong class="ref-card-title">
-          <template v-if="r.type === 'web' && r.url">
-            <a :href="r.url" target="_blank" rel="noopener" class="ref-card-link" @click.stop>{{ r.title || r.url }}</a>
+          <template v-if="r.type === 'url' && referenceOpenTarget(r)">
+            <a :href="referenceOpenTarget(r)" target="_blank" rel="noopener" class="ref-card-link" @click.stop>{{ referenceDisplayName(r) }}</a>
           </template>
-          <template v-else>{{ r.title || r.source }}</template>
+          <template v-else>{{ referenceDisplayName(r) }}</template>
         </strong>
-        <p class="ref-card-excerpt" v-if="r.excerpt">{{ r.excerpt }}</p>
+        <p class="ref-card-excerpt" v-if="referenceExcerpt(r)">{{ referenceExcerpt(r) }}</p>
       </article>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
- defineProps<{
-   references: RefItem[]
-   activeRef: RefItem | null
- }>()
+import type { RefItem } from '../types'
+import {
+  referenceDisplayName,
+  referenceExcerpt,
+  referenceKey,
+  referenceOpenTarget,
+} from '../utils/resourceReferences'
 
- defineEmits<{
-   select: [ref: RefItem]
- }>()
+defineProps<{
+  references: RefItem[]
+  activeRef: RefItem | null
+}>()
 
- interface RefItem { type: string; title: string; source: string; excerpt: string; url?: string }
+defineEmits<{
+  select: [ref: RefItem]
+}>()
 </script>
 
 <style scoped>

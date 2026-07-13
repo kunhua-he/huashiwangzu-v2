@@ -123,30 +123,6 @@ def _strip_internal_success_sections(content: str) -> str:
     return cleaned
 
 
-def extract_success_path(content: str) -> str | None:
-    """Extract internal best-path summary for experience storage."""
-    if not content:
-        return None
-    html_match = re.search(
-        r'<p>\s*<strong>\s*最佳路径总结[:：]\s*</strong>\s*(?:<br\s*/?>)?([\s\S]*?)</p>',
-        content,
-        flags=re.IGNORECASE,
-    )
-    if html_match:
-        text = re.sub(r'<br\s*/?>', '\n', html_match.group(1), flags=re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', '', text).strip()
-        return text or None
-    md_match = re.search(
-        r'(?:^|\n)\s*(?:\*\*)?最佳路径总结[:：](?:\*\*)?\s*([\s\S]*?)(?=\n\s*📎\s*来源[:：]|\n\s*#{1,6}\s|\Z)',
-        content,
-        flags=re.IGNORECASE,
-    )
-    if md_match:
-        text = re.sub(r'[*_`]+', '', md_match.group(1)).strip()
-        return text or None
-    return None
-
-
 def _extract_source_block(content: str) -> tuple[str, str]:
     """Return content without source block plus the extracted source block."""
     html_match = re.search(
@@ -160,37 +136,6 @@ def _extract_source_block(content: str) -> tuple[str, str]:
     if md_match:
         return content[:md_match.start()].strip(), md_match.group(1)
     return content, ""
-
-
-def extract_inline_references(content: str) -> list[dict]:
-    """Extract model-written source list for message footer references."""
-    _, source_block = _extract_source_block(content)
-    if not source_block:
-        return []
-    refs: list[dict] = []
-    seen: set[str] = set()
-    link_re = re.compile(
-        r'\[([^\]]+)\]\((https?://[^\s)]+)\)|<a\s+[^>]*href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>',
-        flags=re.IGNORECASE,
-    )
-    for match in link_re.finditer(source_block):
-        title = re.sub(r'<[^>]+>', '', match.group(1) or match.group(4) or '').strip()
-        url = (match.group(2) or match.group(3) or '').strip()
-        key = url or title
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        refs.append({"type": "web", "title": title or url, "source": title or url, "excerpt": "", "url": url or None})
-    if refs:
-        return refs
-    plain = re.sub(r'<[^>]+>', '\n', source_block)
-    for line in plain.splitlines():
-        title = re.sub(r'^\s*[-*\d.)、]+\s*', '', line).strip()
-        if not title or title in seen:
-            continue
-        seen.add(title)
-        refs.append({"type": "source", "title": title, "source": title, "excerpt": ""})
-    return refs[:6]
 
 
 def strip_inline_source_block(content: str) -> str:

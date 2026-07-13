@@ -87,4 +87,5 @@ register_capability(
     brief="解析 XLS/XLSX 文档",
     parameters={"file_id": {"type": "int", "description": "File ID in file storage"}},
     min_role="viewer",
+    execution_contract={"side_effect_level": "none", "resource_class": "local_cpu", "timeout_seconds": 180, "parallel_safe": True},
 )

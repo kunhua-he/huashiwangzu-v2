@@ -829,6 +829,38 @@ async def recover_expired_leases(db: AsyncSession) -> int:
     return recovered
 
 
+async def release_running_lease_for_shutdown(
+    db: AsyncSession,
+    *,
+    task_id: int,
+    lease_token: str,
+) -> bool:
+    """Return a fenced running task to pending without consuming retry budget."""
+    result = await db.execute(
+        update(SystemTaskQueue)
+        .where(
+            SystemTaskQueue.id == int(task_id),
+            SystemTaskQueue.status == "running",
+            SystemTaskQueue.lease_token == lease_token,
+        )
+        .values(
+            status="pending",
+            retry_at=_now(),
+            started_at=None,
+            completed_at=None,
+            lease_token=None,
+            lease_owner=None,
+            lease_expires_at=None,
+            heartbeat_at=None,
+            executor_pid=None,
+            failure_class=None,
+            error_message=None,
+            blocked_reason="dispatcher_shutdown_requeue",
+        )
+    )
+    return int(result.rowcount or 0) == 1
+
+
 async def execute_claimed_task(task_id: int, lease_token: str) -> int:
     """Run one leased handler inside the disposable executor process."""
     from app.services import task_worker
@@ -1092,8 +1124,26 @@ async def stop_dispatcher() -> None:
             _dispatcher_task.cancel()
             await asyncio.gather(_dispatcher_task, return_exceptions=True)
     dispatcher = TaskDispatcher()
-    for state in list(_active_executors.values()):
-        await dispatcher._terminate_executor(state)
+    states = list(_active_executors.values())
+    await asyncio.gather(
+        *(dispatcher._terminate_executor(state) for state in states),
+        return_exceptions=True,
+    )
+    if states:
+        async with AsyncSessionLocal() as db:
+            for state in states:
+                released = await release_running_lease_for_shutdown(
+                    db,
+                    task_id=state.claim.task_id,
+                    lease_token=state.claim.lease_token,
+                )
+                await _record_attempt_metric(
+                    db,
+                    state,
+                    status="shutdown_requeue" if released else "fenced",
+                    exit_code=state.process.returncode,
+                )
+            await db.commit()
     _active_executors.clear()
 
 

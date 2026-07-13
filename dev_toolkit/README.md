@@ -57,6 +57,10 @@ tail_log(module="knowledge", lines=80)
 - `recent_stage_metrics.key_metrics` 会汇总 `vector_candidates`、`db_commit_ms`、`llm_ms` 等关键字段。
 - `app.task_worker_main` 是可丢弃的后台队列 worker，不是持久状态。队列行持久化在数据库里；改了 task handler、能力注册或遇到内存退休时，可以直接杀旧 worker。worker 退出恢复会把 running 行释放回可重试状态，`backend_watchdog` 会在有可执行 pending 任务时自动拉起新 worker。
 
+## Agent 巡检
+
+- `agent_runtime_snapshot` 只读分析 Agent 对话轨迹、工具调用和失败签名，输出工具发现开销、文件/参数契约错误、知识库超时、权限前置缺失等问题及对应代码落点。传 `owner_id` 可只看一个用户的对话与轨迹。
+
 ## 文档守卫
 
 - 改 manifest、能力注册、router、model、sandbox、release gate、工具台后跑 `docs_audit`。

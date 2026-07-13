@@ -378,6 +378,7 @@ register_capability(
         "folder_id": {"type": "int", "description": "Target folder ID for saved audio"},
     },
     min_role="editor",
+    execution_contract={"side_effect_level": "workspace_write", "resource_class": "local_cpu", "timeout_seconds": 1800, "output_reference_types": ["file"]},
 )
 
 register_capability(
@@ -392,6 +393,7 @@ register_capability(
         "folder_id": {"type": "int", "description": "Target folder ID for saved transcript"},
     },
     min_role="editor",
+    execution_contract={"side_effect_level": "workspace_write", "resource_class": "local_gpu", "timeout_seconds": 1800, "output_reference_types": ["file"]},
 )
 
 register_capability(
@@ -408,4 +410,5 @@ register_capability(
         "folder_id": {"type": "int", "description": "Target folder ID for saved files"},
     },
     min_role="editor",
+    execution_contract={"side_effect_level": "workspace_write", "resource_class": "local_gpu", "timeout_seconds": 1800, "output_reference_types": ["file"]},
 )

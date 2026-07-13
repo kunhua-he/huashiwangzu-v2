@@ -1141,6 +1141,36 @@ async def api_chunk_embedding_backfill_enqueue(
 
 # ── Cross-module capabilities ───────────────────────────────
 
+def _search_resource_refs(results: list[dict]) -> list[dict]:
+    refs: list[dict] = []
+    seen: set[str] = set()
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        raw_id = item.get("chunk_id") or item.get("document_id")
+        if raw_id is None or str(raw_id) in seen:
+            continue
+        seen.add(str(raw_id))
+        provenance = {
+            key: item[key]
+            for key in ("document_id", "chunk_id", "file_id", "page", "score")
+            if item.get(key) is not None
+        }
+        refs.append({
+            "type": "record",
+            "id": raw_id,
+            "display_name": str(
+                item.get("title")
+                or item.get("document_name")
+                or item.get("source_file")
+                or f"Knowledge evidence {raw_id}"
+            ),
+            "access_scope": "user",
+            "provenance": {"module": "knowledge", **provenance},
+        })
+    return refs
+
+
 async def _enqueue_task(db, stage: str, document_id: int, user_id: int) -> ApiResponse:
     """将统一 DAG stage 入队并立即返回。"""
     from .models import KbDocument
@@ -1209,6 +1239,7 @@ async def _cap_search(params: dict, caller: str) -> dict:
         return {
             "query": query,
             "results": enriched,
+            "resource_refs": _search_resource_refs(enriched),
             "context_data": {
                 **context_data,
                 "top_k": top_k,
@@ -1613,6 +1644,32 @@ register_capability(
         },
     },
     min_role="viewer",
+    execution_contract={
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "results": {"type": "array"},
+                "context_data": {"type": "object"},
+                "resource_refs": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["query", "results", "context_data", "resource_refs"],
+        },
+        "execution_mode": "sync",
+        "resource_class": "local_cpu",
+        "timeout_seconds": 120,
+        "max_attempts": 1,
+        "idempotency": "supported",
+        "side_effect_level": "none",
+        "output_reference_types": ["record"],
+        "parallel_safe": True,
+    },
+    retrieval={
+        "aliases": ["知识库检索", "内部资料搜索", "企业文档问答"],
+        "when_to_use": "用户询问公司内部资料、已入库文档或需要可追溯知识证据时",
+        "when_not_to_use": "用户只需要公开网络资料或不依赖企业知识时",
+        "input_reference_types": [],
+    },
 )
 register_capability(
     "knowledge", "get_block", _cap_get_block,

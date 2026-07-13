@@ -456,6 +456,7 @@ async def record_tool_call(
     approval_policy: str = "auto",
     status: str = "planned",
     idempotency_key: str | None = None,
+    idempotency_policy: str | None = None,
     agent_run_id: str | None = None,
     extra_meta: dict | None = None,
 ) -> AgentToolCall:
@@ -467,7 +468,16 @@ async def record_tool_call(
         module, capability = tool_name.split("__", 1)
         target_module = target_module or module
         action = action or capability
-    if side_effect_level != "readonly" and not idempotency_key:
+    if (
+        idempotency_policy in {"required", "supported"}
+        and not idempotency_key
+    ):
+        idempotency_key = f"agent-workflow-{run_id}-{uuid.uuid4().hex}"
+    elif (
+        idempotency_policy is None
+        and side_effect_level != "readonly"
+        and not idempotency_key
+    ):
         idempotency_key = f"agent-workflow-{run_id}-{uuid.uuid4().hex}"
     call = AgentToolCall(
         run_id=run_id,
@@ -483,7 +493,10 @@ async def record_tool_call(
         approval_policy=approval_policy,
         status=status,
         idempotency_key=idempotency_key,
-        extra_meta=extra_meta or {},
+        extra_meta={
+            **(extra_meta or {}),
+            "idempotency_policy": idempotency_policy or "legacy",
+        },
     )
     db.add(call)
     await db.commit()

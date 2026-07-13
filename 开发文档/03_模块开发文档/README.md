@@ -4,6 +4,9 @@
 
 ## Module Contract
 
+Agent 对话执行编排的当前重构规范见
+[`agent-runtime-orchestration-architecture.md`](agent-runtime-orchestration-architecture.md)。
+
 | Area | Rule |
 |---|---|
 | Code location | `modules/{key}/` |

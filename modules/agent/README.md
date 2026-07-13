@@ -145,7 +145,6 @@ Total public actions: 42
 | `agent_user_profile` | Owned by `agent` module |
 | `agent_verification_results` | Owned by `agent` module |
 | `agent_workflow_artifacts` | Owned by `agent` module |
-| `agent_workflow_recipes` | Owned by `agent` module |
 | `agent_workflow_runs` | Owned by `agent` module |
 | `agent_workflow_steps` | Owned by `agent` module |
 

@@ -15,6 +15,7 @@ from app.services.maintenance_service import (
     get_maintenance_state,
     mark_startup_complete_if_needed,
     request_safe_restart,
+    restart_preflight,
     restart_signal_path,
     save_maintenance_state,
 )
@@ -70,6 +71,34 @@ async def test_safe_restart_request_enters_draining_and_running_task_blocks_rest
         assert result["state"]["restart_requested"] is True
         assert result["blockers"]["running_tasks"] >= 1
         assert restart_signal_path().exists()
+    finally:
+        await _cleanup(marker)
+
+
+@pytest.mark.asyncio
+async def test_restartable_knowledge_task_is_reported_but_does_not_block_restart() -> None:
+    marker = uuid4().hex
+    admin = await _user("admin")
+    await _cleanup(marker)
+    try:
+        async with AsyncSessionLocal() as db:
+            task = SystemTaskQueue(
+                task_type=f"kb_pipeline_stage_{marker}",
+                module="knowledge",
+                parameters=json.dumps({"marker": marker}),
+                status="running",
+                creator_id=admin.id,
+            )
+            db.add(task)
+            await db.commit()
+            result = await restart_preflight(db)
+
+        assert result["ready"] is True
+        assert result["blockers"]["running_tasks"] >= 1
+        assert result["blockers"]["restartable_running_tasks"] >= 1
+        assert result["blockers"]["blocking_running_tasks"] == 0
+        assert result["blockers"]["blocking_count"] == 0
+        assert result["blockers"]["restartable_task_sample"][0]["module"] == "knowledge"
     finally:
         await _cleanup(marker)
 

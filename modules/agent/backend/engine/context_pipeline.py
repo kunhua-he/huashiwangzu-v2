@@ -342,43 +342,6 @@ def _inject_skills(system_content: str) -> str:
 
 
 # =====================================================================
-# Stage 6b: Inject tool guidance control plane
-# =====================================================================
-async def _inject_tool_guidance(
-    db: AsyncSession,
-    system_content: str,
-    owner_id: int,
-    agent_code: str,
-) -> tuple[str, dict]:
-    """Inject guidance for currently exposed meta tools.
-
-    The Agent uses progressive tool discovery, so the model only sees the
-    three meta tools at first. Concrete business-tool guidance is attached
-    later by skill_describe for the selected tool.
-    """
-    try:
-        from ..services import tool_guidance_service as tgs
-
-        guidance = await tgs.render_tool_guidance(
-            db,
-            owner_id=owner_id,
-            agent_code=agent_code,
-            tool_names=["skill_list", "skill_describe", "skill_use"],
-            max_tokens=1024,
-        )
-        if not guidance:
-            return system_content, {"tool_guidance_injected": False, "tool_guidance_chars": 0}
-        section = "\n\n---\n\n<tool_guidance>\n" + guidance + "\n</tool_guidance>"
-        return system_content + section, {
-            "tool_guidance_injected": True,
-            "tool_guidance_chars": len(guidance),
-        }
-    except Exception as e:
-        logger.warning("tool guidance injection failed (non-fatal): %s", e)
-        return system_content, {"tool_guidance_injected": False, "tool_guidance_error": str(e)}
-
-
-# =====================================================================
 # Stage 7: Token budget assembly
 # =====================================================================
 def _budget_assembly(
@@ -409,26 +372,18 @@ async def _inject_context_layers(
     owner_id: int,
     db: AsyncSession,
 ) -> tuple[list[dict], dict]:
-    """Apply three-layer memory, workflow strategy, success experience, and workflow recipe injection.
+    """Apply conversational memory and generic workflow strategy.
 
     Each injector follows the same contract: inject(messages, diagnosis, ...) → (messages, diagnosis).
     New injectors can be added by importing a new module and calling it here.
     """
-    from .context_injectors import experience as _exp
     from .context_injectors import three_layer_memory
     from .context_injectors import workflow as _wf
-    from .context_injectors.workflow_recipe import inject as _recipe_inject
 
     messages, diagnosis = await three_layer_memory.inject(
         messages, diagnosis, owner_id=owner_id, current_user_input=current_user_input, logger=logger,
     )
     messages, diagnosis = _wf.inject(messages, diagnosis, current_user_input=current_user_input)
-    messages, diagnosis = await _exp.inject(
-        messages, diagnosis, current_user_input=current_user_input, owner_id=owner_id, logger=logger,
-    )
-    messages, diagnosis = await _recipe_inject(
-        messages, diagnosis, db=db, owner_id=owner_id, current_input=current_user_input,
-    )
     return messages, diagnosis
 
 
@@ -517,32 +472,16 @@ async def run_pipeline(
     system_content = _inject_skills(system_content)
     logger.info("[PIPELINE_TIMING] Stage 6 (inject skills): %dms", round((time.monotonic() - _t6) * 1000))
 
-    # Stage 6b: Inject tool guidance for visible meta tools
-    _t6b = time.monotonic()
-    system_content, tool_guidance_diag = await _inject_tool_guidance(
-        db,
-        system_content,
-        owner_id=owner_id,
-        agent_code=agent_code,
-    )
-    logger.info(
-        "[PIPELINE_TIMING] Stage 6b (tool guidance): %dms, injected=%s chars=%d",
-        round((time.monotonic() - _t6b) * 1000),
-        tool_guidance_diag.get("tool_guidance_injected", False),
-        tool_guidance_diag.get("tool_guidance_chars", 0),
-    )
-
     # Stage 7: Token budget assembly
     _t7 = time.monotonic()
     messages, diagnosis = _budget_assembly(projected, system_content, current_user_input, effective_profile_key)
     logger.info("[PIPELINE_TIMING] Stage 7 (budget assembly): %dms", round((time.monotonic() - _t7) * 1000))
     diagnosis.update(thinking_diag)
     diagnosis.update(reduce_diag)
-    diagnosis.update(tool_guidance_diag)
     diagnosis["agent_code"] = agent_code
     diagnosis["effective_profile_key"] = effective_profile_key
 
-    # Stage 8: Inject context layers (memory, experience, workflow, recipe)
+    # Stage 8: Inject conversational memory and generic workflow context.
     _t8 = time.monotonic()
     messages, diagnosis = await _inject_context_layers(messages, diagnosis, current_user_input, owner_id, db)
     logger.info("[PIPELINE_TIMING] Stage 8 (context layers injection): %dms", round((time.monotonic() - _t8) * 1000))

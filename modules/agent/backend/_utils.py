@@ -350,6 +350,11 @@ _TOOL_EXTRACTORS: dict[str, callable] = {
 
 
 def references_from_tool_events(events: list[dict]) -> list[dict]:
+    """Read legacy event payloads for historical conversation rendering only.
+
+    The live structured runtime consumes validated ``ResourceRef`` values from
+    ``ActionObservation`` and must not call this compatibility extractor.
+    """
     refs: list[dict] = []
     for event in events:
         if event.get("type") != "tool_result":

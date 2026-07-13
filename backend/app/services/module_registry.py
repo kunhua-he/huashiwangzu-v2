@@ -1,4 +1,6 @@
 """Cross-module capability registry（带元数据，支持技能发现）。"""
+import hashlib
+import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,14 +13,12 @@ from app.services.semantic_failure import semantic_failure_reason as semantic_fa
 logger = logging.getLogger("v2.module_registry")
 
 CapabilityHandler = Callable[[dict, str], Awaitable[dict]]
-# key -> {handler, description, parameters, min_role}
+# key -> {handler, description, parameters, execution_contract, retrieval, ...}
 _CAPABILITIES: dict[str, dict] = {}
 _PRIVATE_REGISTRATION_OWNER: ContextVar[int | None] = ContextVar(
     "private_registration_owner",
     default=None,
 )
-
-_ROLE_ORDER = {"viewer": 0, "editor": 1, "admin": 2}
 
 # 可信系统主体白名单：caller 以 system: 开头时从此处获取角色
 _SERVICE_PRINCIPAL_ROLES = {
@@ -77,6 +77,8 @@ def register_capability(
     min_role: str = "viewer",
     brief: str = "",
     owner_id: int | None = None,
+    execution_contract: dict | None = None,
+    retrieval: dict | None = None,
 ) -> None:
     """模块注册一个对外能力。owner_id 非空时标识该能力为私有,仅对应 owner 可调用。"""
     scoped_owner_id = owner_id
@@ -96,12 +98,78 @@ def register_capability(
         "min_role": min_role,
         "brief": brief or description[:20],
         "owner_id": scoped_owner_id,
+        "execution_contract": _normalize_execution_contract(execution_contract),
+        "retrieval": _normalize_retrieval_metadata(retrieval),
     }
     logger.info(
         "Registered capability: %s:%s (scope=%s)",
         module_key, action,
         f"private:owner={scoped_owner_id}" if scoped_owner_id else "public",
     )
+
+
+def _normalize_execution_contract(value: dict | None) -> dict:
+    raw = value if isinstance(value, dict) else {}
+    contract_declared = isinstance(value, dict)
+    risk_declared = contract_declared and "side_effect_level" in raw
+    execution_mode = str(raw.get("execution_mode") or "sync")
+    resource_class = str(raw.get("resource_class") or "fast")
+    idempotency = str(raw.get("idempotency") or "none")
+    side_effect_level = str(raw.get("side_effect_level") or "none")
+    approval_default = (
+        "requires_confirmation"
+        if side_effect_level in {"outbound", "admin", "admin_config", "irreversible"}
+        else "none"
+    )
+    approval_policy = str(raw.get("approval_policy") or approval_default)
+    trust_level = str(raw.get("trust_level") or "module_verified")
+    return {
+        "contract_declared": contract_declared,
+        "risk_declared": risk_declared,
+        "input_schema": raw.get("input_schema") if isinstance(raw.get("input_schema"), dict) else {},
+        "output_schema": raw.get("output_schema") if isinstance(raw.get("output_schema"), dict) else {},
+        "execution_mode": execution_mode if execution_mode in {"sync", "async"} else "sync",
+        "resource_class": resource_class,
+        "timeout_seconds": max(1, int(raw.get("timeout_seconds") or 30)),
+        "max_attempts": max(1, min(int(raw.get("max_attempts") or 1), 10)),
+        "idempotency": (
+            idempotency
+            if idempotency in {"required", "supported", "none"}
+            else "invalid"
+        ),
+        "side_effect_level": side_effect_level,
+        "approval_policy": approval_policy,
+        "trust_level": trust_level,
+        "output_reference_types": sorted({str(item) for item in raw.get("output_reference_types", [])}),
+        "parallel_safe": bool(raw.get("parallel_safe", False)),
+    }
+
+
+def _normalize_retrieval_metadata(value: dict | None) -> dict:
+    raw = value if isinstance(value, dict) else {}
+    return {
+        "aliases": [str(item).strip() for item in raw.get("aliases", []) if str(item).strip()][:20],
+        "when_to_use": str(raw.get("when_to_use") or "").strip(),
+        "when_not_to_use": str(raw.get("when_not_to_use") or "").strip(),
+        "input_reference_types": sorted({str(item) for item in raw.get("input_reference_types", [])}),
+    }
+
+
+def _capability_contract_hash(capability: dict) -> str:
+    payload = {
+        "module": capability.get("module"),
+        "action": capability.get("action"),
+        "parameters": capability.get("parameters") or {},
+        "execution_contract": capability.get("execution_contract") or {},
+        "retrieval": capability.get("retrieval") or {},
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def unregister_capability(module_key: str, action: str | None = None) -> None:
@@ -185,17 +253,22 @@ async def call_capability(
         elif not caller.startswith("system:"):
             raise PermissionDenied(f"Invalid caller format: {caller}")
 
+    # SQL policy is authoritative for user-scoped calls, including system
+    # actors operating on behalf of a user. The model never participates in
+    # this decision and cannot restore a capability filtered from its catalog.
+    await _authorize_user_capability(
+        caller,
+        target_module,
+        action,
+        legacy_min_role=str(entry.get("min_role") or "viewer"),
+    )
+
     resolved_role = _resolve_caller_role(
         caller,
         caller_role,
         actor=actor,
         trusted_user_role=trusted_user_role,
     )
-    min_role = entry.get("min_role", "viewer")
-    if _ROLE_ORDER.get(resolved_role, -1) < _ROLE_ORDER.get(min_role, 0):
-        raise PermissionDenied(
-            f"Requires at least '{min_role}' role, got '{resolved_role}'"
-        )
     logger.info(
         "Cross-module call: actor=%s caller=%s role=%s -> %s:%s",
         actor or caller, caller, resolved_role, target_module, action,
@@ -247,14 +320,41 @@ def _caller_owner_id(caller: str | None) -> int | None:
         return None
 
 
+async def _authorize_user_capability(
+    caller: str,
+    module_key: str,
+    action: str,
+    *,
+    legacy_min_role: str,
+) -> None:
+    owner_id = _caller_owner_id(caller)
+    if owner_id is None:
+        return
+    from app.database import AsyncSessionLocal
+    from app.services.permission_service import assert_capability_authorized
+
+    async with AsyncSessionLocal() as db:
+        await assert_capability_authorized(
+            db,
+            user_id=owner_id,
+            module_key=module_key,
+            action=action,
+            legacy_min_role=legacy_min_role,
+        )
+        await db.commit()
+
+
 def list_capabilities(role: str | None = None, caller: str | None = None) -> list[dict]:
-    """列出能力元数据（不含 handler）。传 role 则按权限过滤（只返回该角色可调的）。"""
+    """List registry metadata without making an authorization decision.
+
+    ``role`` remains as a source-compatible argument for sandbox and contract
+    tooling. User-facing callers must use ``authorized_capability_snapshot``;
+    textual roles are not a capability authorization boundary.
+    """
     caller_owner_id = _caller_owner_id(caller)
     include_all_private = bool(caller and caller.startswith("system:"))
     result = []
     for k, e in _CAPABILITIES.items():
-        if role and _ROLE_ORDER.get(role, 0) < _ROLE_ORDER.get(e["min_role"], 0):
-            continue
         capability_owner = e.get("owner_id")
         if capability_owner is not None and not include_all_private and capability_owner != caller_owner_id:
             continue
@@ -266,8 +366,67 @@ def list_capabilities(role: str | None = None, caller: str | None = None) -> lis
             "parameters": e["parameters"],
             "min_role": e["min_role"],
             "brief": e.get("brief", e["description"][:20]),
+            "execution_contract": e.get("execution_contract", _normalize_execution_contract(None)),
+            "retrieval": e.get("retrieval", _normalize_retrieval_metadata(None)),
         })
     return result
+
+
+def _capabilities_for_owner(caller: str) -> list[dict]:
+    caller_owner_id = _caller_owner_id(caller)
+    include_all_private = caller.startswith("system:")
+    result: list[dict] = []
+    for key, entry in _CAPABILITIES.items():
+        capability_owner = entry.get("owner_id")
+        if capability_owner is not None and not include_all_private and capability_owner != caller_owner_id:
+            continue
+        module_key, action = key.split(":", 1)
+        result.append({
+            "module": module_key,
+            "action": action,
+            "description": entry["description"],
+            "parameters": entry["parameters"],
+            "brief": entry.get("brief", entry["description"][:20]),
+            "execution_contract": entry.get("execution_contract", _normalize_execution_contract(None)),
+            "retrieval": entry.get("retrieval", _normalize_retrieval_metadata(None)),
+            "legacy_min_role": entry.get("min_role", "viewer"),
+        })
+    return result
+
+
+async def authorized_capability_snapshot(*, user_id: int, caller: str | None = None) -> dict:
+    """Return a SQL-authorized immutable capability catalog for one user."""
+    from app.database import AsyncSessionLocal
+    from app.services.permission_service import (
+        filter_authorized_capabilities,
+        resolve_principal_context,
+    )
+
+    resolved_caller = caller or f"user:{int(user_id)}"
+    server_candidates = _capabilities_for_owner(resolved_caller)
+    async with AsyncSessionLocal() as db:
+        principal = await resolve_principal_context(db, int(user_id))
+        authorized = await filter_authorized_capabilities(
+            db,
+            principal=principal,
+            capabilities=server_candidates,
+        )
+        await db.commit()
+    authorized = [
+        {**item, "contract_hash": _capability_contract_hash(item)}
+        for item in authorized
+    ]
+    authorized.sort(key=lambda item: (int(item["capability_id"]), item["module"], item["action"]))
+    canonical = {
+        "principal_version": principal.profile_version,
+        "capabilities": authorized,
+    }
+    encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {
+        "catalog_hash": hashlib.sha256(encoded).hexdigest(),
+        "principal": principal.to_dict(),
+        "capabilities": authorized,
+    }
 
 
 # 内置自检能力（带元数据示例）

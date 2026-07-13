@@ -1,16 +1,15 @@
 import asyncio
 import sys
-from pathlib import Path
 from logging.config import fileConfig
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from alembic import context
+from app.config import get_settings
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from alembic import context
-from app.config import get_settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -24,15 +23,35 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from app.models.base import Base
 from app.models import (  # noqa: F401 - ensure models are loaded
-    User, App, Folder, File, FileShare, RecycleItem,
-    SystemLog, Notification, UserNotificationRead, Feedback, Task,
-    Setting, SystemTaskQueue,
-    RoleMatrix, DesktopState,
-    PromptCategory, PromptTemplate,
+    App,
+    CapabilityIdentity,
+    CapabilityPermissionRequirement,
+    DesktopState,
+    Feedback,
+    File,
+    FileShare,
+    Folder,
+    Notification,
+    PermissionDefinition,
+    PermissionSet,
+    PermissionSetMember,
     PrivateModule,
+    PromptCategory,
+    PromptTemplate,
+    RecycleItem,
+    RoleMatrix,
+    Setting,
+    SystemLog,
+    SystemTaskQueue,
+    Task,
+    User,
+    UserNotificationRead,
+    UserPermissionGrant,
+    UserPermissionSetGrant,
 )
+from app.models.base import Base
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

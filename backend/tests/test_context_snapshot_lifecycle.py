@@ -205,7 +205,6 @@ class TestPostTurnHooksLifecycle:
         """setup_global_hooks must skip re-creation if task already running."""
         assert "already running" in self.SRC
 
-    def test_get_hooks_triggers_setup_global_hooks(self):
-        """engine.get_hooks() must call setup_global_hooks on first access."""
-        engine_src = (AGENT_ENGINE / "engine.py").read_text("utf-8")
-        assert "setup_global_hooks()" in engine_src
+    def test_live_runtime_submits_post_turn_hooks_through_task_sink(self):
+        runtime_src = (AGENT_ENGINE.parent / "runtime" / "tool_loop_runtime.py").read_text("utf-8")
+        assert "run_post_turn_hooks" in runtime_src

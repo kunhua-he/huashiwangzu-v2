@@ -45,17 +45,24 @@ def test_build_retrieval_reflection_excerpt_prefers_current_turn() -> None:
 async def test_knowledge_reflection_handler_preserves_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
 
-    async def fake_call_capability(module: str, action: str, params: dict, caller: str, caller_role: str) -> dict:
+    async def fake_call_capability(
+        module: str,
+        action: str,
+        params: dict,
+        *,
+        principal: str,
+        on_behalf_of_user_id: int,
+    ) -> dict:
         calls.append({
             "module": module,
             "action": action,
             "params": params,
-            "caller": caller,
-            "caller_role": caller_role,
+            "principal": principal,
+            "on_behalf_of_user_id": on_behalf_of_user_id,
         })
         return {"inserted": 1, "updated": 0, "skipped": 0}
 
-    monkeypatch.setattr(task_handlers, "call_capability", fake_call_capability)
+    monkeypatch.setattr(task_handlers, "call_capability_as_system", fake_call_capability)
 
     result = await task_handlers._handle_knowledge_retrieval_reflect({
         "owner_id": 4,
@@ -70,5 +77,5 @@ async def test_knowledge_reflection_handler_preserves_owner(monkeypatch: pytest.
     assert [call["params"]["query_context_id"] for call in calls] == [33, 34]
     assert all(call["module"] == "knowledge" for call in calls)
     assert all(call["action"] == "reflect_retrieval_feedback" for call in calls)
-    assert all(call["caller"] == "user:4" for call in calls)
-    assert all(call["caller_role"] == "admin" for call in calls)
+    assert all(call["principal"] == "system:agent-engine" for call in calls)
+    assert all(call["on_behalf_of_user_id"] == 4 for call in calls)

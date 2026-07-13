@@ -342,37 +342,6 @@ class AgentTrajectoryRecord(Base, TimestampMixin):
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
-class AgentWorkflowRecipe(Base, TimestampMixin):
-    """Per-user mined workflow recipe for shortest-path reuse.
-
-    Generated asynchronously by a background job that analyzes successful
-    turn trajectories. Each recipe describes the shortest known tool chain
-    for a given user intent, along with scoring and provenance fields.
-    """
-    __tablename__ = "agent_workflow_recipes"
-    __table_args__ = {"extend_existing": True}
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(256), default="")
-    description: Mapped[str] = mapped_column(Text, default="")
-    intent_label: Mapped[str] = mapped_column(String(128), default="")
-    trigger_condition: Mapped[str] = mapped_column(Text, default="")
-    steps: Mapped[list] = mapped_column(JSON, default=list)
-    tools_used: Mapped[list] = mapped_column(JSON, default=list)
-    status: Mapped[str] = mapped_column(String(16), default="proposal")
-    version: Mapped[int] = mapped_column(Integer, default=1)
-    success_weight: Mapped[float] = mapped_column(Float, default=0.0)
-    fail_count: Mapped[int] = mapped_column(Integer, default=0)
-    avg_duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
-    avg_tool_count: Mapped[float | None] = mapped_column(Float, nullable=True)
-    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    source_conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    source_trajectory_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    source_experience_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-
-
 # ── Profile 2.0 Models ──────────────────────────────────────────
 
 

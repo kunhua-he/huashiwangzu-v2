@@ -8,12 +8,7 @@ live here and can be overridden per-conversation or per-agent-config.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
-SLOW_SKILL_NAMES: set[str] = {
-    "image-gen__generate",
-    "office-gen__convert",
-}
+from dataclasses import dataclass
 
 
 @dataclass
@@ -27,8 +22,6 @@ class RuntimePolicy:
     Attributes:
         max_tool_rounds: Maximum tool-call iterations before forcing
             a final summary turn.
-        slow_skill_names: Set of skill/module names that execute in
-            the background task queue instead of inline.
         stuck_consecutive_threshold: How many identical tool-call
             fingerprints before the stuck detector fires.
         diminishing_budget_threshold: Token-growth ratio below which
@@ -42,7 +35,6 @@ class RuntimePolicy:
     """
 
     max_tool_rounds: int = 5
-    slow_skill_names: set[str] = field(default_factory=lambda: set(SLOW_SKILL_NAMES))
     stuck_consecutive_threshold: int = 3
     diminishing_budget_threshold: float = 0.15
     allow_inline_tool_recovery: bool = False
@@ -53,7 +45,7 @@ class RuntimePolicy:
 
     # ── Checkpointer (crash recovery) ──────────────────────────────
 
-    enable_checkpointer: bool = False
+    enable_checkpointer: bool = True
     checkpoint_interval: int = 1
 
     # ── Understanding loop precision handles ───────────────────────

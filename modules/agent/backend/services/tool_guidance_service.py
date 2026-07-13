@@ -149,16 +149,16 @@ DEGRADATION_RECIPES: list[dict] = [
     },
     {
         "id": "recipe_tool_discovery",
-        "title": "工具找不到/参数不明 → skill_list/skill_describe",
+        "title": "能力未命中或参数不明 → 刷新授权目录并重新规划",
         "trigger": "Agent 声称'没有能力'或工具返回 tool_not_found",
         "error_classes": ["tool_not_found", "model_bad_arguments"],
         "steps": [
-            "1. 调用 skill_list 列出所有可用工具",
-            "2. 用 skill_describe 查看候选工具的详细参数",
-            "3. 选择匹配意图的工具并调用",
-            "4. 验收：记录使用了哪个工具和为何选择",
+            "1. 重新执行 SQL 授权能力快照和混合检索",
+            "2. 检查候选召回分、schema 和引用类型",
+            "3. 让规划器基于新快照重新生成动作",
+            "4. 验收：动作绑定当前 catalog hash 并通过 schema 校验",
         ],
-        "acceptance": "确认找到并使用正确工具，记录选择理由",
+        "acceptance": "动作使用当前已授权能力且通过契约校验",
     },
 ]
 
@@ -172,42 +172,6 @@ def match_degradation_recipe(error_class: str, user_input: str = "") -> dict | N
 
 
 DEFAULT_TOOL_GUIDES: list[dict] = [
-    {
-        "agent_code": "default",
-        "tool_name": "skill_list",
-        "scope": "global",
-        "title": "工具发现入口",
-        "guide_text": (
-            "当不确定当前任务该用哪个工具时，先调用 skill_list 查看可用能力。"
-            "不要直接回答‘没有能力’；先按模块或关键词缩小候选，再进入 skill_describe。"
-        ),
-        "failure_policy": {"error_map": {"tool_not_found": ["重新调用 skill_list", "按模块名过滤候选"]}},
-        "acceptance_policy": {"check": "返回候选工具名称和选择理由"},
-    },
-    {
-        "agent_code": "default",
-        "tool_name": "skill_describe",
-        "scope": "global",
-        "title": "工具参数确认",
-        "guide_text": (
-            "调用具体工具前，使用 skill_describe 查看参数、权限和工具指引。"
-            "如果返回 tool_guidance，必须遵守其中的失败降级和验收规则。"
-        ),
-        "failure_policy": {"error_map": {"model_bad_arguments": ["重新读取 parameters", "补齐必填参数后再调用"]}},
-        "acceptance_policy": {"check": "明确目标工具、必填参数和验收方式"},
-    },
-    {
-        "agent_code": "default",
-        "tool_name": "skill_use",
-        "scope": "global",
-        "title": "工具执行与验收",
-        "guide_text": (
-            "调用工具后必须检查 success/error/data，不得只看 HTTP 200。"
-            "写入、下载、发布类操作完成后要读回或列出产物验证。"
-        ),
-        "failure_policy": {"error_map": {"unknown": ["分类错误原因", "按降级 recipe 选择替代路径"]}},
-        "acceptance_policy": {"check": "工具结果成功且关键产物可读回"},
-    },
     {
         "agent_code": "default",
         "tool_name": "content:*",

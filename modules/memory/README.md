@@ -33,6 +33,8 @@ Long-term memory module for facts, semantic recall, memory links, experience rec
 - Desktop behavior, format binding, window behavior, and permissions are declared in `manifest.json`.
 - Backend HTTP behavior, if present, is implemented in `backend/router.py`.
 - Runtime module calls, if present, are declared in `manifest.public_actions` and registered by backend capability code.
+- Success experience uses one structured `memory_experiences` projection. Visibility is the SQL union of `global/organization/department/position/user/conversation`, derived from the server-side principal; revoked capability IDs and stale contract hashes are removed before results leave the module.
+- Shared projections contain only sanitized capability identities and dependencies. Personal preferences stay user-scoped, shared promotion uses configurable distinct-user/success thresholds, and high-risk candidates require an admin review.
 
 ## HTTP API / Endpoint Families
 
@@ -55,7 +57,7 @@ Backend HTTP prefix: `/api/memory`
 <!-- DOCS-SYNC: section=public_actions -->
 Runtime authority: backend `register_capability(...)`. Discovery metadata: `manifest.public_actions`.
 
-Total public actions: 19
+Total public actions: 20
 
 | Action | min_role | Parameters | Purpose |
 |---|---|---|---|
@@ -64,11 +66,11 @@ Total public actions: 19
 | `backfill_links` | `admin` | `dry_run`, `limit`, `owner_id` | Admin governance: backfill missing memory_links between existing memory records using vector similarity. Dry-run safe. |
 | `delete` | `viewer` | `id` | 删除一条记忆 |
 | `dream` | `editor` | none | 触发记忆自优化（去重合并 + 建链 + 衰减），后台运行不阻塞 |
-| `experience_feedback` | `viewer` | `experience_id`, `note`, `success`, `team_owner_ids` | 反馈经验执行结果：成功则权重 +1，失败则失败次数 +1 并记录注释 |
+| `experience_feedback` | `viewer` | `conversation_id`, `experience_id`, `note`, `success`, `team_owner_ids` | 反馈经验执行结果：成功则权重 +1，失败则失败次数 +1 并记录注释 |
 | `fuse` | `viewer` | `ids`, `query` | 将多条记忆融合成贴合查询的一段简报（即时融合，on-demand） |
 | `insert` | `viewer` | `id`, `text` | 向已有记忆追加内容 |
 | `list` | `viewer` | `limit`, `offset` | 列出自己所有的记忆 |
-| `match_experience` | `viewer` | `limit`, `query`, `team_owner_ids` | 语义匹配当前用户输入相关的成功经验（纯语义，零硬编码规则） |
+| `match_experience` | `viewer` | `conversation_id`, `limit`, `query`, `team_owner_ids` | 在 SQL principal 可见并集内召回 contract 仍兼容的结构化成功经验 |
 | `overview_stats` | `admin` | none | Admin overview: aggregated memory & experience statistics (total_count, with_embedding, avg_confidence, link_count, experience counts, etc.) |
 | `recall` | `viewer` | `expand_chain`, `limit`, `query` | 语义检索自己的记忆（向量语义召回 + 重排 + 可选顺链扩展），不再仅靠关键词 |
 | `recall_chunk` | `viewer` | `limit`, `query` | 语义检索 chunk 级记忆（带 provenance 溯源信息），返回最小粒度段落 |
@@ -76,7 +78,8 @@ Total public actions: 19
 | `replace` | `viewer` | `id`, `new_text`, `old_text` | 替换记忆中的某段文本（精确片段替换） |
 | `rethink` | `viewer` | `id`, `tags`, `text` | 整条重写一条记忆（自编辑工具，如用户纠正错误时） |
 | `save` | `viewer` | `source`, `tags`, `text` | 保存一段记忆（事实/偏好/约定），自动提取摘要和向量用于语义检索 |
-| `save_experience` | `viewer` | `scope`, `source_conversation_id`, `steps`, `tools_used`, `trigger_condition` | 保存一条成功经验（包含触发条件、有序步骤、工具列表），自动向量化并去重 |
+| `review_experience` | `admin` | `decision`, `experience_id`, `note` | 审核达到晋升门槛的高风险共享经验候选；批准后才可进入召回 |
+| `save_experience` | `viewer` | `action_pattern`, `completion_evidence`, `goal_signature`, `preconditions`, `scope`, `scope_id`, `scope_type`, `source_conversation_id`, `steps`, `tools_used`, `trigger_condition` | 保存结构化成功经验；自动脱敏、绑定 capability contract，并按 principal 生成分层候选 |
 | `save_stable_rule` | `viewer` | `content`, `priority`, `rule_type`, `source` | 保存一条稳定规则记忆（项目边界/用户偏好/硬约束/长期规则），不参与向量衰减 |
 <!-- /DOCS-SYNC -->
 

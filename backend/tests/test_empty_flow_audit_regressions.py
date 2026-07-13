@@ -47,22 +47,13 @@ async def test_skill_usage_stats_consumes_execute_rows_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_skill_use_records_invocation_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_direct_capability_records_invocation_usage(monkeypatch: pytest.MonkeyPatch) -> None:
     from app import database
 
-    from modules.agent.backend.services import (
-        skill_governance_service as sgs,
-    )
-    from modules.agent.backend.services import (
-        tool_discovery,
-    )
+    from modules.agent.backend.services import capability_execution
+    from modules.agent.backend.services import skill_governance_service as sgs
 
     recorded: list[dict] = []
-
-    async def fake_call_capability(module, action, args, caller, caller_role):
-        assert (module, action, caller, caller_role) == ("memory", "recall", "user:42", "viewer")
-        assert args == {"query": "空表画像"}
-        return {"success": True, "data": [{"id": 1}]}
 
     async def fake_record_skill_usage(db, **kwargs) -> None:
         recorded.append(kwargs)
@@ -74,17 +65,16 @@ async def test_skill_use_records_invocation_usage(monkeypatch: pytest.MonkeyPatc
         async def __aexit__(self, exc_type, exc, tb) -> None:
             return None
 
-    monkeypatch.setattr(tool_discovery, "call_capability", fake_call_capability)
     monkeypatch.setattr(database, "AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr(sgs, "record_skill_usage", fake_record_skill_usage)
 
-    result = await tool_discovery.handle_skill_use(
-        {"name": "memory__recall", "args": {"query": "空表画像"}},
+    await capability_execution.record_capability_invocation(
+        "memory__recall",
+        success=True,
+        duration_ms=12.0,
         caller="user:42",
-        caller_role="viewer",
     )
 
-    assert result["success"] is True
     assert len(recorded) == 1
     assert recorded[0]["skill_name"] == "memory__recall"
     assert recorded[0]["success"] is True

@@ -15,7 +15,9 @@ class LocalProvider(BaseProvider):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         tools: list[dict] | None = None,
+        response_format: dict | None = None,
     ) -> dict:
+        _ = response_format
         if not self.allow_echo:
             return {
                 "error": (
@@ -33,7 +35,9 @@ class LocalProvider(BaseProvider):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         tools: list[dict] | None = None,
+        response_format: dict | None = None,
     ) -> AsyncGenerator[dict, None]:
+        _ = response_format
         if not self.allow_echo:
             yield {
                 "type": "error",

@@ -310,6 +310,47 @@ async def _persist_provider_results(
     return results, file_ids, persist_errors, generated_placeholder
 
 
+def _generation_resource_refs(
+    *,
+    request_id: str,
+    record_id: int | None,
+    images: list[dict],
+) -> list[dict]:
+    refs: list[dict] = []
+    if record_id is not None:
+        refs.append({
+            "type": "record",
+            "id": record_id,
+            "display_name": f"Image generation record {record_id}",
+            "access_scope": "user",
+            "provenance": {"module": "image-gen", "request_id": request_id},
+        })
+    for index, image in enumerate(images, start=1):
+        file_id = image.get("file_id")
+        if file_id is not None:
+            refs.append({
+                "type": "file",
+                "id": int(file_id),
+                "locator": f"/api/files/detail/{int(file_id)}",
+                "mime_type": "image/png",
+                "display_name": str(image.get("name") or f"Generated image {index}"),
+                "access_scope": "user",
+                "provenance": {"module": "image-gen", "request_id": request_id},
+            })
+            continue
+        relative_locator = str(image.get("workspace_path") or "")
+        refs.append({
+            "type": "artifact",
+            "id": f"{request_id}:{index}",
+            "locator": relative_locator,
+            "mime_type": "image/png",
+            "display_name": str(image.get("name") or f"Generated image {index}"),
+            "access_scope": "user",
+            "provenance": {"module": "image-gen", "request_id": request_id},
+        })
+    return refs
+
+
 def _resolve_dimensions(size: str, aspect_ratio: str | None) -> tuple[int, int]:
     if aspect_ratio:
         return _dimensions_from_aspect_ratio(aspect_ratio)
@@ -467,6 +508,11 @@ async def _generate(params: dict, caller: str) -> dict:
         "balance": balance,
         "published": publish,
     }
+    response["resource_refs"] = _generation_resource_refs(
+        request_id=request_id,
+        record_id=record_id,
+        images=results,
+    )
     if persist_errors:
         response["error"] = "部分图片保存失败，已返回可用结果"
         response["detail"] = "; ".join(persist_errors)
@@ -628,6 +674,11 @@ async def _transform(params: dict, caller: str) -> dict:
         "strength": strength,
         "published": publish,
     }
+    response["resource_refs"] = _generation_resource_refs(
+        request_id=request_id,
+        record_id=record_id,
+        images=results,
+    )
     if persist_errors:
         response["error"] = "部分图片保存失败，已返回可用结果"
         response["detail"] = "; ".join(persist_errors)
@@ -810,6 +861,31 @@ register_capability(
         "publish": {"type": "boolean", "description": "是否直接发布到桌面文件系统；Agent默认false，需显式publish才用户可见", "default": False},
     },
     min_role="editor",
+    execution_contract={
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "object"},
+                "images": {"type": "array"},
+                "resource_refs": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["task", "images", "resource_refs"],
+        },
+        "execution_mode": "sync",
+        "resource_class": "long",
+        "timeout_seconds": 600,
+        "max_attempts": 1,
+        "idempotency": "none",
+        "side_effect_level": "create",
+        "output_reference_types": ["file", "artifact", "record"],
+        "parallel_safe": False,
+    },
+    retrieval={
+        "aliases": ["生图", "生成图片", "制作海报", "产品配图"],
+        "when_to_use": "用户明确要求创建新的图片、海报、产品图或视觉素材时",
+        "when_not_to_use": "用户要求分析、识别或读取已有图片时",
+        "input_reference_types": [],
+    },
 )
 
 register_capability(
@@ -830,6 +906,31 @@ register_capability(
         "publish": {"type": "boolean", "description": "是否直接发布到桌面文件系统；Agent默认false，需显式publish才用户可见", "default": False},
     },
     min_role="editor",
+    execution_contract={
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "object"},
+                "images": {"type": "array"},
+                "resource_refs": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["task", "images", "resource_refs"],
+        },
+        "execution_mode": "sync",
+        "resource_class": "long",
+        "timeout_seconds": 600,
+        "max_attempts": 1,
+        "idempotency": "none",
+        "side_effect_level": "create",
+        "output_reference_types": ["file", "artifact", "record"],
+        "parallel_safe": False,
+    },
+    retrieval={
+        "aliases": ["图生图", "编辑图片", "图片变体", "风格转换"],
+        "when_to_use": "用户要求基于已有图片进行编辑、变体或风格化时",
+        "when_not_to_use": "用户只需要识别或分析已有图片时",
+        "input_reference_types": ["file"],
+    },
 )
 
 register_capability(

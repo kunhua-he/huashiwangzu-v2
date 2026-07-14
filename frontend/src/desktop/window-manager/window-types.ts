@@ -6,6 +6,7 @@ export interface TaskbarItem {
   icon: string
   isActive: boolean
   minimized: boolean
+  appKey?: string
 }
 
 export interface WindowState {
@@ -24,6 +25,8 @@ export interface WindowState {
   payload?: Record<string, unknown>
   preMaximizeState?: { x: number; y: number; width: number; height: number }
   windowType?: string
+  /** 动画来源坐标，用于"从图标位置展开"动画，一次性信息 */
+  animationOrigin?: { x: number; y: number; width: number; height: number }
 }
 
 export interface FileOpenPayload {

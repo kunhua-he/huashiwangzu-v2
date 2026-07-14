@@ -869,7 +869,20 @@ export function useAgentChat(props: AgentEntryProps) {
                         ensureWorkGroup()
                       } else if (etype === 'assistant_stream_commit') {
                         commitAssistantStream((evt.segment_id as string) || '')
-                      } else if (etype === 'work_start') {
+                      } else if (etype === 'preflight_status') {
+                // 后端 preflight 阶段即时推送 → 立刻显示给用户
+                ensureWorkGroup()
+                const items = currentWorkGroup.value?.items ?? messages.value
+                items.push({
+                  id: 0,
+                  role: '',
+                  content: '',
+                  eventType: 'planner_status',
+                  plannerPhase: typeof evt.phase === 'string' ? evt.phase : 'preflight',
+                  plannerMessage: typeof evt.message === 'string' ? evt.message : '正在工作…',
+                  planRound: 0,
+                } as MsgItem)
+              } else if (etype === 'work_start') {
 
                 ensureWorkGroup()
               } else if (etype === 'planner_status') {

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import math
 import re
+import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -23,6 +25,57 @@ _WORD_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]")
 _CACHE_DIR = Path(__file__).resolve().parents[4] / "backend" / "data" / "runtime" / "agent_capability_index"
 _RRF_K = 60
 logger = logging.getLogger("v2.agent").getChild("services.capability_catalog")
+
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# \u70ed\u7f13\u5b58\uff1aauthorized_capability_snapshot \u5185\u5b58\u7ea7\u7f13\u5b58
+# \u540c\u4e00\u7528\u6237\u77ed\u65f6\u95f4\u5185\uff0860\u79d2\uff09\u591a\u6b21\u8c03\u7528\u76f4\u63a5\u8fd4\u56de\uff0c\u4e0d\u91cd\u590d\u505aSQL+\u5d4c\u5165
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+_SNAPSHOT_CACHE: dict[int, tuple[float, dict]] = {}  # user_id \u2192 (timestamp, snapshot)
+_SNAPSHOT_CACHE_TTL = 60.0  # \u79d2
+
+
+async def _cached_capability_snapshot(*, user_id: int) -> dict:
+    """\u5e26\u5185\u5b58\u7f13\u5b58\u7684 authorized_capability_snapshot"""
+    now = time.time()
+    cached = _SNAPSHOT_CACHE.get(user_id)
+    if cached and (now - cached[0]) < _SNAPSHOT_CACHE_TTL:
+        return cached[1]
+    snapshot = await authorized_capability_snapshot(user_id=user_id)
+    _SNAPSHOT_CACHE[user_id] = (now, snapshot)
+    return snapshot
+
+
+def invalidate_snapshot_cache(user_id: int | None = None) -> None:
+    """\u624b\u52a8\u6e05\u9664\u7f13\u5b58\uff08\u6743\u9650\u53d8\u66f4\u65f6\u8c03\u7528\uff09"""
+    if user_id is None:
+        _SNAPSHOT_CACHE.clear()
+    else:
+        _SNAPSHOT_CACHE.pop(user_id, None)
+
+
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# \u5feb\u901f\u901a\u9053\uff1a\u9ad8\u9891\u67e5\u8be2\u76f4\u63a5\u547d\u4e2d\u80fd\u529b\uff0c\u8df3\u8fc7\u5168\u91cf\u6392\u5e8f
+# \u5173\u952e\u8bcd \u2192 \u80fd\u529b\u540d\u6620\u5c04\uff0c\u8bcd\u6cd5\u547d\u4e2d\u7f6e\u4fe1\u5ea6>0.8\u65f6\u76f4\u63a5\u8fd4\u56de
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+_FAST_LANE_MAP: dict[str, list[str]] = {
+    # \u77e5\u8bc6\u5e93\u76f8\u5173
+    "\u77e5\u8bc6\u5e93": ["knowledge__search"],
+    "\u641c\u7d22\u77e5\u8bc6": ["knowledge__search"],
+    "\u67e5\u627e\u6587\u4ef6": ["knowledge__search"],
+    "\u641c\u7d22\u6587\u4ef6": ["knowledge__search"],
+    "\u6709\u6ca1\u6709": ["knowledge__search"],
+    "\u662f\u5426\u6709": ["knowledge__search"],
+    "\u80fd\u627e\u5230": ["knowledge__search"],
+    "\u5e2e\u6211\u627e": ["knowledge__search"],
+    "\u67e5\u4e00\u4e0b": ["knowledge__search"],
+    # \u8bb0\u5fc6\u76f8\u5173
+    "\u8bb0\u5f97": ["memory__recall"],
+    "\u4e4b\u524d\u8bf4": ["memory__recall"],
+    "\u4e0a\u6b21": ["memory__recall"],
+    # \u4e2a\u4eba\u8d44\u6599
+    "\u6211\u7684\u4fe1\u606f": ["agent__get_my_profile"],
+    "\u6211\u7684\u8d44\u6599": ["agent__get_my_profile"],
+}
 
 
 @dataclass(frozen=True)
@@ -202,6 +255,29 @@ async def _persistent_semantic_scores(
     if not capabilities:
         return [], {"available": False, "reason": "empty_catalog"}
     try:
+        return await asyncio.wait_for(
+            _persistent_semantic_scores_inner(
+                user_id=user_id, query=query, snapshot=snapshot, capabilities=capabilities,
+            ),
+            timeout=8.0,  # 嵌入服务最多等8秒，超时走词法fallback
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Capability semantic scores timed out after 8s; using lexical fallback")
+        return [0.0] * len(capabilities), {"available": False, "reason": "timeout"}
+    except Exception as exc:
+        logger.warning("Capability semantic index unavailable; using lexical fallback: %s", exc)
+        return [0.0] * len(capabilities), {"available": False, "reason": type(exc).__name__}
+
+
+async def _persistent_semantic_scores_inner(
+    *,
+    user_id: int,
+    query: str,
+    snapshot: dict,
+    capabilities: list[dict],
+) -> tuple[list[float], dict]:
+    """实际嵌入计算逻辑，外层包超时保护。"""
+    try:
         profile_key, embedding_fn = await _embedding_profile()
         path = _cache_path(
             user_id=user_id,
@@ -355,6 +431,57 @@ def _reference_scores(
     return scores
 
 
+def _try_fast_lane(query: str, capabilities: list[dict], snapshot: dict) -> dict | None:
+    """快速通道：关键词命中高频能力直接返回，跳过全量排序和嵌入"""
+    matched_names: list[str] = []
+    for keyword, capability_names in _FAST_LANE_MAP.items():
+        if keyword in query:
+            for name in capability_names:
+                if name not in matched_names:
+                    matched_names.append(name)
+
+    if not matched_names:
+        return None
+
+    # 从 capabilities 里找到对应的完整能力对象
+    candidates: list[dict] = []
+    for name in matched_names:
+        parts = name.split("__", 1)
+        if len(parts) != 2:
+            continue
+        module, action = parts
+        for cap in capabilities:
+            if cap.get("module") == module and cap.get("action") == action:
+                candidates.append({
+                    **cap,
+                    "retrieval_score": 1.0,
+                    "retrieval_diagnostics": {
+                        "lexical_score": 1.0,
+                        "semantic_score": 0.0,
+                        "experience_score": 0.0,
+                        "reference_score": 0.0,
+                    },
+                })
+                break
+
+    if not candidates:
+        return None
+
+    return {
+        "catalog_hash": snapshot.get("catalog_hash"),
+        "principal": snapshot.get("principal"),
+        "query": query,
+        "total_authorized": len(capabilities),
+        "total_snapshot_capabilities": len(snapshot.get("capabilities") or []),
+        "candidates": candidates,
+        "experience_patterns": [],
+        "semantic_index": {"available": False, "reason": "fast_lane_bypass"},
+        "low_confidence": False,
+        "strongest_retrieval_signal": 1.0,
+        "retrieval_strategy": "fast_lane",
+    }
+
+
 def _route_ranks(values: list[float]) -> dict[int, int]:
     ordered = sorted(
         (index for index, value in enumerate(values) if value > 0),
@@ -383,9 +510,23 @@ async def retrieve_capabilities(
     available_reference_types: set[str] | None = None,
     desired_reference_types: set[str] | None = None,
 ) -> dict:
-    snapshot = await authorized_capability_snapshot(user_id=user_id)
+    t0 = time.time()
+    snapshot = await _cached_capability_snapshot(user_id=user_id)
     raw_capabilities = list(snapshot.get("capabilities") or [])
     capabilities = agent_visible_capabilities(raw_capabilities)
+
+    # ── 快速通道：关键词直接命中高频能力 ──
+    fast_lane_result = _try_fast_lane(query, capabilities, snapshot)
+    if fast_lane_result is not None:
+        logger.info(
+            "[FAST_LANE] query=%s hit=%s elapsed=%dms",
+            query[:60],
+            [item.get("module") + "__" + item.get("action") for item in fast_lane_result["candidates"]],
+            round((time.time() - t0) * 1000),
+        )
+        return fast_lane_result
+
+    # ── 常规全量排序路径 ──
     lexical = _lexical_scores(query, capabilities)
     semantic_diagnostics: dict = {"available": False, "reason": "disabled"}
     semantic = [0.0] * len(capabilities)

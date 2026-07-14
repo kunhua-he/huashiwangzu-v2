@@ -87,7 +87,7 @@
       "type": "openai_compat",
       "api_url": "http://127.0.0.1:11434/v1/chat/completions",
       "provider_name": "ollama",
-      "description": "Local Ollama fallback (openai-compatible)"
+      "description": "Local Ollama（仅供向量回填等本地大批量任务使用，Agent链路不走此provider）"
     },
     "mimo": {
       "type": "openai_compat",
@@ -99,8 +99,8 @@
   },
   "fallback_policies": {
     "knowledge_text_primary": {
-      "description": "Knowledge text analysis: 本地 GPT-5.5 优先，失败降到 gemma-4 本地，最后 ollama",
-      "chain": ["gemma-4", "ollama-local"]
+      "description": "Knowledge text analysis: 本地 GPT-5.5 优先，失败降到云端 deepseek",
+      "chain": ["deepseek-v4-flash"]
     },
     "knowledge_vision_primary": {
       "description": "Knowledge vision analysis: jayce GPT-5.5 优先，失败降到本地 qwen3-vl",
@@ -112,8 +112,7 @@
       "primary": "gpt-5.5-knowledge",
       "fallback_on_explicit_profile": true,
       "fallback_chain": [
-        "gemma-4",
-        "ollama-local"
+        "deepseek-v4-flash"
       ],
       "profiles": {
         "gpt-5.5-knowledge": {
@@ -174,17 +173,6 @@
           "system_prompt": "This is a test assistant.",
           "response_adapter": "openai_compat",
           "context_budget": null,
-          "price_input": 0,
-          "price_output": 0
-        },
-        "ollama-local": {
-          "provider": "ollama",
-          "model": "qwen2.5:7b",
-          "temperature": 0.7,
-          "max_tokens": 4096,
-          "system_prompt": "You are a helpful AI assistant.",
-          "response_adapter": "openai_compat",
-          "context_budget": 32000,
           "price_input": 0,
           "price_output": 0
         }
@@ -316,6 +304,7 @@
     },
     "knowledge": {
       "default_profile": "gpt-5.5-knowledge",
+      "agent_search_profile": "deepseek-v4-flash",
       "default_vision_profile": "gpt-5.5-vision",
       "fallback_profile": "gpt-5.5-knowledge",
       "pause_after_fallback": true,
@@ -436,7 +425,8 @@
       "model_type": "local",
       "startup_script": "",
       "port": 30004,
-      "description": "Qwen3-Embedding-8B HF local embedding server for 4096D knowledge chunk sidecar vectors",
+      "auto_unload": false,
+      "description": "Qwen3-Embedding-8B HF local embedding server for 4096D knowledge chunk sidecar vectors（常驻，不卸载）",
       "launch": {
         "backend": "transformers",
         "model_path": "/Users/hekunhua/Documents/AI模型/Embedding模型/Qwen3-Embedding-8B",

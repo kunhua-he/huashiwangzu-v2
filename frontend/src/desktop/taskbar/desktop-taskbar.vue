@@ -27,17 +27,66 @@
         @keydown.enter.prevent="$emit('switchWindow', item.id)"
         @keydown.space.prevent="$emit('switchWindow', item.id)"
         @mousedown.prevent
+        @mouseenter="onItemMouseEnter($event, item)"
+        @mouseleave="onItemMouseLeave"
       >
         <AppIcon :icon="item.icon" :size="16" />
         <span class="taskbar-window-title">{{ item.title }}</span>
+        <!-- 进度条 -->
+        <div v-if="getProgress(item.appKey)" class="taskbar-progress-bar">
+          <div
+            class="taskbar-progress-fill"
+            :class="{ 'taskbar-progress-indeterminate': getProgress(item.appKey)?.progress === -1 }"
+            :style="progressStyle(item.appKey)"
+          />
+        </div>
       </div>
       <div v-if="!items.length" class="taskbar-empty">没有打开的窗口</div>
     </div>
     <div class="taskbar-right">
       <TaskbarNotifications @open-app="(id: string, payload?: Record<string, unknown>) => $emit('openTrayApp', id, payload)" />
       <TrayLauncher v-if="trayApps?.length" :app-list="trayApps" @openApp="(id: string) => $emit('openTrayApp', id)" />
-      <div class="taskbar-clock">{{ clockText }}</div>
+      <!-- 时钟升级版 -->
+      <div
+        class="taskbar-clock"
+        @mouseenter="clockHover = true"
+        @mouseleave="clockHover = false"
+      >
+        <span class="clock-main">{{ clockTime }}</span>
+        <span class="clock-date">{{ clockDate }}</span>
+        <!-- 时钟悬浮面板 -->
+        <Transition name="clock-panel-fade">
+          <div v-if="clockHover" class="clock-panel">
+            <div class="clock-panel-time">{{ clockFull }}</div>
+            <div class="clock-panel-date">{{ clockFullDate }}</div>
+            <div class="clock-panel-weekday">{{ clockWeekday }}</div>
+          </div>
+        </Transition>
+      </div>
+      <!-- 显示桌面按钮 -->
+      <div
+        class="taskbar-show-desktop"
+        role="button"
+        tabindex="0"
+        title="显示桌面"
+        @click="onShowDesktop"
+        @keydown.enter.prevent="onShowDesktop"
+        @keydown.space.prevent="onShowDesktop"
+      >
+        <div class="show-desktop-line" />
+      </div>
     </div>
+    <!-- 窗口预览组件 -->
+    <TaskbarWindowPreview
+      :visible="previewVisible"
+      :window-id="previewWindowId"
+      :window-title="previewWindowTitle"
+      :window-icon="previewWindowIcon"
+      :anchor-rect="previewAnchorRect"
+      @close-window="onPreviewClose"
+      @keep-alive="onPreviewKeepAlive"
+      @dismiss="onPreviewDismiss"
+    />
   </div>
 </template>
 
@@ -46,37 +95,141 @@ import { ref, defineAsyncComponent, onMounted, onUnmounted } from 'vue'
 import type { TaskbarItem } from '@/desktop/window-manager/window-types'
 import type { AppRegistryEntry } from '@/desktop/window-manager/window-types'
 import AppIcon from '@/desktop/components/app-icon.vue'
+import { activeProgress } from '@/desktop/feedback/desktop-feedback'
+import TaskbarWindowPreview from './taskbar-window-preview.vue'
 
 const TrayLauncher = defineAsyncComponent(() => import('./tray-launcher.vue'))
 const TaskbarNotifications = defineAsyncComponent(() => import('./taskbar-notifications.vue'))
+
 const props = defineProps<{
   items: TaskbarItem[]
   launcherOpen?: boolean
   trayApps?: AppRegistryEntry[]
 }>()
-defineEmits<{
+
+const emit = defineEmits<{
   (e: 'switchWindow', id: string): void
   (e: 'openLauncher'): void
   (e: 'openTrayApp', id: string, payload?: Record<string, unknown>): void
+  (e: 'showDesktop'): void
+  (e: 'closeWindow', id: string): void
 }>()
 
-const clockText = ref('')
+// ═══════════════════════════════════════════════════
+// 时钟系统
+// ═══════════════════════════════════════════════════
+const clockTime = ref('')
+const clockDate = ref('')
+const clockFull = ref('')
+const clockFullDate = ref('')
+const clockWeekday = ref('')
+const clockHover = ref(false)
 let clockTimer: ReturnType<typeof setInterval> | null = null
+
+const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
 
 function updateClock() {
   const now = new Date()
-  clockText.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  const h = String(now.getHours()).padStart(2, '0')
+  const m = String(now.getMinutes()).padStart(2, '0')
+  const s = String(now.getSeconds()).padStart(2, '0')
+  clockTime.value = `${h}:${m}`
+  clockDate.value = `${now.getMonth() + 1}/${now.getDate()}`
+  clockFull.value = `${h}:${m}:${s}`
+  clockFullDate.value = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
+  clockWeekday.value = WEEKDAYS[now.getDay()]
 }
 
+// ═══════════════════════════════════════════════════
+// 进度条
+// ═══════════════════════════════════════════════════
+function getProgress(appKey?: string) {
+  if (!appKey) return null
+  return activeProgress.value.get(appKey) || null
+}
+
+function progressStyle(appKey?: string) {
+  const entry = getProgress(appKey)
+  if (!entry) return {}
+  if (entry.progress === -1) return { background: entry.color || '#3b82f6' }
+  return {
+    width: `${Math.min(100, entry.progress * 100)}%`,
+    background: entry.color || '#3b82f6',
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// 悬停预览
+// ═══════════════════════════════════════════════════
+const previewVisible = ref(false)
+const previewWindowId = ref('')
+const previewWindowTitle = ref('')
+const previewWindowIcon = ref('')
+const previewAnchorRect = ref<{ x: number; y: number; width: number; height: number } | null>(null)
+
+let hoverEnterTimer: ReturnType<typeof setTimeout> | null = null
+let hoverLeaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function onItemMouseEnter(event: MouseEvent, item: TaskbarItem) {
+  if (hoverLeaveTimer) { clearTimeout(hoverLeaveTimer); hoverLeaveTimer = null }
+  hoverEnterTimer = setTimeout(() => {
+    const target = (event.currentTarget as HTMLElement)
+    const rect = target.getBoundingClientRect()
+    previewAnchorRect.value = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    previewWindowId.value = item.id
+    previewWindowTitle.value = item.title
+    previewWindowIcon.value = item.icon
+    previewVisible.value = true
+  }, 300)
+}
+
+function onItemMouseLeave() {
+  if (hoverEnterTimer) { clearTimeout(hoverEnterTimer); hoverEnterTimer = null }
+  hoverLeaveTimer = setTimeout(() => {
+    previewVisible.value = false
+  }, 150)
+}
+
+function onPreviewKeepAlive() {
+  if (hoverLeaveTimer) { clearTimeout(hoverLeaveTimer); hoverLeaveTimer = null }
+}
+
+function onPreviewDismiss() {
+  hoverLeaveTimer = setTimeout(() => {
+    previewVisible.value = false
+  }, 150)
+}
+
+function onPreviewClose(id: string) {
+  previewVisible.value = false
+  emit('closeWindow', id)
+}
+
+// ═══════════════════════════════════════════════════
+// 显示桌面
+// ═══════════════════════════════════════════════════
+const desktopShown = ref(false)
+
+function onShowDesktop() {
+  desktopShown.value = !desktopShown.value
+  emit('showDesktop')
+}
+
+// ═══════════════════════════════════════════════════
+// 生命周期
+// ═══════════════════════════════════════════════════
 onMounted(() => {
   updateClock()
-  clockTimer = setInterval(updateClock, 30000)
+  clockTimer = setInterval(updateClock, 1000)
 })
 
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
+  if (hoverEnterTimer) clearTimeout(hoverEnterTimer)
+  if (hoverLeaveTimer) clearTimeout(hoverLeaveTimer)
 })
 </script>
+
 <style scoped>
 .desktop-taskbar {
   position: absolute;
@@ -100,7 +253,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px; height: 32px; border-radius: 8px;
+  padding: 0 10px;
+  height: 32px;
+  border-radius: 8px;
   cursor: pointer;
   color: #eff6ff;
   border: 1px solid transparent;
@@ -118,19 +273,157 @@ onUnmounted(() => {
   outline-offset: 2px;
 }
 .taskbar-start-label { font-size: 12px; font-weight: 700; color: #eff6ff; }
-.taskbar-launcher-indicator { width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; margin-left: 4px; box-shadow: 0 0 12px rgba(56, 189, 248, .9); }
-.taskbar-window-list { flex: 1; display: flex; align-items: center; gap: 2px; margin: 0 4px; overflow-x: auto; }
-.taskbar-item { position: relative; display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 30px; border-radius: 7px; cursor: pointer; color: #cbd5e1; white-space: nowrap; flex-shrink: 0; border: 1px solid transparent; transition: background .16s ease, border-color .16s ease, color .16s ease, opacity .16s ease, transform .16s ease; }
-.taskbar-item::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 3px; height: 2px; border-radius: 999px; background: transparent; }
+.taskbar-launcher-indicator {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #38bdf8; margin-left: 4px;
+  box-shadow: 0 0 12px rgba(56, 189, 248, .9);
+}
+.taskbar-window-list {
+  flex: 1; display: flex; align-items: center;
+  gap: 2px; margin: 0 4px; overflow-x: auto;
+}
+.taskbar-item {
+  position: relative; display: flex; align-items: center;
+  gap: 6px; padding: 0 12px; height: 30px; border-radius: 7px;
+  cursor: pointer; color: #cbd5e1; white-space: nowrap; flex-shrink: 0;
+  border: 1px solid transparent;
+  transition: background .16s ease, border-color .16s ease, color .16s ease, opacity .16s ease, transform .16s ease;
+}
+.taskbar-item::after {
+  content: ''; position: absolute;
+  left: 12px; right: 12px; bottom: 3px;
+  height: 2px; border-radius: 999px; background: transparent;
+}
 .taskbar-item:hover,
-.taskbar-item:focus-visible { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.12); transform: translateY(-1px); }
-.taskbar-item:focus-visible { outline: 2px solid rgba(191, 219, 254, .9); outline-offset: 2px; }
-.taskbar-item-active { background: rgba(59, 130, 246, 0.18); border-color: rgba(147, 197, 253, 0.3); color: #f8fafc; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
-.taskbar-item-active::after { background: #60a5fa; box-shadow: 0 0 10px rgba(96, 165, 250, .72); }
+.taskbar-item:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-1px);
+}
+.taskbar-item:focus-visible {
+  outline: 2px solid rgba(191, 219, 254, .9);
+  outline-offset: 2px;
+}
+.taskbar-item-active {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(147, 197, 253, 0.3);
+  color: #f8fafc;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.taskbar-item-active::after {
+  background: #60a5fa;
+  box-shadow: 0 0 10px rgba(96, 165, 250, .72);
+}
 .taskbar-item-minimized { opacity: 0.66; }
 .taskbar-item-minimized::after { background: rgba(203, 213, 225, 0.42); }
-.taskbar-window-title { font-size: 11px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.taskbar-window-title {
+  font-size: 11px; max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .taskbar-empty { font-size: 12px; color: #cbd5e1; padding: 0 8px; }
-.taskbar-right { display: flex; align-items: center; gap: 6px; padding-left: 8px; border-left: 1px solid rgba(255, 255, 255, 0.1); }
-.taskbar-clock { font-size: 12px; color: #cbd5e1; font-weight: 600; padding: 0 4px; }
+.taskbar-right {
+  display: flex; align-items: center; gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ═══ 进度条 ═══ */
+.taskbar-progress-bar {
+  position: absolute;
+  left: 2px; right: 2px; bottom: 1px;
+  height: 2px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.taskbar-progress-fill {
+  height: 100%; border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.taskbar-progress-indeterminate {
+  width: 40% !important;
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(150%); }
+  100% { transform: translateX(-100%); }
+}
+
+/* ═══ 时钟升级版 ═══ */
+.taskbar-clock {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center;
+  padding: 2px 8px; border-radius: 6px;
+  cursor: default;
+  transition: background 0.15s ease;
+}
+.taskbar-clock:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.clock-main {
+  font-size: 12px; color: #e2e8f0; font-weight: 600;
+  line-height: 1.2;
+}
+.clock-date {
+  font-size: 10px; color: #94a3b8; line-height: 1.2;
+}
+.clock-panel {
+  position: absolute;
+  bottom: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 12px 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  z-index: 10100;
+  text-align: center;
+}
+.clock-panel-time {
+  font-size: 22px; font-weight: 700; color: #f1f5f9;
+  letter-spacing: 1px;
+}
+.clock-panel-date {
+  font-size: 12px; color: #cbd5e1; margin-top: 4px;
+}
+.clock-panel-weekday {
+  font-size: 11px; color: #94a3b8; margin-top: 2px;
+}
+.clock-panel-fade-enter-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.clock-panel-fade-leave-active {
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+.clock-panel-fade-enter-from,
+.clock-panel-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(4px);
+}
+
+/* ═══ 显示桌面按钮 ═══ */
+.taskbar-show-desktop {
+  width: 12px; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  margin-left: 4px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  transition: background 0.15s ease;
+}
+.taskbar-show-desktop:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.taskbar-show-desktop:hover .show-desktop-line {
+  opacity: 1;
+}
+.show-desktop-line {
+  width: 2px; height: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
 </style>

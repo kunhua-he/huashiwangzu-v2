@@ -10,6 +10,7 @@ html, body, #app {
   font-family: var(--font-stack);
   background-color: var(--page-bg);
   color: var(--text-primary);
+  overflow: hidden;
 }
 
 .global-loading {

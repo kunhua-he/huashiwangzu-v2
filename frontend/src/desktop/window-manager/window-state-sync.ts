@@ -12,7 +12,7 @@ export function createWindowStateSync(windows: Reactive<WindowState[]>) {
 
   const stopTaskbarSync = watch(() => windows.map((w: WindowState) => ({
     id: w.id, title: w.title, icon: w.icon,
-    isActive: w.isActive, minimized: w.minimized,
+    isActive: w.isActive, minimized: w.minimized, appKey: w.appKey,
   })), value => { taskbarItems.value = value }, { immediate: true, deep: true })
 
   const stopSessionSync = watch(windows, () => {

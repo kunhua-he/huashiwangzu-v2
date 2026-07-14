@@ -40,6 +40,11 @@ logger = logging.getLogger("v2.agent").getChild("runtime.conversation")
 _FALLBACK_PROFILE = "deepseek-v4-flash"
 
 
+def _sse_json(obj: dict) -> bytes:
+    """格式化 SSE 数据帧"""
+    return f"data: {json.dumps(obj, ensure_ascii=False, default=str)}\n\n".encode("utf-8")
+
+
 def _default_agent_profile() -> str:
     """从 models.json module_routing.agent.default_profile 读取，fallback 硬编码。"""
     try:
@@ -281,33 +286,43 @@ class ConversationRuntime:
                 logger.warning("Record thinking feedback failed (non-fatal): %s", feedback_exc)
 
             _tools_t0 = time.monotonic()
-            capability_catalog = await self._build_capability_catalog(
-                user_id=user.id,
-                query=payload.content,
-                conversation_id=payload.conversation_id,
-            )
-            logger.info(
-                "[PREFLIGHT_TIMING] authorized capability Top-K: %dms candidates=%d total=%d hash=%s",
-                round((time.monotonic() - _tools_t0) * 1000),
-                len(capability_catalog.get("candidates") or []),
-                int(capability_catalog.get("total_authorized") or 0),
-                str(capability_catalog.get("catalog_hash") or "")[:12],
-            )
-            logger.info(
-                "Capability catalog selected: conv=%d query=%s candidates=%s low_confidence=%s signal=%s",
-                payload.conversation_id,
-                payload.content[:120],
-                [
-                    f"{item.get('module')}__{item.get('action')}"
-                    for item in capability_catalog.get("candidates") or []
-                    if isinstance(item, dict)
-                ],
-                bool(capability_catalog.get("low_confidence")),
-                capability_catalog.get("strongest_retrieval_signal"),
-            )
+            capability_catalog = {}  # 延迟到 SSE 流内部构建，避免阻塞 HTTP 响应
 
         # ── Wire sub-runtimes lazily inside the SSE stream so preflight does not block the HTTP response ──
         async def _event_stream():
+            nonlocal capability_catalog
+
+            # 立刻推送 preflight 状态，让前端秒级有反馈
+            yield _sse_json({"type": "preflight_status", "phase": "start", "message": "正在准备..."})
+
+            # 在流内部构建能力目录（之前在流外面阻塞了HTTP响应24秒）
+            if not capability_catalog:
+                yield _sse_json({"type": "preflight_status", "phase": "capability_routing", "message": "正在匹配能力..."})
+                capability_catalog = await self._build_capability_catalog(
+                    user_id=user.id,
+                    query=payload.content,
+                    conversation_id=payload.conversation_id,
+                )
+                logger.info(
+                    "[PREFLIGHT_TIMING] authorized capability Top-K: %dms candidates=%d total=%d hash=%s",
+                    round((time.monotonic() - _tools_t0) * 1000),
+                    len(capability_catalog.get("candidates") or []),
+                    int(capability_catalog.get("total_authorized") or 0),
+                    str(capability_catalog.get("catalog_hash") or "")[:12],
+                )
+                logger.info(
+                    "Capability catalog selected: conv=%d query=%s candidates=%s low_confidence=%s signal=%s",
+                    payload.conversation_id,
+                    payload.content[:120],
+                    [
+                        f"{item.get('module')}__{item.get('action')}"
+                        for item in capability_catalog.get("candidates") or []
+                        if isinstance(item, dict)
+                    ],
+                    bool(capability_catalog.get("low_confidence")),
+                    capability_catalog.get("strongest_retrieval_signal"),
+                )
+
             stream_preflight = None
             workflow_link = WorkflowRuntimeLink.from_channel_values(
                 conversation_id=payload.conversation_id,

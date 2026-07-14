@@ -20,6 +20,8 @@ from dev_toolkit.knowledge_source_manifest_audit import source_manifest_import_a
 
 TOOL_NAMES = {
     "knowledge_pipeline_snapshot",
+    "knowledge_pipeline_submit",
+    "knowledge_pipeline_node_status",
     "knowledge_source_gap_snapshot",
     "knowledge_source_manifest_audit",
     "knowledge_source_manifest_summary",
@@ -161,6 +163,72 @@ def tool_definitions() -> list[Any]:
                 "required": ["source_root"],
             },
         ),
+        Tool(
+            name="knowledge_pipeline_submit",
+            description=(
+                "投递任务到统一调度器。支持所有已注册 task_type：kb_pipeline_stage、"
+                "kb_chunk_embedding_backfill、kb_enterprise_import 等。"
+                "调度器自动分发到对应执行器。"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_type": {
+                        "type": "string",
+                        "description": (
+                            "任务类型，已注册："
+                            "kb_pipeline_stage / kb_chunk_embedding_backfill / "
+                            "kb_enterprise_import / kb_enterprise_import_file / "
+                            "kb_pipeline / knowledge_retrieval_reflect / "
+                            "agent_context_compact / agent_execute_slow_tool / "
+                            "memory_distill / memory_post_save / profile_evolve / "
+                            "scheduled_agent_job / workflow_mine"
+                        ),
+                    },
+                    "module": {
+                        "type": "string",
+                        "description": "所属模块，如 knowledge / agent / memory",
+                        "default": "knowledge",
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": "任务参数 JSON 对象，按 task_type 不同结构不同",
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "description": "优先级 1-10，数字越大越优先，默认5",
+                        "default": 5,
+                    },
+                },
+                "required": ["task_type"],
+            },
+        ),
+        Tool(
+            name="knowledge_pipeline_node_status",
+            description=(
+                "查看指定文档在管线各阶段的处理状态。"
+                "返回每个阶段的运行记录（状态、耗时、错误）和队列中的任务。"
+                "支持按 document_id 或 filename 查询。"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {
+                        "type": "integer",
+                        "description": "文档ID，直接查询",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "文件名模糊搜索（document_id 优先）",
+                    },
+                    "owner_id": {
+                        "type": "integer",
+                        "description": "用户 ID，默认4",
+                        "default": 4,
+                    },
+                },
+            },
+        ),
     ]
 
 
@@ -169,6 +237,12 @@ def handles_tool(name: str) -> bool:
 
 
 async def handle_tool(repo_root: Path, name: str, arguments: dict[str, Any]) -> str:
+    if name == "knowledge_pipeline_submit":
+        result = await _pipeline_submit(repo_root, arguments)
+        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+    if name == "knowledge_pipeline_node_status":
+        result = await _pipeline_node_status(repo_root, arguments)
+        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
     if name == "knowledge_source_manifest_audit":
         result = await source_manifest_import_audit_snapshot(
             repo_root,
@@ -210,6 +284,226 @@ async def handle_tool(repo_root: Path, name: str, arguments: dict[str, Any]) -> 
     snapshot = await _db_snapshot(repo_root, failed_limit=max(0, failed_limit))
     snapshot["log_summary"] = _log_summary(repo_root, max(0, log_lines))
     return json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+
+async def _pipeline_submit(repo_root: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+    """通过后端 API 投递任务到统一调度器。"""
+    task_type = str(arguments.get("task_type", ""))
+    module = str(arguments.get("module", "knowledge") or "knowledge")
+    parameters = arguments.get("parameters") or {}
+    priority = int(arguments.get("priority", 5) or 5)
+
+    if not task_type:
+        return {"success": False, "error": "task_type 不能为空"}
+
+    known_types = {
+        "kb_pipeline_stage", "kb_chunk_embedding_backfill",
+        "kb_enterprise_import", "kb_enterprise_import_file",
+        "kb_pipeline", "knowledge_retrieval_reflect",
+        "agent_context_compact", "agent_execute_slow_tool",
+        "memory_distill", "memory_post_save", "profile_evolve",
+        "scheduled_agent_job", "workflow_mine",
+    }
+    if task_type not in known_types:
+        return {
+            "success": False,
+            "error": f"未知 task_type: {task_type}",
+            "known_types": sorted(known_types),
+        }
+
+    script = f"""
+import asyncio
+import json
+from app.database import AsyncSessionLocal
+from app.services.task_dispatcher import publish_task
+
+TASK_TYPE = {json.dumps(task_type)}
+MODULE = {json.dumps(module)}
+PARAMETERS = json.loads({json.dumps(json.dumps(parameters, ensure_ascii=False))})
+PRIORITY = {priority}
+
+async def main():
+    async with AsyncSessionLocal() as db:
+        task = await publish_task(
+            db,
+            task_type=TASK_TYPE,
+            module=MODULE,
+            owner_id=4,
+            body=PARAMETERS,
+            requested_by="mcp:knowledge_pipeline_submit",
+            trigger="mcp.pipeline_submit",
+            priority=PRIORITY,
+        )
+        await db.commit()
+        await db.refresh(task)
+        return {{
+            "success": True,
+            "task_id": task.id,
+            "task_type": task.task_type,
+            "status": task.status,
+            "priority": task.priority,
+            "module": task.module,
+            "created_at": str(task.created_at),
+        }}
+
+print(json.dumps(asyncio.run(main()), ensure_ascii=False, default=str))
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = ".:backend"
+    proc = await asyncio.create_subprocess_exec(
+        _project_python(repo_root),
+        "-c",
+        script,
+        cwd=repo_root,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        return {"success": False, "error": stderr.decode("utf-8", errors="replace")[-4000:]}
+    return json.loads(stdout.decode("utf-8"))
+
+
+async def _pipeline_node_status(repo_root: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+    """查看文档在管线各阶段的处理状态。"""
+    document_id = arguments.get("document_id")
+    filename = str(arguments.get("filename", "") or "")
+    owner_id = int(arguments.get("owner_id", 4) or 4)
+
+    if not document_id and not filename:
+        return {"success": False, "error": "需要 document_id 或 filename"}
+
+    script = f"""
+import asyncio
+import json
+from sqlalchemy import text
+from app.database import AsyncSessionLocal
+
+DOCUMENT_ID = {json.dumps(document_id)}
+FILENAME = {json.dumps(filename)}
+OWNER_ID = {owner_id}
+
+STAGE_ORDER = [
+    "source_validate", "parse_index", "page_render", "raw_text",
+    "raw_ocr", "raw_vision", "fusion", "profile",
+    "cognitive_index", "graph", "relations"
+]
+STAGE_NAMES = {{
+    "source_validate": "源文件校验",
+    "parse_index": "基础解析/索引",
+    "page_render": "页面截图/压缩资产",
+    "raw_text": "原始文本采集",
+    "raw_ocr": "视觉 OCR",
+    "raw_vision": "VLM 看图理解",
+    "fusion": "LLM 融合交叉印证",
+    "profile": "文档画像/标签",
+    "cognitive_index": "认知派生索引",
+    "graph": "实体图谱抽取",
+    "relations": "关系/联动构建",
+}}
+
+async def main():
+    async with AsyncSessionLocal() as db:
+        doc_id = DOCUMENT_ID
+        if not doc_id and FILENAME:
+            row = (await db.execute(text(
+                "SELECT id, filename, extension, file_size, parse_status, "
+                "vector_status, fusion_status, profile_status, graph_status "
+                "FROM kb_documents WHERE owner_id=:oid AND filename ILIKE :pat "
+                "AND deleted=false LIMIT 5"
+            ), {{"oid": OWNER_ID, "pat": f"%{{FILENAME}}%"}})).mappings().all()
+            if not row:
+                return {{"success": False, "error": f"未找到匹配文件: {{FILENAME}}"}}
+            if len(row) > 1:
+                return {{
+                    "success": False,
+                    "error": "匹配多个文档，请用 document_id 精确查询",
+                    "matches": [dict(r) for r in row],
+                }}
+            doc_id = row[0]["id"]
+
+        doc = (await db.execute(text(
+            "SELECT d.id, d.filename, d.extension, d.file_size, d.total_chunks, "
+            "d.total_pages, d.parse_status, d.vector_status, d.fusion_status, "
+            "d.profile_status, d.graph_status, d.relation_status, d.created_at "
+            "FROM kb_documents d WHERE d.id=:did AND d.owner_id=:oid"
+        ), {{"did": doc_id, "oid": OWNER_ID}})).mappings().first()
+        if not doc:
+            return {{"success": False, "error": f"文档不存在: {{doc_id}}"}}
+
+        stage_runs = (await db.execute(text(
+            "SELECT stage, status, reason, duration_ms, error_message, "
+            "started_at, completed_at "
+            "FROM kb_pipeline_stage_runs "
+            "WHERE document_id=:did AND owner_id=:oid "
+            "ORDER BY id DESC"
+        ), {{"did": doc_id, "oid": OWNER_ID}})).mappings().all()
+
+        queue_tasks = (await db.execute(text(
+            "SELECT id, stage_key, status, priority, error_message, "
+            "retry_count, max_retries, created_at, started_at "
+            "FROM framework_system_task_queues "
+            "WHERE task_type='kb_pipeline_stage' AND document_id=:did "
+            "ORDER BY id DESC LIMIT 30"
+        ), {{"did": doc_id}})).mappings().all()
+
+        chunk_stats = (await db.execute(text(
+            "SELECT COUNT(*) total, "
+            "COUNT(CASE WHEN char_length(text)<50 THEN 1 END) short, "
+            "ROUND(AVG(char_length(text))::numeric,0) avg_len "
+            "FROM kb_chunks WHERE document_id=:did AND owner_id=:oid"
+        ), {{"did": doc_id, "oid": OWNER_ID}})).mappings().first()
+
+        embedding_stats = (await db.execute(text(
+            "SELECT COUNT(*) embedded "
+            "FROM kb_chunk_embeddings e "
+            "JOIN kb_chunks c ON c.id=e.chunk_id "
+            "WHERE c.document_id=:did AND e.status='active'"
+        ), {{"did": doc_id}})).mappings().first()
+
+        stages = {{}}
+        for run in stage_runs:
+            s = run["stage"]
+            if s not in stages:
+                stages[s] = []
+            stages[s].append(dict(run))
+
+        ordered_stages = []
+        for s in STAGE_ORDER:
+            ordered_stages.append({{
+                "stage": s,
+                "name": STAGE_NAMES.get(s, s),
+                "runs": stages.get(s, []),
+                "latest_status": stages[s][0]["status"] if s in stages else "未执行",
+            }})
+
+        return {{
+            "success": True,
+            "document": dict(doc),
+            "stages": ordered_stages,
+            "queue_tasks": [dict(t) for t in queue_tasks],
+            "chunk_stats": dict(chunk_stats) if chunk_stats else None,
+            "embedding_stats": dict(embedding_stats) if embedding_stats else None,
+        }}
+
+print(json.dumps(asyncio.run(main()), ensure_ascii=False, default=str))
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = ".:backend"
+    proc = await asyncio.create_subprocess_exec(
+        _project_python(repo_root),
+        "-c",
+        script,
+        cwd=repo_root,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        return {"success": False, "error": stderr.decode("utf-8", errors="replace")[-4000:]}
+    return json.loads(stdout.decode("utf-8"))
 
 
 async def _source_manifest_tool(repo_root: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any]:

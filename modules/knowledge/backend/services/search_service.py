@@ -26,7 +26,7 @@ RRF_K = 60
 VECTOR_SEARCH_EF_SEARCH = 240
 VECTOR_SEARCH_MAX_CANDIDATES = 200
 DOCUMENT_SEARCH_MAX_CANDIDATES = 200
-QUERY_PLAN_TIMEOUT_SECONDS = 15.0
+QUERY_PLAN_TIMEOUT_SECONDS = 8.0
 QUERY_PLAN_MAX_TERMS = 16
 RETRIEVAL_SCORE_VERSION = "kb_retrieval_score_v1"
 MODEL_WARM_THRESHOLD_MS = 1500.0
@@ -546,7 +546,7 @@ def _default_query_plan(query: str) -> dict:
     terms = _local_query_terms(query)
     return {
         "intent": "semantic_search",
-        "need_document_level_results": True,
+        "need_document_level_results": False,
         "answer_shape": "mixed",
         "terms": terms,
         "entities": [],
@@ -623,6 +623,10 @@ async def plan_query(query: str, db: AsyncSession | None = None, owner_id: int |
     if local_plan is not None:
         return local_plan
 
+    # 短查询（<50字）直接用本地默认规划，不浪费时间调 LLM
+    if len(query.strip()) < 50:
+        return _default_query_plan(query)
+
     messages = [
         {
             "role": "system",
@@ -644,13 +648,16 @@ async def plan_query(query: str, db: AsyncSession | None = None, owner_id: int |
         },
     ]
     try:
+        from app.gateway.config import get_models_config
         from app.gateway.router import gateway_router
 
+        _routing = get_models_config().get("module_routing", {}).get("knowledge", {})
+        _search_profile = _routing.get("agent_search_profile") or "deepseek-v4-flash"
         result = await asyncio.wait_for(
-            gateway_router.chat(messages=messages),
+            gateway_router.chat(messages=messages, profile_key=_search_profile),
             timeout=QUERY_PLAN_TIMEOUT_SECONDS,
         )
-        content = str(result.get("content") or "")
+        content = str(result.get("content") or "") or str(result.get("thinking") or "")
         if result.get("error") or not content:
             raise RuntimeError(str(result.get("error") or "empty query plan"))
         parsed = _extract_json_object(content)
@@ -1261,12 +1268,8 @@ def _allow_legacy_vector_fallback(
     fallback_from: str | None,
     allow: bool,
 ) -> bool:
-    return (
-        allow
-        and fallback_from is None
-        and embedding_model != LEGACY_CHUNK_EMBEDDING_PROFILE
-        and vector_store == "kb_chunk_embeddings"
-    )
+    # bge-m3 已废弃（1024维 vs 数据库4096维），永远不 fallback
+    return False
 
 
 async def document_candidate_search(
@@ -1309,7 +1312,7 @@ async def document_candidate_search(
                   AND c.owner_id = base.doc_owner_id
                   AND (
                     c.text ILIKE :{key}
-                    OR COALESCE(c.keywords, '') ILIKE :{key}
+                    OR c.keywords ILIKE :{key}
                   )
                 LIMIT 1
             )
@@ -1475,9 +1478,9 @@ async def structured_signal_search(
                 OR ed.name ILIKE :{key}
                 OR ea.alias ILIKE :{key}
                 OR fc.claim_text ILIKE :{key}
-                OR COALESCE(fc.subject, '') ILIKE :{key}
-                OR COALESCE(fc.predicate, '') ILIKE :{key}
-                OR COALESCE(fc.object_value, '') ILIKE :{key}
+                OR fc.subject ILIKE :{key}
+                OR fc.predicate ILIKE :{key}
+                OR fc.object_value ILIKE :{key}
                 OR cc.context ILIKE :{key}
                 OR cc.cause ILIKE :{key}
                 OR cc.effect ILIKE :{key}
@@ -2053,6 +2056,7 @@ async def hybrid_search(
     embedding_profile: str | None = None,
 ) -> list[dict]:
     """混合检索：向量 + 关键词 → RRF 融合 → 可选 rerank。"""
+    _search_t0 = time.perf_counter()
     diagnostics = _RetrievalDiagnostics(query=query, top_k=top_k, use_rerank=use_rerank)
     planning_started_at = time.perf_counter()
     query_plan = await plan_query(query, db=db, owner_id=owner_id)
@@ -2078,6 +2082,7 @@ async def hybrid_search(
     if document_intent and not fast_local_plan:
         stage_started_at = time.perf_counter()
         doc_results = await document_candidate_search(db, query_plan, owner_id, top_k=top_k * 4)
+        logger.info("[SEARCH_STAGE] doc_candidate=%dms n=%d", _elapsed_ms(stage_started_at), len(doc_results))
         diagnostics.stage(
             "document_candidate_search",
             duration_ms=_elapsed_ms(stage_started_at),
@@ -2092,6 +2097,7 @@ async def hybrid_search(
     if not fast_local_plan:
         stage_started_at = time.perf_counter()
         structured_results = await structured_signal_search(db, query_plan, owner_id, top_k=top_k * 4)
+        logger.info("[SEARCH_STAGE] structured_signal=%dms n=%d", _elapsed_ms(stage_started_at), len(structured_results))
         diagnostics.stage(
             "structured_signal_search",
             duration_ms=_elapsed_ms(stage_started_at),
@@ -2101,6 +2107,7 @@ async def hybrid_search(
         diagnostics.skipped("structured_signal_search", "fast_local_plan")
     stage_started_at = time.perf_counter()
     kw_results = await keyword_search(db, _keyword_query_for_plan(query, query_plan), owner_id, top_k=top_k * 2)
+    logger.info("[SEARCH_STAGE] keyword=%dms n=%d", _elapsed_ms(stage_started_at), len(kw_results))
     diagnostics.stage("keyword_search", duration_ms=_elapsed_ms(stage_started_at), result_count=len(kw_results))
     vec_results = []
     if not fast_local_plan:
@@ -2113,6 +2120,7 @@ async def hybrid_search(
             diagnostics=diagnostics,
             embedding_profile=embedding_profile,
         )
+        logger.info("[SEARCH_STAGE] vector=%dms n=%d", _elapsed_ms(stage_started_at), len(vec_results))
         diagnostics.stage("vector_search", duration_ms=_elapsed_ms(stage_started_at), result_count=len(vec_results))
     else:
         diagnostics.skipped("vector_search", "fast_local_plan")
@@ -2134,6 +2142,7 @@ async def hybrid_search(
         result.setdefault("query_plan", query_plan)
     stage_started_at = time.perf_counter()
     results = await verify_and_score_results(db, results, owner_id=owner_id, query_plan=query_plan)
+    logger.info("[SEARCH_STAGE] verify_score=%dms n=%d", _elapsed_ms(stage_started_at), len(results))
     diagnostics.stage(
         "verify_and_score_results",
         duration_ms=_elapsed_ms(stage_started_at),
@@ -2141,6 +2150,13 @@ async def hybrid_search(
     )
 
     # 可选 rerank
+    logger.info(
+        "[SEARCH_TIMING] query='%s' total=%dms plan_source=%s fast=%s doc=%d struct=%d kw=%d vec=%d fused=%d verified=%d",
+        query[:30], _elapsed_ms(_search_t0),
+        query_plan.get("source", "?"), fast_local_plan,
+        len(doc_results), len(structured_results), len(kw_results), len(vec_results),
+        len(results), len(results),
+    )
     if use_rerank and results:
         stage_started_at = time.perf_counter()
         try:

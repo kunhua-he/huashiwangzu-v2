@@ -327,6 +327,11 @@ class ToolLoopRuntime:
             from app.services.module_registry import call_capability
 
             module_key, capability_action = parse_capability_name(action.capability)
+            _tool_start = time.time()
+            logger.info(
+                "[TOOL_EXEC] start: conv=%s capability=%s args_keys=%s",
+                self.conversation_id, action.capability, list(arguments.keys()),
+            )
             result = await call_capability(
                 module_key,
                 capability_action,
@@ -334,6 +339,12 @@ class ToolLoopRuntime:
                 caller=f"user:{self.owner_id}",
                 caller_role=self.user_role,
                 trusted_user_role=True,
+            )
+            _tool_elapsed = round((time.time() - _tool_start) * 1000)
+            _tool_ok = result.get("success", False) if isinstance(result, dict) else "?"
+            logger.info(
+                "[TOOL_EXEC] done: conv=%s capability=%s elapsed=%dms success=%s",
+                self.conversation_id, action.capability, _tool_elapsed, _tool_ok,
             )
             normalized, _ = normalize_tool_result_for_model(result, action.capability)
             return normalized

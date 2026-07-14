@@ -21,10 +21,10 @@ function generateZIndex(): number { return nextZIndex++ }
 const taskbarItems = ref<TaskbarItem[]>([])
 watch(() => windows.map(w => ({
   id: w.id, title: w.title, icon: w.icon,
-  isActive: w.isActive, minimized: w.minimized,
+  isActive: w.isActive, minimized: w.minimized, appKey: w.appKey,
 })), (value) => { taskbarItems.value = value }, { immediate: true, deep: true })
 
-function openWindow(appKey: string, payload?: unknown): string | null {
+function openWindow(appKey: string, payload?: unknown, originRect?: WindowGeometry): string | null {
   const app = getApp(appKey)
   if (!app) return null
   const store = useUserStore()
@@ -84,7 +84,16 @@ function openWindow(appKey: string, payload?: unknown): string | null {
     minimized: false, maximized: false, isActive: true,
     windowType: app.windowType || WINDOW_TYPE_NORMAL,
     payload: windowPayload,
+    animationOrigin: originRect || undefined,
   })
+
+  // 动画来源坐标是一次性信息，200ms后清除
+  if (originRect) {
+    setTimeout(() => {
+      const w = windows.find(win => win.id === id)
+      if (w) w.animationOrigin = undefined
+    }, 200)
+  }
 
   windows.forEach(w => { if (w.id !== id) w.isActive = false })
   return id

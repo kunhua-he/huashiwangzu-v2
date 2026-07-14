@@ -7,6 +7,7 @@ export type SnapPreview = { kind: SnapKind; x: number; y: number; width: number;
 type InteractionConfig = {
   id: string; x: number; y: number; width: number; height: number; maximized: boolean
   minWidth: number; minHeight: number; rootEl: Ref<HTMLElement | null>
+  preMaximizeState?: WindowGeometry
   activate: (id: string) => void; updatePosition: (id: string, x: number, y: number) => void
   updateGeometry: (id: string, x: number, y: number, width: number, height: number) => void
   maximize: (id: string, restoreState?: WindowGeometry) => void
@@ -15,6 +16,7 @@ type InteractionConfig = {
 const resizeDirections: ResizeDirection[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
 const SNAP_EDGE_SIZE = 28
 const TASKBAR_RESERVED_HEIGHT = 48
+const MAX_DRAG_RESTORE_THRESHOLD = 4
 
 function clampDimension(value: number, min: number, max: number): number {
   if (max <= 0) return 0
@@ -27,6 +29,10 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
   const snapPreview = ref<SnapPreview | null>(null)
   const dragStart = ref({ x: 0, y: 0, winX: 0, winY: 0, winWidth: 0, winHeight: 0 })
   const resizeInfo = ref<{ direction: ResizeDirection; startX: number; startY: number; initialX: number; initialY: number; initialWidth: number; initialHeight: number } | null>(null)
+
+  // 最大化拖拽还原状态
+  const maxDragState = ref<{ startX: number; startY: number; triggered: boolean } | null>(null)
+
   const getBounds = () => {
     const parent = readConfig().rootEl.value?.parentElement
     const rect = parent?.getBoundingClientRect()
@@ -58,12 +64,69 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
     return null
   }
   function startDrag(e: MouseEvent) {
-    const cfg = readConfig(); if (cfg.maximized) return
+    const cfg = readConfig()
+
+    // 最大化拖拽还原：记录起点，等待超过阈值后触发
+    if (cfg.maximized) {
+      cfg.activate(cfg.id)
+      maxDragState.value = { startX: e.clientX, startY: e.clientY, triggered: false }
+      document.addEventListener('mousemove', handleMaxDragMove)
+      document.addEventListener('mouseup', stopMaxDrag)
+      return
+    }
+
     cfg.activate(cfg.id); dragging.value = true
     snapPreview.value = null
     dragStart.value = { x: e.clientX, y: e.clientY, winX: cfg.x, winY: cfg.y, winWidth: cfg.width, winHeight: cfg.height }
     document.addEventListener('mousemove', handleDragMove); document.addEventListener('mouseup', stopInteraction)
   }
+
+  function handleMaxDragMove(e: MouseEvent) {
+    if (!maxDragState.value || maxDragState.value.triggered) return
+    const dx = e.clientX - maxDragState.value.startX
+    const dy = e.clientY - maxDragState.value.startY
+    const distance = Math.sqrt(dx * dx + dy * dy)
+    if (distance < MAX_DRAG_RESTORE_THRESHOLD) return
+
+    // 超过阈值 → 触发还原并进入拖拽模式
+    maxDragState.value.triggered = true
+    const cfg = readConfig()
+    const restoreWidth = cfg.preMaximizeState?.width ?? cfg.minWidth * 2
+    const restoreHeight = cfg.preMaximizeState?.height ?? cfg.minHeight * 2
+
+    // 计算鼠标在标题栏的水平比例
+    const titlebarEl = cfg.rootEl.value?.querySelector('.window-titlebar') as HTMLElement | null
+    const titlebarWidth = titlebarEl?.offsetWidth ?? cfg.width
+    const mouseRelativeX = e.clientX - (cfg.rootEl.value?.getBoundingClientRect().left ?? 0)
+    const ratio = Math.max(0, Math.min(1, mouseRelativeX / titlebarWidth))
+
+    // 还原窗口（调用 maximize 切换回普通态）
+    cfg.maximize(cfg.id)
+
+    // 还原后按比例定位窗口
+    const { containerLeft, containerTop, containerWidth, availableHeight } = getBounds()
+    const newX = Math.max(0, Math.min(e.clientX - containerLeft - restoreWidth * ratio, containerWidth - restoreWidth))
+    const newY = Math.max(0, e.clientY - containerTop - 16)
+    cfg.updateGeometry(cfg.id, Math.round(newX), Math.round(newY), restoreWidth, restoreHeight)
+
+    // 清除最大化拖拽监听，进入常规拖拽
+    document.removeEventListener('mousemove', handleMaxDragMove)
+    document.removeEventListener('mouseup', stopMaxDrag)
+
+    // 进入常规拖拽模式
+    dragging.value = true
+    snapPreview.value = null
+    dragStart.value = { x: e.clientX, y: e.clientY, winX: Math.round(newX), winY: Math.round(newY), winWidth: restoreWidth, winHeight: restoreHeight }
+    document.addEventListener('mousemove', handleDragMove)
+    document.addEventListener('mouseup', stopInteraction)
+  }
+
+  function stopMaxDrag() {
+    maxDragState.value = null
+    document.removeEventListener('mousemove', handleMaxDragMove)
+    document.removeEventListener('mouseup', stopMaxDrag)
+  }
+
   function handleDragMove(e: MouseEvent) {
     if (!dragging.value) return
     const cfg = readConfig(), { containerWidth, availableHeight } = getBounds(), dx = e.clientX - dragStart.value.x, dy = e.clientY - dragStart.value.y
@@ -115,6 +178,9 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
     snapPreview.value = null
     document.removeEventListener('mousemove', handleDragMove); document.removeEventListener('mousemove', handleResizeMove); document.removeEventListener('mouseup', stopInteraction)
   }
-  onUnmounted(stopInteraction)
+  onUnmounted(() => {
+    stopInteraction()
+    stopMaxDrag()
+  })
   return { resizeDirections, snapPreview, dragging, startDrag, startResize }
 }

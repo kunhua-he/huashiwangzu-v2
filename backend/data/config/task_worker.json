@@ -41,36 +41,18 @@
       }
     }
   },
-  "paused_task_types": [
-    "kb_enterprise_import"
-  ],
-  "paused_stages": {
-    "kb_pipeline_stage": [
-      "raw_ocr",
-      "raw_vision",
-      "fusion",
-      "graph",
-      "profile"
-    ]
-  },
-  "paused_lanes": {
-    "kb_pipeline_stage": [
-      "llm_analysis",
-      "vision_analysis"
-    ]
-  },
+  "paused_task_types": [],
+  "paused_stages": {},
+  "paused_lanes": {},
     "config_note": "唯一控制器是 app.task_worker_main 启动的 Dispatcher。它每 1 秒（有执行器）或 8 秒（空闲）检查持久任务表，以 lease 领取任务并派生一次性 executor 进程。paused_task_types、paused_stages 和 paused_lanes 会阻止新领取；正在运行的可中断任务会在下一次心跳被释放回 pending 并标记 paused_by_config。lane_limits 是本地和云端资源池的硬上限，provider_limits 是云模型供应商的全局并发上限。云端额度支持 200 路，但 Knowledge Fusion 在 200 文档扩量时触发 PostgreSQL too many clients，因而按实测稳定门槛把 LLM lane/provider 限为 24 路；VLM 保持 40 路。256 个总 executor 同时保留本地预处理、派生索引、关系、通用和向量槽位；CPU、内存或 GPU 触及阈值时不会继续扩张。GPU 读取未知时 Dispatcher 采用配置上限，不把未知数据伪装成准确监控。",
 
   "model_auto_pause": {
-    "enabled": true,
+    "enabled": false,
     "stage": "all_model_stages",
     "group": "llm_vlm",
-    "paused_stages": [
-      "graph",
-      "profile"
-    ],
-    "reason": "pause_all_llm_vlm_for_user_checkpoint",
-    "error_message": "LLM and VLM paused per user request; fusion, vision, ocr, profile, and graph all stopped.",
-    "updated_at": "2026-07-13T19:00:00+00:00"
+    "paused_stages": [],
+    "reason": "resumed_2026-07-14_gpt5.5恢复",
+    "error_message": "",
+    "updated_at": "2026-07-14T21:20:00+08:00"
   }
 }

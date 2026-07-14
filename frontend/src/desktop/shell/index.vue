@@ -2,7 +2,7 @@
   <div ref="desktopContainerRef" class="desktop-shell-container" @contextmenu.prevent="handleDesktopContextMenu" @mousedown="handleDesktopMouseDown" @dragover.prevent="onDragEnter" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop">
     <div class="desktop-shell-wallpaper" :style="{ backgroundImage: `url(${wallpaper})` }" />
     <div class="desktop-shell-icon-layer">
-      <component :is="desktopIconGrid" :app-list="desktopAppList" :file-list="desktopFileList" @openApp="handleOpenApp" @openFile="openDesktopEntry" @app-context-menu="handleAppContextMenu" @file-context-menu="handleFileContextMenu" />
+      <component :is="desktopIconGrid" :app-list="desktopAppList" :file-list="desktopFileList" @openApp="handleOpenApp" @openFile="openDesktopEntry" @app-context-menu="handleAppContextMenu" @file-context-menu="handleFileContextMenu" @move-to-folder="handleIconMoveToFolder" @drop-on-window="handleDropOnWindow" />
       <SelectionBox />
     </div>
     <component
@@ -22,6 +22,7 @@
       :is-active="w.isActive"
       :app-key="w.appKey"
       :payload="w.payload"
+      :animation-origin="w.animationOrigin"
       @activate="windowManager.activateWindow"
       @close="windowManager.closeWindow"
       @minimize="windowManager.toggleMinimized"
@@ -29,7 +30,7 @@
       @update-position="windowManager.updateWindowPosition"
       @update-geometry="windowManager.updateWindowGeometry"
     />
-    <component :is="desktopTaskbar" :items="unref(windowManager.taskbarItems)" :launcher-open="showLauncher" :tray-apps="trayAppList" @switchWindow="handleSwitchWindow" @openLauncher="showLauncher = !showLauncher" @openTrayApp="handleOpenApp" />
+    <component :is="desktopTaskbar" :items="unref(windowManager.taskbarItems)" :launcher-open="showLauncher" :tray-apps="trayAppList" @switchWindow="handleSwitchWindow" @openLauncher="showLauncher = !showLauncher" @openTrayApp="handleOpenApp" @showDesktop="handleShowDesktop" @closeWindow="windowManager.closeWindow" />
     <component :is="desktopLauncher" v-if="showLauncher" :show="showLauncher" :app-list="launcherAppList" @openApp="handleLauncherOpen" @execute-command="handleLauncherCommand" @close="showLauncher = false" />
     <component :is="desktopRightSidebar" :show="showRightSidebar" :current-path="rightSidebarPath" :current-app-key="rightSidebarAppKey" :app-list="sidebarAppList" @close="showRightSidebar = false" @switch="openSidebar" @open-window="handleOpenApp" />
     <ContextMenu
@@ -92,7 +93,8 @@ import { buildDesktopShellIconMenu as buildAppIconMenu, buildDesktopShellBlankMe
 import { buildRecycleBinMenu, buildRecycleBinItemMenu } from '@/desktop/context-menu/file-context-menu'
 import { copyItems, cutItems, hasContent, currentClipboardType, currentClipboardItems, clearClipboard, getClipboardIdList } from '@/desktop/clipboard/clipboard-state'
 import type { ClipboardItem } from '@/desktop/clipboard/clipboard-state'
-import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
+// 旧 drag-tool 已被 icon-grid-model 替代，图标网格组件自管理位置
+// import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import {
   moveEntryRequest, emptyRecycleBinRequest,
 } from '@/shared/api/desktop'
@@ -151,10 +153,12 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
   for (const id of ids) {
     const colonIdx = id.indexOf(':')
     if (colonIdx === -1) continue
-    const type = id.slice(0, colonIdx) as 'file' | 'folder'
     const fileId = Number(id.slice(colonIdx + 1))
     if (!Number.isFinite(fileId)) continue
     if (fileId === targetId) continue
+    // 通过 desktopFileList 查找该项判断是文件还是文件夹
+    const entry = desktopFileList.value?.find((f: FileEntry) => f.id === fileId)
+    const type: 'file' | 'folder' = entry?.is_folder ? 'folder' : 'file'
     const srcFolderId = getSourceFolderId(id)
     if (srcFolderId !== null && srcFolderId === targetId) continue
     try {
@@ -251,7 +255,6 @@ function getCtxtFile(): FileEntry | null { return ctxtTarget.value }
 function refreshDesktop() {
   emit('refresh:file-list', { folderId: 0 })
   updateContainerSize()
-  requestAnimationFrame(() => restorePersistedIconPositions())
 }
 
 const fileOps = useFileOperations({ refresh: refreshDesktop })
@@ -369,5 +372,26 @@ function handleSwitchWindow(id: string) {
   if (w) {
     if (w.minimized || !w.isActive) { windowManager.activateWindow(id) } else { windowManager.toggleMinimized(id) }
   }
+}
+function handleShowDesktop() {
+  windowManager.windows.forEach((w: { id: string }) => windowManager.toggleMinimized(w.id))
+}
+
+function handleIconMoveToFolder(keys: string[], folderKey: string) {
+  // folderKey 格式为 "file:{id}"，提取 folderId
+  const colonIdx = folderKey.indexOf(':')
+  if (colonIdx === -1) return
+  const targetFolderId = Number(folderKey.slice(colonIdx + 1))
+  if (!Number.isFinite(targetFolderId)) return
+  emit('desktop:move-to-folder', { ids: keys, targetFolderId })
+}
+
+function handleDropOnWindow(keys: string[], windowId: string) {
+  // 从窗口ID找到对应窗口的payload（获取目标文件夹ID）
+  const w = windowManager.windows.find(x => x.id === windowId)
+  if (!w) return
+  const targetFolderId = w.payload?.folderId as number | null ?? null
+  // 触发和拖到文件夹图标相同的事件
+  emit('desktop:move-to-folder', { ids: keys, targetFolderId })
 }
 </script>

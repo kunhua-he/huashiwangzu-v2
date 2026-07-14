@@ -3,6 +3,9 @@
   inset: 0;
   overflow: hidden;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  /* 禁止桌面壳本身滚动，固定在视口内 */
+  overscroll-behavior: none;
+  touch-action: none;
 }
 .desktop-shell-wallpaper {
   position: absolute;
@@ -24,10 +27,9 @@
   left: 0;
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: 48px; /* 减去任务栏高度，图标不会排到任务栏下面 */
   width: auto;
   z-index: 1;
-  padding-top: 12px;
   overflow: visible;
   pointer-events: none;
 }

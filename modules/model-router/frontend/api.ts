@@ -7,11 +7,11 @@ import { apiGet, apiPost, apiPut, apiDelete } from '../runtime'
 // ── 类型定义 ─────────────────────────────────────────────
 
 export interface ProfileDetail {
-  provider: string
-  model: string
-  temperature: number
-  max_tokens: number
-  context_budget: number
+  provider?: string
+  model?: string | null
+  temperature?: number | null
+  max_tokens?: number | null
+  context_budget?: number | null
 }
 
 export interface RouterNode {
@@ -20,8 +20,9 @@ export interface RouterNode {
   group: string
   model_type: string
   current_profile: string
-  profile_detail: ProfileDetail
-  available_profiles: string[]
+  provider?: string
+  profile_detail?: ProfileDetail
+  candidates: string[]
   fallback_chain: string[]
   health: 'ok' | 'degraded' | 'down'
 }

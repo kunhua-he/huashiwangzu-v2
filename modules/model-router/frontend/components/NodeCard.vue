@@ -11,15 +11,15 @@
     <div class="node-card__row">
       <label class="node-card__label">当前档案</label>
       <el-select v-model="form.profile_key" size="small" class="node-card__select" @change="onProfileChange">
-        <el-option v-for="p in node.available_profiles" :key="p" :label="p" :value="p" />
+        <el-option v-for="p in node.candidates" :key="p" :label="p" :value="p" />
       </el-select>
     </div>
 
     <div class="node-card__row">
       <label class="node-card__label">模型</label>
-      <el-tag size="small" type="info">{{ node.profile_detail.model }}</el-tag>
+      <el-tag size="small" type="info">{{ node.profile_detail?.model || '-' }}</el-tag>
       <label class="node-card__label node-card__label--gap">提供商</label>
-      <el-tag size="small">{{ node.profile_detail.provider }}</el-tag>
+      <el-tag size="small">{{ node.provider || '-' }}</el-tag>
     </div>
 
     <div class="node-card__row">
@@ -65,7 +65,7 @@
           @change="confirmAddFallback"
           @visible-change="onFallbackSelectVisibleChange"
         >
-          <el-option v-for="p in node.available_profiles" :key="p" :label="p" :value="p" />
+          <el-option v-for="p in node.candidates" :key="p" :label="p" :value="p" />
         </el-select>
         <el-button v-else size="small" text @click="addingFallback = true">+ 添加</el-button>
       </div>
@@ -92,10 +92,10 @@ const healthLabel = healthLabelMap[props.node.health] ?? props.node.health
 
 const form = reactive({
   profile_key: props.node.current_profile,
-  temperature: props.node.profile_detail.temperature,
-  max_tokens: props.node.profile_detail.max_tokens,
-  context_budget: props.node.profile_detail.context_budget,
-  fallback_chain: [...props.node.fallback_chain],
+  temperature: props.node.profile_detail?.temperature ?? null,
+  max_tokens: props.node.profile_detail?.max_tokens ?? null,
+  context_budget: props.node.profile_detail?.context_budget ?? null,
+  fallback_chain: [...(props.node.fallback_chain || [])],
 })
 
 const saving = ref(false)
@@ -107,10 +107,10 @@ watch(
   () => props.node,
   (n) => {
     form.profile_key = n.current_profile
-    form.temperature = n.profile_detail.temperature
-    form.max_tokens = n.profile_detail.max_tokens
-    form.context_budget = n.profile_detail.context_budget
-    form.fallback_chain = [...n.fallback_chain]
+    form.temperature = n.profile_detail?.temperature ?? null
+    form.max_tokens = n.profile_detail?.max_tokens ?? null
+    form.context_budget = n.profile_detail?.context_budget ?? null
+    form.fallback_chain = [...(n.fallback_chain || [])]
   },
 )
 

@@ -327,16 +327,44 @@ async def list_nodes(user: User = Depends(require_permission("admin"))):
         candidates = _profiles_for_type(config, node_def["model_type"])
         current_profile = candidates.get(current_key) if current_key else None
         provider_key = current_profile.get("provider") if isinstance(current_profile, dict) else None
+
+        # 构建 profile_detail（前端 NodeCard 需要）
+        profile_detail = {
+            "temperature": None,
+            "max_tokens": None,
+            "context_budget": None,
+            "model": None,
+        }
+        if isinstance(current_profile, dict):
+            profile_detail["temperature"] = current_profile.get("temperature")
+            profile_detail["max_tokens"] = current_profile.get("max_tokens")
+            profile_detail["context_budget"] = current_profile.get("context_budget")
+            profile_detail["model"] = current_profile.get("model")
+
+        # 构建 fallback_chain
+        fallback_chain: list[str] = []
+        if isinstance(current_profile, dict):
+            policy_name = current_profile.get("fallback_policy")
+            if policy_name:
+                policies = config.get("fallback_policies", {})
+                policy = policies.get(policy_name, {})
+                if isinstance(policy, dict):
+                    fallback_chain = list(policy.get("chain", []))
+            if not fallback_chain:
+                mt_cfg = config.get("model_types", {}).get(node_def["model_type"], {})
+                fallback_chain = list(mt_cfg.get("fallback_chain", []))
+
         items.append({
             "id": node_def["id"],
             "name": node_def["name"],
             "group": node_def["group"],
             "model_type": node_def["model_type"],
             "config_path": node_def["config_path"],
-            "profile_source": node_def.get("profile_source", ""),
             "current_profile": current_key,
             "provider": provider_key,
-            "healthy": provider_health.get(provider_key) if provider_key else None,
+            "profile_detail": profile_detail,
+            "fallback_chain": fallback_chain,
+            "health": "ok" if provider_health.get(provider_key) else "down",
             "candidates": sorted(candidates.keys()),
         })
     return ApiResponse(data={"nodes": items})

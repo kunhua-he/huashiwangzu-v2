@@ -26,6 +26,12 @@ AUTH_RATIO = 10    # 权威字块数 ≥ 次高 × 此倍数 = 碾压
 AUTH_MIN = 5       # 权威字最少文本层块数（证据下限，防小样本抖动）
 VALID_MIN = 3      # 当前字在该位文本层出现 ≥ 此数 = 真值(不是错字),不动
                    # 例:"广花X路"里"二"出现8次→广花二路是真路,不能并进广花一路
+# 短上下文护栏:3字词(变化位左右各1字)模式太泛,很多合法字都能填(透X肌/超X水/养X粥),
+# 弱权威会把合法词误改成另一合法词。所以短上下文必须权威极强(专名级)才动。
+# 数据实测:好例娇薇诗2019/苏蜜雅956(短) vs 坏例透美肌157/圣痘士46(短) → 300 干净分开。
+SHORT_CTX_MAX = 3      # 左右上下文合计 ≤ 此数 = 短上下文
+SHORT_AUTH_MIN = 300   # 短上下文时权威字最少块数(专名级碾压)
+SHORT_ATTEST_MIN = 50  # 短上下文时改后完整名最少命中文档数
 _IMG_EXT = ("jpg", "png", "jpeg", "gif", "bmp", "webp", "tiff", "svg")
 _IMG_EXT_SQL = "(" + ",".join(f"'{e}'" for e in _IMG_EXT) + ")"
 
@@ -133,15 +139,22 @@ async def canonicalize_name(db: AsyncSession, owner_id: int, name: str) -> tuple
         cur_n = next((n for ch, n in ranked if ch == chars[i]), 0)
         if cur_n >= VALID_MIN:
             continue  # 护栏4:当前字在该位文本层真实出现≥VALID_MIN次→是真值,不是错字
-        if top_n >= max(AUTH_MIN, second * AUTH_RATIO):
-            fixes.append({"pos": i, "from": chars[i], "to": top_ch, "evidence": top_n, "runner_up": second})
+        # 护栏6:短上下文(3字词,左右各1字)模式太泛,弱权威会把合法词误改成另一合法词。
+        # 必须权威极强(专名级)才动。数据实测:娇薇诗2019/苏蜜雅956留,透美肌157/圣痘士46驳。
+        short_ctx = (len(left) + len(right)) <= SHORT_CTX_MAX
+        auth_floor = SHORT_AUTH_MIN if short_ctx else AUTH_MIN
+        if top_n >= max(auth_floor, second * AUTH_RATIO):
+            fixes.append({"pos": i, "from": chars[i], "to": top_ch, "evidence": top_n,
+                          "runner_up": second, "short_ctx": short_ctx})
             chars[i] = top_ch  # 就地修正，后续窗口用修正后的字
     corrected = "".join(chars)
     if not fixes:
         return name, []
-    # 终极护栏:改后完整名必须在干净文本层真实存在,否则驳回(防臆造/合法词误改)
+    # 终极护栏:改后完整名必须在干净文本层真实存在,否则驳回(防臆造/合法词误改)。
+    # 短上下文再加码:改后名须命中≥SHORT_ATTEST_MIN篇(专名才有这么高覆盖)。
     attested = await _name_attested(db, owner_id, corrected)
-    if attested < 1:
+    min_attest = SHORT_ATTEST_MIN if any(f.get("short_ctx") for f in fixes) else 1
+    if attested < min_attest:
         return name, []
     return corrected, fixes
 

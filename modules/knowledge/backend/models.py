@@ -302,6 +302,48 @@ class KbEntityMergeLog(Base, TimestampMixin):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class KbDocRelation(Base, TimestampMixin):
+    """跨文档因果/层级关系(第五层,方向性)。独立于 kb_file_relations(那个只做对称相似)。
+
+    华哥场景:华世王镞集团→5品牌→每品牌多产品海报/货盘。搭方向性归属树。
+    relation_type: 归属(子→父,如产品海报归属品牌)/同级(同主体的多份资料)/
+                   继承(版本延续)/因果(A导致B)/引用。
+    主体驱动:每文档抽"主体实体"(最高频中心实体),同主体=同级,主体含包含关系=归属。
+    """
+    __tablename__ = "kb_doc_relations"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 子/发起方
+    target_document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 父/接收方
+    relation_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 归属/同级/继承/因果/引用
+    source_subject: Mapped[str | None] = mapped_column(String(256), nullable=True)  # 源文档主体名
+    target_subject: Mapped[str | None] = mapped_column(String(256), nullable=True)  # 目标文档主体名
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)  # 判定依据(可回溯)
+    meta_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 共享实体/层级链等
+    status: Mapped[str] = mapped_column(String(16), default="active")
+
+
+class KbDocSubject(Base, TimestampMixin):
+    """文档主体(每文档的中心实体,跨文档因果的锚)。独立沉淀表。
+
+    主体=文档最能代表"这份资料是关于谁/什么"的实体(最高频+类型权重)。
+    如一张产品海报主体=该产品,一份品牌手册主体=该品牌。供跨文档归属推断用。
+    """
+    __tablename__ = "kb_doc_subjects"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    subject_entity_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    subject_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    subject_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    freq: Mapped[int] = mapped_column(Integer, default=0)  # 主体实体在该文档出现次数
+    secondary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 次要实体(用于归属链)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+
+
 class KbSemanticType(Base, TimestampMixin):
     """语义类型体系（本体）。领域无关：任何行业的知识库都从自身语料自动发现类型后固化到此表。
 

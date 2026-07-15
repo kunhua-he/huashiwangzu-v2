@@ -17,6 +17,7 @@ KB_TABLES = [
     "kb_entity_dictionary", "kb_entity_aliases", "kb_disambiguation", "kb_semantic_types", "kb_authority_tokens",
     "kb_graph_nodes", "kb_graph_edges", "kb_chunk_entities",
     "kb_evidence", "kb_conclusion_evidence", "kb_entity_merge_log",
+    "kb_doc_relations", "kb_doc_subjects",
     "kb_governance_candidates", "kb_pipeline_runs",
     "kb_pipeline_stage_runs", "kb_analysis_artifacts", "kb_pipeline_stale",
     "kb_image_assets", "kb_image_similar_pairs", "kb_image_similarity_groups",

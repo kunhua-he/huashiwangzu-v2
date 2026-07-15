@@ -14,7 +14,7 @@ _INDEX_NAME_RE = re.compile(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s
 KB_TABLES = [
     "kb_catalogs", "kb_documents", "kb_chunks", "kb_chunk_embeddings", "kb_page_fusions",
     "kb_raw_data", "kb_document_profiles", "kb_document_profile_vectors", "kb_file_relations",
-    "kb_entity_dictionary", "kb_entity_aliases", "kb_disambiguation",
+    "kb_entity_dictionary", "kb_entity_aliases", "kb_disambiguation", "kb_semantic_types", "kb_authority_tokens",
     "kb_graph_nodes", "kb_graph_edges", "kb_chunk_entities",
     "kb_evidence", "kb_conclusion_evidence", "kb_entity_merge_log",
     "kb_governance_candidates", "kb_pipeline_runs",
@@ -189,6 +189,11 @@ _MIGRATION_STATEMENTS = [
     ("kb_image_assets", "storage_path", "ALTER TABLE kb_image_assets ADD COLUMN IF NOT EXISTS storage_path VARCHAR(512)"),
     ("kb_image_assets", "mime_type", "ALTER TABLE kb_image_assets ADD COLUMN IF NOT EXISTS mime_type VARCHAR(128)"),
     ("kb_image_assets", "byte_size", "ALTER TABLE kb_image_assets ADD COLUMN IF NOT EXISTS byte_size BIGINT"),
+    # 语义归类：词典加语义层字段（原始 name/category 不改，新字段承载类型/合并/节点数据，可回溯）
+    ("kb_entity_dictionary", "type_id", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS type_id BIGINT"),
+    ("kb_entity_dictionary", "canonical_id", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS canonical_id BIGINT"),
+    ("kb_entity_dictionary", "semantic_meta", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS semantic_meta JSON"),
+    ("kb_entity_dictionary", "align_status", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS align_status VARCHAR(16) DEFAULT 'pending'"),
 ]
 
 _DDL_MIGRATION_STATEMENTS = [

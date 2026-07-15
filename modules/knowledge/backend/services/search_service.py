@@ -494,48 +494,105 @@ def _build_local_query_plan_from_rules(
     }
 
 
-_TERM_CACHE: dict[int, tuple[float, list[tuple[str, str, str]]]] = {}
-_TERM_CACHE_TTL = 300
+# 实体IDF表缓存：owner_id -> (加载时刻, 全库文档数N, [(归一名, 原名, 分类, 文档频率df)])
+# 用途：查询理解层用 IDF 给命中词自动定权——泛词(高df)沉底、专名(低df)高权，
+# 不靠任何硬编码停用词表，纯数据驱动，能扛混沌问题。
+_TERM_CACHE: dict[int, tuple[float, int, list[tuple[str, str, str, int]]]] = {}
+_TERM_CACHE_TTL = 1800  # 30分钟；词典/文档频率变化慢，长缓存省重复统计
 
 
-async def _load_query_tokenizer_terms(db: AsyncSession | None, owner_id: int | None, query: str) -> list[str]:
+def _idf_weight(df: int, doc_count: int) -> float:
+    """标准 IDF：文档频率越低权重越高。df=1 的专名权重远高于高频泛词。"""
+    n = max(1, int(doc_count or 1))
+    d = max(0, int(df or 0))
+    return math.log((n + 1.0) / (d + 1.0)) + 1.0
+
+
+async def _load_entity_idf_table(
+    db: AsyncSession | None, owner_id: int | None
+) -> tuple[int, list[tuple[str, str, str, int]]]:
+    """加载词典实体 + 每个实体的文档频率(df)，缓存。返回 (全库文档数N, pairs)。
+
+    pairs 元素：(归一化名, 原名, 分类, 文档频率df)。全量约0.7秒(10万实体)，靠TTL缓存复用。
+    """
     if db is None or owner_id is None or not hasattr(db, "execute"):
+        return 0, []
+    now = time.time()
+    cached = _TERM_CACHE.get(owner_id)
+    if cached is not None and (now - cached[0]) <= _TERM_CACHE_TTL:
+        return cached[1], cached[2]
+    try:
+        # 一次拿到：词典实体(name/category) + 该实体在多少篇文档出现(df)
+        # LEFT JOIN 让没有chunk关联的实体 df=0 也保留（它们仍可被查询命中，只是IDF最高）
+        result = await db.execute(
+            sa_text(
+                """
+                WITH ef AS (
+                    SELECT entity_id, count(DISTINCT document_id) AS df
+                    FROM kb_chunk_entities
+                    WHERE owner_id = :owner_id
+                    GROUP BY entity_id
+                )
+                SELECT ed.name, ed.category, COALESCE(ef.df, 0) AS df
+                FROM kb_entity_dictionary ed
+                LEFT JOIN ef ON ef.entity_id = ed.id
+                WHERE ed.owner_id = :owner_id
+                  AND ed.status IN ('candidate', 'confirmed')
+                  AND ed.name <> ''
+                """
+            ),
+            {"owner_id": owner_id},
+        )
+        pairs = [
+            (_normalize_term_text(str(name)), str(name), str(cat or "通用"), int(df or 0))
+            for name, cat, df in result.all()
+            if str(name or "").strip()
+        ]
+        doc_count_row = await db.execute(
+            sa_text("SELECT count(*) FROM kb_documents WHERE owner_id = :owner_id AND deleted IS FALSE"),
+            {"owner_id": owner_id},
+        )
+        doc_count = int(doc_count_row.scalar() or 0)
+        _TERM_CACHE[owner_id] = (now, doc_count, pairs)
+        return doc_count, pairs
+    except Exception as exc:
+        logger.warning("Entity IDF table unavailable: %s", exc)
+        return 0, []
+
+
+async def _match_query_entities(
+    db: AsyncSession | None, owner_id: int | None, query: str
+) -> list[tuple[str, str, float, int]]:
+    """把查询里出现的词典实体全捞出来，带 IDF 权重。返回 [(原名, 分类, idf权重, df)] 按权重降序。
+
+    这是查询理解层的核心：不判断"是不是泛词"，而是给每个命中词算 IDF 权重，
+    让下游按权重使用——专名自然高权，泛词自然低权。混沌问题也适用。
+    """
+    if db is None or owner_id is None:
         return []
     compact = _normalize_term_text(query)
     if len(compact) < 2:
         return []
-    try:
-        from ..models import KbEntityDictionary
-
-        now = time.time()
-        cached = _TERM_CACHE.get(owner_id)
-        if cached is None or (now - cached[0]) > _TERM_CACHE_TTL:
-            result = await db.execute(
-                select(KbEntityDictionary.name, KbEntityDictionary.category)
-                .where(
-                    KbEntityDictionary.owner_id == owner_id,
-                    KbEntityDictionary.status.in_(["candidate", "confirmed"]),
-                    KbEntityDictionary.name != "",
-                )
-            )
-            pairs = [
-                (_normalize_term_text(str(name)), str(name), str(cat or "通用"))
-                for name, cat in result.all()
-                if str(name or "").strip()
-            ]
-            _TERM_CACHE[owner_id] = (now, pairs)
-        else:
-            pairs = cached[1]
-
-        matches: list[str] = []
-        for normalized_name, name, _category in pairs:
-            if normalized_name in compact:
-                matches.append(name)
-        matches.sort(key=lambda t: len(t), reverse=True)
-        return [t for t in matches[:40] if t.strip()]
-    except Exception as exc:
-        logger.warning("Query tokenizer terms unavailable, using generic tokenizer: %s", exc)
+    doc_count, pairs = await _load_entity_idf_table(db, owner_id)
+    if not pairs:
         return []
+    matched: list[tuple[str, str, float, int]] = []
+    seen: set[str] = set()
+    for normalized_name, name, category, df in pairs:
+        if not normalized_name or normalized_name in seen:
+            continue
+        if normalized_name in compact:
+            seen.add(normalized_name)
+            matched.append((name, category, _idf_weight(df, doc_count), df))
+    # 按 (IDF权重, 名字长度) 降序：高权专名、长词优先
+    matched.sort(key=lambda t: (t[2], len(t[0])), reverse=True)
+    return matched
+
+
+async def _load_query_tokenizer_terms(db: AsyncSession | None, owner_id: int | None, query: str) -> list[str]:
+    """兼容旧调用：返回查询命中的词典实体名（按IDF权重降序）。"""
+    matched = await _match_query_entities(db, owner_id, query)
+    return [name for name, _cat, _w, _df in matched[:40] if name.strip()]
 
 
 async def _load_query_routing_rules(db: AsyncSession | None, owner_id: int | None) -> list[object]:
@@ -559,19 +616,138 @@ async def _load_query_routing_rules(db: AsyncSession | None, owner_id: int | Non
         return []
 
 
-def _default_query_plan(query: str) -> dict:
-    terms = _local_query_terms(query)
-    return {
+def _attach_core_entities(
+    plan: dict, matched_entities: list[tuple[str, str, float, int]] | None
+) -> None:
+    """把带 IDF 权重的词典实体挂到检索计划上。
+
+    产出 plan["core_entities"] = [{name, category, weight, df}]（按权重降序），
+    这是查询理解层的核心产物：下游召回/打分按 weight 使用——专名高权、泛词低权，
+    不靠死词表，纯 IDF 数据驱动，混沌问题也能自适应。
+    同时把核心实体名前置进 entities/terms，保证现有下游通道能用上。
+    """
+    if not isinstance(plan, dict) or not matched_entities:
+        return
+    core = [
+        {"name": name, "category": category, "weight": round(weight, 4), "df": df}
+        for name, category, weight, df in matched_entities[:12]
+    ]
+    plan["core_entities"] = core
+
+    core_names = [c["name"] for c in core]
+    # entities：核心实体名并入（去重，保留原有）
+    existing_entities = plan.get("entities") if isinstance(plan.get("entities"), list) else []
+    merged_entities: list[str] = []
+    for name in core_names + [str(e) for e in existing_entities]:
+        if name and name not in merged_entities:
+            merged_entities.append(name)
+    plan["entities"] = merged_entities[:12]
+
+    # terms：核心实体前置（高权实体优先参与关键词/结构化召回）
+    existing_terms = plan.get("terms") if isinstance(plan.get("terms"), list) else []
+    merged_terms: list[str] = []
+    for name in core_names + [str(t) for t in existing_terms]:
+        if name and name not in merged_terms:
+            merged_terms.append(name)
+    plan["terms"] = merged_terms[:QUERY_PLAN_MAX_TERMS]
+
+
+def _default_query_plan(
+    query: str, matched_entities: list[tuple[str, str, float, int]] | None = None
+) -> dict:
+    """本地兜底检索计划。
+
+    matched_entities 是词典反查命中的实体（带IDF权重）。历史实现把它丢了导致
+    entities 永远为空，结构化召回锚不到实体，精度大幅丢失。这里通过
+    _attach_core_entities 把带权重的实体接进 core_entities/entities/terms。
+    """
+    plan = {
         "intent": "semantic_search",
         "need_document_level_results": False,
         "answer_shape": "mixed",
-        "terms": terms,
+        "terms": _local_query_terms(query),
         "entities": [],
+        "core_entities": [],
         "document_types": [],
         "constraints": [],
         "source": "local_fallback",
         "query": query,
     }
+    _attach_core_entities(plan, matched_entities)
+    return plan
+
+
+def _normalize_dual_layer_plan(query: str, parsed: dict) -> dict:
+    """把本地LLM的双层拆词结果规范成标准 query_plan（core_entities 由 _merge 补齐）。"""
+    low = [str(w).strip() for w in (parsed.get("low_level") or []) if str(w).strip()]
+    high = [str(w).strip() for w in (parsed.get("high_level") or []) if str(w).strip()]
+    terms: list[str] = []
+    for w in low + high:
+        if len(w) >= 2 and w not in terms:
+            terms.append(w[:80])
+    if not terms:
+        terms = _local_query_terms(query)
+    return {
+        "intent": str(parsed.get("intent") or "semantic_search").strip()[:64] or "semantic_search",
+        "need_document_level_results": bool(parsed.get("need_document_level_results", False)),
+        "answer_shape": str(parsed.get("answer_shape") or "mixed").strip()[:64] or "mixed",
+        "terms": terms[:QUERY_PLAN_MAX_TERMS],
+        "entities": [],
+        "core_entities": [],
+        "concept_terms": [w for w in high][:10],
+        "document_types": [],
+        "constraints": [],
+        "source": "llm_dual",
+        "query": query,
+    }
+
+
+def _merge_llm_and_idf_entities(
+    plan: dict,
+    parsed: dict,
+    matched_entities: list[tuple[str, str, float, int]] | None,
+) -> None:
+    """LLM定性 + IDF定量：只把LLM认可为low_level的词当核心实体，权重取IDF。
+
+    这是"IDF+本地LLM双层拆词全都要"的融合点：
+    - LLM 判断哪些是真实体（自动排除分词碎片'烟酰'、把'推荐/功效'归入high_level）
+    - IDF 给这些实体定量权重（专名高权、泛词低权）
+    - LLM 认可但词典未收录的词，给参考权重（本地模型认为它是实体，予以信任）
+    """
+    low = [str(w).strip() for w in (parsed.get("low_level") or []) if str(w).strip()]
+    if not low:
+        # LLM 没给低层实体，退回纯 IDF 结果
+        _attach_core_entities(plan, matched_entities)
+        return
+    matched_entities = matched_entities or []
+    idf_by_norm: dict[str, tuple[str, str, float, int]] = {}
+    for name, cat, weight, df in matched_entities:
+        idf_by_norm[_normalize_term_text(name)] = (name, cat, weight, df)
+    weights = [w for _n, _c, w, _d in matched_entities]
+    ref_weight = round(sum(weights) / len(weights), 4) if weights else 8.0
+
+    core: list[tuple[str, str, float, int]] = []
+    seen: set[str] = set()
+    for orig in low:
+        norm = _normalize_term_text(orig)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        if norm in idf_by_norm:
+            core.append(idf_by_norm[norm])  # 词典命中：用真实IDF权重
+            continue
+        # 子串匹配（LLM给"积雪草苷"、词典存"积雪草苷"变体）取最高权重那个
+        best: tuple[str, str, float, int] | None = None
+        for k, tup in idf_by_norm.items():
+            if k and (k in norm or norm in k):
+                if best is None or tup[2] > best[2]:
+                    best = tup
+        if best is not None:
+            core.append(best)
+        else:
+            core.append((orig, "LLM识别", ref_weight, 0))  # 词典没有,信任LLM
+    core.sort(key=lambda t: (t[2], len(t[0])), reverse=True)
+    _attach_core_entities(plan, core)
 
 
 def _extract_json_object(text: str) -> dict | None:
@@ -635,33 +811,37 @@ def _normalize_query_plan(query: str, plan: dict | None, *, source: str) -> dict
 async def plan_query(query: str, db: AsyncSession | None = None, owner_id: int | None = None) -> dict:
     """Use the model to translate a natural query into a structured retrieval plan."""
     rules = await _load_query_routing_rules(db, owner_id)
-    custom_terms = await _load_query_tokenizer_terms(db, owner_id, query)
+    matched_entities = await _match_query_entities(db, owner_id, query)  # [(名,分类,IDF权重,df)]
+    custom_terms = [name for name, _c, _w, _d in matched_entities]
     local_plan = _build_local_query_plan_from_rules(query, rules, custom_terms=custom_terms)
     if local_plan is not None:
+        _attach_core_entities(local_plan, matched_entities)
         return local_plan
 
-    # 短查询（<25字）直接用本地默认规划，不浪费时间调 LLM
+    # 短查询（<25字）直接用本地默认规划，不浪费时间调 LLM；词典实体带IDF权重接入
     if len(query.strip()) < 25:
-        return _default_query_plan(query)
+        return _default_query_plan(query, matched_entities=matched_entities)
 
+    # 长/混沌查询：本地LLM双层拆词（低层具体实体 vs 高层概念意图），本地qwen免费无限。
+    # 低层词=可精确锚定的实体（成分/产品/品牌等），纠正IDF被分词碎片骗高的问题；
+    # 高层词=概念/意图/维度（功效/搭配/浓度等），不做精确锚定、走语义/关系召回。
     messages = [
         {
             "role": "system",
             "content": (
-                "你是企业知识库检索规划器。只返回 JSON，不要解释。"
-                "不要使用固定业务枚举；根据用户原句抽取检索意图、实体、资料类型、约束。"
-                "JSON 字段: intent, need_document_level_results, answer_shape, terms, entities, "
-                "document_types, constraints。terms/entities/document_types/constraints 都是字符串数组。"
+                "你是知识库检索查询分析器。把用户问题拆成两层关键词。只返回JSON，不解释。\n"
+                "JSON字段:\n"
+                "  low_level: 具体实体词数组（产品名/成分/品牌/型号/专有名词等能精确指向某个东西的词）\n"
+                "  high_level: 高层概念词数组（功效/作用/原理/搭配/浓度/推荐等抽象维度或意图）\n"
+                "  intent: 检索意图\n"
+                "  need_document_level_results: 是否优先返回文件/报告/清单(true/false)\n"
+                "  answer_shape: list/summary/qa/mixed 之一\n"
+                "规则:不要把分词碎片(如'烟酰'这种不完整的词)当low_level;low_level只放完整、有意义、能独立指代的实体。"
             ),
         },
         {
             "role": "user",
-            "content": (
-                "请为下面查询生成检索计划。"
-                "need_document_level_results 表示是否应优先返回文件/报告/资料清单；"
-                "answer_shape 可为 list、summary、qa、mixed。\n"
-                f"查询: {query}"
-            ),
+            "content": f"拆解这个知识库查询:\n{query}",
         },
     ]
     try:
@@ -669,19 +849,23 @@ async def plan_query(query: str, db: AsyncSession | None = None, owner_id: int |
         from app.gateway.router import gateway_router
 
         _routing = get_models_config().get("module_routing", {}).get("knowledge", {})
-        _search_profile = _routing.get("agent_search_profile") or "deepseek-v4-flash"
+        # 拆词用本地profile(免费无限)，不烧云端额度；未配则回退agent_search_profile
+        _planner_profile = _routing.get("query_planning_profile") or _routing.get("agent_search_profile") or "deepseek-v4-flash"
         result = await asyncio.wait_for(
-            gateway_router.chat(messages=messages, profile_key=_search_profile),
+            gateway_router.chat(messages=messages, profile_key=_planner_profile),
             timeout=QUERY_PLAN_TIMEOUT_SECONDS,
         )
         content = str(result.get("content") or "") or str(result.get("thinking") or "")
         if result.get("error") or not content:
             raise RuntimeError(str(result.get("error") or "empty query plan"))
         parsed = _extract_json_object(content)
-        return _normalize_query_plan(query, parsed, source="llm")
+        plan = _normalize_dual_layer_plan(query, parsed)
+        # LLM定性(哪些是实体) + IDF定量(权重)：只保留LLM认可为low_level的核心实体，赋IDF权重
+        _merge_llm_and_idf_entities(plan, parsed, matched_entities)
+        return plan
     except Exception as exc:
-        logger.warning("LLM query planning failed, using local fallback: %s", exc)
-        return _default_query_plan(query)
+        logger.warning("LLM dual-layer planning failed, using IDF local fallback: %s", exc)
+        return _default_query_plan(query, matched_entities=matched_entities)
 
 
 def _result_key(item: dict, *, dedupe_by_document: bool) -> tuple:

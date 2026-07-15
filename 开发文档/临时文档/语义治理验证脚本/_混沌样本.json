@@ -1,0 +1,772 @@
+[
+ {
+  "name": "1680教你如何赚事业金",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "接待或培训场景",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "某美容院促销活动方案",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "华世王镞 & 梁自清",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "商务培训/招商会",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "献爱心公益感召活动",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "使用前后对比案例",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "顾客简单应答",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "超值裂变礼包引流+兑奖锁定流量+1元换购留粉裂变+到店核销方案",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "聚餐、庆祝或送花留念场景",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "企业培训活动现场照片",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "十一小长假",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "《3A客满天下》爆店系统品鉴会",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "品牌培训",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "开工大吉",
+  "cat": "事件",
+  "st": "confirmed"
+ },
+ {
+  "name": "产品技术讲解",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "企业美容培训",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "入职事件2019-02-01",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "攀岩",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "警告",
+  "cat": "事件",
+  "st": "confirmed"
+ },
+ {
+  "name": "美容院节日促销案",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "三天营销课程",
+  "cat": "事件",
+  "st": "candidate"
+ },
+ {
+  "name": "白色与银灰色小瓶或安瓶状产品",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "KRNÓBQUE（KN）产品",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "调肤一套（正装）",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "护肤品膏霜罐",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "面护+暖宫",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "COAGULATED POWDER TYPE ESSENCE",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "办公用品",
+  "cat": "产品名",
+  "st": "confirmed"
+ },
+ {
+  "name": "高级纤纤玉指护理",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "收缩毛孔产品",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "娇薇诗玻尿酸面膜",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "人生之路",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "水感修颜霜",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "娇薇诗娇韵皙芙霜",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "大熊实验室联名产品",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "监控屏",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "中式展示柜",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "抗生素",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "植物油",
+  "cat": "产品名",
+  "st": "confirmed"
+ },
+ {
+  "name": "小瓶或小盒类产品样品",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "CRYSTALLOID ... SOLUTION",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "3A客满天下+123全免单系统",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "服务优惠卡",
+  "cat": "产品名",
+  "st": "candidate"
+ },
+ {
+  "name": "余春萍",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "C级顾客",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "总东",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "注册/办理同事",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "私人接待XX",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "魏静星",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "洋洋",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "就业者",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "优秀人才",
+  "cat": "人名",
+  "st": "confirmed"
+ },
+ {
+  "name": "周成芳",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "执行老师",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "王小姐",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "女性工作人员",
+  "cat": "人名",
+  "st": "confirmed"
+ },
+ {
+  "name": "大S",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "冯仑",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "@***菠萝",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "刘紫娟",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "右侧参会女性",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "连永民",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "手持产品盒的女性",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "男性访客",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "认证联系人",
+  "cat": "人名",
+  "st": "candidate"
+ },
+ {
+  "name": "粉色芍药/牡丹类花朵",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "木纹墙面或木质板材",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "人物场景照片",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "虚化绿植与浅色环境",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "配图建议",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "黑色条纹吊顶",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "顶部圆形灯带",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "美容院顾客调查问卷",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "学员证件或互动道具",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "会议/培训/讲座现场照片",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "团队激励文案",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "红色门",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "Safety Assessment of Caprylhydroxamic Acid as Used in Cosmetics",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "活动大礼包",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "彩色珍珠",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "用户B",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "半透明肌理元素",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "红色LED舞台背景",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "粉色台面",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "现场活动照片/未加工素材",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "No.WH24120414-01B1",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "中奖/促销展示牌",
+  "cat": "其他",
+  "st": "candidate"
+ },
+ {
+  "name": "云南市场",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "舞台或发布会现场",
+  "cat": "地名",
+  "st": "confirmed"
+ },
+ {
+  "name": "规定的地方",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "住宅小区",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "市北中央商务区万达广场商务楼A座",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "曲靖",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "洁净室/医疗空间",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "广州市新市黄边工业区北路4号",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "A库三层203",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "印度尼西亚巴厘岛",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "宴会厅/会场",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "空旷的场地",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "宿舍",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "镇江金汇大厦2楼",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "浴室或洗漱环境",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "洁净走廊/实验室",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "座位区",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "走道",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "大连",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "会议现场",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "盐城市",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "广东省佛山市",
+  "cat": "地名",
+  "st": "candidate"
+ },
+ {
+  "name": "入会顾客",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "使用须知",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "引爆王",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "传热",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "轮排",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "团购套餐",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "优质蛋白",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "用人疑、疑人用，理性疑、感性用，公开疑、透明用",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "真诚服务大佬",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "解决您的色素烦恼",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "胆结石",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "死亡的、没有知觉的细胞",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "术后修护期",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "宏观思考",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "取势",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "激发",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "代谢不太好",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "目赤",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "会议氛围",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "细胞兴奋性",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "小学",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "皮肤紧致",
+  "cat": "术语",
+  "st": "candidate"
+ },
+ {
+  "name": "妍绮诗/娇绮诗",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "红会馆女子养生会馆",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "香港花都国际美容（集团）有限公司",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "自然疗法协会",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "文儿雅养生馆",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "华世王蕨公司",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "设计",
+  "cat": "组织名",
+  "st": "confirmed"
+ },
+ {
+  "name": "中医",
+  "cat": "组织名",
+  "st": "confirmed"
+ },
+ {
+  "name": "薇诺·清颜",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "中国建设银行遵义市南门关支行",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "华世玉维",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "CANCQI E",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "美舒研",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "半岛晨报",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "清华大学",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "广州中田美生物基因工程",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "十三五国家项目科技成果转化生产基地",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "主要供应厂商",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "华世王族品牌",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "俏佳人美容美体",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "销售商",
+  "cat": "组织名",
+  "st": "candidate"
+ },
+ {
+  "name": "海南红妆",
+  "cat": "组织名",
+  "st": "candidate"
+ }
+]

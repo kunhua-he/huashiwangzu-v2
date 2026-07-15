@@ -100,11 +100,15 @@
   "fallback_policies": {
     "knowledge_text_primary": {
       "description": "Knowledge text analysis: 本地 GPT-5.5 优先，失败降到云端 deepseek",
-      "chain": ["deepseek-v4-flash"]
+      "chain": [
+        "deepseek-v4-flash"
+      ]
     },
     "knowledge_vision_primary": {
       "description": "Knowledge vision analysis: jayce GPT-5.5 优先，失败降到本地 qwen3-vl",
-      "chain": ["qwen3-vl"]
+      "chain": [
+        "qwen3-vl"
+      ]
     }
   },
   "model_types": {
@@ -173,6 +177,17 @@
           "system_prompt": "This is a test assistant.",
           "response_adapter": "openai_compat",
           "context_budget": null,
+          "price_input": 0,
+          "price_output": 0
+        },
+        "qwen-local-planner": {
+          "provider": "ollama",
+          "model": "qwen2.5-14b:latest",
+          "temperature": 0.1,
+          "max_tokens": 1024,
+          "response_adapter": "openai_compat",
+          "system_prompt": "你是知识库检索查询分析器。只输出JSON，不解释。",
+          "context_budget": 32000,
           "price_input": 0,
           "price_output": 0
         }
@@ -360,7 +375,8 @@
         "profile": "gpt-5.5-knowledge",
         "entity": "gpt-5.5-knowledge",
         "legacy_page_fusion": "gpt-5.5-knowledge"
-      }
+      },
+      "query_planning_profile": "qwen-local-planner"
     }
   },
   "watchdog_models": {

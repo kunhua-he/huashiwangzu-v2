@@ -179,6 +179,11 @@ class KbEntityDictionary(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="confirmed")  # candidate/confirmed/merged/archived
     source: Mapped[str] = mapped_column(String(64), default="extraction")  # extraction/manual/import
+    # ↓ 语义归类新增（原始 name/category 不改，新字段承载语义层，可回溯）
+    type_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # 指向 kb_semantic_types 固化类型
+    canonical_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # 同义词合并后指向的统一实体id(自身或代表)
+    semantic_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 节点数据:LLM原始判断/置信度/合并依据,全落盘可回溯
+    align_status: Mapped[str] = mapped_column(String(16), default="pending")  # 文本层打齐状态:pending未验证/done已验证(分轮回填用,已验证的下轮跳过)
 
 
 class KbEntityAlias(Base, TimestampMixin):
@@ -295,6 +300,46 @@ class KbEntityMergeLog(Base, TimestampMixin):
     target_entity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     merged_by: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class KbSemanticType(Base, TimestampMixin):
+    """语义类型体系（本体）。领域无关：任何行业的知识库都从自身语料自动发现类型后固化到此表。
+
+    固化后，10万实体的归类全部依据这套固定类型，不再每批重新发现，保证归类标准稳定。
+    支持层级（parent_id），如 成分 → 植物成分。is_noise 标记"噪音/非实体"类型。
+    """
+    __tablename__ = "kb_semantic_types"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    type_name: Mapped[str] = mapped_column(String(64), nullable=False)  # 类型名：成分/功效/品类/人物...
+    definition: Mapped[str | None] = mapped_column(Text, nullable=True)  # 一句话定义
+    examples: Mapped[list] = mapped_column(JSON, default=list)  # 示例词
+    counter_examples: Mapped[list] = mapped_column(JSON, default=list)  # 反例（治坑3：边界，如成分≠病理）
+    parent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # 层级父类型
+    is_noise: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否"噪音/非实体"类型
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="active")  # active/draft
+
+
+class KbAuthorityToken(Base, TimestampMixin):
+    """全局权威字典：从干净文本层自动挖掘"某上下文里权威正确的字/词"。
+
+    领域无关、纯数据驱动：key=上下文前缀(如"华世王"/"广东万")，value=文本层碾压的权威字(如"镞"/"禧")。
+    用途：一致性打齐时,全称没进文本层→缩短前缀查此字典,跨文档定正确字。全自动无人参与。
+    evidence_count=文本层支撑块数,runner_up_count=次高,置信来自碾压比。
+    """
+    __tablename__ = "kb_authority_tokens"
+    __table_args__ = KB_TABLE_ARGS_EXTEND
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    context_prefix: Mapped[str] = mapped_column(String(128), nullable=False)  # 上下文前缀
+    context_suffix: Mapped[str] = mapped_column(String(128), default="")  # 上下文后缀(可空)
+    authority_text: Mapped[str] = mapped_column(String(64), nullable=False)  # 权威正确字/词
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)  # 文本层支撑块数
+    runner_up_count: Mapped[int] = mapped_column(Integer, default=0)  # 次高字块数
+    source: Mapped[str] = mapped_column(String(32), default="text_layer")  # text_layer/vote/llm
+    status: Mapped[str] = mapped_column(String(32), default="active")
 
 
 class KbGovernanceCandidate(Base, TimestampMixin):

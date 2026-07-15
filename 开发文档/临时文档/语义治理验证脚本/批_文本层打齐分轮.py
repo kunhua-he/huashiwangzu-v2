@@ -60,7 +60,7 @@ async def run_round(batch, dry):
         checked += 1
         try:
             async with AsyncSessionLocal() as db:  # 每实体独立短会话,防长事务/连接超时
-                canonical_name, fixes = await canonicalize_name(db, OWNER, name)
+                canonical_name, fixes = await canonicalize_name(db, OWNER, name, semantic_gate=True)
                 if fixes and canonical_name != name:
                     cid = await _resolve_canonical_entity(db, OWNER, canonical_name, category)
                     await _merge_variant_into(db, OWNER, eid, name, cid, canonical_name, fixes)

@@ -12,7 +12,7 @@ async def m():
     async with AsyncSessionLocal() as db:
         r = await db.execute(T("""
             SELECT id, source_entity_ids, target_entity_id, reason FROM kb_entity_merge_log
-            WHERE owner_id=:o AND reason LIKE '文本层打齐%' AND created_at > now() - interval '24 hours'
+            WHERE owner_id=:o AND reason LIKE '文本层打齐%' AND created_at > now() - interval '3 hours'
             ORDER BY id
         """), {"o": OWNER})
         rows = r.all()

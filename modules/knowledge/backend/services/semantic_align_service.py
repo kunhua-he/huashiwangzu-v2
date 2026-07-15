@@ -218,6 +218,15 @@ async def canonicalize_name(db: AsyncSession, owner_id: int, name: str, semantic
             if len(bigram) == 2 and _is_cjk(bigram[0]) and _is_cjk(bigram[1]):
                 if await _name_attested(db, owner_id, bigram) >= SUBWORD_REAL_MIN:
                     return name, []  # 原词含真词子串→是合法词,不并
+    # 护栏8(长上下文GPT终审):长上下文(≥4字名)纯规则挡不住"两个都真词"的词义差异
+    # (皮肤无弹性vs的弹性、纯利润vs毛利润)。GPT当法官,只有判"并"才并。GPT死→不并(安全)。
+    # 短上下文已被护栏6/7保住,不走GPT(省额度)。semantic_gate=False时长上下文一律不并(保守)。
+    is_long = any(not f.get("short_ctx") for f in fixes)
+    if is_long:
+        if not semantic_gate:
+            return name, []  # 未开GPT终审→长上下文一律保守不并
+        if not await _semantic_gate(name, corrected, attested):
+            return name, []  # GPT判"留"→不并
     return corrected, fixes
 
 

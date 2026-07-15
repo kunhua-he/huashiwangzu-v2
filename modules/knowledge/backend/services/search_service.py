@@ -494,7 +494,7 @@ def _build_local_query_plan_from_rules(
     }
 
 
-_TERM_CACHE: dict[int, tuple[float, list[tuple[str, str]]]] = {}
+_TERM_CACHE: dict[int, tuple[float, list[tuple[str, str, str]]]] = {}
 _TERM_CACHE_TTL = 300
 
 
@@ -505,28 +505,32 @@ async def _load_query_tokenizer_terms(db: AsyncSession | None, owner_id: int | N
     if len(compact) < 2:
         return []
     try:
-        from ..models import KbTerm
+        from ..models import KbEntityDictionary
 
         now = time.time()
         cached = _TERM_CACHE.get(owner_id)
         if cached is None or (now - cached[0]) > _TERM_CACHE_TTL:
             result = await db.execute(
-                select(KbTerm.normalized, KbTerm.term)
+                select(KbEntityDictionary.name, KbEntityDictionary.category)
                 .where(
-                    KbTerm.owner_id == owner_id,
-                    KbTerm.status == "active",
-                    KbTerm.normalized != "",
+                    KbEntityDictionary.owner_id == owner_id,
+                    KbEntityDictionary.status.in_(["candidate", "confirmed"]),
+                    KbEntityDictionary.name != "",
                 )
             )
-            pairs = [(str(n), str(t)) for n, t in result.all() if str(n or "").strip()]
+            pairs = [
+                (_normalize_term_text(str(name)), str(name), str(cat or "通用"))
+                for name, cat in result.all()
+                if str(name or "").strip()
+            ]
             _TERM_CACHE[owner_id] = (now, pairs)
         else:
             pairs = cached[1]
 
         matches: list[str] = []
-        for normalized, term in pairs:
-            if normalized in compact:
-                matches.append(term)
+        for normalized_name, name, _category in pairs:
+            if normalized_name in compact:
+                matches.append(name)
         matches.sort(key=lambda t: len(t), reverse=True)
         return [t for t in matches[:40] if t.strip()]
     except Exception as exc:
@@ -1480,15 +1484,11 @@ async def structured_signal_search(
     term_conditions: list[str] = []
     for index, needle in enumerate(needles):
         key = f"needle_{index}"
-        norm_key = f"needle_norm_{index}"
         params[key] = f"%{needle}%"
-        params[norm_key] = f"%{_normalize_term_text(needle)}%"
         term_conditions.append(
             f"""
             (
-                t.term ILIKE :{key}
-                OR t.normalized ILIKE :{norm_key}
-                OR ed.name ILIKE :{key}
+                ed.name ILIKE :{key}
                 OR ea.alias ILIKE :{key}
                 OR fc.claim_text ILIKE :{key}
                 OR fc.subject ILIKE :{key}
@@ -1514,25 +1514,6 @@ async def structured_signal_search(
                   AND f.deleted IS FALSE
                   AND {_accessible_file_sql()}
             ),
-            term_hits AS (
-                SELECT
-                    o.document_id,
-                    min(o.chunk_id) AS chunk_id,
-                    min(o.page) AS page,
-                    count(DISTINCT o.term_id) AS term_count,
-                    sum(COALESCE(o.weight, 1.0)) AS term_weight,
-                    left(string_agg(DISTINCT CONCAT(t.term, ': ', COALESCE(o.context, '')), E'\n'), 500) AS evidence_text
-                FROM kb_term_occurrences o
-                JOIN kb_terms t ON t.id = o.term_id AND t.owner_id = o.owner_id
-                JOIN live_docs ld ON ld.document_id = o.document_id AND ld.doc_owner_id = o.owner_id
-                LEFT JOIN kb_entity_dictionary ed ON false
-                LEFT JOIN kb_entity_aliases ea ON false
-                LEFT JOIN kb_fact_candidates fc ON false
-                LEFT JOIN kb_causal_candidates cc ON false
-                WHERE t.status = 'active'
-                  AND ({match_clause})
-                GROUP BY o.document_id
-            ),
             entity_hits AS (
                 SELECT
                     ce.document_id,
@@ -1544,7 +1525,6 @@ async def structured_signal_search(
                 JOIN kb_entity_dictionary ed ON ed.id = ce.entity_id AND ed.owner_id = ce.owner_id
                 JOIN live_docs ld ON ld.document_id = ce.document_id AND ld.doc_owner_id = ce.owner_id
                 LEFT JOIN kb_entity_aliases ea ON ea.entity_id = ed.id AND ea.owner_id = ed.owner_id
-                LEFT JOIN kb_terms t ON false
                 LEFT JOIN kb_fact_candidates fc ON false
                 LEFT JOIN kb_causal_candidates cc ON false
                 WHERE ed.status IN ('candidate', 'confirmed')
@@ -1560,7 +1540,6 @@ async def structured_signal_search(
                     left(string_agg(DISTINCT fc.claim_text, E'\n'), 500) AS evidence_text
                 FROM kb_fact_candidates fc
                 JOIN live_docs ld ON ld.document_id = fc.document_id AND ld.doc_owner_id = fc.owner_id
-                LEFT JOIN kb_terms t ON false
                 LEFT JOIN kb_entity_dictionary ed ON false
                 LEFT JOIN kb_entity_aliases ea ON false
                 LEFT JOIN kb_causal_candidates cc ON false
@@ -1577,7 +1556,6 @@ async def structured_signal_search(
                     left(string_agg(DISTINCT COALESCE(cc.context, CONCAT(cc.cause, ' -> ', cc.effect)), E'\n'), 500) AS evidence_text
                 FROM kb_causal_candidates cc
                 JOIN live_docs ld ON ld.document_id = cc.document_id AND ld.doc_owner_id = cc.owner_id
-                LEFT JOIN kb_terms t ON false
                 LEFT JOIN kb_entity_dictionary ed ON false
                 LEFT JOIN kb_entity_aliases ea ON false
                 LEFT JOIN kb_fact_candidates fc ON false
@@ -1590,33 +1568,27 @@ async def structured_signal_search(
                     ld.document_id,
                     ld.file_id,
                     ld.filename,
-                    th.chunk_id,
-                    COALESCE(th.page, fh.page, ch.page) AS page,
-                    COALESCE(th.term_count, 0) AS term_count,
-                    COALESCE(th.term_weight, 0) AS term_weight,
+                    eh.chunk_id,
+                    COALESCE(fh.page, ch.page) AS page,
                     COALESCE(eh.entity_count, 0) AS entity_count,
                     COALESCE(eh.entity_confidence, 0) AS entity_confidence,
                     COALESCE(fh.fact_count, 0) AS fact_count,
                     COALESCE(fh.fact_confidence, 0) AS fact_confidence,
                     COALESCE(ch.causal_count, 0) AS causal_count,
                     COALESCE(ch.causal_confidence, 0) AS causal_confidence,
-                    CONCAT_WS(E'\n', th.evidence_text, eh.evidence_text, fh.evidence_text, ch.evidence_text) AS evidence_text
+                    CONCAT_WS(E'\n', eh.evidence_text, fh.evidence_text, ch.evidence_text) AS evidence_text
                 FROM live_docs ld
-                LEFT JOIN term_hits th ON th.document_id = ld.document_id
                 LEFT JOIN entity_hits eh ON eh.document_id = ld.document_id
                 LEFT JOIN fact_hits fh ON fh.document_id = ld.document_id
                 LEFT JOIN causal_hits ch ON ch.document_id = ld.document_id
-                WHERE th.document_id IS NOT NULL
-                   OR eh.document_id IS NOT NULL
+                WHERE eh.document_id IS NOT NULL
                    OR fh.document_id IS NOT NULL
                    OR ch.document_id IS NOT NULL
             )
             SELECT
                 *,
                 (
-                    term_count * 4
-                    + LEAST(term_weight, 10)
-                    + entity_count * 5
+                    entity_count * 5
                     + fact_count * 6
                     + causal_count * 4
                     + entity_confidence * 2
@@ -1636,7 +1608,6 @@ async def structured_signal_search(
         channels = [
             name
             for name, count in (
-                ("term_graph", row["term_count"]),
                 ("entity_graph", row["entity_count"]),
                 ("fact_candidate", row["fact_count"]),
                 ("causal_candidate", row["causal_count"]),
@@ -1668,7 +1639,6 @@ async def structured_signal_search(
                 "file_id": row["file_id"],
                 "filename": row["filename"],
                 "channels": channels,
-                "term_count": int(row["term_count"] or 0),
                 "entity_count": int(row["entity_count"] or 0),
                 "fact_count": int(row["fact_count"] or 0),
                 "causal_count": int(row["causal_count"] or 0),

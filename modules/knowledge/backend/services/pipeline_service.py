@@ -27,11 +27,12 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import (
+    KbCausalCandidate,
     KbDocument,
+    KbFactCandidate,
     KbPipelineRun,
     KbPipelineStageRun,
     KbRawData,
-    KbTermOccurrence,
 )
 from .analysis_artifact_service import (
     build_input_hash,
@@ -514,15 +515,39 @@ def _ready_for_cognitive_index(doc: KbDocument) -> bool:
 
 
 async def _cognitive_index_complete(db: AsyncSession, doc: KbDocument) -> bool:
-    existing = await db.scalar(
-        select(KbTermOccurrence.id)
+    # 优先检查 fact_candidates 或 causal_candidates 是否存在
+    fact_exists = await db.scalar(
+        select(KbFactCandidate.id)
         .where(
-            KbTermOccurrence.owner_id == int(doc.owner_id),
-            KbTermOccurrence.document_id == int(doc.id),
+            KbFactCandidate.owner_id == int(doc.owner_id),
+            KbFactCandidate.document_id == int(doc.id),
         )
         .limit(1)
     )
-    return existing is not None
+    if fact_exists is not None:
+        return True
+    causal_exists = await db.scalar(
+        select(KbCausalCandidate.id)
+        .where(
+            KbCausalCandidate.owner_id == int(doc.owner_id),
+            KbCausalCandidate.document_id == int(doc.id),
+        )
+        .limit(1)
+    )
+    if causal_exists is not None:
+        return True
+    # 兜底：检查 stage_runs 里 cognitive_index 是否有 done 记录
+    stage_done = await db.scalar(
+        select(KbPipelineStageRun.id)
+        .where(
+            KbPipelineStageRun.document_id == int(doc.id),
+            KbPipelineStageRun.owner_id == int(doc.owner_id),
+            KbPipelineStageRun.stage == "cognitive_index",
+            KbPipelineStageRun.status == "done",
+        )
+        .limit(1)
+    )
+    return stage_done is not None
 
 
 def _stage_needs_work(status: str | None) -> bool:

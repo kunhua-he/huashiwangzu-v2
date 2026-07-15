@@ -32,12 +32,10 @@ from ..models import (
     KbQueryContext,
     KbTerm,
     KbTermEdge,
-    KbTermOccurrence,
     KbValidationReport,
 )
 from .analysis_artifact_service import stable_hash
 
-TERM_SCHEMA_VERSION = "kb_term_graph_v1"
 COGNITIVE_INDEX_WRITE_BATCH = 10
 
 _TOKEN_RE = re.compile(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_+-]{1,}|[A-Z]{1,8}\d{3,}")
@@ -433,10 +431,10 @@ async def derive_document_cognitive_index(
         ).limit(1)
     )
     if doc is None:
-        return {"terms": 0, "term_occurrences": 0, "fact_candidates": 0, "causal_candidates": 0}
+        return {"fact_candidates": 0, "causal_candidates": 0}
     document_filename = str(doc.filename or "")
 
-    for model in (KbTermOccurrence, KbFactCandidate, KbCausalCandidate):
+    for model in (KbFactCandidate, KbCausalCandidate):
         await db.execute(
             sa_delete(model).where(
                 model.owner_id == owner_id,
@@ -479,141 +477,6 @@ async def derive_document_cognitive_index(
             " ".join(str(item.get("name", "")) for item in (profile.key_entities or []) if isinstance(item, dict)),
         ])
         source_texts.append((profile_text, None, None, "document_profile"))
-
-    occurrence_inputs: list[dict[str, Any]] = []
-    term_inputs: dict[str, dict[str, Any]] = {}
-    term_order: list[str] = []
-    for text_value, page, fusion_id, source_type in source_texts:
-        for position, term in enumerate(extract_terms(text_value, limit=limit)):
-            normalized = normalize_term(term)
-            if normalized not in term_inputs:
-                term_inputs[normalized] = {
-                    "term": term,
-                    "source_type": source_type,
-                }
-                term_order.append(normalized)
-            occurrence_inputs.append({
-                "normalized": normalized,
-                "page": page,
-                "fusion_id": fusion_id,
-                "source_type": source_type,
-                "position": position,
-                "context": text_value[:500],
-            })
-
-    term_id_map: dict[str, int] = {}
-    for normalized in sorted(term_inputs):
-        item = await upsert_term(
-            db,
-            owner_id=owner_id,
-            term=str(term_inputs[normalized]["term"]),
-            source=str(term_inputs[normalized]["source_type"]),
-            confidence=0.65,
-        )
-        term_id_map[normalized] = int(item.id)
-        if len(term_id_map) % COGNITIVE_INDEX_WRITE_BATCH == 0:
-            await db.commit()
-            db.expunge_all()
-    await db.commit()
-    db.expunge_all()
-
-    occurrence_count = 0
-    for index, item in enumerate(occurrence_inputs, start=1):
-        normalized = str(item["normalized"])
-        term_id = term_id_map.get(normalized)
-        if term_id is None:
-            continue
-        page = item["page"]
-        fusion_id = item["fusion_id"]
-        source_type = str(item["source_type"])
-        position = int(item["position"])
-        context = str(item["context"])
-        source_hash = _source_hash(
-            "term_occurrence",
-            {
-                "term": normalized,
-                "document_id": document_id,
-                "page": page,
-                "fusion_id": fusion_id,
-                "source": source_type,
-                "position": position,
-            },
-        )
-        result = await db.execute(
-            sa_text(
-                """
-                INSERT INTO kb_term_occurrences (
-                    owner_id, term_id, document_id, page_fusion_id, page,
-                    source_type, position, weight, context, source_hash
-                )
-                VALUES (
-                    :owner_id, :term_id, :document_id, :page_fusion_id, :page,
-                    :source_type, :position, 1.0, :context, :source_hash
-                )
-                ON CONFLICT (owner_id, source_hash)
-                DO NOTHING
-                RETURNING id
-                """
-            ),
-            {
-                "owner_id": owner_id,
-                "term_id": term_id,
-                "document_id": document_id,
-                "page_fusion_id": fusion_id,
-                "page": page,
-                "source_type": source_type,
-                "position": position,
-                "context": context,
-                "source_hash": source_hash,
-            },
-        )
-        if result.scalar_one_or_none() is not None:
-            occurrence_count += 1
-        if index % COGNITIVE_INDEX_WRITE_BATCH == 0:
-            await db.commit()
-            db.expunge_all()
-    await db.commit()
-    db.expunge_all()
-
-    edge_count = 0
-    ordered_term_ids = [term_id_map[normalized] for normalized in term_order if normalized in term_id_map]
-    for index, (left_id, right_id) in enumerate(zip(ordered_term_ids, ordered_term_ids[1:]), start=1):
-        if int(left_id) == int(right_id):
-            continue
-        source_id, target_id = sorted((int(left_id), int(right_id)))
-        result = await db.execute(
-            sa_text(
-                """
-                INSERT INTO kb_term_edges (
-                    owner_id, source_term_id, target_term_id, edge_type,
-                    weight, decision_json, status
-                )
-                VALUES (
-                    :owner_id, :source_term_id, :target_term_id, 'co_occurs',
-                    0.5, CAST(:decision_json AS json), 'active'
-                )
-                ON CONFLICT (owner_id, source_term_id, target_term_id, edge_type)
-                DO NOTHING
-                RETURNING id
-                """
-            ),
-            {
-                "owner_id": owner_id,
-                "source_term_id": source_id,
-                "target_term_id": target_id,
-                "decision_json": json.dumps(
-                    {"schema_version": TERM_SCHEMA_VERSION, "source": "document_order"},
-                    ensure_ascii=False,
-                ),
-            },
-        )
-        if result.scalar_one_or_none() is not None:
-            edge_count += 1
-        if index % COGNITIVE_INDEX_WRITE_BATCH == 0:
-            await db.commit()
-            db.expunge_all()
-    await db.commit()
-    db.expunge_all()
 
     fact_count = 0
     if profile is not None:
@@ -741,9 +604,6 @@ async def derive_document_cognitive_index(
     db.expunge_all()
 
     return {
-        "terms": len(term_id_map),
-        "term_occurrences": occurrence_count,
-        "term_edges": edge_count,
         "fact_candidates": fact_count,
         "causal_candidates": causal_count,
     }

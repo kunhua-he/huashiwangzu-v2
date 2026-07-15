@@ -392,6 +392,7 @@ class ToolLoopRuntime:
             planner=self.planner,
         )
 
+        runtime_task: asyncio.Task | None = None
         try:
             runtime_task = asyncio.create_task(runtime.run(
                 goal=goal,
@@ -456,6 +457,13 @@ class ToolLoopRuntime:
                     yield self._sse("error", visible)
                 except GeneratorExit:
                     disconnected = True
+        finally:
+            if runtime_task is not None and not runtime_task.done():
+                runtime_task.cancel()
+                try:
+                    await runtime_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
         if not disconnected:
             experience_result = await sink.submit_completed_experience(action_checkpoint)
@@ -488,7 +496,10 @@ class ToolLoopRuntime:
                 disconnected,
                 bool(runtime_model_error),
             )
+        try:
             yield b"data: [DONE]\n\n"
+        except (GeneratorExit, Exception):
+            pass
 
     async def _finalize_turn(
         self,

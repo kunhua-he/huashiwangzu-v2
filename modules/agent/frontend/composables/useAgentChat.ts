@@ -164,9 +164,14 @@ export function useAgentChat(props: AgentEntryProps) {
     nextTick(scrollToBottom)
   }
 
-  // ── Scroll ──
+  // ── Scroll (RAF throttled) ──
+  let _scrollRaf = 0
   function scrollToBottom() {
-    nextTick(() => { if (msgArea.value) msgArea.value.scrollTop = msgArea.value.scrollHeight })
+    if (_scrollRaf) return
+    _scrollRaf = requestAnimationFrame(() => {
+      _scrollRaf = 0
+      if (msgArea.value) msgArea.value.scrollTop = msgArea.value.scrollHeight
+    })
   }
 
   /** 按 timeline 展开历史消息：还原思考↔工具↔回复的真实交错顺序，并用工作组包裹 */

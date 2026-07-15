@@ -65,7 +65,25 @@
        双击图标打开应用 · 右键管理文件与回收站
      </div>
      <div v-if="isDragActive" class="desktop-shell-drop-hint">松开后上传到桌面</div>
-     <div v-if="loading" class="desktop-shell-loading">加载中...</div>
+     <!-- 首屏骨架屏 -->
+     <div v-if="loading" class="desktop-skeleton-overlay">
+       <div class="desktop-skeleton-taskbar">
+         <div class="skeleton-block" style="width:32px;height:32px;border-radius:8px;" />
+         <div class="skeleton-block" style="width:120px;height:24px;" />
+         <div style="flex:1" />
+         <div class="skeleton-block" style="width:80px;height:20px;" />
+         <div class="skeleton-block" style="width:20px;height:20px;border-radius:50%;" />
+       </div>
+       <div class="desktop-skeleton-icons">
+         <div v-for="n in 8" :key="n" class="desktop-skeleton-icon-item">
+           <div class="skeleton-block" style="width:48px;height:48px;border-radius:12px;" />
+           <div class="skeleton-block" style="width:56px;height:12px;margin-top:8px;" />
+         </div>
+       </div>
+       <div class="desktop-skeleton-dock">
+         <div v-for="n in 6" :key="n" class="skeleton-block" style="width:40px;height:40px;border-radius:10px;" />
+       </div>
+     </div>
   </div>
 </template>
 

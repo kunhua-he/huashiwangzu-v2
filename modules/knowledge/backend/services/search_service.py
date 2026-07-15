@@ -494,6 +494,10 @@ def _build_local_query_plan_from_rules(
     }
 
 
+_TERM_CACHE: dict[int, tuple[float, list[tuple[str, str]]]] = {}
+_TERM_CACHE_TTL = 300
+
+
 async def _load_query_tokenizer_terms(db: AsyncSession | None, owner_id: int | None, query: str) -> list[str]:
     if db is None or owner_id is None or not hasattr(db, "execute"):
         return []
@@ -503,19 +507,28 @@ async def _load_query_tokenizer_terms(db: AsyncSession | None, owner_id: int | N
     try:
         from ..models import KbTerm
 
-        result = await db.execute(
-            select(KbTerm.term)
-            .where(
-                KbTerm.owner_id == owner_id,
-                KbTerm.status == "active",
-                KbTerm.normalized != "",
-                sa_text(":compact LIKE '%' || kb_terms.normalized || '%'"),
+        now = time.time()
+        cached = _TERM_CACHE.get(owner_id)
+        if cached is None or (now - cached[0]) > _TERM_CACHE_TTL:
+            result = await db.execute(
+                select(KbTerm.normalized, KbTerm.term)
+                .where(
+                    KbTerm.owner_id == owner_id,
+                    KbTerm.status == "active",
+                    KbTerm.normalized != "",
+                )
             )
-            .order_by(sa_text("length(kb_terms.normalized) DESC"), KbTerm.confidence.desc().nullslast())
-            .limit(40),
-            {"compact": compact},
-        )
-        return [str(term) for term in result.scalars().all() if str(term or "").strip()]
+            pairs = [(str(n), str(t)) for n, t in result.all() if str(n or "").strip()]
+            _TERM_CACHE[owner_id] = (now, pairs)
+        else:
+            pairs = cached[1]
+
+        matches: list[str] = []
+        for normalized, term in pairs:
+            if normalized in compact:
+                matches.append(term)
+        matches.sort(key=lambda t: len(t), reverse=True)
+        return [t for t in matches[:40] if t.strip()]
     except Exception as exc:
         logger.warning("Query tokenizer terms unavailable, using generic tokenizer: %s", exc)
         return []
@@ -623,8 +636,8 @@ async def plan_query(query: str, db: AsyncSession | None = None, owner_id: int |
     if local_plan is not None:
         return local_plan
 
-    # 短查询（<50字）直接用本地默认规划，不浪费时间调 LLM
-    if len(query.strip()) < 50:
+    # 短查询（<25字）直接用本地默认规划，不浪费时间调 LLM
+    if len(query.strip()) < 25:
         return _default_query_plan(query)
 
     messages = [
@@ -1489,6 +1502,7 @@ async def structured_signal_search(
         )
     match_clause = " OR ".join(term_conditions)
 
+    await db.execute(sa_text("SET LOCAL work_mem = '64MB'"))
     result = await db.execute(
         sa_text(
             f"""
@@ -1865,6 +1879,7 @@ async def verify_and_score_results(
                 avg(COALESCE(ce.confidence, 0.0)) AS entity_confidence,
                 count(DISTINCT ge.id) AS graph_edge_count
             FROM kb_chunk_entities ce
+            JOIN kb_entity_dictionary ed ON ed.id = ce.entity_id AND ed.owner_id = ce.owner_id AND ed.status IN ('candidate', 'confirmed')
             LEFT JOIN kb_graph_nodes gn ON gn.owner_id = ce.owner_id AND gn.entity_id = ce.entity_id
             LEFT JOIN kb_graph_edges ge ON ge.owner_id = ce.owner_id AND (ge.source_node_id = gn.id OR ge.target_node_id = gn.id)
                 JOIN live ON live.document_id = ce.document_id AND live.doc_owner_id = ce.owner_id

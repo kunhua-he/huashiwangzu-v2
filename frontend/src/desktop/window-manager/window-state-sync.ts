@@ -15,13 +15,19 @@ export function createWindowStateSync(windows: Reactive<WindowState[]>) {
     isActive: w.isActive, minimized: w.minimized, appKey: w.appKey,
   })), value => { taskbarItems.value = value }, { immediate: true, deep: true })
 
+  let sessionSyncTimer: ReturnType<typeof setTimeout> | null = null
   const stopSessionSync = watch(windows, () => {
-    updateWindowSnapshot(createDesktopWindowSnapshot(windows))
+    if (sessionSyncTimer) clearTimeout(sessionSyncTimer)
+    sessionSyncTimer = setTimeout(() => {
+      sessionSyncTimer = null
+      updateWindowSnapshot(createDesktopWindowSnapshot(windows))
+    }, 300)
   }, { deep: true })
 
   window.addEventListener('pagehide', saveDesktopStateWithKeepalive)
 
   function stopSync() {
+    if (sessionSyncTimer) { clearTimeout(sessionSyncTimer); sessionSyncTimer = null }
     saveNow()
     stopTaskbarSync()
     stopSessionSync()

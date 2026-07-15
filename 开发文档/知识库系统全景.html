@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知识库系统全景</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+:root{
+  --主色:#0086A8; --强调:#2395bc; --金:#f0b240;
+  --底:#ffffff; --浅底:#f5f8fa; --卡底:#fbfdfe;
+  --线:#d8e2e8; --字:#1f2d33; --灰字:#5a6b73;
+  --警红:#c0392b; --警红底:#fdecea; --警橙:#b9770e; --警橙底:#fdf5e6;
+  --绿:#1e8449; --绿底:#eafaf1;
+}
+*{box-sizing:border-box;}
+body{margin:0;font-family:"苹方","微软雅黑","宋体",sans-serif;background:var(--浅底);color:var(--字);line-height:1.7;font-size:15px;}
+a{color:var(--主色);text-decoration:none;}
+a:hover{text-decoration:underline;}
+#布局{display:flex;max-width:1400px;margin:0 auto;}
+#目录{position:sticky;top:0;align-self:flex-start;width:250px;height:100vh;overflow-y:auto;padding:24px 16px;background:var(--底);border-right:1px solid var(--线);}
+#目录 h2{font-size:16px;color:var(--主色);margin:0 0 12px;border:none;padding:0;}
+#目录 ol{margin:0;padding-left:20px;}
+#目录 li{margin:6px 0;font-size:14px;}
+#正文{flex:1;padding:32px 40px;background:var(--底);min-width:0;}
+h1{color:var(--主色);border-bottom:3px solid var(--金);padding-bottom:10px;font-size:28px;}
+h2{color:var(--主色);margin-top:44px;font-size:22px;border-left:5px solid var(--金);padding-left:12px;scroll-margin-top:20px;}
+h3{color:var(--强调);font-size:18px;margin-top:28px;}
+p{margin:10px 0;}
+code{background:var(--浅底);padding:2px 6px;border-radius:4px;font-family:"SF Mono",Consolas,monospace;font-size:13px;color:var(--警红);}
+table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px;}
+th,td{border:1px solid var(--线);padding:8px 12px;text-align:left;vertical-align:top;}
+th{background:var(--主色);color:#fff;font-weight:600;}
+tr:nth-child(even){background:var(--浅底);}
+.卡{background:var(--卡底);border:1px solid var(--线);border-radius:8px;padding:16px 20px;margin:16px 0;}
+.图{background:#fff;border:1px solid var(--线);border-radius:8px;padding:16px;margin:16px 0;overflow-x:auto;text-align:center;}
+.警{background:var(--警红底);border-left:5px solid var(--警红);border-radius:6px;padding:12px 18px;margin:14px 0;}
+.警 b{color:var(--警红);}
+.橙{background:var(--警橙底);border-left:5px solid var(--警橙);border-radius:6px;padding:12px 18px;margin:14px 0;}
+.橙 b{color:var(--警橙);}
+.绿{background:var(--绿底);border-left:5px solid var(--绿);border-radius:6px;padding:12px 18px;margin:14px 0;}
+.绿 b{color:var(--绿);}
+.数字条{display:flex;flex-wrap:wrap;gap:14px;margin:18px 0;}
+.数字块{flex:1;min-width:150px;background:linear-gradient(135deg,#0086A8,#2395bc);color:#fff;border-radius:10px;padding:16px 18px;}
+.数字块 .num{font-size:26px;font-weight:700;}
+.数字块 .lbl{font-size:13px;opacity:.9;margin-top:4px;}
+.标签{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;color:#fff;background:var(--强调);}
+</style>
+</head>
+<body>
+<div id="布局">
+<nav id="目录">
+<h2>目录</h2>
+<ol>
+<li><a href="#s1">系统概览与数据规模</a></li>
+<li><a href="#s2">管线全流程图</a></li>
+<li><a href="#s3">实体数据流图</a></li>
+<li><a href="#s4">数据库核心表关系</a></li>
+<li><a href="#s5">治理子系统</a></li>
+<li><a href="#s6">搜索链路</a></li>
+<li><a href="#s7">现存问题</a></li>
+<li><a href="#s8">MCP 工具速查</a></li>
+</ol>
+</nav>
+<main id="正文">
+<h1>知识库系统全景</h1>
+<p style="color:var(--灰字);">本文档面向新会话接手与开发排障。读完即可不翻代码理解:实体怎么产生、管线怎么跑、搜索怎么工作、治理怎么闭环。数据取自 owner_id=4 实测(PostgreSQL 库 华世王镞_v2)。</p>
+
+<h2 id="s1">一、系统概览与数据规模</h2>
+<p>知识库把文档(PDF/图片/表格等)吃进来,经过一条 <b>11 阶段事件驱动管线</b> 逐层加工:解析分块 → 采集原文/OCR/视觉 → 融合正文 → 抽画像 → 抽实体图谱 → 建词项索引 → 建关系。最终产出供 <b>混合检索</b>(关键词 + 向量 + 结构化信号)使用的数据。</p>
+
+<div class="卡">
+<b>两套并行、互不通气的"实体"体系(最容易踩的坑)</b>
+<table>
+<tr><th></th><th>体系 A · 实体图谱(LLM 抽取)</th><th>体系 B · 词项索引(正则分词)</th></tr>
+<tr><td>产出表</td><td><code>kb_entity_dictionary</code> / <code>kb_graph_nodes</code> / <code>kb_graph_edges</code> / <code>kb_evidence</code> / <code>kb_governance_candidates</code></td><td><code>kb_terms</code> / <code>kb_term_occurrences</code> / <code>kb_term_edges</code> / <code>kb_fact_candidates</code></td></tr>
+<tr><td>生产文件</td><td><code>entity_service.py</code></td><td><code>cognitive_index_service.py</code></td></tr>
+<tr><td>管线阶段</td><td><code>graph</code> 阶段</td><td><code>cognitive_index</code> 阶段</td></tr>
+<tr><td>抽取方式</td><td>调云端大模型 gateway</td><td>纯正则分词,无模型</td></tr>
+<tr><td>分类字段</td><td><code>category</code>(LLM 给品牌/成分/人名…)</td><td><code>term_type</code>(恒为默认 "term")</td></tr>
+</table>
+<p style="margin-bottom:0;">任务里常点名的 <code>entity_service.py</code> <b>不写</b> <code>kb_terms</code>,它写 <code>kb_entity_dictionary</code>。<code>kb_entity_aliases</code>/<code>kb_disambiguation</code> 都是从体系 A 派生的。</p>
+</div>
+
+<h3>数据规模(owner_id=4 实测)</h3>
+<div class="数字条">
+<div class="数字块"><div class="num">677,625</div><div class="lbl">kb_terms 词项(active 675,536 / rejected 2,089)</div></div>
+<div class="数字块"><div class="num">1,578,790</div><div class="lbl">kb_term_occurrences 出现位置</div></div>
+<div class="数字块"><div class="num">103,707</div><div class="lbl">kb_entity_dictionary 实体(全 candidate,confirmed=0)</div></div>
+<div class="数字块"><div class="num">242,000+</div><div class="lbl">kb_governance_candidates 治理候选(全 pending)</div></div>
+</div>
+<div class="数字条">
+<div class="数字块"><div class="num">1,742,715</div><div class="lbl">kb_chunk_entities 块-实体关联</div></div>
+<div class="数字块"><div class="num">15,179</div><div class="lbl">kb_document_profiles 有 subject 的画像</div></div>
+<div class="数字块"><div class="num">3,031</div><div class="lbl">kb_entity_aliases 别名</div></div>
+<div class="数字块"><div class="num">11</div><div class="lbl">管线阶段数</div></div>
+</div>
+
+<div class="橙">
+<b>数据健康关键事实:</b> <code>kb_terms</code> 近 <b>8 成词项只出现 1 次</b>(537,677 条),典型长尾噪声;高频 TOP100 里大量是 OCR/版式碎片(如 <code>主色为</code>、<code>图片格式为</code>、<code>分辨率</code>)。规则去噪(为/约/是/的结尾、≥20字符整句、含数字)可砍掉约 20 万条垃圾。<code>kb_terms.term_type</code> 全是 "term",<code>kb_entity_dictionary</code> 已确认(confirmed)为 0 —— 分类结果堆在候选表里等审核。
+</div>
+
+<h2 id="s2">二、管线全流程图</h2>
+<p>只有一个 worker 任务类型 <code>kb_pipeline_stage</code>。每个任务只跑<b>一个</b>阶段,跑完由 dispatcher 的 settlement 回调把被解锁的下游阶段再入队 —— 是事件驱动 DAG,不是线性流水线。DAG 顺序在 <code>pipeline_service.py:532 settle_pipeline_stage_successors()</code> 用命令式 if 分支定义。lane 决定并发限流:<code>local_preprocess/derived_index/relation_build</code> 内存吃紧时降到 0 并发;<code>llm_analysis/vision_analysis</code> 视为云调用不受本机内存限制。</p>
+
+<div class="图">
+<pre class="mermaid">
+flowchart TD
+  SV["source_validate (ROOT)<br/>lane: local_preprocess<br/>源文件校验"]
+  PI["parse_index<br/>lane: local_preprocess<br/>解析+分块 kb_chunks"]
+  RT["raw_text<br/>lane: local_preprocess<br/>原文采集"]
+  PR["page_render<br/>lane: local_preprocess<br/>视觉文档渲染页图"]
+  OCR["raw_ocr<br/>lane: vision_analysis (VLM)<br/>OCR 文本"]
+  RV["raw_vision<br/>lane: vision_analysis (VLM)<br/>视觉描述"]
+  FU["fusion<br/>lane: llm_analysis (LLM)<br/>融合 kb_page_fusions"]
+  PF["profile<br/>lane: llm_analysis (LLM)<br/>画像 kb_document_profiles"]
+  GR["graph<br/>lane: llm_analysis (LLM)<br/>实体图谱 (体系A)"]
+  CI["cognitive_index<br/>lane: derived_index<br/>词项索引 kb_terms (体系B)"]
+  RE["relations<br/>lane: relation_build<br/>关系构建"]
+
+  SV --> PI
+  SV --> RT
+  SV --> PR
+  PR --> OCR
+  PR --> RV
+  PI --> FU
+  RT --> FU
+  OCR --> FU
+  RV --> FU
+  FU --> PF
+  FU --> GR
+  PF --> CI
+  FU --> CI
+  PF --> RE
+  GR --> RE
+
+  classDef local fill:#eafaf1,stroke:#1e8449;
+  classDef vision fill:#fdf5e6,stroke:#b9770e;
+  classDef llm fill:#eaf6fa,stroke:#0086A8;
+  classDef derived fill:#f5eefc,stroke:#8e44ad;
+  class SV,PI,RT,PR local;
+  class OCR,RV vision;
+  class FU,PF,GR llm;
+  class CI,RE derived;
+</pre>
+</div>
+
+<table>
+<tr><th>阶段</th><th>lane</th><th>模型</th><th>上游依赖</th><th>对应 service</th></tr>
+<tr><td>source_validate (ROOT)</td><td>local_preprocess</td><td>否</td><td>—</td><td>document_service</td></tr>
+<tr><td>parse_index</td><td>local_preprocess</td><td>否</td><td>source_validate</td><td>parse_and_index_document</td></tr>
+<tr><td>raw_text</td><td>local_preprocess</td><td>否</td><td>source_validate</td><td>raw_collection_service</td></tr>
+<tr><td>page_render</td><td>local_preprocess</td><td>否</td><td>source_validate(仅视觉文档)</td><td>page_asset_service</td></tr>
+<tr><td>raw_ocr</td><td>vision_analysis</td><td>VLM</td><td>page_render</td><td>raw_collection_service</td></tr>
+<tr><td>raw_vision</td><td>vision_analysis</td><td>VLM</td><td>page_render</td><td>raw_collection_service</td></tr>
+<tr><td>fusion</td><td>llm_analysis</td><td>LLM</td><td>parse_index + 全部 raw</td><td>fusion_service</td></tr>
+<tr><td>profile</td><td>llm_analysis</td><td>LLM</td><td>fusion</td><td>profile_service</td></tr>
+<tr><td>graph</td><td>llm_analysis</td><td>LLM</td><td>fusion</td><td>entity_service</td></tr>
+<tr><td>cognitive_index</td><td>derived_index</td><td>否</td><td>fusion + profile</td><td>cognitive_index_service</td></tr>
+<tr><td>relations</td><td>relation_build</td><td>否</td><td>profile + graph</td><td>relation_service</td></tr>
+</table>
+
+<div class="卡">
+<b>阶段 runner 约定</b>:统一签名 <code>async def run(db, *, doc, **context) -> dict</code>,返回 dict 必带 <code>status</code>(done/degraded/skipped/blocked/failed)。runner 内<b>不要 commit</b>——由 handler <code>_pipeline_stage_handler</code> 统一收口(commit、写台账 <code>KbPipelineStageRun</code>、写制品 <code>KbAnalysisArtifact</code>、失败诊断)。入队去重靠 <code>pg_advisory_xact_lock</code>,同 doc+stage 已有 pending/running 则不重复跑。
+</div>
+
+<h2 id="s3">三、实体数据流图</h2>
+<p>下图把两套体系并排画出:左边体系 B(<code>kb_terms</code>,追踪目标)由正则分词产生,右边体系 A(<code>kb_entity_dictionary</code>,LLM 图谱)。搜索侧同时消费两套数据,但它们在库里没有任何主外键关联。</p>
+
+<div class="图">
+<pre class="mermaid">
+flowchart TD
+  subgraph B["体系 B · 词项索引 (cognitive_index 阶段, 纯正则)"]
+    direction TB
+    PFU["kb_page_fusions 融合正文"]
+    DPR["kb_document_profiles 画像"]
+    EXT["extract_terms() 正则分词<br/>只词频, 无分类"]
+    UPT["upsert_term()<br/>term_type 缺省 'term'<br/>status 硬编码 'active'"]
+    KT["kb_terms<br/>term_type=term / status=active"]
+    KTO["kb_term_occurrences<br/>位置证据"]
+    KTE["kb_term_edges 'co_occurs'<br/>共现边 weight 0.5"]
+    PFU --> EXT
+    DPR --> EXT
+    EXT --> UPT --> KT
+    UPT --> KTO
+    UPT --> KTE
+  end
+
+  subgraph A["体系 A · 实体图谱 (graph 阶段, LLM 抽取)"]
+    direction TB
+    PFU2["kb_page_fusions 融合正文"]
+    LLM["process_document_entities_from_fusions()<br/>LLM 抽取 + 去重"]
+    ED["kb_entity_dictionary<br/>category=LLM给 / status=candidate"]
+    GN["kb_graph_nodes / kb_graph_edges"]
+    EV["kb_evidence / kb_chunk_entities"]
+    GC["kb_governance_candidates<br/>audit_status=pending"]
+    BF["_backfill_entity_governance()<br/>旁路手动回填(不在管线内)"]
+    EA["kb_entity_aliases 别名"]
+    DS["kb_disambiguation 消歧"]
+    PFU2 --> LLM
+    LLM --> ED
+    LLM --> GN
+    LLM --> EV
+    LLM --> GC
+    ED --> BF
+    BF --> EA
+    BF --> DS
+  end
+
+  KT --> SRCH["搜索 search_service.py"]
+  KTO --> SRCH
+  KTE --> SRCH
+  ED --> SRCH
+  EA --> SRCH
+
+  classDef bcls fill:#f5eefc,stroke:#8e44ad;
+  classDef acls fill:#eaf6fa,stroke:#0086A8;
+  classDef use fill:#eafaf1,stroke:#1e8449;
+  class PFU,DPR,EXT,UPT,KT,KTO,KTE bcls;
+  class PFU2,LLM,ED,GN,EV,GC,BF,EA,DS acls;
+  class SRCH use;
+</pre>
+</div>
+
+<div class="卡">
+<b>关键节点行号</b>(便于定位)
+<ul>
+<li>体系 B 生产:<code>cognitive_index_service.py:56 extract_terms</code> → <code>:367 upsert_term</code>(默认 term_type="term") → <code>:506</code> 唯一调用点(不传 term_type) → <code>:383</code> INSERT 硬编码 status='active'</li>
+<li>体系 A 生产:<code>entity_service.py:427 process_document_entities_from_fusions</code>(现役)/ <code>:163</code>(旧路径),写实体 <code>status="candidate"</code></li>
+<li>别名/消歧回填:<code>derived_governance_service.py:540 _backfill_entity_governance</code>,数据源是体系 A 的 <code>kb_entity_dictionary</code>,<b>不在管线里</b>,须人工调后台接口触发</li>
+</ul>
+</div>
+
+<h2 id="s4">四、数据库核心表关系</h2>
+<p>34 张表可分 6 组:文档 / 分块向量 / 词项索引(体系B)/ 实体图谱(体系A)/ 治理 / 源清单。下图画核心表主外键关联。</p>
+
+<div class="图">
+<pre class="mermaid">
+erDiagram
+  kb_documents ||--o{ kb_chunks : "分块"
+  kb_documents ||--o{ kb_page_fusions : "融合页"
+  kb_documents ||--o{ kb_document_profiles : "画像"
+  kb_documents ||--o{ kb_term_occurrences : "词项出现"
+  kb_documents ||--o{ kb_chunk_entities : "块实体"
+  kb_documents ||--o{ kb_governance_candidates : "治理候选"
+  kb_documents ||--o{ kb_pipeline_stage_runs : "阶段台账"
+
+  kb_terms ||--o{ kb_term_occurrences : "1词多现"
+  kb_terms ||--o{ kb_term_edges : "共现边"
+  kb_chunks ||--o{ kb_chunk_entities : "块含实体"
+
+  kb_entity_dictionary ||--o{ kb_chunk_entities : "实体被引"
+  kb_entity_dictionary ||--o{ kb_graph_nodes : "映射节点"
+  kb_entity_dictionary ||--o{ kb_entity_aliases : "别名"
+  kb_entity_dictionary ||--o{ kb_evidence : "证据"
+  kb_graph_nodes ||--o{ kb_graph_edges : "图谱边"
+
+  kb_documents {
+    int id PK
+    int owner_id
+    string status
+    string source_path
+  }
+  kb_chunks {
+    int id PK
+    int document_id FK
+    text content
+    vector embedding
+  }
+  kb_terms {
+    int id PK
+    int owner_id
+    string term
+    string normalized
+    string term_type "恒=term"
+    string status "恒=active"
+  }
+  kb_term_occurrences {
+    int id PK
+    int term_id FK
+    int document_id FK
+    int page
+    float weight
+    text context
+  }
+  kb_fact_candidates {
+    int id PK
+    int document_id FK
+    string status "candidate/confirmed/rejected"
+    float confidence
+  }
+  kb_entity_dictionary {
+    int id PK
+    int owner_id
+    string entity_name
+    string category "LLM分类"
+    string status "candidate/confirmed/rejected"
+  }
+  kb_governance_candidates {
+    int id PK
+    int document_id FK
+    string entity_name
+    string category
+    float confidence
+    string audit_status "pending/approved/rejected/merged"
+  }
+</pre>
+</div>
+
+<table>
+<tr><th>分组</th><th>核心表</th><th>作用</th></tr>
+<tr><td>文档</td><td>kb_documents</td><td>文档主表,11 阶段各有一个 *_status 列参与完成判定</td></tr>
+<tr><td>分块向量</td><td>kb_chunks</td><td>parse_index 切出的文本块 + 向量,向量检索的基础单位</td></tr>
+<tr><td>词项(体系B)</td><td>kb_terms / kb_term_occurrences / kb_term_edges</td><td>正则分词产物,关键词召回 + 查询分词器 + 共现扩展</td></tr>
+<tr><td>实体图谱(体系A)</td><td>kb_entity_dictionary / kb_graph_nodes / kb_graph_edges / kb_chunk_entities / kb_evidence</td><td>LLM 抽取的实体与关系,打分时算 entity_count / graph_score</td></tr>
+<tr><td>候选/事实</td><td>kb_fact_candidates / kb_causal_candidates</td><td>事实/因果候选,结构化信号召回通道</td></tr>
+<tr><td>治理</td><td>kb_governance_candidates / kb_entity_aliases / kb_disambiguation / kb_entity_merge_log</td><td>人工审核台 + 派生别名/消歧/合并日志</td></tr>
+</table>
+
+<h2 id="s5">五、治理子系统</h2>
+<p>治理分两条线,别混:<b>"实体/证据"治理线</b> 和 <b>"运行时/生命周期"债务线</b>,互不相关。共四个服务。</p>
+
+<h3>1. governance_service.py — 实体候选人工审核台(核心)</h3>
+<p>处理 <code>kb_governance_candidates</code> 的人工审批闭环,做实体的确认/驳回/合并/校准,不做算法分类。</p>
+<table>
+<tr><th>函数</th><th>行号</th><th>做什么</th></tr>
+<tr><td>list_governance_candidates</td><td>11</td><td>分页列候选,按 audit_status 筛选</td></tr>
+<tr><td>approve_candidate</td><td>54</td><td>通过 → 候选标 approved + 实体词典 status=confirmed</td></tr>
+<tr><td>reject_candidate</td><td>85</td><td>驳回 → 候选标 rejected + 实体词典 status=archived</td></tr>
+<tr><td>merge_entities</td><td>116</td><td>合并:源名转别名、迁移关联和证据、写 kb_entity_merge_log</td></tr>
+<tr><td>calibrate_extraction</td><td>243</td><td>校准:改 entity_name 或 category,同步词典 —— 分类人工纠错的唯一入口</td></tr>
+</table>
+
+<h3>2. derived_governance_service.py — 派生侧表回填(纯算法)</h3>
+<p>从已有产物回填检索侧表,入口 <code>backfill_derived_governance:267</code>,支持 dry_run/预览/计数,幂等。</p>
+<ul>
+<li><b>别名</b> <code>_backfill_entity_governance:540</code>:遍历实体词典,<code>_alias_candidates:61</code> 从括号内容、<code>/｜,;、</code> 分隔符、CJK 去空格变体抽别名,过滤低信号词,写 <code>kb_entity_aliases</code>。</li>
+<li><b>消歧</b>:建倒排表,同一词形归属 ≥2 实体时判歧义,写 <code>kb_disambiguation</code>。</li>
+<li>另有产物血缘 <code>_backfill_artifact_lineage:357</code>、结论证据链 <code>_backfill_conclusion_evidence:416</code>。</li>
+</ul>
+<div class="橙"><b>刻意留的口子</b>(347 行注释写死):不自动写 <code>kb_catalogs</code>(分类目录)和 <code>kb_entity_merge_log</code> —— "分类目录需算法出处/反馈字段才能自动写,应先派生成候选而非直接改主分类"。这正是给自动分类功能留的接线位。</div>
+
+<h3>3. lifecycle_debt_service.py — 源文件生命周期债务</h3>
+<p>管<b>源文件丢失</b>的文档:<code>audit_lifecycle_debt:119</code> 扫描源文件已删/丢失/路径非法,<code>archive_source_unavailable_documents:150</code> 带确认令牌 <code>ARCHIVE_SOURCE_UNAVAILABLE</code> 归档。跟实体分类无关。</p>
+
+<h3>4. pipeline_debt_service.py — 管线任务队列债务</h3>
+<p>管<b>任务队列</b>历史垃圾:<code>_classify_task:70</code> 按错误家族(doc_missing/parser_no_content/greenlet_spawn 等)分类,<code>classify_pipeline_lifecycle_debt:668</code> 分类,<code>apply_pipeline_lifecycle_debt_action:977</code> 带确认执行归档/重试/释放。这里的 category 是<b>任务债务类别</b>,不是实体类别。</p>
+
+<div class="绿">
+<b>要做"存量实体批量重分类"往哪加:</b> 扩展 <code>derived_governance_service.py</code> 新增 <code>_backfill_entity_category</code> 回填函数,挂到 <code>backfill_derived_governance</code> 开关体系下,产出到 <code>kb_governance_candidates</code>(category=推断值/confidence=模型分),走 <code>governance_service.approve_candidate</code> 人工确认后再落主词典。<b>不要新建服务、不要直接写主词典字段</b> —— 存储字段、候选表、审批闭环、回填骨架、router 能力全都齐了。
+</div>
+
+<h2 id="s6">六、搜索链路</h2>
+<p>混合检索 <code>hybrid_search</code> = 关键词召回 + 向量召回 + 结构化信号召回 → RRF 融合 → verify_and_score 重排序。核心文件 <code>search_service.py</code>(2249 行)。</p>
+
+<div class="图">
+<pre class="mermaid">
+flowchart LR
+  Q["用户 query"] --> PLAN["query_plan 规划<br/>_build_local_query_plan / LLM<br/>产出 needles / entities / document_types"]
+  PLAN --> TOK["查询分词<br/>_load_query_tokenizer_terms<br/>kb_terms status=active 词表"]
+
+  PLAN --> KW["关键词召回<br/>keyword_search"]
+  PLAN --> VEC["向量召回<br/>vector_search (kb_chunks embedding)"]
+  PLAN --> STR["结构化信号召回<br/>structured_signal_search"]
+
+  STR --> TH["term_hits<br/>kb_term_occurrences JOIN kb_terms<br/>WHERE status=active"]
+  STR --> EH["entity_hits<br/>kb_entity_dictionary + kb_entity_aliases<br/>status IN candidate,confirmed"]
+  STR --> FH["fact/causal_hits<br/>候选表 status IN candidate,confirmed"]
+
+  KW --> RRF["RRF 融合<br/>多路排名倒数加权"]
+  VEC --> RRF
+  TH --> RRF
+  EH --> RRF
+  FH --> RRF
+
+  RRF --> VS["verify_and_score_results<br/>final=0.30*recall_prior+0.55*verification+learning"]
+  VS --> GS["graph_score / term_entity_score<br/>entity_stats CTE (kb_chunk_entities)"]
+  VS --> OUT["返回 Top-N 结果"]
+
+  classDef q fill:#fdf5e6,stroke:#b9770e;
+  classDef mid fill:#eaf6fa,stroke:#0086A8;
+  classDef out fill:#eafaf1,stroke:#1e8449;
+  class Q,PLAN,TOK q;
+  class KW,VEC,STR,TH,EH,FH,RRF,VS,GS mid;
+  class OUT out;
+</pre>
+</div>
+
+<table>
+<tr><th>环节</th><th>行号</th><th>用到的实体/治理数据</th></tr>
+<tr><td>查询分词</td><td>501 _load_query_tokenizer_terms</td><td>只取 kb_terms status=active,做自定义分词器(5分钟缓存)</td></tr>
+<tr><td>term_hits 召回</td><td>1517-1535</td><td>kb_term_occurrences JOIN kb_terms,WHERE status='active';信号 term_count/term_weight/evidence_text</td></tr>
+<tr><td>entity_hits 召回</td><td>1546-1550</td><td>kb_entity_dictionary LEFT JOIN kb_entity_aliases,status IN(candidate,confirmed)</td></tr>
+<tr><td>打分融合</td><td>1616-1625</td><td>term_count*4 + term_weight + entity_count*5 + fact_count*6 + causal_count*4</td></tr>
+<tr><td>重排序 graph_score</td><td>1875-1964</td><td>entity_stats CTE 从 kb_chunk_entities 算,占 verification 25%</td></tr>
+</table>
+
+<div class="卡">
+<b>rejected 过滤两段结论(关键):</b>
+<ul>
+<li><b>rejected 词(2089 条)真的被排除了</b>:召回(1532 <code>t.status='active'</code>)+ 分词器(518 <code>status=='active'</code>)双重排除,连带 174,642 条 occurrence 一起挡掉。</li>
+<li><b>rejected 实体(1181 条)只排除了一半</b>:召回排除了(1550),但重排序 <code>entity_stats CTE(1875-1886)没 JOIN kb_entity_dictionary、无 status 过滤</code>,93,134 条关联仍在给 7704 个文档虚高打分。</li>
+</ul>
+</div>
+
+<h2 id="s7">七、现存问题</h2>
+
+<div class="警">
+<b>问题 1 · term_type 全是 "term",分类逻辑从未实现。</b>
+<code>cognitive_index</code> 是纯正则管线,<code>extract_terms</code> 只分词不分类;唯一写入点 <code>cognitive_index_service.py:506</code> 从不给 <code>upsert_term</code> 传 term_type,而它默认就是 "term"。<code>term_type</code> 只是预留的死维度(有唯一约束 <code>uq_kb_terms_owner_norm_type</code> 和索引,架构上本该当分类用)。要分类必须在 <code>derive_document_cognitive_index</code> 里加类型判断再传给 upsert_term。
+</div>
+
+<div class="警">
+<b>问题 2 · status 的 rejected 过滤对 kb_terms 形同虚设。</b>
+<code>kb_terms.status</code> INSERT 硬编码 'active'(:383),全 backend 没有任何代码把它改成 rejected。搜索侧三处过滤 <code>status='active'</code> 恒为真。词项无淘汰机制 —— 治理只对体系 A 生效。(注:实测 owner 数据里有 2089 条 rejected,来自后续批量治理脚本手动改写,非管线产生。)
+</div>
+
+<div class="警">
+<b>问题 3 · rejected 实体在重排序打分里没被过滤(精度漏洞)。</b>
+<code>verify_and_score_results</code> 的 entity_stats CTE(1875-1886)完全没 JOIN kb_entity_dictionary、无 status 过滤。93,134 条指向 rejected 实体的 chunk_entities 仍在污染 7704 个文档的 graph_score / term_entity_score,把虚高分推上去挤掉真相关文档。<b>P0 修复:该 CTE 加 <code>JOIN kb_entity_dictionary ... AND ed.status IN('candidate','confirmed')</code>。</b>
+</div>
+
+<div class="橙">
+<b>问题 4 · 存量分类堆积待审,confirmed=0。</b>
+<code>kb_entity_dictionary</code> 10.3 万条全是 candidate,confirmed 为 0;<code>kb_governance_candidates</code> 24.2 万条已带 LLM 类别(confidence 全 0.70)全部 pending。<b>当前缺的不是再跑 LLM,而是审核+入库+去噪</b>。分层治理建议:先规则去噪 ~20 万,再消化 24 万存量候选,再 LLM 只精分去噪后高频 9265 个(186 批),低频 42 万不投 LLM 靠向量兜底。
+</div>
+
+<div class="橙">
+<b>问题 5 · 别名 3031 条只用于召回,没做正向查询扩展;文档说明与 MCP 工具双缺口。</b>
+用户查主名时不会自动带别名去检索,别名增益基本浪费。知识库<b>没有一份主开发文档级别的说明文档</b>(README 仅 88 行、开头英文、漏 24 个能力、表无字段说明);MCP 工具 8 个全服务于"管线跑没跑完",<b>没有一个服务于"跑出来的东西对不对"</b>(实体质量/搜索质量/图谱质量)。
+</div>
+
+<h2 id="s8">八、MCP 工具速查</h2>
+<p>注册于 <code>dev_toolkit/knowledge_tools.py</code>,共 8 个,全是运维/管线巡检导向。</p>
+<table>
+<tr><th>工具</th><th>用途</th></tr>
+<tr><td>knowledge_pipeline_snapshot</td><td>管线各阶段队列 / 向量回填进度 / DB 压力 / 失败 / 模型耗时汇总</td></tr>
+<tr><td>knowledge_pipeline_submit</td><td>投递任务到统一调度器(kb_pipeline_stage 等)</td></tr>
+<tr><td>knowledge_pipeline_node_status</td><td>查单文档在 11 个阶段的处理状态</td></tr>
+<tr><td>knowledge_source_gap_snapshot</td><td>统计源目录还有多少文件没入库</td></tr>
+<tr><td>knowledge_source_manifest_summary</td><td>外部物理源清单摘要</td></tr>
+<tr><td>knowledge_source_manifest_audit</td><td>源清单审计</td></tr>
+<tr><td>knowledge_source_manifest_scan</td><td>源清单扫描</td></tr>
+<tr><td>knowledge_source_manifest_enqueue</td><td>源清单投递入队</td></tr>
+</table>
+
+<div class="橙">
+<b>覆盖盲区(华哥点名的都缺):</b>
+<ul>
+<li>❌ 看实体分类分布 —— 无工具统计"抽出多少实体、按类型分布、噪声占比"(dashboard_service:256-270 有现成 SQL 未暴露)</li>
+<li>❌ 看某文档的实体 —— 无"按 document_id 反查该文档实体/关系/事实候选"</li>
+<li>❌ 搜索质量诊断 —— 无工具跑一次搜索返回召回明细(_RetrievalDiagnostics:132 数据丢在返回值,MCP 拿不到)</li>
+<li>❌ 消歧/合并现状 —— kb_disambiguation / kb_entity_merge_log / kb_entity_aliases 无查询工具</li>
+<li>❌ 图谱查看 —— kb_graph_nodes / kb_graph_edges / kb_term_edges 无 MCP 工具</li>
+</ul>
+</div>
+
+<div class="绿">
+<b>建议补的工具(P0):</b>
+<ul>
+<li><code>knowledge_entity_snapshot</code> —— 实体分类分布:总数 / 按类型 / 置信度分布 / 疑似噪声 TopN(复用 dashboard_service SQL)</li>
+<li><code>knowledge_document_entities</code> —— 按 document_id/filename 反查产出的实体、关系、事实候选、消歧记录</li>
+<li><code>knowledge_search_diagnose</code> —— 跑真实搜索返回各路召回 + RRF + 重排序得分,暴露 _RetrievalDiagnostics</li>
+</ul>
+</div>
+
+<h3>manifest.json 能力现状</h3>
+<p><code>public_actions</code> 共 34 个,描述大多准确但只有一句话,治理类能力(6 个 reconcile/pipeline_debt)光看描述分不清区别;能力 → handler(document/embedding/governance/pipeline/search 五个)的映射无文档。</p>
+
+<hr style="margin:40px 0;border:none;border-top:1px solid var(--线);">
+<p style="color:var(--灰字);font-size:13px;">相关核心文件:<code>services/cognitive_index_service.py</code>(kb_terms)、<code>services/entity_service.py</code>(实体图谱)、<code>services/derived_governance_service.py</code>(别名/消歧)、<code>services/search_service.py</code>(2249行 混合检索)、<code>services/pipeline_service.py</code>(DAG 编排)、<code>services/pipeline_stages/</code>(11 阶段)、<code>services/governance_service.py</code>(审核台)、<code>models.py</code> / <code>init_db.py</code>(表定义)、<code>dev_toolkit/knowledge_tools.py</code>(MCP)、<code>manifest.json</code>(34 能力)。</p>
+
+</main>
+</div>
+<script>
+mermaid.initialize({startOnLoad:true,theme:"base",themeVariables:{
+  primaryColor:"#eaf6fa",primaryBorderColor:"#0086A8",primaryTextColor:"#1f2d33",
+  lineColor:"#2395bc",fontFamily:"苹方,微软雅黑,sans-serif",fontSize:"14px"
+}});
+</script>
+</body>
+</html>

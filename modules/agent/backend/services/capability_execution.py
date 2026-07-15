@@ -15,6 +15,8 @@ def parse_capability_name(name: str) -> tuple[str, str]:
 
 
 def capability_result_succeeded(result: object) -> bool:
+    if result is None:
+        return False
     if not isinstance(result, dict):
         return True
     if result.get("success") is False:

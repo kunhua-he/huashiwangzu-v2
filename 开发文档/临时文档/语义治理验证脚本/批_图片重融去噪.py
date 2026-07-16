@@ -39,8 +39,11 @@ async def _gpt_fuse(sys_p: str, user_msg: str) -> dict | None:
     last_exc = None
     for attempt in range(3):  # 瞬断重试(高并发防连接闪断)
         try:
+            import uuid as _uuid
             req = urllib.request.Request(GPT_EP, data=payload,
-                                         headers={"Content-Type": "application/json", "Authorization": f"Bearer {GPT_KEY}"})
+                                         headers={"Content-Type": "application/json",
+                                                  "Authorization": f"Bearer {GPT_KEY}",
+                                                  "X-Session-Id": f"fuse-{_uuid.uuid4().hex}"})  # 每请求唯一session→cockpit真并行
             raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=180).read())
             d = json.loads(raw)
             text = ""

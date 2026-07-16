@@ -21,6 +21,7 @@ OWNER = 4
 
 SHARD = 0     # 本进程分片号(id % SHARDS == SHARD 才处理)
 SHARDS = 1    # 总分片数(1=不分片)
+GATE = False  # 长上下文GPT终审开关。GPT死时必须关,否则每候选卡满60s超时(整晚空转)
 
 
 async def fetch_batch(db, batch):
@@ -55,27 +56,27 @@ async def run_round(batch, dry):
     if not ents:
         return 0, 0, 0
     checked = aligned = 0
-    done_ids: list[int] = []
     for eid, name, category in ents:
         checked += 1
         try:
             async with AsyncSessionLocal() as db:  # 每实体独立短会话,防长事务/连接超时
-                canonical_name, fixes = await canonicalize_name(db, OWNER, name, semantic_gate=True)
+                canonical_name, fixes = await canonicalize_name(db, OWNER, name, semantic_gate=GATE)
                 if fixes and canonical_name != name:
                     cid = await _resolve_canonical_entity(db, OWNER, canonical_name, category)
                     await _merge_variant_into(db, OWNER, eid, name, cid, canonical_name, fixes)
-                    if dry:
-                        await db.rollback()
-                    else:
-                        await db.commit()
                     aligned += 1
                     print(f"    {name} → {canonical_name}  {[(f['from'],f['to'],f['evidence']) for f in fixes]}", flush=True)
+                # 每实体即时打done并落库,中断也不白跑(华哥分轮法幂等)
+                if not dry:
+                    await db.execute(
+                        T("UPDATE kb_entity_dictionary SET align_status='done' WHERE owner_id=:o AND id=:id"),
+                        {"o": OWNER, "id": eid},
+                    )
+                    await db.commit()
+                else:
+                    await db.rollback()
         except Exception as exc:  # noqa: BLE001
             print(f"    !实体{eid}({name})异常: {str(exc)[:120]}", flush=True)
-        done_ids.append(eid)
-    if not dry:
-        async with AsyncSessionLocal() as db:
-            await mark_done(db, done_ids)
     return checked, aligned, len(ents)
 
 
@@ -120,7 +121,9 @@ if __name__ == "__main__":
     ap.add_argument("--dry", action="store_true")
     ap.add_argument("--shard", type=int, default=0)   # 本进程分片号
     ap.add_argument("--shards", type=int, default=1)  # 总分片数(并行时>1)
+    ap.add_argument("--gate", action="store_true")    # 开GPT长上下文终审(GPT活着才开,死了别开)
     a = ap.parse_args()
     SHARD = a.shard
     SHARDS = max(1, a.shards)
+    GATE = a.gate
     asyncio.run(main(a.batch, a.rounds, a.dry))

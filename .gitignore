@@ -90,3 +90,5 @@ dev_toolkit/memory_embeddings.json
 
 # Playwright 登录态(含token,禁提交)
 frontend/tests/.auth/
+开发文档/临时文档/语义治理验证脚本/*.csv
+开发文档/临时文档/语义治理验证脚本/*.log

@@ -26,7 +26,7 @@ async def classify_batch(entities, conc):
     sem = asyncio.Semaphore(conc)
     results = {}
 
-    async def one(eid, name, cat):
+    async def one(eid, name, cat, blk):
         async with sem:
             user = f"实体名:{name}\n当前类目:{cat}\n最准确的类型是?"
             try:
@@ -42,35 +42,43 @@ async def classify_batch(entities, conc):
                     typ = json.loads(m.group(0)).get("类型", "")
                     if typ in TYPES.split("/"):
                         results[eid] = typ
+                        async with AsyncSessionLocal() as wdb:
+                            if typ == "噪音":
+                                # 噪音=删除动作,精度红线。deepseek会误删(专利法/投流)→落隔离表,
+                                # 不写死category(保持原类目仍可召回),等GPT额度回来复审。
+                                await wdb.execute(T("""
+                                    INSERT INTO kb_entity_noise_review(owner_id,entity_id,name,old_category,judged_by,block_count)
+                                    VALUES(:o,:id,:n,:oc,'deepseek-v4-flash',:blk)
+                                    ON CONFLICT(owner_id,entity_id) DO NOTHING
+                                """), {"o": OWNER, "id": eid, "n": name, "oc": cat, "blk": blk})
+                            else:
+                                # 正向归类即时写死category(收益直接拿,幂等:重跑同样命中)
+                                await wdb.execute(T("UPDATE kb_entity_dictionary SET category=:c, updated_at=now() WHERE id=:id AND owner_id=:o"),
+                                                  {"c": typ, "id": eid, "o": OWNER})
+                            await wdb.commit()
             except Exception:
                 pass
-    await asyncio.gather(*(one(e, n, c) for e, n, c in entities))
+    await asyncio.gather(*(one(e, n, c, b) for e, n, c, b in entities))
     return results
 
 
 async def main(conc, limit):
     async with AsyncSessionLocal() as db:
         r = await db.execute(T(f"""
-            SELECT ed.id, ed.name, ed.category,
-              (SELECT count(*) FROM kb_chunk_entities ce WHERE ce.entity_id=ed.id AND ce.owner_id={OWNER}) AS blk
+            SELECT ed.id, ed.name, ed.category, 0 AS blk
             FROM kb_entity_dictionary ed
             WHERE ed.owner_id={OWNER} AND ed.status IN ('candidate','confirmed')
-              AND ed.category IN ('术语','通用','其他','产品名','事件')
+              AND ed.category IN ('术语','通用','其他')
               AND length(ed.name)>=2
-            ORDER BY blk DESC LIMIT :lim
+              AND NOT EXISTS (SELECT 1 FROM kb_entity_noise_review nr
+                              WHERE nr.owner_id={OWNER} AND nr.entity_id=ed.id)
+            ORDER BY ed.id LIMIT :lim
         """), {"lim": limit})
-        entities = [(int(i), n, c) for i, n, c, _ in r.all()]
+        entities = [(int(i), n, c, int(b)) for i, n, c, b in r.all()]
     print(f"待归类: {len(entities)}, 并发={conc}", flush=True)
     t0 = time.time()
     results = await classify_batch(entities, conc)
-    print(f"GPT归类完成: {len(results)}/{len(entities)} 用时{time.time()-t0:.0f}s", flush=True)
-    # 写回 category(不动type_id,直接改category字段让召回权重生效)
-    async with AsyncSessionLocal() as db:
-        for eid, typ in results.items():
-            await db.execute(T("UPDATE kb_entity_dictionary SET category=:c, updated_at=now() WHERE id=:id AND owner_id=:o"),
-                             {"c": typ, "id": eid, "o": OWNER})
-        await db.commit()
-    print(f"已写回 {len(results)} 个实体类型", flush=True)
+    print(f"deepseek归类完成: {len(results)}/{len(entities)} 用时{time.time()-t0:.0f}s (已即时落库)", flush=True)
     # 统计
     from collections import Counter
     print("类型分布:", Counter(results.values()).most_common(10), flush=True)
@@ -78,7 +86,7 @@ async def main(conc, limit):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--conc", type=int, default=200)
-    ap.add_argument("--limit", type=int, default=3000)
+    ap.add_argument("--conc", type=int, default=40)   # >50触发opencode网关每秒限流(429),负优化
+    ap.add_argument("--limit", type=int, default=50000)
     a = ap.parse_args()
     asyncio.run(main(a.conc, a.limit))

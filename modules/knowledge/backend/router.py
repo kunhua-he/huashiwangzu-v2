@@ -1308,3 +1308,89 @@ async def _on_file_uploaded(payload: dict, caller: str, caller_role: str) -> dic
 
 register_module_event_handler("file.uploaded", _on_file_uploaded, "knowledge")
 
+
+# ── 语义打齐批量能力(供回填脚本 HTTP 调用,复用常驻底座) ───────────
+async def _cap_align_entity_batch(params: dict, caller: str) -> dict:
+    """对一批实体执行 canonicalize_name(逐字位打齐+护栏8裁定),标记 align_status。"""
+    from app.database import AsyncSessionLocal
+    from .services.semantic_align_service import canonicalize_name, _resolve_canonical_entity, _merge_variant_into
+
+    owner_id = int(caller.split(":")[1]) if ":" in caller else 4
+    batch = int(params.get("batch", 100))
+    gate = bool(params.get("gate", True))
+    shard = int(params.get("shard", 0))
+    shards = max(1, int(params.get("shards", 1)))
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import text as T
+        r = await db.execute(T("""
+            SELECT ed.id, ed.name, ed.category
+            FROM kb_entity_dictionary ed
+            WHERE ed.owner_id=:o AND ed.status!='merged'
+              AND COALESCE(ed.align_status,'pending')='pending'
+              AND ed.name ~ '[一-鿿]' AND length(ed.name)>=2
+              AND (mod(ed.id, :shards) = :shard)
+              AND EXISTS (SELECT 1 FROM kb_chunk_entities ce WHERE ce.entity_id=ed.id AND ce.owner_id=:o)
+            ORDER BY length(ed.name), ed.id
+            LIMIT :b
+        """), {"o": owner_id, "b": batch, "shards": shards, "shard": shard})
+        ents = [(int(i), n, c) for i, n, c in r.all()]
+
+    if not ents:
+        return {"success": True, "data": {"checked": 0, "aligned": 0, "remaining": 0}}
+
+    import asyncio as _aio
+    import logging as _log
+    batch_conc = int(params.get("batch_conc", 8))  # 批内并发(热调,防打爆DB)
+    sem = _aio.Semaphore(batch_conc)
+    counters = {"checked": 0, "aligned": 0}
+
+    async def _处理一条(eid, name, category):
+        async with sem:
+            try:
+                async with AsyncSessionLocal() as db:
+                    canonical_name, fixes = await canonicalize_name(db, owner_id, name, semantic_gate=gate)
+                    if fixes and canonical_name != name:
+                        cid = await _resolve_canonical_entity(db, owner_id, canonical_name, category)
+                        await _merge_variant_into(db, owner_id, eid, name, cid, canonical_name, fixes)
+                        await db.commit()
+                        counters["aligned"] += 1
+                    await db.execute(T("UPDATE kb_entity_dictionary SET align_status='done' WHERE owner_id=:o AND id=:id"),
+                                     {"o": owner_id, "id": eid})
+                    await db.commit()
+            except Exception as exc:
+                _log.getLogger(__name__).warning("align实体%d(%s)异常: %s", eid, name, str(exc)[:120])
+            finally:
+                counters["checked"] += 1
+
+    await _aio.gather(*(_处理一条(eid, name, category) for eid, name, category in ents))
+    checked, aligned = counters["checked"], counters["aligned"]
+
+    # 剩余数
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import text as T
+        r2 = await db.execute(T("""
+            SELECT count(*) FROM kb_entity_dictionary ed
+            WHERE ed.owner_id=:o AND ed.status!='merged'
+              AND COALESCE(ed.align_status,'pending')='pending'
+              AND ed.name ~ '[一-鿿]' AND length(ed.name)>=2
+              AND (mod(ed.id, :shards) = :shard)
+              AND EXISTS (SELECT 1 FROM kb_chunk_entities ce WHERE ce.entity_id=ed.id AND ce.owner_id=:o)
+        """), {"o": owner_id, "shards": shards, "shard": shard})
+        remaining = int(r2.first()[0])
+
+    return {"success": True, "data": {"checked": checked, "aligned": aligned, "remaining": remaining}}
+
+
+register_capability(
+    "knowledge", "align_entity_batch", _cap_align_entity_batch,
+    description="批量实体语义打齐(逐字位纠错+护栏8证据驱动裁定),回填脚本专用",
+    brief="实体打齐回填",
+    parameters={
+        "batch": {"type": "integer", "description": "本次处理条数,默认100"},
+        "gate": {"type": "boolean", "description": "是否开启护栏8(LLM裁定),默认true"},
+        "shard": {"type": "integer", "description": "分片号(并行用)"},
+        "shards": {"type": "integer", "description": "总分片数"},
+    },
+    min_role="admin",
+)

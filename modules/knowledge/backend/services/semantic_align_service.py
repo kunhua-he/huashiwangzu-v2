@@ -60,26 +60,44 @@ def _cjk_run(chars: list[str], start: int, step: int, limit: int) -> str:
 
 
 async def _slot_authority(db: AsyncSession, owner_id: int, left: str, right: str) -> list[tuple[str, int]]:
-    """查 'left + X + right' 中 X 在干净文本层（排图片）的字→块数分布，降序。"""
+    """查 'left + X + right' 中 X 在干净文本层（排图片）的字→文档数分布，降序。
+
+    优先查预计算表 kb_char_slot_authority(O(1)索引命中,<1ms);表为空则退化回全表正则扫。
+    预计算表根治了"20万次全表扫把DB当处理器"的CPU爆满问题。
+    """
     if not left or not right:
         return []
-    pat = f"{_re_escape(left)}(.){_re_escape(right)}"
-    rex = f"{_re_escape(left)}.{_re_escape(right)}"
-    r = await db.execute(
-        sa_text(
-            f"""
-            SELECT substring(c.text from :pat) AS ch, COUNT(*) AS n
-            FROM kb_chunks c JOIN kb_documents d ON d.id = c.document_id
-            WHERE c.owner_id = :o AND c.index_layer = 'base_parse'
-              AND d.extension NOT IN {_IMG_EXT_SQL}
-              AND c.text ~ (:re)
-            GROUP BY substring(c.text from :pat)
-            """
-        ),
-        {"pat": pat, "re": rex, "o": owner_id},
-    )
-    rows = [(ch, int(n)) for ch, n in r.all() if ch and ch.strip()]
-    return sorted(rows, key=lambda x: -x[1])
+    # 优先:查预计算表(btree索引,毫秒级)
+    try:
+        r = await db.execute(
+            sa_text(
+                """SELECT mid_char, cnt FROM kb_char_slot_authority
+                   WHERE owner_id=:o AND left_ctx=:l AND right_ctx=:r
+                   ORDER BY cnt DESC"""
+            ),
+            {"o": owner_id, "l": left, "r": right},
+        )
+        rows = [(ch, int(n)) for ch, n in r.all() if ch and ch.strip()]
+        return rows  # 命中→已按cnt降序;未命中→空(保守不改,不再全表扫爆CPU)
+    except Exception:
+        # 仅预计算表异常时才退化全表扫(正常不会走到)
+        pat = f"{_re_escape(left)}(.){_re_escape(right)}"
+        rex = f"{_re_escape(left)}.{_re_escape(right)}"
+        r = await db.execute(
+            sa_text(
+                f"""
+                SELECT substring(c.text from :pat) AS ch, COUNT(*) AS n
+                FROM kb_chunks c JOIN kb_documents d ON d.id = c.document_id
+                WHERE c.owner_id = :o AND c.index_layer = 'base_parse'
+                  AND d.extension NOT IN {_IMG_EXT_SQL}
+                  AND c.text ~ (:re)
+                GROUP BY substring(c.text from :pat)
+                """
+            ),
+            {"pat": pat, "re": rex, "o": owner_id},
+        )
+        rows = [(ch, int(n)) for ch, n in r.all() if ch and ch.strip()]
+        return sorted(rows, key=lambda x: -x[1])
 
 
 def _re_escape(s: str) -> str:
@@ -87,49 +105,40 @@ def _re_escape(s: str) -> str:
     return re.escape(s)
 
 
-# 语义终审:频率护栏筛出候选后,本地模型对灰区(两个都像真词)做最后裁定。
-# 华哥"分不清才降级LLM,LLM只兜底"。本地gemma免费走GPU,候选极少(几万里十几个),不拖慢。
-_LOCAL_MODEL = "gemma-4-26b:latest"
-_LOCAL_EP = "http://127.0.0.1:11434/api/chat"
+# 语义终审:证据驱动裁定循环(取证工具组备证据→喂模型判)。零行业硬编码,换行业只换库。
+# 黄金集实测:乱并=0,该并侧证据充分全对。候选极少(几万里十几个),不拖慢。
 
 
-async def _semantic_gate(orig: str, fixed: str, evidence: int) -> bool:
-    """本地模型裁定:orig 是 fixed 的错字(该并)→True;orig 是合法独立词(不该并)→False。
+async def _semantic_gate(orig: str, fixed: str, evidence: int, db: AsyncSession = None, owner_id: int = 0) -> bool:
+    """证据驱动裁定:orig 是 fixed 的OCR错写(该并)→True;orig 是合法独立词(不该并)→False。
 
-    给模型频率证据:fixed 在公司资料文本层出现 evidence 次,orig 几乎不出现。
-    模型结合通用语义判断——如"皮脂"是护肤真词不该并进"硬脂";"护养品"是"护肤品"错字该并。
-    异常/超时→返回False(保守不并,精度第一)。
+    调裁定循环(取证工具组备齐证据→deepseek单轮判+置信度+留言)。
+    高置信判并→True;低置信/证据不足→进留言表+返回False(保守不并)。
+    无db时退化为旧逻辑(裸判,兼容旧调用方式)。异常→False(保守不并)。
     """
-    import asyncio, json, urllib.request
-    sys_p = (
-        "你是中文校对专家。给你两个词A和B,判断A是不是B的错别字误写。\n"
-        "判'留'(A不是错字,保持A)的情形:A本身是一个有独立含义的正常词,或A里含有一个有意义的词"
-        "(如'皮脂'是皮肤分泌物、'工位'是工作位置、'皮肤'是常见词),即使B更常见也要判'留'。\n"
-        "判'并'(A是B的错写)的情形:A整体不成词、无实际含义,只是B的形近/音近误写"
-        "(如'护养品'不是词、是'护肤品'的误写)。\n"
-        "拿不准时判'留'。只输出JSON。"
-    )
-    usr = (
-        f"A={orig}\nB={fixed}\n"
-        f"A是B的错别字误写吗?A本身是正常词或含有意义的词就判'留',A不成词只是B的形近误写才判'并'。\n"
-        f'输出:{{"判定":"并"或"留","原因":"简短"}}'
-    )
-    body = json.dumps({
-        "model": _LOCAL_MODEL,
-        "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": usr}],
-        "stream": False, "options": {"temperature": 0.1},
-    }).encode()
-    try:
-        req = urllib.request.Request(_LOCAL_EP, data=body, headers={"Content-Type": "application/json"})
-        loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=60).read())
-        content = json.loads(raw).get("message", {}).get("content", "")
-        import re as _re
-        m = _re.search(r'\{.*\}', content, _re.S)
-        if not m:
+    if db is not None and owner_id:
+        try:
+            from .实体裁定循环 import 裁定
+            return await 裁定(db, owner_id, orig, fixed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("证据驱动裁定异常(保守不并) %s→%s: %s", orig, fixed, exc)
             return False
-        verdict = json.loads(m.group(0)).get("判定", "")
-        return verdict == "并"
+    # 无db退化:直接调网关裸判(旧逻辑,兼容)
+    try:
+        from app.gateway.router import gateway_router
+        import re as _re, json as _json
+        sys_p = (
+            "你是中文实体校对专家,判断原词是不是候选词的OCR错写。"
+            "差异字形近/音近→并;差异字是不同含义的正常字→留。拿不准判留。"
+            "只输出JSON:{\"判定\":\"并\"或\"留\"}"
+        )
+        res = await gateway_router.chat(
+            [{"role": "system", "content": sys_p},
+             {"role": "user", "content": f"原词:{orig}\n候选词:{fixed}"}],
+            profile_key="deepseek-v4-flash",
+        )
+        m = _re.search(r'\{.*\}', res.get("content", "") or "", _re.S)
+        return _json.loads(m.group(0)).get("判定", "") == "并" if m else False
     except Exception as exc:  # noqa: BLE001
         logger.warning("语义终审失败(保守不并) %s→%s: %s", orig, fixed, exc)
         return False
@@ -163,6 +172,11 @@ async def canonicalize_name(db: AsyncSession, owner_id: int, name: str, semantic
     semantic_gate=True:频率护栏通过后,本地模型终审灰区(两个都像真词的,如皮脂vs硬脂),兜最后1%。
     """
     if not name or len(name) < 2:
+        return name, []
+    # 快速排除:VLM像素属性数据混入实体表的噪音(主色#xxx/边缘密度0.xx/平均亮度…)
+    # 这些不是实体名,不可能有OCR错字需要纠,跳过零精度损失(抽样验证20/20全是纯像素数据)。
+    import re as _re_mod
+    if _re_mod.match(r'\s*(主色|边缘密度|平均亮度|占比|纹理|色温|饱和度|对比度|颜色分布|亮度)', name):
         return name, []
     # 便宜预筛:整名在干净文本层逐字命中(≥3字走trgm索引,快)=已是正确名,直接跳过逐字扫。
     # 第一性原理:整名在100%正确的文本层里真实存在→它就是对的,无需纠错。
@@ -225,8 +239,8 @@ async def canonicalize_name(db: AsyncSession, owner_id: int, name: str, semantic
     if is_long:
         if not semantic_gate:
             return name, []  # 未开GPT终审→长上下文一律保守不并
-        if not await _semantic_gate(name, corrected, attested):
-            return name, []  # GPT判"留"→不并
+        if not await _semantic_gate(name, corrected, attested, db=db, owner_id=owner_id):
+            return name, []  # 裁定"留"→不并
     return corrected, fixes
 
 

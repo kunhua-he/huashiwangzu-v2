@@ -135,6 +135,7 @@
       "primary": "gpt-5.5-knowledge",
       "fallback_on_explicit_profile": true,
       "fallback_chain": [
+        "gpt-5.5-knowledge",
         "gemma-4"
       ],
       "profiles": {
@@ -340,10 +341,10 @@
       "planning_profile": "deepseek-v4-flash"
     },
     "knowledge": {
-      "default_profile": "gpt-5.5-knowledge",
+      "default_profile": "deepseek-v4-flash",
       "agent_search_profile": "deepseek-v4-flash",
       "default_vision_profile": "gpt-5.5-vision",
-      "fallback_profile": "gpt-5.5-knowledge",
+      "fallback_profile": "deepseek-v4-flash",
       "pause_after_fallback": false,
       "rate_limit_auto_pause": {
         "enabled": true,
@@ -393,10 +394,10 @@
       "stages": {
         "raw_ocr": "gpt-5.5-vision",
         "raw_vision": "gpt-5.5-vision",
-        "fusion": "gpt-5.5-knowledge",
-        "profile": "gpt-5.5-knowledge",
-        "entity": "gpt-5.5-knowledge",
-        "legacy_page_fusion": "gpt-5.5-knowledge"
+        "fusion": "deepseek-v4-flash",
+        "profile": "deepseek-v4-flash",
+        "entity": "deepseek-v4-flash",
+        "legacy_page_fusion": "deepseek-v4-flash"
       },
       "query_planning_profile": "qwen-local-planner"
     }

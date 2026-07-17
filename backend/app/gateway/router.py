@@ -344,6 +344,16 @@ class ModelGatewayRouter:
                     auth_recovery=cfg.get("auth_recovery") or {},
                     api_protocol=cfg.get("api_protocol") or cfg.get("protocol") or "",
                 )
+            elif ptype == "anthropic":
+                from app.gateway.anthropic_provider import AnthropicProvider
+                self._providers[name] = AnthropicProvider(
+                    api_url=cfg.get("api_url", ""),
+                    api_key=_resolve_api_key(cfg),
+                    provider_name=cfg.get("provider_name", name),
+                    extra_headers=cfg.get("headers") or {},
+                    proxy=cfg.get("proxy") or "",
+                    timeout_seconds=float(cfg.get("timeout_seconds") or 120),
+                )
             elif ptype == "local":
                 self._providers[name] = LocalProvider(allow_echo=bool(cfg.get("allow_echo", False)))
 

@@ -9,6 +9,7 @@
  */
 import { reactive, computed, watch } from 'vue'
 import { desktopStateStore, scheduleDesktopStateSave } from '@/desktop/window-manager/desktop-state-store'
+import { DESKTOP_DOCK_HEIGHT, DESKTOP_DOCK_BOTTOM_GAP } from './desktop-chrome-metrics'
 
 // ═══════════════════════════════════════════════════
 // 类型定义
@@ -73,10 +74,10 @@ const DEFAULT_CONFIG: DesktopConfig = {
   showIconLabels: true,
 
   taskbarPosition: 'bottom',
-  taskbarHeight: 44,
-  taskbarShowClock: true,
-  taskbarShowDate: true,
-  taskbarGroupWindows: false,
+  taskbarHeight: DESKTOP_DOCK_HEIGHT,
+  taskbarShowClock: false,
+  taskbarShowDate: false,
+  taskbarGroupWindows: true,
 
   windowAnimationDuration: 200,
   windowSnapThreshold: 28,
@@ -142,7 +143,7 @@ const iconMetrics = computed(() => {
   }
 })
 
-const taskbarReservedHeight = computed(() => config.taskbarHeight + 8)
+const taskbarReservedHeight = computed(() => DESKTOP_DOCK_HEIGHT + DESKTOP_DOCK_BOTTOM_GAP)
 
 // ═══════════════════════════════════════════════════
 // 公共接口

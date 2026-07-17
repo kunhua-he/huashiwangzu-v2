@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     GPTSTORE_BASE_URL: str = "https://pool.gptstore.club/v1"
     GPTSTORE_PROXY: str = ""
 
+    # ant 协议(Anthropic /v1/messages)备用服务商,不参与常规运行,填了 key 才启用
+    DEEPSEEK_ANTHROPIC_KEY: str = ""   # deepseek 官方 anthropic 端点
+    JAYCE_CLAUDE_KEY: str = ""         # jayce 中转站 claude(需走代理)
+
     # LiblibAI（生图模块）
     LIBLIB_ACCESS_KEY: str = ""
     LIBLIB_SECRET_KEY: str = ""

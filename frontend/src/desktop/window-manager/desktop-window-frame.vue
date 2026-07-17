@@ -21,9 +21,9 @@
         <span class="window-title">{{ title }}</span>
       </div>
       <div class="window-action-buttons">
-        <button v-if="windowType !== 'panel'" class="window-action-btn window-action-minimize" @click.stop="handleMinimize" title="最小化" aria-label="最小化" />
-        <button v-if="windowType !== 'tool' && windowType !== 'background-service'" class="window-action-btn window-action-maximize" @click.stop="$emit('maximize', id)" title="最大化" aria-label="最大化" />
         <button class="window-action-btn window-action-close" @click.stop="requestClose" title="关闭" aria-label="关闭" />
+        <button v-if="windowType !== 'panel'" class="window-action-btn window-action-minimize" @click.stop="handleMinimize" title="最小化" aria-label="最小化" />
+        <button v-if="windowType !== 'tool' && windowType !== 'background-service'" class="window-action-btn window-action-maximize" @click.stop="$emit('maximize', id)" title="缩放" aria-label="缩放" />
       </div>
     </div>
     <div class="window-content" v-show="contentVisible">
@@ -84,6 +84,7 @@ const props = defineProps<{
   isActive: boolean
   appKey: string
   payload?: Record<string, unknown>
+  preMaximizeState?: WindowGeometry
   animationOrigin?: { x: number; y: number; width: number; height: number }
 }>()
 
@@ -139,8 +140,7 @@ watch(() => props.minimized, (minimized, oldMinimized) => {
 }, { immediate: true })
 
 function getTaskbarButtonRect(): { x: number; y: number } | null {
-  // 查找任务栏中对应窗口的按钮位置
-  const btn = document.querySelector(`[data-window-id="${props.id}"]`) as HTMLElement | null
+  const btn = document.querySelector(`[data-dock-app-key="${props.appKey}"]`) as HTMLElement | null
   if (btn) {
     const rect = btn.getBoundingClientRect()
     const parent = rootEl.value?.parentElement
@@ -215,9 +215,7 @@ const windowType = computed(() => appInfo.value?.windowType || 'normal')
 const resizable = computed(() => appInfo.value?.resizable !== false && windowType.value !== 'fullscreen')
 const minWidth = computed(() => appInfo.value?.minWidth ?? 400)
 const minHeight = computed(() => appInfo.value?.minHeight ?? 260)
-const preMaximizeState = computed(() => {
-  return undefined as WindowGeometry | undefined
-})
+const preMaximizeState = computed(() => props.preMaximizeState)
 
 const rootEl = ref<HTMLElement | null>(null)
 const windowInteraction = useWindowInteraction(() => ({

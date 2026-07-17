@@ -1,7 +1,8 @@
 import { onUnmounted, ref, type Ref } from 'vue'
+import { getDesktopWorkArea } from '@/desktop/config/desktop-chrome-metrics'
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-type SnapKind = 'left' | 'right' | 'top'
+type SnapKind = 'top'
 type WindowGeometry = { x: number; y: number; width: number; height: number }
 export type SnapPreview = { kind: SnapKind; x: number; y: number; width: number; height: number }
 type InteractionConfig = {
@@ -14,8 +15,7 @@ type InteractionConfig = {
 }
 
 const resizeDirections: ResizeDirection[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
-const SNAP_EDGE_SIZE = 28
-const TASKBAR_RESERVED_HEIGHT = 48
+const SNAP_EDGE_SIZE = 18
 const MAX_DRAG_RESTORE_THRESHOLD = 4
 
 function clampDimension(value: number, min: number, max: number): number {
@@ -38,28 +38,19 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
     const rect = parent?.getBoundingClientRect()
     const containerWidth = parent?.clientWidth ?? window.innerWidth
     const containerHeight = parent?.clientHeight ?? window.innerHeight
+    const workArea = getDesktopWorkArea(containerWidth, containerHeight)
     return {
       containerLeft: rect?.left ?? 0,
       containerTop: rect?.top ?? 0,
       containerWidth,
-      availableHeight: Math.max(0, containerHeight - TASKBAR_RESERVED_HEIGHT),
+      workArea,
     }
   }
   function resolveSnapPreview(e: MouseEvent): SnapPreview | null {
-    const cfg = readConfig()
-    const { containerLeft, containerTop, containerWidth, availableHeight } = getBounds()
-    const pointerX = e.clientX - containerLeft
+    const { containerTop, workArea } = getBounds()
     const pointerY = e.clientY - containerTop
-    if (pointerY <= SNAP_EDGE_SIZE) {
-      return { kind: 'top', x: 0, y: 0, width: containerWidth, height: availableHeight }
-    }
-    const halfWidth = clampDimension(Math.round(containerWidth / 2), cfg.minWidth, containerWidth)
-    const snapHeight = clampDimension(availableHeight, cfg.minHeight, availableHeight)
-    if (pointerX <= SNAP_EDGE_SIZE) {
-      return { kind: 'left', x: 0, y: 0, width: halfWidth, height: snapHeight }
-    }
-    if (pointerX >= containerWidth - SNAP_EDGE_SIZE) {
-      return { kind: 'right', x: Math.max(0, containerWidth - halfWidth), y: 0, width: halfWidth, height: snapHeight }
+    if (pointerY <= workArea.y + SNAP_EDGE_SIZE) {
+      return { kind: 'top', ...workArea }
     }
     return null
   }
@@ -104,9 +95,9 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
     cfg.maximize(cfg.id)
 
     // 还原后按比例定位窗口
-    const { containerLeft, containerTop, containerWidth, availableHeight } = getBounds()
-    const newX = Math.max(0, Math.min(e.clientX - containerLeft - restoreWidth * ratio, containerWidth - restoreWidth))
-    const newY = Math.max(0, e.clientY - containerTop - 16)
+    const { containerLeft, containerTop, workArea } = getBounds()
+    const newX = Math.max(workArea.x, Math.min(e.clientX - containerLeft - restoreWidth * ratio, workArea.x + workArea.width - restoreWidth))
+    const newY = Math.max(workArea.y, Math.min(e.clientY - containerTop - 16, workArea.y + workArea.height - restoreHeight))
     cfg.updateGeometry(cfg.id, Math.round(newX), Math.round(newY), restoreWidth, restoreHeight)
 
     // 清除最大化拖拽监听，进入常规拖拽
@@ -129,8 +120,12 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
 
   function handleDragMove(e: MouseEvent) {
     if (!dragging.value) return
-    const cfg = readConfig(), { containerWidth, availableHeight } = getBounds(), dx = e.clientX - dragStart.value.x, dy = e.clientY - dragStart.value.y
-    cfg.updatePosition(cfg.id, Math.max(0, Math.min(dragStart.value.winX + dx, Math.max(0, containerWidth - cfg.width))), Math.max(0, Math.min(dragStart.value.winY + dy, Math.max(0, availableHeight - cfg.height))))
+    const cfg = readConfig(), { workArea } = getBounds(), dx = e.clientX - dragStart.value.x, dy = e.clientY - dragStart.value.y
+    cfg.updatePosition(
+      cfg.id,
+      Math.max(workArea.x, Math.min(dragStart.value.winX + dx, workArea.x + Math.max(0, workArea.width - cfg.width))),
+      Math.max(workArea.y, Math.min(dragStart.value.winY + dy, workArea.y + Math.max(0, workArea.height - cfg.height))),
+    )
     snapPreview.value = resolveSnapPreview(e)
   }
   function startResize(direction: ResizeDirection, e: MouseEvent) {
@@ -141,19 +136,19 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
   }
   function handleResizeMove(e: MouseEvent) {
     if (!resizeInfo.value) return
-    const cfg = readConfig(), info = resizeInfo.value, { containerWidth, availableHeight } = getBounds(), dx = e.clientX - info.startX, dy = e.clientY - info.startY
+    const cfg = readConfig(), info = resizeInfo.value, { workArea } = getBounds(), dx = e.clientX - info.startX, dy = e.clientY - info.startY
     let { initialX: x, initialY: y, initialWidth: width, initialHeight: height } = info
-    if (info.direction.includes('e')) width = clampDimension(info.initialWidth + dx, cfg.minWidth, containerWidth - info.initialX)
-    if (info.direction.includes('s')) height = clampDimension(info.initialHeight + dy, cfg.minHeight, availableHeight - info.initialY)
+    if (info.direction.includes('e')) width = clampDimension(info.initialWidth + dx, cfg.minWidth, workArea.x + workArea.width - info.initialX)
+    if (info.direction.includes('s')) height = clampDimension(info.initialHeight + dy, cfg.minHeight, workArea.y + workArea.height - info.initialY)
     if (info.direction.includes('w')) {
       const rightEdge = info.initialX + info.initialWidth
-      const nextX = Math.max(0, Math.min(info.initialX + dx, rightEdge))
+      const nextX = Math.max(workArea.x, Math.min(info.initialX + dx, rightEdge))
       width = clampDimension(rightEdge - nextX, cfg.minWidth, rightEdge)
       x = rightEdge - width
     }
     if (info.direction.includes('n')) {
       const bottomEdge = info.initialY + info.initialHeight
-      const nextY = Math.max(0, Math.min(info.initialY + dy, bottomEdge))
+      const nextY = Math.max(workArea.y, Math.min(info.initialY + dy, bottomEdge))
       height = clampDimension(bottomEdge - nextY, cfg.minHeight, bottomEdge)
       y = bottomEdge - height
     }
@@ -163,16 +158,12 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
     const preview = dragging.value && e ? resolveSnapPreview(e) : snapPreview.value
     if (dragging.value && preview) {
       const cfg = readConfig()
-      if (preview.kind === 'top') {
-        cfg.maximize(cfg.id, {
-          x: dragStart.value.winX,
-          y: dragStart.value.winY,
-          width: dragStart.value.winWidth,
-          height: dragStart.value.winHeight,
-        })
-      } else {
-        cfg.updateGeometry(cfg.id, preview.x, preview.y, preview.width, preview.height)
-      }
+      cfg.maximize(cfg.id, {
+        x: dragStart.value.winX,
+        y: dragStart.value.winY,
+        width: dragStart.value.winWidth,
+        height: dragStart.value.winHeight,
+      })
     }
     dragging.value = false; resizeInfo.value = null
     snapPreview.value = null

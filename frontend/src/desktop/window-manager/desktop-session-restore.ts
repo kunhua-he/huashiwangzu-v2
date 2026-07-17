@@ -2,6 +2,7 @@ import { getApp } from '@/desktop/app-registry/app-registry'
 import type { WindowState } from './window-types'
 import type { DesktopWindowSnapshot } from './desktop-session-storage'
 import { deduplicateSnapshots } from './desktop-session-storage'
+import { clampWindowToWorkArea, getDesktopWorkArea } from '@/desktop/config/desktop-chrome-metrics'
 
 type RestoreOptions = {
   snapshots: DesktopWindowSnapshot[]
@@ -15,23 +16,23 @@ type RestoreOptions = {
 export function buildRestoreWindowList(opts: RestoreOptions): WindowState[] {
   const deduped = deduplicateSnapshots(opts.snapshots)
   const result: WindowState[] = []
+  const workArea = getDesktopWorkArea(opts.containerWidth, opts.containerHeight)
   for (const snap of [...deduped].sort((a, b) => a.zIndex - b.zIndex)) {
     const reg = getApp(snap.appKey)
     if (!reg || reg.windowType === 'background-service') continue
     if (reg.allowedRoles && opts.currentRole && !reg.allowedRoles.includes(opts.currentRole)) continue
 
-    const width = Math.min(Math.max(reg.minWidth, snap.width), opts.containerWidth)
-    const height = Math.min(Math.max(reg.minHeight, snap.height), opts.containerHeight - 48)
+    const geometry = clampWindowToWorkArea(snap, workArea, reg.minWidth, reg.minHeight)
     const maximized = Boolean(snap.maximized)
     result.push({
       ...snap,
       id: opts.generateId(),
       title: resolveRestoredWindowTitle(snap.appKey, reg.appName, snap.payload || {}),
       icon: reg.icon,
-      x: maximized ? 0 : Math.max(0, Math.min(snap.x, opts.containerWidth - width)),
-      y: maximized ? 0 : Math.max(0, Math.min(snap.y, opts.containerHeight - 48 - height)),
-      width: maximized ? opts.containerWidth : width,
-      height: maximized ? opts.containerHeight - 48 : height,
+      x: maximized ? workArea.x : geometry.x,
+      y: maximized ? workArea.y : geometry.y,
+      width: maximized ? workArea.width : geometry.width,
+      height: maximized ? workArea.height : geometry.height,
       zIndex: opts.generateZIndex(),
     })
   }

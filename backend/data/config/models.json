@@ -95,6 +95,25 @@
       "api_key_env": "MIMO_GATE1_KEY",
       "provider_name": "mimo",
       "description": "Xiaomi MiMo cloud vision-language model"
+    },
+    "deepseek-anthropic": {
+      "type": "anthropic",
+      "api_url": "https://api.deepseek.com/anthropic/v1/messages",
+      "api_protocol": "anthropic",
+      "api_key_env": "DEEPSEEK_ANTHROPIC_KEY",
+      "provider_name": "deepseek-anthropic",
+      "timeout_seconds": 120,
+      "description": "ant协议备用:deepseek官方anthropic端点(x-api-key直连),不参与常规运行,填key才启用。模型deepseek-v4-flash/pro"
+    },
+    "jayce-claude": {
+      "type": "anthropic",
+      "api_url": "https://jayce.sky1818.com/v1/messages",
+      "api_protocol": "anthropic",
+      "api_key_env": "JAYCE_CLAUDE_KEY",
+      "provider_name": "jayce-claude",
+      "proxy": "http://127.0.0.1:4780",
+      "timeout_seconds": 120,
+      "description": "ant协议备用:jayce中转站claude真身(必须走代理4780),贵,仅备。模型claude-opus-4-8"
     }
   },
   "fallback_policies": {

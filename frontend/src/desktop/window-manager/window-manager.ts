@@ -4,6 +4,7 @@ import { getApp } from '@/desktop/app-registry/app-registry'
 import { useUserStore } from '@/platform/stores/user'
 import { MAX_WINDOWS, type DesktopWindowSnapshot } from './desktop-session-storage'
 import { buildRestoreWindowList } from './desktop-session-restore'
+import { clampWindowToWorkArea, getDesktopWorkArea } from '@/desktop/config/desktop-chrome-metrics'
 
 const WINDOW_TYPE_BACKGROUND_SERVICE = 'background-service'
 const WINDOW_TYPE_NORMAL = 'normal'
@@ -13,6 +14,7 @@ const windows = reactive<WindowState[]>([])
 let nextZIndex = 100
 let nextId = 1
 const desktopContainerSize = reactive({ width: window.innerWidth, height: window.innerHeight })
+const showDesktopWindowIds = new Set<string>()
 
 function generateId(): string { return `win_${Date.now()}_${nextId++}` }
 
@@ -74,12 +76,18 @@ function openWindow(appKey: string, payload?: unknown, originRect?: WindowGeomet
   const id = generateId()
   const windowPayload = normalizeWindowPayload(payload)
 
+  const workArea = getDesktopWorkArea(desktopContainerSize.width, desktopContainerSize.height)
+  const geometry = clampWindowToWorkArea({
+    x: app.defaultWidth > 800 ? 120 + offset : 160 + offset,
+    y: workArea.y + 54 + offset,
+    width: app.defaultWidth,
+    height: app.defaultHeight,
+  }, workArea, app.minWidth, app.minHeight)
+
   windows.push({
     id, appKey,
     title: resolveWindowTitle(appKey, app.appName, windowPayload), icon: app.icon,
-    x: app.defaultWidth > 800 ? 120 + offset : 160 + offset,
-    y: 110 + offset,
-    width: app.defaultWidth, height: app.defaultHeight,
+    ...geometry,
     zIndex: nextZIndex++,
     minimized: false, maximized: false, isActive: true,
     windowType: app.windowType || WINDOW_TYPE_NORMAL,
@@ -104,6 +112,7 @@ function closeWindow(id: string) {
   if (idx === -1) return
   const wasActive = windows[idx].isActive
   windows.splice(idx, 1)
+  showDesktopWindowIds.delete(id)
   if (wasActive) activateTopmostVisibleWindow()
 }
 
@@ -117,17 +126,36 @@ function toggleMinimized(id: string) {
   } else { activateWindow(id) }
 }
 
+function minimizeWindow(id: string) {
+  const w = windows.find(x => x.id === id)
+  if (!w || w.minimized) return
+  w.minimized = true
+  w.isActive = false
+  activateTopmostVisibleWindow(w.id)
+}
+
+function restoreWindow(id: string) {
+  const w = windows.find(x => x.id === id)
+  if (!w) return
+  w.minimized = false
+  activateWindow(id)
+}
+
 function toggleMaximized(id: string, restoreState?: WindowGeometry) {
   const w = windows.find(x => x.id === id)
   if (!w) return
   if (w.maximized) {
-    if (w.preMaximizeState) { w.x = w.preMaximizeState.x; w.y = w.preMaximizeState.y; w.width = w.preMaximizeState.width; w.height = w.preMaximizeState.height }
+    const workArea = getDesktopWorkArea(desktopContainerSize.width, desktopContainerSize.height)
+    if (w.preMaximizeState) {
+      Object.assign(w, clampWindowToWorkArea(w.preMaximizeState, workArea))
+    }
     w.maximized = false
   } else {
     w.preMaximizeState = restoreState ? { ...restoreState } : { x: w.x, y: w.y, width: w.width, height: w.height }
-    w.x = 0; w.y = 0
-    w.width = desktopContainerSize.width
-    w.height = desktopContainerSize.height - 48
+    const workArea = getDesktopWorkArea(desktopContainerSize.width, desktopContainerSize.height)
+    w.x = workArea.x; w.y = workArea.y
+    w.width = workArea.width
+    w.height = workArea.height
     w.maximized = true
   }
 }
@@ -152,6 +180,18 @@ function activateTopmostVisibleWindow(excludeId?: string) {
 function setContainerSize(width: number, height: number) {
   desktopContainerSize.width = width
   desktopContainerSize.height = height
+  const workArea = getDesktopWorkArea(width, height)
+  for (const w of windows) {
+    if (w.maximized) {
+      w.x = workArea.x
+      w.y = workArea.y
+      w.width = workArea.width
+      w.height = workArea.height
+      continue
+    }
+    const app = getApp(w.appKey)
+    Object.assign(w, clampWindowToWorkArea(w, workArea, app?.minWidth, app?.minHeight))
+  }
 }
 
 function updateWindowPosition(id: string, x: number, y: number) {
@@ -168,7 +208,37 @@ function updateWindowSize(id: string, width: number, height: number) {
 
 function updateWindowGeometry(id: string, x: number, y: number, width: number, height: number) {
   const w = windows.find(win => win.id === id)
-  if (w && !w.maximized) { w.x = x; w.y = y; w.width = width; w.height = height }
+  if (w && !w.maximized) {
+    const app = getApp(w.appKey)
+    const workArea = getDesktopWorkArea(desktopContainerSize.width, desktopContainerSize.height)
+    Object.assign(w, clampWindowToWorkArea({ x, y, width, height }, workArea, app?.minWidth, app?.minHeight))
+  }
+}
+
+function showDesktop() {
+  showDesktopWindowIds.clear()
+  for (const w of windows) {
+    if (w.minimized || w.windowType === WINDOW_TYPE_BACKGROUND_SERVICE) continue
+    showDesktopWindowIds.add(w.id)
+    w.minimized = true
+    w.isActive = false
+  }
+}
+
+function restoreDesktop() {
+  const ids = [...showDesktopWindowIds]
+  showDesktopWindowIds.clear()
+  for (const id of ids) {
+    const w = windows.find(item => item.id === id)
+    if (w) w.minimized = false
+  }
+  const top = windows.filter(w => !w.minimized).sort((a, b) => b.zIndex - a.zIndex)[0]
+  if (top) activateWindow(top.id)
+}
+
+function toggleDesktopVisibility() {
+  if (showDesktopWindowIds.size > 0) restoreDesktop()
+  else showDesktop()
 }
 
 function normalizeWindowPayload(payload?: unknown): Record<string, unknown> {
@@ -220,9 +290,9 @@ export function useWindowManager() {
     windows,
     openedWindowCount: computed(() => windows.length),
     taskbarItems,
-    openWindow, closeWindow, toggleMinimized, toggleMaximized, activateWindow,
+    openWindow, closeWindow, toggleMinimized, minimizeWindow, restoreWindow, toggleMaximized, activateWindow,
     updateWindowPosition, updateWindowSize, updateWindowGeometry,
-    setContainerSize, restoreWindows,
+    setContainerSize, restoreWindows, showDesktop, restoreDesktop, toggleDesktopVisibility,
   }
 }
 
@@ -230,7 +300,7 @@ export const windowManager = {
   windows,
   get openedWindowCount() { return windows.length },
   taskbarItems,
-  openWindow, closeWindow, toggleMinimized, toggleMaximized, activateWindow,
+  openWindow, closeWindow, toggleMinimized, minimizeWindow, restoreWindow, toggleMaximized, activateWindow,
   updateWindowPosition, updateWindowSize, updateWindowGeometry,
-  setContainerSize, restoreWindows,
+  setContainerSize, restoreWindows, showDesktop, restoreDesktop, toggleDesktopVisibility,
 }

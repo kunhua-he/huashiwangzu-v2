@@ -146,8 +146,10 @@ import type { ClipboardItem } from '@/desktop/clipboard/clipboard-state'
 // 旧 drag-tool 已被 icon-grid-model 替代，图标网格组件自管理位置
 // import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import {
-  moveEntryRequest, batchMoveRequest, batchCopyRequest, copyEntryRequest, emptyRecycleBinRequest,
+  moveEntryRequest, copyEntryRequest, emptyRecycleBinRequest,
+  resolveNameConflictRequest,
 } from '@/shared/api/desktop'
+import { ElMessageBox } from 'element-plus'
 import type { FileEntry } from '@/shared/api/types'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { useFileOperations } from '@/shared/files/use-file-operations'
@@ -393,51 +395,58 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId, copy }) => {
   }
   if (!items.length) return
 
+  async function resolveConflict(item: MoveItem, mode: 'move' | 'copy'): Promise<boolean> {
+    try {
+      await ElMessageBox.confirm(
+        '目标已有同名项目。选择「替换」将把已有项目移入回收站；「保留两者」会自动重命名。',
+        mode === 'move' ? '移动冲突' : '复制冲突',
+        {
+          distinguishCancelAndClose: true,
+          confirmButtonText: '替换',
+          cancelButtonText: '保留两者',
+          type: 'warning',
+        },
+      )
+      await resolveNameConflictRequest({
+        action: 'replace',
+        mode,
+        item_type: item.item_type,
+        item_id: item.id,
+        target_folder_id: targetId,
+      })
+      return true
+    } catch (action) {
+      if (action === 'cancel') {
+        await resolveNameConflictRequest({
+          action: 'keep_both',
+          mode,
+          item_type: item.item_type,
+          item_id: item.id,
+          target_folder_id: targetId,
+        })
+        return true
+      }
+      return false
+    }
+  }
+
   let doneCount = 0
-  if (isCopy) {
+  // always process item-by-item so 409 can open conflict dialog
+  for (const item of items) {
     try {
-      const resp = await batchCopyRequest(items, targetId)
-      doneCount = Number(resp.success_count || 0)
-      const failed = Number(resp.failed_count || 0)
-      if (failed > 0 && doneCount === 0) desktopMessage.warning('复制失败')
-      else if (failed > 0) desktopMessage.warning(`已复制 ${doneCount} 个，失败 ${failed} 个`)
-    } catch {
-      for (const item of items) {
-        try {
-          await copyEntryRequest(item.item_type, item.id, targetId)
-          doneCount += 1
-        } catch (e: unknown) {
-          const err = e as { http_status?: number; response?: { status?: number } } | null
-          if (err?.http_status === 409 || err?.response?.status === 409) {
-            desktopMessage.warning('目标已有同名文件')
-          }
-        }
-      }
-      if (doneCount === 0) desktopMessage.warning('复制失败')
-    }
-  } else {
-    try {
-      const resp = await batchMoveRequest(items, targetId)
-      doneCount = Number(resp.success_count || 0)
-      const failed = Number(resp.failed_count || 0)
-      if (failed > 0 && doneCount === 0) {
-        desktopMessage.warning('移动失败')
-      } else if (failed > 0) {
-        desktopMessage.warning(`已移动 ${doneCount} 个，失败 ${failed} 个`)
-      }
-    } catch {
-      for (const item of items) {
-        try {
-          await moveEntryRequest(item.item_type, item.id, targetId)
-          doneCount += 1
-        } catch (e: unknown) {
-          const err = e as { http_status?: number; response?: { status?: number } } | null
-          if (err?.http_status === 409 || err?.response?.status === 409) {
-            desktopMessage.warning('目标已有同名文件')
-          }
-        }
+      if (isCopy) await copyEntryRequest(item.item_type, item.id, targetId)
+      else await moveEntryRequest(item.item_type, item.id, targetId)
+      doneCount += 1
+    } catch (e: unknown) {
+      const err = e as { http_status?: number; response?: { status?: number } } | null
+      if (err?.http_status === 409 || err?.response?.status === 409) {
+        const ok = await resolveConflict(item, isCopy ? 'copy' : 'move')
+        if (ok) doneCount += 1
       }
     }
+  }
+  if (doneCount === 0 && items.length) {
+    desktopMessage.warning(isCopy ? '复制失败' : '移动失败')
   }
 
   if (doneCount > 0) {

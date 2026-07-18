@@ -23,10 +23,12 @@ export function buildFileMenu(
   writable: boolean,
   separatorItems: () => MenuItemConfig[],
   activeTags: FinderTagColor[] = [],
+  opts?: { canDecompress?: boolean },
 ): MenuItemConfig[] {
   return [
     { key: 'open', label: '打开', icon: '↗' },
     { key: 'download', label: '下载到本地', icon: '⬇' },
+    ...(opts?.canDecompress ? [{ key: 'decompress', label: '解压', icon: '📂' }] : []),
     ...separatorItems(),
     ...(writable
       ? [

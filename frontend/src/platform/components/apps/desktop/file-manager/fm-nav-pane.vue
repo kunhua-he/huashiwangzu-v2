@@ -58,7 +58,10 @@
     </section>
 
     <section class="fm-nav-section">
-      <div class="fm-nav-section-label">标签</div>
+      <div class="fm-nav-section-label">
+        <span>标签</span>
+        <button type="button" class="fm-nav-edit-tags" title="自定义标签名" @click.stop="editLabels">编辑</button>
+      </div>
       <button
         v-for="tag in tags"
         :key="tag.key"
@@ -76,10 +79,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { Download, FileText, HardDrive, Monitor, Trash2 } from 'lucide-vue-next'
-import { FINDER_TAGS, type FinderTagColor } from './finder-tags'
-
+import {
+  listTagsWithCustomNames,
+  loadCustomTagLabels,
+  saveCustomTagLabels,
+  type FinderTagColor,
+  type FinderTagDef,
+} from './finder-tags'
 import { dragState } from '@/desktop/drag-drop/drag-state'
 
 const props = defineProps<{
@@ -106,7 +115,40 @@ const currentKey = computed(() => {
   return 'folder'
 })
 
-const tags = FINDER_TAGS
+const labelTick = ref(0)
+loadCustomTagLabels()
+const tags = computed<FinderTagDef[]>(() => {
+  void labelTick.value
+  return listTagsWithCustomNames()
+})
+
+async function editLabels() {
+  const current = listTagsWithCustomNames()
+  const lines = current.map((t) => t.name).join('\n')
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '按行输入 7 个标签名（红→灰），留空恢复默认',
+      '自定义标签名',
+      {
+        inputValue: lines,
+        inputType: 'textarea',
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+      },
+    )
+    const parts = String(value || '').split('\n').map((s) => s.trim())
+    const keys: FinderTagColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray']
+    const next: Partial<Record<FinderTagColor, string>> = {}
+    keys.forEach((key, i) => {
+      if (parts[i]) next[key] = parts[i]
+    })
+    saveCustomTagLabels(next)
+    labelTick.value += 1
+  } catch {
+    // cancelled
+  }
+}
+
 const dragOverId = computed(() => (dragState.isDragging ? dragState.dragOverId : null))
 const documentsFolderId = computed(() => props.documentsFolderId ?? null)
 const downloadsFolderId = computed(() => props.downloadsFolderId ?? null)
@@ -136,6 +178,18 @@ const downloadsFolderId = computed(() => props.downloadsFolderId ?? null)
   padding: 0 12px 4px;
   font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
   color: rgba(60, 60, 67, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fm-nav-edit-tags {
+  border: 0;
+  background: transparent;
+  color: rgba(10, 132, 255, 0.9);
+  font: 500 11px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  cursor: pointer;
+  padding: 0;
 }
 
 .fm-nav-item {

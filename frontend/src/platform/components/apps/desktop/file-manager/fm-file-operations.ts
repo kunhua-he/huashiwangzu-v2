@@ -1,7 +1,7 @@
 import { useFileOperations } from '@/shared/files/use-file-operations'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { copyItems, cutItems, hasContent, currentClipboardType, currentClipboardItems, clearClipboard } from '@/desktop/clipboard/clipboard-state'
-import { compressEntriesRequest } from '@/shared/api/desktop'
+import { compressEntriesRequest, decompressZipRequest } from '@/shared/api/desktop'
 import { pushUndo } from './finder-undo-stack'
 import type { FileEntry } from '@/shared/api/types'
 import type { ComputedRef, Ref } from 'vue'
@@ -79,7 +79,17 @@ export function createFileOperations(deps: FileOperationsDeps) {
   }
 
   async function renameEntry(file: FileEntry) {
-    await ops.renameEntry(file)
+    const result = await ops.renameEntry(file)
+    if (result?.renamed) {
+      pushUndo({
+        kind: 'rename',
+        itemType: result.renamed.type,
+        id: result.renamed.id,
+        prevName: result.renamed.prevName,
+        nextName: result.renamed.nextName,
+      })
+    }
+    return result
   }
 
   async function deleteEntry(file: FileEntry) {
@@ -151,20 +161,21 @@ export function createFileOperations(deps: FileOperationsDeps) {
         const isCut = currentClipboardType.value === 'cut'
         const folderId = (file && file.is_folder) ? file.id : deps.currentFolderId.value
         const clip = currentClipboardItems.value
-        await ops.pasteToFolder(folderId, clip, isCut)
+        const fromFolder = deps.currentFolderId.value || null
+        const result = await ops.pasteToFolder(folderId, clip, isCut)
         if (isCut) {
           pushUndo({
             kind: 'move',
             items: clip.map((c) => ({
               id: c.id,
               type: c.type,
-              from: folderId,
-              to: deps.currentFolderId.value || null,
+              from: fromFolder,
+              to: folderId,
             })),
           })
           clearClipboard()
-        } else {
-          // copy: cannot know new ids without API response; skip precise undo
+        } else if (result.created?.length) {
+          pushUndo({ kind: 'copy', created: result.created })
         }
       }
       return
@@ -190,12 +201,12 @@ export function createFileOperations(deps: FileOperationsDeps) {
     }
     if (key === 'duplicate') {
       if (!targets.length) return
-      // copy into current folder (Finder "Duplicate")
-      await ops.pasteToFolder(
+      const result = await ops.pasteToFolder(
         deps.currentFolderId.value || null,
         targets.map(toClipboardItem),
         false,
       )
+      if (result.created?.length) pushUndo({ kind: 'copy', created: result.created })
       return
     }
     if (key === 'compress') {
@@ -203,15 +214,29 @@ export function createFileOperations(deps: FileOperationsDeps) {
       await compressEntries(targets)
       return
     }
+    if (key === 'decompress') {
+      const target = file || targets[0]
+      if (!target || target.is_folder) return
+      const ext = String(target.format || '').toLowerCase()
+      if (ext !== 'zip') {
+        ElMessage.warning('仅支持 .zip 解压')
+        return
+      }
+      try {
+        const res = await decompressZipRequest(target.id, deps.currentFolderId.value || null)
+        ElMessage.success(`已解压到「${res.folder_name}」(${res.file_count} 个文件)`)
+        await deps.loadFiles()
+      } catch {
+        ElMessage.warning('解压失败')
+      }
+      return
+    }
     if (!file) return
     if (key === 'open') { deps.openItem(file); return }
     if (key === 'download') { await downloadFile(file); return }
     if (key === 'copy-path') { await copyPath(file); return }
     if (key === 'rename') {
-      const prev = file.file_name
       await renameEntry(file)
-      // best-effort: renameEntry prompts; if success list refreshes — we can't know new name here without return
-      void prev
       return
     }
   }

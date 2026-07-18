@@ -766,7 +766,8 @@ function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
       })
     }
   } else {
-    items = buildFileMenu(state.canWrite.value, sep, activeTags)
+    const canDecompress = String(item.format || '').toLowerCase() === 'zip'
+    items = buildFileMenu(state.canWrite.value, sep, activeTags, { canDecompress })
   }
   contextMenu.open(e, items, { type: item.is_folder ? 'folder' : 'file', target: { ...item } })
 }

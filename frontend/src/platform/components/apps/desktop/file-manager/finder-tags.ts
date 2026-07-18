@@ -30,6 +30,45 @@ export const FINDER_TAGS: FinderTagDef[] = [
   { key: 'gray', name: '灰色', color: 'rgb(152, 152, 157)' },
 ]
 
+/** User-custom display names for the 7 system colors (prefs, no schema change). */
+const CUSTOM_LABEL_KEY = 'finder.tag.labels.v1'
+let customLabels: Partial<Record<FinderTagColor, string>> = {}
+
+export function loadCustomTagLabels(): Partial<Record<FinderTagColor, string>> {
+  try {
+    const raw = localStorage.getItem(CUSTOM_LABEL_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, string>
+    const out: Partial<Record<FinderTagColor, string>> = {}
+    for (const t of FINDER_TAGS) {
+      const name = parsed[t.key]
+      if (typeof name === 'string' && name.trim()) out[t.key] = name.trim().slice(0, 16)
+    }
+    customLabels = out
+    return out
+  } catch {
+    return {}
+  }
+}
+
+export function saveCustomTagLabels(labels: Partial<Record<FinderTagColor, string>>) {
+  customLabels = { ...labels }
+  localStorage.setItem(CUSTOM_LABEL_KEY, JSON.stringify(customLabels))
+}
+
+export function getTagDisplayName(key: FinderTagColor): string {
+  if (!Object.keys(customLabels).length) loadCustomTagLabels()
+  return customLabels[key] || FINDER_TAGS.find((t) => t.key === key)?.name || key
+}
+
+export function listTagsWithCustomNames(): FinderTagDef[] {
+  if (!Object.keys(customLabels).length) loadCustomTagLabels()
+  return FINDER_TAGS.map((t) => ({
+    ...t,
+    name: customLabels[t.key] || t.name,
+  }))
+}
+
 /** In-memory cache mirrored from backend (per user session). */
 let tagMap: Record<string, FinderTagColor[]> = {}
 let loaded = false

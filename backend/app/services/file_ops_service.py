@@ -208,6 +208,39 @@ async def copy_item(
     raise AppException("Unsupported item type", status_code=400)
 
 
+async def find_name_conflict(
+    db: AsyncSession,
+    *,
+    item_type: str,
+    name: str,
+    extension: str | None,
+    target_folder_id: int | None,
+    owner_id: int,
+    exclude_id: int | None = None,
+) -> File | Folder | None:
+    dest = target_folder_id if target_folder_id and target_folder_id > 0 else None
+    if item_type == "folder":
+        q = select(Folder).where(
+            Folder.name == name,
+            Folder.parent_id == dest,
+            Folder.owner_id == owner_id,
+            Folder.deleted.is_(False),
+        )
+        if exclude_id is not None:
+            q = q.where(Folder.id != exclude_id)
+        return (await db.execute(q)).scalar_one_or_none()
+    q = select(File).where(
+        File.name == name,
+        File.extension == (extension or ""),
+        File.folder_id == dest,
+        File.owner_id == owner_id,
+        File.deleted.is_(False),
+    )
+    if exclude_id is not None:
+        q = q.where(File.id != exclude_id)
+    return (await db.execute(q)).scalar_one_or_none()
+
+
 async def get_file_detail(db: AsyncSession, file_id: int, user_id: int) -> dict:
     file = await get_file_record(db, file_id)
     if not file:

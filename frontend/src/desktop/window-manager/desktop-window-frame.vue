@@ -21,16 +21,50 @@
         <span class="window-title">{{ title }}</span>
       </div>
       <div class="window-action-buttons">
+        <button
+          v-if="isFinderWindow"
+          class="window-tab-add"
+          type="button"
+          title="新建标签"
+          aria-label="新建标签"
+          @click.stop="addFinderTab"
+        >+</button>
         <button class="window-action-btn window-action-close" @click.stop="requestClose" title="关闭" aria-label="关闭" />
         <button v-if="windowType !== 'panel'" class="window-action-btn window-action-minimize" @click.stop="handleMinimize" title="最小化" aria-label="最小化" />
         <button v-if="windowType !== 'tool' && windowType !== 'background-service'" class="window-action-btn window-action-maximize" @click.stop="$emit('maximize', id)" title="缩放" aria-label="缩放" />
       </div>
     </div>
+    <div
+      v-if="isFinderWindow && finderTabs.length > 1"
+      class="window-finder-tabs"
+      role="tablist"
+    >
+      <button
+        v-for="tab in finderTabs"
+        :key="tab.id"
+        type="button"
+        class="window-finder-tab"
+        :class="{ active: tab.id === activeFinderTabId }"
+        role="tab"
+        @click.stop="activateFinderTab(tab.id)"
+      >
+        <span class="window-finder-tab-label">{{ tab.title }}</span>
+        <span
+          class="window-finder-tab-close"
+          title="关闭标签"
+          @click.stop="closeFinderTab(tab.id)"
+        >×</span>
+      </button>
+    </div>
     <div v-if="hasMountedContent" class="window-content" v-show="contentVisible">
       <div class="window-content-padding">
         <template v-if="currentComponent && !loadError">
           <Suspense>
-            <component :is="currentComponent" v-bind="{ ...(payload || {}), windowId: id }" />
+            <component
+              :is="currentComponent"
+              :key="isFinderWindow ? activeFinderTabId : id"
+              v-bind="finderComponentBind"
+            />
             <template #fallback>
               <AsyncPaneState :title="`正在启动${title}`" />
             </template>
@@ -224,6 +258,105 @@ const minWidth = computed(() => appInfo.value?.minWidth ?? 400)
 const minHeight = computed(() => appInfo.value?.minHeight ?? 260)
 const preMaximizeState = computed(() => props.preMaximizeState)
 
+type FinderTab = {
+  id: string
+  title: string
+  folderId?: number
+  folderName?: string
+}
+const finderTabs = ref<FinderTab[]>([])
+const activeFinderTabId = ref('')
+
+function seedFinderTabs() {
+  if (!isFinderWindow.value) {
+    finderTabs.value = []
+    activeFinderTabId.value = ''
+    return
+  }
+  if (finderTabs.value.length) return
+  const folderId = props.payload?.folderId as number | undefined
+  const folderName = typeof props.payload?.folderName === 'string' ? props.payload.folderName : props.title
+  const tab: FinderTab = {
+    id: `tab-${props.id}-root`,
+    title: folderName || '桌面',
+    folderId: folderId as number | undefined,
+    folderName: folderName || '桌面',
+  }
+  finderTabs.value = [tab]
+  activeFinderTabId.value = tab.id
+}
+
+function addFinderTab() {
+  if (!isFinderWindow.value) return
+  seedFinderTabs()
+  const tab: FinderTab = {
+    id: `tab-${props.id}-${Date.now()}`,
+    title: '桌面',
+    folderId: 0,
+    folderName: '桌面',
+  }
+  finderTabs.value = [...finderTabs.value, tab]
+  activeFinderTabId.value = tab.id
+}
+
+function activateFinderTab(tabId: string) {
+  activeFinderTabId.value = tabId
+}
+
+function closeFinderTab(tabId: string) {
+  if (finderTabs.value.length <= 1) {
+    requestClose()
+    return
+  }
+  const next = finderTabs.value.filter((t) => t.id !== tabId)
+  finderTabs.value = next
+  if (activeFinderTabId.value === tabId) {
+    activeFinderTabId.value = next[next.length - 1]?.id || next[0].id
+  }
+}
+
+const activeFinderTab = computed(() => finderTabs.value.find((t) => t.id === activeFinderTabId.value) || null)
+
+const finderComponentBind = computed(() => {
+  if (!isFinderWindow.value) return { ...(props.payload || {}), windowId: props.id }
+  seedFinderTabs()
+  const tab = activeFinderTab.value
+  return {
+    ...(props.payload || {}),
+    windowId: props.id,
+    folderId: tab?.folderId ?? props.payload?.folderId,
+    folderName: tab?.folderName ?? props.payload?.folderName,
+  }
+})
+
+watch(
+  () => [isFinderWindow.value, props.payload?.folderId, props.payload?.folderName, props.title] as const,
+  () => {
+    if (!isFinderWindow.value) return
+    if (!finderTabs.value.length) {
+      seedFinderTabs()
+      return
+    }
+    // keep active tab title in sync when navigating inside the same tab instance
+    const tab = activeFinderTab.value
+    if (!tab) return
+    const folderName = typeof props.payload?.folderName === 'string' ? props.payload.folderName : props.title
+    const folderId = props.payload?.folderId as number | undefined
+    const idx = finderTabs.value.findIndex((t) => t.id === tab.id)
+    if (idx >= 0) {
+      const next = [...finderTabs.value]
+      next[idx] = {
+        ...next[idx],
+        title: folderName || next[idx].title,
+        folderId: folderId as number | undefined,
+        folderName: folderName || next[idx].folderName,
+      }
+      finderTabs.value = next
+    }
+  },
+  { immediate: true },
+)
+
 const rootEl = ref<HTMLElement | null>(null)
 const windowInteraction = useWindowInteraction(() => ({
   id: props.id, x: props.x, y: props.y, width: props.width, height: props.height, maximized: props.maximized,
@@ -318,10 +451,64 @@ onUnmounted(() => {
   border-bottom: 0;
   background: color-mix(in srgb, #ececef 78%, rgba(255, 255, 255, 0.55));
   box-shadow: inset 0 -0.5px 0 rgba(60, 60, 67, 0.12);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
 }
 .desktop-window-finder.desktop-window-active :deep(.window-titlebar) {
   background: color-mix(in srgb, #f4f4f6 82%, rgba(255, 255, 255, 0.6));
 }
+.window-tab-add {
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(60, 60, 67, 0.75);
+  font: 600 16px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: pointer;
+}
+.window-tab-add:hover { background: rgba(0, 0, 0, 0.06); }
+.window-finder-tabs {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  min-height: 28px;
+  padding: 0 10px;
+  background: color-mix(in srgb, #ececef 70%, white);
+  box-shadow: inset 0 -0.5px 0 rgba(60, 60, 67, 0.12);
+  overflow-x: auto;
+}
+.window-finder-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: rgba(60, 60, 67, 0.78);
+  font: 500 12px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  cursor: pointer;
+}
+.window-finder-tab.active {
+  background: color-mix(in srgb, #fff 88%, #f2f2f4);
+  color: #1d1d1f;
+  box-shadow: 0 -0.5px 0 rgba(60, 60, 67, 0.12);
+}
+.window-finder-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.window-finder-tab-close {
+  opacity: 0.55;
+  font-size: 14px;
+  line-height: 1;
+}
+.window-finder-tab:hover .window-finder-tab-close { opacity: 0.9; }
 .desktop-window-finder :deep(.window-content) {
   background: transparent;
 }

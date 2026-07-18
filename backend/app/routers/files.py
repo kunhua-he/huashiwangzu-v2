@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AppException, NotFound
 from app.database import get_db
 from app.middleware.auth import require_permission
 from app.models.file import File, Folder
@@ -344,6 +345,94 @@ async def compress_items(
         media_type="application/zip",
         headers={"Content-Disposition": cd},
     )
+
+
+class DecompressRequest(BaseModel):
+    file_id: int
+    target_folder_id: int | None = None
+
+
+@router.post("/decompress")
+async def decompress_zip(
+    body: DecompressRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    result = await file_compress_service.extract_zip_file(
+        db,
+        owner_id=user.id,
+        file_id=body.file_id,
+        target_folder_id=body.target_folder_id,
+    )
+    await create_log(db, "info", "file_system", "decompress", f"Extracted zip {body.file_id}", user_id=user.id)
+    return ApiResponse(data=result)
+
+
+class ResolveConflictRequest(BaseModel):
+    """replace = trash existing then move/copy; keep_both = auto-rename via copy semantics."""
+    action: str  # replace | keep_both | skip
+    mode: str  # move | copy
+    item_type: str
+    item_id: int
+    target_folder_id: int | None = None
+
+
+@router.post("/resolve-conflict")
+async def resolve_conflict(
+    body: ResolveConflictRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    if body.action == "skip":
+        return ApiResponse(data={"status": "skipped"})
+    if body.action not in ("replace", "keep_both") or body.mode not in ("move", "copy"):
+        raise AppException("Unsupported conflict resolution", status_code=400)
+
+    src = await db.get(Folder if body.item_type == "folder" else File, body.item_id)
+    if not src or getattr(src, "deleted", False) or src.owner_id != user.id:
+        raise NotFound("Source not found")
+
+    if body.action == "replace":
+        conflict = await file_ops_service.find_name_conflict(
+            db,
+            item_type=body.item_type,
+            name=src.name,
+            extension=getattr(src, "extension", None),
+            target_folder_id=body.target_folder_id,
+            owner_id=user.id,
+            exclude_id=body.item_id if body.mode == "move" else None,
+        )
+        if conflict:
+            await file_service.delete_to_trash(db, body.item_type, conflict.id, user.id)
+            db.add(RecycleItem(
+                origin_id=conflict.id,
+                item_type=body.item_type,
+                name=conflict.name,
+                owner_id=user.id,
+                deleted_at=datetime.now(timezone.utc),
+            ))
+            await db.commit()
+
+    if body.mode == "move" and body.action == "replace":
+        await file_service.move_item(db, body.item_type, body.item_id, body.target_folder_id, user.id)
+        return ApiResponse(data={"status": "replaced_moved"})
+
+    if body.mode == "move" and body.action == "keep_both":
+        copied = await file_ops_service.copy_item(db, body.item_type, body.item_id, body.target_folder_id, user.id)
+        await file_service.delete_to_trash(db, body.item_type, body.item_id, user.id)
+        db.add(RecycleItem(
+            origin_id=body.item_id,
+            item_type=body.item_type,
+            name=src.name,
+            owner_id=user.id,
+            deleted_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+        return ApiResponse(data={"status": "kept_both_moved", "new_id": getattr(copied, "id", None)})
+
+    # copy + replace/keep_both (keep_both is default auto-rename copy)
+    copied = await file_ops_service.copy_item(db, body.item_type, body.item_id, body.target_folder_id, user.id)
+    return ApiResponse(data={"status": "copied", "new_id": getattr(copied, "id", None)})
 
 
 @router.get("/path/{item_type}/{item_id}")

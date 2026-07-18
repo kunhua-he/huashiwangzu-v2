@@ -3,7 +3,7 @@ import api from '@/shared/api'
 import {
   createFileRequest, uploadFileRequest, renameEntryRequest,
   moveToRecycleBinRequest, moveEntryRequest, copyEntryRequest, downloadFileRequest,
-  batchDeleteRequest, batchMoveRequest,
+  batchDeleteRequest, batchMoveRequest, resolveNameConflictRequest,
 } from '@/shared/api/desktop'
 import { formatFileDisplayName } from '@/shared/files/display-name'
 import type { FileEntry } from '@/shared/api/types'
@@ -26,6 +26,39 @@ export interface BatchOperationResult {
   successCount: number
   failCount: number
   errors: BatchOperationError[]
+  /** copy new ids when API returns them */
+  created?: Array<{ id: number; type: FileItemType }>
+  renamed?: { id: number; type: FileItemType; prevName: string; nextName: string }
+}
+
+export type ConflictAction = 'replace' | 'keep_both' | 'skip' | 'cancel'
+
+async function askNameConflict(name: string, mode: 'move' | 'copy'): Promise<ConflictAction> {
+  try {
+    await ElMessageBox.confirm(
+      `目标已有同名项目「${name}」。\n选择「替换」将把已有项目移入回收站；「保留两者」会自动重命名。`,
+      mode === 'move' ? '移动冲突' : '复制冲突',
+      {
+        distinguishCancelAndClose: true,
+        confirmButtonText: '替换',
+        cancelButtonText: '保留两者',
+        type: 'warning',
+        showClose: true,
+      },
+    )
+    return 'replace'
+  } catch (action) {
+    if (action === 'cancel') return 'keep_both'
+    return 'cancel'
+  }
+}
+
+function isConflictError(error: unknown): boolean {
+  const err = error as { http_status?: number; response?: { status?: number }; message?: string; error?: string } | null
+  const status = err?.http_status || err?.response?.status
+  if (status === 409) return true
+  const msg = String(err?.message || err?.error || error || '')
+  return msg.includes('409') || msg.includes('same name') || msg.includes('同名')
 }
 
 /** 统一文件全名：文件夹用原名，文件用显示名（含扩展名） */
@@ -163,16 +196,36 @@ export function useFileOperations(options: FileOperationsOptions) {
     }
   }
 
-  async function renameEntry(file: FileEntry): Promise<void> {
+  async function renameEntry(file: FileEntry): Promise<BatchOperationResult | null> {
+    const result = createBatchOperationResult()
     try {
       const { value } = await ElMessageBox.prompt('输入新名称', '重命名', {
         inputValue: file.file_name, confirmButtonText: '确定', cancelButtonText: '取消',
       })
-      if (!value || value === file.file_name) return
-      await renameEntryRequest(file.is_folder ? 'folder' : 'file', file.id, value)
+      if (!value || value === file.file_name) return null
+      try {
+        await renameEntryRequest(file.is_folder ? 'folder' : 'file', file.id, value)
+      } catch (error: unknown) {
+        if (isConflictError(error)) {
+          ElMessage.warning('该名称已存在')
+          result.failCount = 1
+          return result
+        }
+        throw error
+      }
+      result.successCount = 1
+      result.renamed = {
+        id: file.id,
+        type: file.is_folder ? 'folder' : 'file',
+        prevName: file.file_name,
+        nextName: value,
+      }
       ElMessage.success('重命名成功')
       await refresh()
-    } catch { /* cancelled */ }
+      return result
+    } catch {
+      return null
+    }
   }
 
   async function deleteEntry(file: FileEntry): Promise<BatchOperationResult | null> {
@@ -197,12 +250,52 @@ export function useFileOperations(options: FileOperationsOptions) {
 
   async function pasteToFolder(folderId: number | null, items: ClipboardLike[], isCut: boolean): Promise<BatchOperationResult> {
     const result = createBatchOperationResult()
+    result.created = []
+    let applyAll: ConflictAction | null = null
     for (const item of items) {
       try {
-        if (isCut) await moveEntryRequest(item.type, item.id, folderId)
-        else await copyEntryRequest(item.type, item.id, folderId)
+        if (isCut) {
+          await moveEntryRequest(item.type, item.id, folderId)
+        } else {
+          const resp = await copyEntryRequest(item.type, item.id, folderId)
+          const newId = Number((resp as { id?: number })?.id)
+          if (Number.isFinite(newId)) result.created.push({ id: newId, type: item.type })
+        }
         result.successCount += 1
       } catch (error: unknown) {
+        if (isConflictError(error)) {
+          let action: ConflictAction = applyAll || await askNameConflict(item.name, isCut ? 'move' : 'copy')
+          if (action === 'cancel') {
+            result.failCount += 1
+            result.errors.push({ id: item.id, name: item.name, message: '已取消' })
+            break
+          }
+          if (items.length > 1 && !applyAll && action !== 'skip') {
+            // subsequent conflicts reuse last choice for speed
+            applyAll = action
+          }
+          if (action === 'skip') {
+            result.failCount += 1
+            result.errors.push({ id: item.id, name: item.name, message: '已跳过' })
+            continue
+          }
+          try {
+            const resolved = await resolveNameConflictRequest({
+              action: action === 'replace' ? 'replace' : 'keep_both',
+              mode: isCut ? 'move' : 'copy',
+              item_type: item.type,
+              item_id: item.id,
+              target_folder_id: folderId,
+            })
+            result.successCount += 1
+            const newId = Number((resolved as { new_id?: number })?.new_id)
+            if (Number.isFinite(newId) && !isCut) result.created.push({ id: newId, type: item.type })
+          } catch (e2: unknown) {
+            result.failCount += 1
+            result.errors.push({ id: item.id, name: item.name, message: errorMessage(e2) })
+          }
+          continue
+        }
         result.failCount += 1
         result.errors.push({ id: item.id, name: item.name, message: errorMessage(error) })
       }

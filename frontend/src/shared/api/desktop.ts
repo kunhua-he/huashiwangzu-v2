@@ -196,6 +196,33 @@ export async function copyEntryRequest(itemType: FileItemType, id: number, targe
   return await api.post<unknown, Record<string, unknown>>('/files/copy', { type: itemType, id, target_folder_id: targetFolderId })
 }
 
+export async function resolveNameConflictRequest(body: {
+  action: 'replace' | 'keep_both' | 'skip'
+  mode: 'move' | 'copy'
+  item_type: FileItemType
+  item_id: number
+  target_folder_id?: number | null
+}): Promise<Record<string, unknown>> {
+  return await api.post<unknown, Record<string, unknown>>('/files/resolve-conflict', {
+    action: body.action,
+    mode: body.mode,
+    item_type: body.item_type,
+    item_id: body.item_id,
+    target_folder_id: body.target_folder_id ?? null,
+  })
+}
+
+export async function decompressZipRequest(fileId: number, targetFolderId?: number | null): Promise<{
+  folder_id: number
+  folder_name: string
+  file_count: number
+}> {
+  return await api.post<unknown, { folder_id: number; folder_name: string; file_count: number }>('/files/decompress', {
+    file_id: fileId,
+    target_folder_id: targetFolderId ?? null,
+  })
+}
+
 export async function moveToRecycleBinRequest(itemType: FileItemType, id: number): Promise<Record<string, unknown>> {
   return await api.post<unknown, Record<string, unknown>>('/files/delete', { type: itemType, id })
 }

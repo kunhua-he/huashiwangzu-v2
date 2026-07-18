@@ -115,3 +115,99 @@ async def build_zip_bytes(
                 name = f"{file.name}.zip"
 
     return buf.getvalue(), name
+
+
+async def extract_zip_file(
+    db: AsyncSession,
+    *,
+    owner_id: int,
+    file_id: int,
+    target_folder_id: int | None = None,
+) -> dict:
+    """Extract a zip file owned by user into target folder (default: zip's parent)."""
+    import zipfile as zfmod
+
+    from app.services.file_service import next_available_folder_name
+
+    src = await db.get(File, file_id)
+    if not src or src.deleted or src.owner_id != owner_id:
+        raise NotFound("Zip file not found")
+    ext = (src.extension or "").lower()
+    if ext != "zip":
+        raise AppException("Only .zip is supported", status_code=400)
+    disk = _resolve_disk_path(src.storage_path)
+    if not disk:
+        raise AppException("Zip content missing on disk", status_code=404)
+
+    dest_parent = target_folder_id if target_folder_id and target_folder_id > 0 else src.folder_id
+    # create container folder named after zip
+    base_name = f"{src.name}"
+    folder_name = await next_available_folder_name(
+        db, owner_id=owner_id, parent_id=dest_parent, requested_name=base_name
+    )
+    container = Folder(name=folder_name, parent_id=dest_parent, owner_id=owner_id, deleted=False)
+    db.add(container)
+    await db.flush()
+
+    upload_dir = Path(settings.UPLOAD_DIR).resolve()
+    extract_root = (upload_dir / "extracted" / str(owner_id) / f"{container.id}").resolve()
+    extract_root.mkdir(parents=True, exist_ok=True)
+
+    created_files = 0
+    with zfmod.ZipFile(disk, "r") as zf:
+        for info in zf.infolist():
+            name = info.filename
+            if not name or name.endswith("/"):
+                # ensure folder path exists in DB tree lazily via file parents
+                continue
+            # path traversal guard
+            target_path = (extract_root / name).resolve()
+            if not str(target_path).startswith(str(extract_root)):
+                continue
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src_f, open(target_path, "wb") as out_f:
+                out_f.write(src_f.read())
+
+            # map relative path to folder tree under container
+            parts = Path(name).parts
+            parent_id = container.id
+            for folder_part in parts[:-1]:
+                existing = await db.execute(
+                    select(Folder).where(
+                        Folder.name == folder_part,
+                        Folder.parent_id == parent_id,
+                        Folder.owner_id == owner_id,
+                        Folder.deleted.is_(False),
+                    )
+                )
+                folder = existing.scalar_one_or_none()
+                if not folder:
+                    folder = Folder(name=folder_part, parent_id=parent_id, owner_id=owner_id, deleted=False)
+                    db.add(folder)
+                    await db.flush()
+                parent_id = folder.id
+
+            filename = parts[-1]
+            stem, dot, extension = filename.rpartition(".")
+            if not dot:
+                stem, extension = filename, ""
+            rel_storage = str(target_path.relative_to(upload_dir))
+            row = File(
+                name=stem or filename,
+                extension=extension.lower(),
+                size=target_path.stat().st_size,
+                folder_id=parent_id,
+                owner_id=owner_id,
+                storage_path=rel_storage,
+                mime_type="",
+                deleted=False,
+            )
+            db.add(row)
+            created_files += 1
+
+    await db.commit()
+    return {
+        "folder_id": container.id,
+        "folder_name": container.name,
+        "file_count": created_files,
+    }

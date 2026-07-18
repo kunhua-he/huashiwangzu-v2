@@ -1,0 +1,50 @@
+from app.core.exceptions import ValidationError
+from app.middleware.auth import require_permission
+from app.models.user import User
+from app.schemas.common import ApiResponse
+from app.services.module_registry import register_capability
+from app.services.uploaded_file_runner import run_uploaded_file_capability
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+
+from .parser import SUPPORTED_EXTS, DocParseError, parse_doc_file
+
+router = APIRouter(prefix="/api/doc-parser", tags=["doc-parser"])
+
+
+class ParseRequest(BaseModel):
+    file_id: int = Field(gt=0)
+
+
+async def _parse(params: dict, caller: str) -> dict:
+    def parse_file(file_id, _file, full_path, ext):
+        try:
+            return parse_doc_file(file_id, full_path, ext)
+        except DocParseError as exc:
+            raise ValidationError(str(exc)) from exc
+
+    try:
+        return await run_uploaded_file_capability(params, caller, SUPPORTED_EXTS, parse_file)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
+@router.get("/health")
+async def health():
+    return ApiResponse(data={"module": "doc-parser", "status": "ok"})
+
+
+@router.post("/parse")
+async def call_parse(payload: ParseRequest, user: User = Depends(require_permission("viewer"))):
+    result = await _parse({"file_id": payload.file_id}, f"user:{user.id}")
+    return ApiResponse(data=result)
+
+
+register_capability(
+    "doc-parser", "parse", _parse,
+    description="Parse DOC files into unified content blocks",
+    brief="解析 DOC 文档",
+    parameters={"file_id": {"type": "int", "description": "File ID in file storage"}},
+    min_role="viewer",
+    execution_contract={"side_effect_level": "none", "resource_class": "local_cpu", "timeout_seconds": 120, "parallel_safe": True},
+)

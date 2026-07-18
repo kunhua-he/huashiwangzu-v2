@@ -1,0 +1,18 @@
+{
+  "language": "html",
+  "extensions": [
+    "html",
+    "htm"
+  ],
+  "split_mode": "html",
+  "line_comment": [],
+  "block_comment": [
+    {
+      "start": "<!--",
+      "end": "-->"
+    }
+  ],
+  "unit_patterns": [],
+  "preserve_indent": true,
+  "max_bytes": 1048576
+}

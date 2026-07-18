@@ -16,7 +16,7 @@ logger = logging.getLogger("v2.knowledge").getChild("parsing")
 FORMAT_PARSER_MAP: dict[str, tuple[str, str]] = {
     "pdf": ("pdf-parser", "parse"),
     "docx": ("docx-parser", "parse"),
-    "doc": ("docx-parser", "parse"),
+    "doc": ("doc-parser", "parse"),
     "pptx": ("pptx-parser", "parse"),
     "ppt": ("pptx-parser", "parse"),
     "xlsx": ("xlsx-parser", "parse"),
@@ -31,6 +31,24 @@ FORMAT_PARSER_MAP: dict[str, tuple[str, str]] = {
     "yml": ("structured-parser", "parse"),
     "eml": ("email-parser", "parse"),
     "msg": ("email-parser", "parse"),
+    # 节点②A：doc 拆分 + 代码文件解析器
+    "py": ("code-py-parser", "parse"),
+    "php": ("code-php-parser", "parse"),
+    "html": ("code-html-parser", "parse"),
+    "htm": ("code-html-parser", "parse"),
+    "js": ("code-js-parser", "parse"),
+    "ts": ("code-js-parser", "parse"),
+    "jsx": ("code-js-parser", "parse"),
+    "tsx": ("code-js-parser", "parse"),
+    "java": ("code-generic-parser", "parse"),
+    "go": ("code-generic-parser", "parse"),
+    "c": ("code-generic-parser", "parse"),
+    "cpp": ("code-generic-parser", "parse"),
+    "cs": ("code-generic-parser", "parse"),
+    "rb": ("code-generic-parser", "parse"),
+    "rs": ("code-generic-parser", "parse"),
+    "sh": ("code-generic-parser", "parse"),
+    "sql": ("code-generic-parser", "parse"),
 }
 
 # 图片格式经 image-vision 模块解析（可选依赖）

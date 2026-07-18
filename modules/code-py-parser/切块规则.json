@@ -1,0 +1,29 @@
+{
+  "language": "python",
+  "extensions": [
+    "py"
+  ],
+  "split_mode": "python_ast",
+  "line_comment": [
+    "#"
+  ],
+  "block_comment": [
+    {
+      "start": "\"\"\"",
+      "end": "\"\"\""
+    },
+    {
+      "start": "'''",
+      "end": "'''"
+    }
+  ],
+  "unit_patterns": [
+    "^(?:async\\s+)?def\\s+\\w+",
+    "^class\\s+\\w+"
+  ],
+  "module_docstring_as_heading": true,
+  "emit_docstring_paragraph": true,
+  "indent_based_body": true,
+  "preserve_indent": true,
+  "max_bytes": 1048576
+}

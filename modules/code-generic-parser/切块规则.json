@@ -1,0 +1,35 @@
+{
+  "language": "generic",
+  "extensions": [
+    "java",
+    "go",
+    "c",
+    "cpp",
+    "cs",
+    "rb",
+    "rs",
+    "sh",
+    "sql"
+  ],
+  "split_mode": "regex",
+  "line_comment": [
+    "//",
+    "#",
+    "--"
+  ],
+  "block_comment": [
+    {
+      "start": "/*",
+      "end": "*/"
+    }
+  ],
+  "unit_patterns": [
+    "(?:public|private|protected|static|final|async|export|fn|func|def|class|interface|struct|enum|impl)\\s+[\\w<>,\\s\\*]+",
+    "function\\s+\\w+",
+    "^\\s*(?:sub|package|module)\\s+\\w+"
+  ],
+  "brace_based_body": true,
+  "blank_line_split": true,
+  "preserve_indent": true,
+  "max_bytes": 1048576
+}

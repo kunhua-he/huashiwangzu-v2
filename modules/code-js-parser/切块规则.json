@@ -1,0 +1,30 @@
+{
+  "language": "javascript",
+  "extensions": [
+    "js",
+    "ts",
+    "jsx",
+    "tsx"
+  ],
+  "split_mode": "regex",
+  "line_comment": [
+    "//"
+  ],
+  "block_comment": [
+    {
+      "start": "/*",
+      "end": "*/"
+    }
+  ],
+  "unit_patterns": [
+    "(?:export\\s+)?(?:async\\s+)?function\\s+\\w+",
+    "(?:export\\s+)?class\\s+\\w+",
+    "(?:export\\s+)?const\\s+\\w+\\s*=\\s*(?:async\\s*)?\\(",
+    "(?:export\\s+)?(?:const|let|var)\\s+\\w+\\s*=\\s*(?:async\\s*)?function",
+    "export\\s+default\\s+function",
+    "export\\s+\\{"
+  ],
+  "brace_based_body": true,
+  "preserve_indent": true,
+  "max_bytes": 1048576
+}

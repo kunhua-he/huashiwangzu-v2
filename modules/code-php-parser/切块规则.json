@@ -1,0 +1,26 @@
+{
+  "language": "php",
+  "extensions": [
+    "php"
+  ],
+  "split_mode": "regex",
+  "line_comment": [
+    "//",
+    "#"
+  ],
+  "block_comment": [
+    {
+      "start": "/*",
+      "end": "*/"
+    }
+  ],
+  "unit_patterns": [
+    "function\\s+\\w+",
+    "(?:abstract\\s+|final\\s+)?class\\s+\\w+",
+    "interface\\s+\\w+",
+    "trait\\s+\\w+"
+  ],
+  "brace_based_body": true,
+  "preserve_indent": true,
+  "max_bytes": 1048576
+}

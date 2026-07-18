@@ -44,12 +44,17 @@ PACKAGE_TYPE_MAP = {
     "mp4": "media", "avi": "media", "mov": "media",
     "mkv": "media", "webm": "media",
     "mp3": "media", "wav": "media", "flac": "media",
+    # 节点②A：代码文件包类型
+    "py": "code", "php": "code", "html": "code", "htm": "code",
+    "js": "code", "ts": "code", "jsx": "code", "tsx": "code",
+    "java": "code", "go": "code", "c": "code", "cpp": "code",
+    "cs": "code", "rb": "code", "rs": "code", "sh": "code", "sql": "code",
 }
 
 FORMAT_PARSER_MAP: dict[str, tuple[str, str]] = {
     "pdf": ("pdf-parser", "parse"),
     "docx": ("docx-parser", "parse"),
-    "doc": ("docx-parser", "parse"),
+    "doc": ("doc-parser", "parse"),
     "pptx": ("pptx-parser", "parse"),
     "ppt": ("pptx-parser", "parse"),
     "xlsx": ("xlsx-parser", "parse"),
@@ -64,6 +69,24 @@ FORMAT_PARSER_MAP: dict[str, tuple[str, str]] = {
     "yml": ("structured-parser", "parse"),
     "eml": ("email-parser", "parse"),
     "msg": ("email-parser", "parse"),
+    # 节点②A：doc 拆分 + 代码文件解析器
+    "py": ("code-py-parser", "parse"),
+    "php": ("code-php-parser", "parse"),
+    "html": ("code-html-parser", "parse"),
+    "htm": ("code-html-parser", "parse"),
+    "js": ("code-js-parser", "parse"),
+    "ts": ("code-js-parser", "parse"),
+    "jsx": ("code-js-parser", "parse"),
+    "tsx": ("code-js-parser", "parse"),
+    "java": ("code-generic-parser", "parse"),
+    "go": ("code-generic-parser", "parse"),
+    "c": ("code-generic-parser", "parse"),
+    "cpp": ("code-generic-parser", "parse"),
+    "cs": ("code-generic-parser", "parse"),
+    "rb": ("code-generic-parser", "parse"),
+    "rs": ("code-generic-parser", "parse"),
+    "sh": ("code-generic-parser", "parse"),
+    "sql": ("code-generic-parser", "parse"),
 }
 
 IMAGE_FORMATS = {"png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "svg"}

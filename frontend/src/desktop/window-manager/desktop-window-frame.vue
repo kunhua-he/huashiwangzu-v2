@@ -3,7 +3,7 @@
     v-if="windowType !== 'background-service'"
     ref="rootEl"
     class="desktop-window glass-window"
-    :class="windowClasses"
+    :class="[windowClasses, { 'desktop-window-finder': isFinderWindow }]"
     :style="windowStyle"
     :data-window-id="id"
     :data-accepts-drop="appKey === 'desktop' ? 'true' : undefined"
@@ -217,6 +217,7 @@ const windowStyle = computed(() => {
 })
 
 const appInfo = computed(() => getApp(props.appKey))
+const isFinderWindow = computed(() => props.appKey === 'files' || props.appKey === 'desktop')
 const windowType = computed(() => appInfo.value?.windowType || 'normal')
 const resizable = computed(() => appInfo.value?.resizable !== false && windowType.value !== 'fullscreen')
 const minWidth = computed(() => appInfo.value?.minWidth ?? 400)
@@ -301,6 +302,21 @@ onUnmounted(() => {
     transform var(--window-anim-duration, 200ms) cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.16s ease,
     border-color 0.16s ease;
+}
+
+/* Finder / 访达：更接近系统标题栏（隐藏应用图标，仅保留居中标题） */
+.desktop-window-finder :deep(.window-title-info .app-icon) {
+  display: none;
+}
+.desktop-window-finder :deep(.window-title) {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.desktop-window-finder :deep(.window-titlebar) {
+  height: 40px;
+}
+.desktop-window-finder :deep(.window-content) {
+  background: transparent;
 }
 
 /* ═══ 打开动画 - 通用（从中心淡入） ═══ */

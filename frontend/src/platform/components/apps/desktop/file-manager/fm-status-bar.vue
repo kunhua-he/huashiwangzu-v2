@@ -35,7 +35,7 @@ defineProps<{
   fileCount: number
   selectedItem: FileEntry | null
   selectedSize: string
-  viewMode: 'grid' | 'list'
+  viewMode: 'grid' | 'list' | 'column'
   searchKeyword: string
   filteredCount: number
   displayName: (file: FileEntry) => string

@@ -79,6 +79,44 @@
         </button>
       </div>
 
+      <div v-else-if="viewMode === 'column'" class="fm-content-column">
+        <div class="fm-column-pane">
+          <button
+            v-for="item in items"
+            :key="`${item.is_folder ? 'folder' : 'file'}-${item.id}`"
+            :draggable="false"
+            class="fm-column-row"
+            :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
+            :data-folder="item.is_folder ? String(item.id) : undefined"
+            :class="{ 'fm-entry-selected': selectedId === item.id }"
+            type="button"
+            @click="handleClick(item, $event)"
+            @dblclick="handleDoubleClick(item, $event)"
+            @contextmenu.prevent.stop="$emit('context-menu', item, $event)"
+            @mousedown.stop="handleEntryMouseDown(item, $event)"
+          >
+            <FileVisualIcon :kind="item.is_folder || !item.format ? 'folder' : 'file'" :extension="item.format || ''" :size="18" />
+            <span class="fm-entry-name">{{ displayName(item) }}</span>
+            <span v-if="item.is_folder" class="fm-column-chevron" aria-hidden="true">›</span>
+          </button>
+        </div>
+        <div class="fm-column-preview">
+          <template v-if="selected">
+            <FileVisualIcon
+              :kind="selected.is_folder || !selected.format ? 'folder' : 'file'"
+              :extension="selected.format || ''"
+              :size="72"
+            />
+            <div class="fm-column-preview-name">{{ displayName(selected) }}</div>
+            <div class="fm-column-preview-meta">
+              {{ selected.is_folder ? '文件夹' : (selected.format || '文件') }}
+              <template v-if="!selected.is_folder"> · {{ formatSize(selected.file_size) }}</template>
+            </div>
+          </template>
+          <div v-else class="fm-column-preview-empty">选择一个项目以预览</div>
+        </div>
+      </div>
+
       <div v-else class="fm-content-list">
         <button
           v-for="item in items"
@@ -121,7 +159,7 @@ let pendingDrag: { key: string; startX: number; startY: number } | null = null
 const props = withDefaults(defineProps<{
   items: FileEntry[]
   selectedId: number | null
-  viewMode: 'grid' | 'list'
+  viewMode: 'grid' | 'list' | 'column'
   iconSize?: number
   loading: boolean
   displayName: (file: FileEntry) => string
@@ -133,6 +171,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   iconSize: 50,
 })
+
+const selected = computed(() => props.items.find((item) => item.id === props.selectedId) || null)
 
 const gridIconSize = computed(() => Math.round(props.iconSize * 0.78))
 const gridStyle = computed(() => ({
@@ -257,6 +297,72 @@ const emit = defineEmits<{
   display: grid;
   align-content: start;
   padding: 12px;
+}
+
+.fm-content-column {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.fm-column-pane {
+  overflow: auto;
+  border-right: 0.5px solid rgba(60, 60, 67, 0.14);
+  background: #fff;
+  padding: 4px 0;
+}
+
+.fm-column-row {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: default;
+  color: #1d1d1f;
+  font-size: 13px;
+}
+
+.fm-column-row:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.fm-column-row.fm-entry-selected {
+  background: rgba(10, 132, 255, 0.18);
+}
+
+.fm-column-chevron {
+  color: rgba(60, 60, 67, 0.45);
+  font-size: 14px;
+}
+
+.fm-column-preview {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  background: #fbfbfd;
+  color: #1d1d1f;
+}
+
+.fm-column-preview-name {
+  max-width: 240px;
+  text-align: center;
+  font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  word-break: break-word;
+}
+
+.fm-column-preview-meta,
+.fm-column-preview-empty {
+  color: rgba(60, 60, 67, 0.58);
+  font-size: 12px;
 }
 
 .fm-content-list {

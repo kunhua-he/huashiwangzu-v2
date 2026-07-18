@@ -1,49 +1,27 @@
 <template>
   <header class="fm-navigation-bar">
     <div class="fm-nav-left">
-      <button
-        class="fm-icon-button"
-        type="button"
-        :disabled="!canGoBack"
-        title="后退"
-        aria-label="后退"
-        @click="$emit('go-back')"
-      >
+      <button class="fm-icon-button" type="button" :disabled="!canGoBack" title="后退" aria-label="后退" @click="$emit('go-back')">
         <ChevronLeft :size="17" :stroke-width="2" />
       </button>
-      <button
-        class="fm-icon-button"
-        type="button"
-        :disabled="!canGoForward"
-        title="前进"
-        aria-label="前进"
-        @click="$emit('go-forward')"
-      >
+      <button class="fm-icon-button" type="button" :disabled="!canGoForward" title="前进" aria-label="前进" @click="$emit('go-forward')">
         <ChevronRight :size="17" :stroke-width="2" />
       </button>
     </div>
 
     <div class="fm-view-switch" role="group" aria-label="视图">
-      <span class="fm-view-thumb" :class="`is-${viewMode}`" aria-hidden="true" />
+      <span class="fm-view-thumb" :style="thumbStyle" aria-hidden="true" />
       <button
+        v-for="mode in viewModes"
+        :key="mode.id"
         type="button"
         class="fm-view-btn"
-        :class="{ active: viewMode === 'grid' }"
-        title="图标"
-        aria-label="图标视图"
-        @click="$emit('update:viewMode', 'grid')"
+        :class="{ active: viewMode === mode.id }"
+        :title="mode.title"
+        :aria-label="mode.title"
+        @click="$emit('update:viewMode', mode.id)"
       >
-        <LayoutGrid :size="15" :stroke-width="2" />
-      </button>
-      <button
-        type="button"
-        class="fm-view-btn"
-        :class="{ active: viewMode === 'list' }"
-        title="列表"
-        aria-label="列表视图"
-        @click="$emit('update:viewMode', 'list')"
-      >
-        <List :size="15" :stroke-width="2" />
+        <component :is="mode.icon" :size="15" :stroke-width="2" />
       </button>
     </div>
 
@@ -64,16 +42,19 @@
 </template>
 
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, LayoutGrid, List, Search } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { ChevronLeft, ChevronRight, Columns3, LayoutGrid, List, Search } from 'lucide-vue-next'
 import type { DesktopFileManagerBreadcrumbItem } from './types'
 
-defineProps<{
+export type FinderViewMode = 'grid' | 'list' | 'column'
+
+const props = defineProps<{
   canGoBack: boolean
   canGoForward: boolean
   canGoUp: boolean
   breadcrumb: DesktopFileManagerBreadcrumbItem[]
   searchKeyword: string
-  viewMode: 'grid' | 'list'
+  viewMode: FinderViewMode
 }>()
 
 defineEmits<{
@@ -83,8 +64,19 @@ defineEmits<{
   (e: 'go-root'): void
   (e: 'navigate', index: number): void
   (e: 'update:searchKeyword', value: string): void
-  (e: 'update:viewMode', mode: 'grid' | 'list'): void
+  (e: 'update:viewMode', mode: FinderViewMode): void
 }>()
+
+const viewModes = [
+  { id: 'grid' as const, title: '图标', icon: LayoutGrid },
+  { id: 'list' as const, title: '列表', icon: List },
+  { id: 'column' as const, title: '分栏', icon: Columns3 },
+]
+
+const thumbStyle = computed(() => {
+  const idx = Math.max(0, viewModes.findIndex((m) => m.id === props.viewMode))
+  return { left: `${2 + idx * 30}px` }
+})
 </script>
 
 <style scoped>
@@ -99,7 +91,7 @@ defineEmits<{
   padding: 0 12px;
   box-sizing: border-box;
   background: transparent;
-  box-shadow: inset 0 -0.5px 0 var(--mac-app-border, rgba(60, 60, 67, 0.18));
+  box-shadow: inset 0 -0.5px 0 rgba(60, 60, 67, 0.16);
 }
 
 .fm-nav-left {
@@ -114,19 +106,19 @@ defineEmits<{
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--mac-app-text-secondary, #6e6e73);
+  color: rgba(60, 60, 67, 0.72);
   display: grid;
   place-items: center;
   cursor: pointer;
 }
 
 .fm-icon-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--mac-app-text, #1d1d1f) 7%, transparent);
-  color: var(--mac-app-text, #1d1d1f);
+  background: rgba(0, 0, 0, 0.06);
+  color: #1d1d1f;
 }
 
 .fm-icon-button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 
@@ -137,8 +129,8 @@ defineEmits<{
   margin: 0 8px;
   padding: 2px;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--mac-app-text-secondary, #8e8e93) 16%, transparent);
-  box-shadow: inset 0 0 0 0.5px var(--mac-app-border, rgba(60, 60, 67, 0.16));
+  background: rgba(120, 120, 128, 0.14);
+  box-shadow: inset 0 0 0 0.5px rgba(60, 60, 67, 0.14);
   flex-shrink: 0;
 }
 
@@ -146,19 +138,12 @@ defineEmits<{
   position: absolute;
   top: 2px;
   bottom: 2px;
-  left: 2px;
   width: 30px;
   border-radius: 7px;
-  background: color-mix(in srgb, white 92%, #f2f2f7);
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.18),
-    inset 0 0 0 0.5px var(--mac-app-border, rgba(60, 60, 67, 0.14));
-  transition: left 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16), inset 0 0 0 0.5px rgba(60, 60, 67, 0.12);
+  transition: left 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
   pointer-events: none;
-}
-
-.fm-view-thumb.is-list {
-  left: 32px;
 }
 
 .fm-view-btn {
@@ -168,7 +153,7 @@ defineEmits<{
   height: 24px;
   border: 0;
   background: transparent;
-  color: var(--mac-app-text-secondary, #6e6e73);
+  color: rgba(60, 60, 67, 0.68);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -176,7 +161,7 @@ defineEmits<{
 }
 
 .fm-view-btn.active {
-  color: var(--mac-app-text, #1d1d1f);
+  color: #1d1d1f;
 }
 
 .fm-toolbar-spacer {
@@ -188,21 +173,19 @@ defineEmits<{
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 180px;
+  width: 188px;
   height: 26px;
   padding: 0 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, white 62%, rgba(246, 246, 248, 0.55));
-  box-shadow:
-    inset 0 0 0 0.5px var(--mac-app-border, rgba(60, 60, 67, 0.16)),
-    0 1px 1px rgba(255, 255, 255, 0.35) inset;
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: inset 0 0 0 0.5px rgba(60, 60, 67, 0.16);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
   flex-shrink: 0;
 }
 
 .fm-search-icon {
-  color: var(--mac-app-text-secondary, #8e8e93);
+  color: rgba(60, 60, 67, 0.55);
   flex-shrink: 0;
 }
 
@@ -212,16 +195,10 @@ defineEmits<{
   outline: none;
   background: transparent;
   font-size: 13px;
-  color: var(--mac-app-text, #1d1d1f);
+  color: #1d1d1f;
 }
 
 .fm-search-input::placeholder {
-  color: var(--mac-app-text-secondary, #8e8e93);
-}
-
-@media (max-width: 720px) {
-  .fm-search-pill {
-    width: min(180px, 34vw);
-  }
+  color: rgba(60, 60, 67, 0.48);
 }
 </style>

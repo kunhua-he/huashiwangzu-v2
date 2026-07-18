@@ -29,8 +29,10 @@
         <FmNavPane
           :current-folder-id="state.currentFolderId.value"
           :is-recycle-bin="state.isRecycleBin.value"
+          :active-named="state.activeNamed.value"
           @go-root="state.goRoot"
           @open-recycle="state.openRecycle"
+          @open-named="state.openNamedLocation"
         />
       </template>
 
@@ -39,6 +41,11 @@
         :data-folder="String(state.currentFolderId.value || 0)"
         :class="{ 'fm-main-drag-over': dragState.dragOverId === String(state.currentFolderId.value) && dragState.isDragging }"
       >
+        <FmPathBar
+          v-if="!state.isRecycleBin.value"
+          :crumbs="state.breadcrumb.value"
+          @navigate="state.navigateToCrumb"
+        />
         <FmFileList
           :items="state.sortedItems.value"
           :selected-id="state.selectedId.value"
@@ -115,6 +122,7 @@ import { hasContent } from '@/desktop/clipboard/clipboard-state'
 import { restoreRecycleBinEntry, permanentlyDeleteEntry, emptyRecycleBinRequest } from '@/shared/api/desktop'
 import FmNavigationBar from './file-manager/fm-navigation-bar.vue'
 import FmNavPane from './file-manager/fm-nav-pane.vue'
+import FmPathBar from './file-manager/fm-path-bar.vue'
 import FmFileList from './file-manager/fm-file-list.vue'
 import FmStatusBar from './file-manager/fm-status-bar.vue'
 import FmPropertiesDialog from './file-manager/fm-properties-dialog.vue'
@@ -293,9 +301,15 @@ onMounted(() => {
   min-width: 0;
   min-height: 0;
   height: 100%;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   background: var(--mac-app-surface, #fff);
+}
+
+.fm-main > .fm-file-list,
+.fm-main > :deep(.fm-file-list) {
+  flex: 1;
+  min-height: 0;
 }
 
 .fm-hidden-input {

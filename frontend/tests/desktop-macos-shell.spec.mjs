@@ -529,9 +529,12 @@ test('files finder app mounts MacAppShell contract', async ({ page }) => {
   await expect(finder.locator('.fm-nav-section-label').filter({ hasText: '个人收藏' })).toBeVisible()
   await expect(finder.locator('.fm-nav-section-label').filter({ hasText: '位置' })).toBeVisible()
   await expect(finder.locator('.fm-nav-section-label').filter({ hasText: '标签' })).toBeVisible()
+  await expect(finder.locator('.fm-path-bar')).toBeVisible()
   await expect(finder.locator('.fm-status-bar')).toBeVisible()
   await expect(finder.locator('.fm-icon-size')).toBeVisible()
   await expect(finder.locator('.app-window-frame--file-manager')).toBeVisible()
+  await finder.locator('.fm-view-btn[aria-label="分栏"]').click()
+  await expect(finder.locator('.fm-content-column')).toBeVisible()
 })
 
 test('document viewer shell uses mac-app-v1 chrome instead of legacy teal shell', async ({ page }) => {

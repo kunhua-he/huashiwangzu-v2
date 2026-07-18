@@ -22,7 +22,8 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   const loading = ref(false)
   const uploadInput = ref<HTMLInputElement | null>(null)
   const breadcrumb = ref<DesktopFileManagerBreadcrumbItem[]>([{ id: null, name: '桌面' }])
-  const viewMode = ref<'grid' | 'list'>('grid')
+  const viewMode = ref<'grid' | 'list' | 'column'>('grid')
+  const activeNamed = ref<'documents' | 'downloads' | null>(null)
   const selectedId = ref<number | null>(null)
 
   const sortColumn = ref<'name' | 'date' | 'type' | 'size'>('name')
@@ -157,9 +158,45 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
 
   async function goRoot() {
     isRecycleBin.value = false
+    activeNamed.value = null
     breadcrumb.value = [{ id: null, name: '桌面' }]
     pushHistory(0, '桌面')
     enterFolder(0)
+  }
+
+  function applyNamedFilter(key: 'documents' | 'downloads') {
+    if (key === 'documents') {
+      items.value = items.value.filter((item) => {
+        if (item.is_folder) return true
+        const ext = (item.format || '').toLowerCase()
+        return ['doc', 'docx', 'pdf', 'txt', 'md', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'json'].includes(ext)
+      })
+      return
+    }
+    items.value = items.value.filter((item) => {
+      const name = (item.file_name || '').toLowerCase()
+      const ext = (item.format || '').toLowerCase()
+      return item.is_folder
+        || ['zip', 'rar', '7z', 'dmg', 'pkg'].includes(ext)
+        || name.includes('下载')
+        || name.includes('download')
+    })
+  }
+
+  async function openNamedLocation(key: 'documents' | 'downloads') {
+    isRecycleBin.value = false
+    activeNamed.value = key
+    const label = key === 'documents' ? '文稿' : '下载'
+    // 当前数据模型以桌面根为统一存储；命名位置先以筛选呈现 Finder 结构
+    breadcrumb.value = [{ id: null, name: '桌面' }, { id: null, name: label }]
+    pushHistory(0, label)
+    sortColumn.value = 'name'
+    sortDirection.value = 'asc'
+    searchKeyword.value = ''
+    selectedId.value = null
+    currentFolderId.value = 0
+    await loadFiles()
+    applyNamedFilter(key)
   }
 
   async function goUp() {
@@ -209,6 +246,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
 
   function openItem(item: FileEntry) {
     if (item.is_folder) {
+      activeNamed.value = null
       breadcrumb.value.push({ id: item.id, name: item.file_name })
       pushHistory(item.id, item.file_name)
       enterFolder(item.id)
@@ -219,6 +257,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
 
   function openRecycle() {
     isRecycleBin.value = true
+    activeNamed.value = null
     breadcrumb.value = [{ id: null, name: '回收站' }]
     selectedId.value = null
     searchKeyword.value = ''
@@ -249,6 +288,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     uploadInput,
     breadcrumb,
     viewMode,
+    activeNamed,
     selectedId,
     sortColumn,
     sortDirection,
@@ -281,6 +321,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     openSelected,
     openItem,
     openRecycle,
+    openNamedLocation,
     formatSize,
     showProperties,
     closeProperties,

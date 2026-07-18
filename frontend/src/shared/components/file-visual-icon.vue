@@ -5,20 +5,79 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const props = withDefaults(defineProps<{ kind: 'file' | 'folder'; size?: number; extension?: string }>(), { size: 20, extension: '' })
-const folderIcon = '<svg viewBox="0 0 64 52" xmlns="http://www.w3.org/2000/svg"><path d="M6 12c0-3.3 2.7-6 6-6h12l5 5h23c3.3 0 6 2.7 6 6v4H6v-9z" fill="#9ed0ff"/><path d="M4 18c0-3.3 2.7-6 6-6h44c3.3 0 6 2.7 6 6v20c0 4.4-3.6 8-8 8H12c-4.4 0-8-3.6-8-8V18z" fill="#5aa7ff"/><path d="M7 21h50v3H7z" fill="#cfe7ff" opacity=".65"/></svg>'
-const defaultDoc = '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M16 6h24l10 10v36c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V12c0-3.3 2.7-6 6-6z" fill="#fff" stroke="#d9e2ec" stroke-width="2"/><path d="M40 6v12h12" fill="#eef4fa"/><path d="M18 28h28M18 36h28M18 44h18" stroke="#94a3b8" stroke-width="4" stroke-linecap="round"/></svg>'
-const notepadIcon = '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="12" y="10" width="40" height="48" rx="6" fill="#7dd3fc"/><rect x="12" y="52" width="40" height="6" rx="2" fill="#d97706" opacity=".75"/><path d="M20 10v-4M28 10v-4M36 10v-4M44 10v-4" stroke="#0f172a" stroke-width="4" stroke-linecap="round"/><path d="M21 26h22M21 34h22M21 42h16" stroke="#0c4a6e" stroke-width="4" stroke-linecap="round" opacity=".78"/></svg>'
-function buildWordIcon() { return '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="24" y="10" width="30" height="44" rx="4" fill="#2b78da"/><rect x="30" y="10" width="24" height="44" rx="4" fill="#185abd"/><path d="M30 20h24M30 30h24M30 40h24" stroke="#5b9af4" stroke-width="4" opacity=".55"/><rect x="8" y="18" width="24" height="28" rx="4" fill="#185abd"/><text x="20" y="36" text-anchor="middle" font-size="18" font-weight="700" font-family="Arial, sans-serif" fill="#fff">W</text></svg>' }
-function buildExcelIcon() { return '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="24" y="10" width="30" height="44" rx="4" fill="#33c481"/><rect x="30" y="10" width="24" height="44" rx="4" fill="#107c41"/><path d="M30 22h24M42 10v44M30 38h24" stroke="#6ee7b7" stroke-width="4" opacity=".38"/><rect x="8" y="18" width="24" height="28" rx="4" fill="#107c41"/><text x="20" y="36" text-anchor="middle" font-size="18" font-weight="700" font-family="Arial, sans-serif" fill="#fff">X</text></svg>' }
-function buildPptIcon() { return '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="28" y="12" width="26" height="40" rx="4" fill="#f59e0b"/><circle cx="41" cy="24" r="8" fill="#fff3"/><path d="M41 24V16A8 8 0 0 1 49 24Z" fill="#fff"/><path d="M34 36h14M34 42h14" stroke="#fff" stroke-width="3.5" stroke-linecap="round" opacity=".85"/><path d="M10 18l20-6v40l-20-6z" fill="#f43f5e"/><text x="20" y="36" text-anchor="middle" font-size="18" font-weight="700" font-family="Arial, sans-serif" fill="#fff">P</text></svg>' }
-function buildBadgeDoc(background: string, label: string, line: string) { return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M16 6h24l10 10v36c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V12c0-3.3 2.7-6 6-6z" fill="#fff" stroke="#d9e2ec" stroke-width="2"/><path d="M40 6v12h12" fill="#eef4fa"/><rect x="14" y="14" width="28" height="12" rx="6" fill="${background}"/><text x="28" y="22.5" text-anchor="middle" font-size="8.5" font-weight="700" font-family="Arial, sans-serif" fill="#fff">${label}</text><path d="M18 34h24M18 42h24M18 50h16" stroke="${line}" stroke-width="4" stroke-linecap="round" opacity=".7"/></svg>` }
-function buildDocIcon(extension: string) { const k = extension.toLowerCase(); return ({ txt: notepadIcon, doc: buildWordIcon(), docx: buildWordIcon(), xls: buildExcelIcon(), xlsx: buildExcelIcon(), ppt: buildPptIcon(), pptx: buildPptIcon(), pdf: buildBadgeDoc('#dc2626', 'PDF', '#dc2626'), png: buildBadgeDoc('#0ea5e9', 'PNG', '#0ea5e9'), jpg: buildBadgeDoc('#7c3aed', 'JPG', '#7c3aed'), jpeg: buildBadgeDoc('#7c3aed', 'JPG', '#7c3aed'), zip: buildBadgeDoc('#f59e0b', 'ZIP', '#b45309') } as Record<string, string>)[k] || defaultDoc }
-const svgSource = computed(() => props.kind === 'folder' ? folderIcon : buildDocIcon(props.extension || ''))
+const props = withDefaults(defineProps<{
+  kind: 'file' | 'folder'
+  size?: number
+  extension?: string
+}>(), {
+  size: 20,
+  extension: '',
+})
+
+function folderSvg() {
+  return `
+<svg viewBox="0 0 64 52" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="f1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8ec8ff"/>
+      <stop offset="100%" stop-color="#4d9dff"/>
+    </linearGradient>
+    <linearGradient id="f2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#69b4ff"/>
+      <stop offset="100%" stop-color="#2f86f0"/>
+    </linearGradient>
+  </defs>
+  <path d="M6 14c0-3.2 2.5-5.8 5.7-5.8h11.2l4.2 4.1h24.2c3.2 0 5.7 2.6 5.7 5.8v3.2H6V14z" fill="url(#f1)"/>
+  <path d="M4 19.2c0-3.1 2.5-5.6 5.6-5.6h44.8c3.1 0 5.6 2.5 5.6 5.6V38c0 4.1-3.3 7.4-7.4 7.4H11.4C7.3 45.4 4 42.1 4 38V19.2z" fill="url(#f2)"/>
+  <path d="M8 22.5h48v2.4H8z" fill="#d7ebff" opacity=".55"/>
+</svg>`
+}
+
+function docSvg(ext: string, accent: string, labelColor = '#6e6e73') {
+  const label = (ext || 'DOC').slice(0, 4).toUpperCase()
+  return `
+<svg viewBox="0 0 48 60" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="p" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f2f2f5"/>
+    </linearGradient>
+  </defs>
+  <path d="M8 2h22l12 12v40c0 2.2-1.8 4-4 4H8c-2.2 0-4-1.8-4-4V6c0-2.2 1.8-4 4-4z" fill="url(#p)" stroke="rgba(0,0,0,0.12)" stroke-width="1"/>
+  <path d="M30 2v10c0 1.1.9 2 2 2h10" fill="#eef0f4"/>
+  <path d="M30 2l12 12" stroke="rgba(0,0,0,0.08)" stroke-width="1"/>
+  <path d="M12 28h24M12 35h24M12 42h16" stroke="${accent}" stroke-width="2.2" stroke-linecap="round" opacity=".55"/>
+  <text x="24" y="22" text-anchor="middle" font-size="8" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" fill="${labelColor}">${label}</text>
+</svg>`
+}
+
+function iconFor(extRaw: string) {
+  const ext = (extRaw || '').toLowerCase()
+  if (['doc', 'docx'].includes(ext)) return docSvg(ext, '#185abd', '#185abd')
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return docSvg(ext, '#107c41', '#107c41')
+  if (['ppt', 'pptx'].includes(ext)) return docSvg(ext, '#c43e1c', '#c43e1c')
+  if (ext === 'pdf') return docSvg('pdf', '#d70015', '#d70015')
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return docSvg(ext, '#0a84ff', '#0a84ff')
+  if (['zip', 'rar', '7z'].includes(ext)) return docSvg(ext, '#ff9f0a', '#b86e00')
+  if (['md', 'txt', 'log', 'json', 'yaml', 'yml', 'xml'].includes(ext)) return docSvg(ext || 'txt', '#8e8e93', '#636366')
+  return docSvg(ext || 'file', '#8e8e93', '#636366')
+}
+
+const svgSource = computed(() => (props.kind === 'folder' ? folderSvg() : iconFor(props.extension || '')))
 const styleObject = computed(() => ({ width: `${props.size}px`, height: `${props.size}px` }))
 </script>
 
 <style scoped>
-.file-visual-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-.file-visual-icon :deep(svg) { width: 100%; height: 100%; display: block; }
+.file-visual-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.file-visual-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
 </style>

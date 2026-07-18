@@ -1,8 +1,15 @@
 <template>
   <aside class="fm-preview-pane" aria-label="预览">
     <template v-if="item">
-      <div class="fm-preview-icon">
+      <div class="fm-preview-visual">
+        <img
+          v-if="thumbUrl"
+          class="fm-preview-thumb"
+          :src="thumbUrl"
+          :alt="displayName(item)"
+        >
         <FileVisualIcon
+          v-else
           :kind="item.is_folder || !item.format ? 'folder' : 'file'"
           :extension="item.format || ''"
           :size="88"
@@ -36,14 +43,83 @@
 </template>
 
 <script setup lang="ts">
+import { onBeforeUnmount, ref, watch } from 'vue'
 import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
+import { fetchDownloadBlob, fetchFilePreview, fetchBlobByApiPath } from '@/shared/api/desktop'
 import type { FileEntry } from '@/shared/api/types'
 
-defineProps<{
+const props = defineProps<{
   item: FileEntry | null
   displayName: (file: FileEntry) => string
   formatSize: (size: number) => string
 }>()
+
+const thumbUrl = ref('')
+let loadToken = 0
+
+const IMAGE_EXTS = new Set([
+  'jpg', 'jpeg', 'jpe', 'jfif', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tif', 'tiff', 'avif',
+])
+
+function revokeThumb() {
+  if (thumbUrl.value) {
+    URL.revokeObjectURL(thumbUrl.value)
+    thumbUrl.value = ''
+  }
+}
+
+function extOf(item: FileEntry) {
+  return String(item.format || '').toLowerCase().replace(/^\./, '')
+}
+
+function asString(value: unknown) {
+  return typeof value === 'string' ? value : ''
+}
+
+async function loadThumb(item: FileEntry) {
+  const token = ++loadToken
+  revokeThumb()
+  if (item.is_folder) return
+  const ext = extOf(item)
+  if (!IMAGE_EXTS.has(ext)) return
+  try {
+    const data = await fetchFilePreview(item.id)
+    if (token !== loadToken) return
+    const downloadUrl = asString((data as Record<string, unknown>).download_url)
+    let blob: Blob
+    if (downloadUrl) {
+      try {
+        blob = await fetchBlobByApiPath(downloadUrl)
+      } catch {
+        blob = await fetchDownloadBlob(item.id, 'standard-image').catch(() => fetchDownloadBlob(item.id))
+      }
+    } else {
+      blob = await fetchDownloadBlob(item.id, 'standard-image').catch(() => fetchDownloadBlob(item.id))
+    }
+    if (token !== loadToken) return
+    thumbUrl.value = URL.createObjectURL(blob)
+  } catch {
+    // keep icon fallback
+  }
+}
+
+watch(
+  () => [props.item?.id, props.item?.format, props.item?.is_folder] as const,
+  () => {
+    if (!props.item) {
+      loadToken += 1
+      revokeThumb()
+      return
+    }
+    void loadThumb(props.item)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  loadToken += 1
+  revokeThumb()
+})
 
 function formatDate(raw?: string | null) {
   if (!raw) return '—'
@@ -80,12 +156,21 @@ function formatDate(raw?: string | null) {
   align-items: center;
 }
 
-.fm-preview-icon {
-  width: 120px;
-  height: 100px;
+.fm-preview-visual {
+  width: 140px;
+  height: 110px;
   display: grid;
   place-items: center;
   margin-bottom: 12px;
+}
+
+.fm-preview-thumb {
+  max-width: 140px;
+  max-height: 110px;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  background: #fff;
 }
 
 .fm-preview-name {
@@ -120,14 +205,12 @@ function formatDate(raw?: string | null) {
 }
 
 .fm-preview-row dt {
-  margin: 0;
   color: rgba(60, 60, 67, 0.55);
 }
 
 .fm-preview-row dd {
   margin: 0;
   color: #1d1d1f;
-  text-align: right;
   word-break: break-word;
 }
 
@@ -135,14 +218,14 @@ function formatDate(raw?: string | null) {
   margin-top: 48px;
   display: grid;
   gap: 6px;
-  justify-items: center;
-  color: rgba(60, 60, 67, 0.48);
   text-align: center;
-  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  color: rgba(60, 60, 67, 0.55);
+  font: 500 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
 }
 
 .fm-preview-empty small {
+  font-weight: 400;
   font-size: 11px;
-  opacity: 0.85;
+  color: rgba(60, 60, 67, 0.45);
 }
 </style>

@@ -146,7 +146,7 @@ import type { ClipboardItem } from '@/desktop/clipboard/clipboard-state'
 // 旧 drag-tool 已被 icon-grid-model 替代，图标网格组件自管理位置
 // import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import {
-  moveEntryRequest, emptyRecycleBinRequest,
+  moveEntryRequest, batchMoveRequest, emptyRecycleBinRequest,
 } from '@/shared/api/desktop'
 import type { FileEntry } from '@/shared/api/types'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
@@ -357,37 +357,68 @@ function getSourceFolderId(key: string): number | null {
 }
 
 on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
-  const targetId = targetFolderId !== null && targetFolderId !== undefined
+  let targetId = targetFolderId !== null && targetFolderId !== undefined
     ? Number(targetFolderId)
     : null
   if (targetId !== null && !Number.isFinite(targetId)) return
+  // desktop root is virtual folder id 0 / null in API
+  if (targetId === 0) targetId = null
+
   const affectedFolders = new Set<number>()
   affectedFolders.add(0)
-  let movedCount = 0
-  for (const id of ids) {
-    const colonIdx = id.indexOf(':')
+  if (targetId !== null) affectedFolders.add(targetId)
+
+  type MoveItem = { id: number; item_type: 'file' | 'folder' }
+  const items: MoveItem[] = []
+  for (const key of ids) {
+    const colonIdx = key.indexOf(':')
     if (colonIdx === -1) continue
-    const fileId = Number(id.slice(colonIdx + 1))
+    const kind = key.slice(0, colonIdx)
+    if (kind !== 'file' && kind !== 'folder') continue
+    const fileId = Number(key.slice(colonIdx + 1))
     if (!Number.isFinite(fileId)) continue
     if (fileId === targetId) continue
-    // 通过 desktopFileList 查找该项判断是文件还是文件夹
-    const entry = desktopFileList.value?.find((f: FileEntry) => f.id === fileId)
-    const type: 'file' | 'folder' = entry?.is_folder ? 'folder' : 'file'
-    const srcFolderId = getSourceFolderId(id)
+    const srcFolderId = getSourceFolderId(key)
     if (srcFolderId !== null && srcFolderId === targetId) continue
-    try {
-      await moveEntryRequest(type, fileId, targetId)
-      movedCount += 1
-      if (srcFolderId !== null) affectedFolders.add(srcFolderId)
-    } catch (e: unknown) {
-	      const err = e as { http_status?: number; response?: { status?: number } } | null
-	      if (err?.http_status === 409 || err?.response?.status === 409) {
-        desktopMessage.warning('目标已有同名文件')
+    // desktop icons always use file:id even for folders — prefer list lookup when present
+    let itemType: 'file' | 'folder' = kind === 'folder' ? 'folder' : 'file'
+    if (kind === 'file') {
+      const entry = desktopFileList.value?.find((f: FileEntry) => f.id === fileId)
+      if (entry?.is_folder) itemType = 'folder'
+    }
+    items.push({ id: fileId, item_type: itemType })
+    if (srcFolderId !== null) affectedFolders.add(srcFolderId)
+  }
+  if (!items.length) return
+
+  let movedCount = 0
+  try {
+    const resp = await batchMoveRequest(items, targetId)
+    movedCount = Number(resp.success_count || 0)
+    const failed = Number(resp.failed_count || 0)
+    if (failed > 0 && movedCount === 0) {
+      desktopMessage.warning('移动失败')
+    } else if (failed > 0) {
+      desktopMessage.warning(`已移动 ${movedCount} 个，失败 ${failed} 个`)
+    }
+  } catch {
+    for (const item of items) {
+      try {
+        await moveEntryRequest(item.item_type, item.id, targetId)
+        movedCount += 1
+      } catch (e: unknown) {
+        const err = e as { http_status?: number; response?: { status?: number } } | null
+        if (err?.http_status === 409 || err?.response?.status === 409) {
+          desktopMessage.warning('目标已有同名文件')
+        }
       }
     }
   }
+
   if (movedCount > 0) {
-    desktopMessage.success(movedCount > 1 ? `已移动 ${movedCount} 个项目` : '已移动')
+    if (movedCount === items.length) {
+      desktopMessage.success(movedCount > 1 ? `已移动 ${movedCount} 个项目` : '已移动')
+    }
     affectedFolders.forEach(folderId => {
       emit('refresh:file-list', { folderId })
     })

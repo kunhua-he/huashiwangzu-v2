@@ -3,6 +3,7 @@ import api from '@/shared/api'
 import {
   createFileRequest, uploadFileRequest, renameEntryRequest,
   moveToRecycleBinRequest, moveEntryRequest, copyEntryRequest, downloadFileRequest,
+  batchDeleteRequest, batchMoveRequest,
 } from '@/shared/api/desktop'
 import { formatFileDisplayName } from '@/shared/files/display-name'
 import type { FileEntry } from '@/shared/api/types'
@@ -214,8 +215,96 @@ export function useFileOperations(options: FileOperationsOptions) {
     return result
   }
 
+  async function deleteEntries(files: FileEntry[]): Promise<BatchOperationResult | null> {
+    if (!files.length) return null
+    const label = files.length === 1
+      ? `确定删除 “${files[0].file_name}”？`
+      : `确定删除选中的 ${files.length} 个项目？`
+    try {
+      await ElMessageBox.confirm(label, '确认删除', { type: 'warning' })
+    } catch {
+      return null
+    }
+    const result = createBatchOperationResult()
+    try {
+      const resp = await batchDeleteRequest(
+        files.map((file) => ({
+          id: file.id,
+          item_type: file.is_folder ? 'folder' as const : 'file' as const,
+        })),
+      )
+      result.successCount = Number(resp.success_count || 0)
+      result.failCount = Number(resp.failed_count || 0)
+      for (const item of resp.items || []) {
+        if (!item.success) {
+          result.errors.push({
+            id: item.id,
+            name: `#${item.id}`,
+            message: item.error || '删除失败',
+          })
+        }
+      }
+    } catch (error: unknown) {
+      for (const file of files) {
+        try {
+          await moveToRecycleBinRequest(file.is_folder ? 'folder' : 'file', file.id)
+          result.successCount += 1
+        } catch (err: unknown) {
+          result.failCount += 1
+          result.errors.push({ id: file.id, name: fullFileName(file), message: errorMessage(err) })
+        }
+      }
+      if (!result.successCount && !result.failCount) {
+        result.failCount = files.length
+        result.errors.push({ message: errorMessage(error) })
+      }
+    }
+    showBatchOperationResult('删除', '已移至回收站', result)
+    if (result.successCount > 0) await refresh()
+    return result
+  }
+
+  async function moveEntries(files: FileEntry[], targetFolderId: number | null): Promise<BatchOperationResult> {
+    const result = createBatchOperationResult()
+    if (!files.length) return result
+    const normalizedTarget = targetFolderId && targetFolderId > 0 ? targetFolderId : null
+    try {
+      const resp = await batchMoveRequest(
+        files.map((file) => ({
+          id: file.id,
+          item_type: file.is_folder ? 'folder' as const : 'file' as const,
+        })),
+        normalizedTarget,
+      )
+      result.successCount = Number(resp.success_count || 0)
+      result.failCount = Number(resp.failed_count || 0)
+      for (const item of resp.items || []) {
+        if (!item.success) {
+          result.errors.push({
+            id: item.id,
+            name: `#${item.id}`,
+            message: item.error || '移动失败',
+          })
+        }
+      }
+    } catch {
+      for (const file of files) {
+        try {
+          await moveEntryRequest(file.is_folder ? 'folder' : 'file', file.id, normalizedTarget)
+          result.successCount += 1
+        } catch (error: unknown) {
+          result.failCount += 1
+          result.errors.push({ id: file.id, name: fullFileName(file), message: errorMessage(error) })
+        }
+      }
+    }
+    showBatchOperationResult('移动', '已移动', result)
+    if (result.successCount > 0) await refresh()
+    return result
+  }
+
   return {
     uploadFile, createFolder, createFile, downloadFile,
-    copyPath, renameEntry, deleteEntry, pasteToFolder, fullFileName,
+    copyPath, renameEntry, deleteEntry, deleteEntries, moveEntries, pasteToFolder, fullFileName,
   }
 }

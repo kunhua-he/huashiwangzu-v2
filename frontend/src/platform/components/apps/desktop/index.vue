@@ -17,6 +17,7 @@
           :can-go-up="state.canGoUp.value"
           :breadcrumb="state.breadcrumb.value"
           :search-keyword="state.searchKeyword.value"
+          :search-scope="state.searchScope.value"
           :view-mode="state.viewMode.value"
           :show-path-bar="showPathBar"
           :show-preview="showPreview"
@@ -25,7 +26,8 @@
           @go-up="state.goUp"
           @go-root="state.goRoot"
           @navigate="state.navigateToCrumb"
-          @update:search-keyword="state.searchKeyword.value = $event"
+          @update:search-keyword="state.setSearchKeyword($event)"
+          @update:search-scope="state.setSearchScope($event)"
           @update:view-mode="state.viewMode.value = $event"
           @update:show-path-bar="setShowPathBar"
           @update:show-preview="setShowPreview"
@@ -39,6 +41,8 @@
           :is-recycle-bin="state.isRecycleBin.value"
           :active-named="state.activeNamed.value"
           :active-tag="state.activeTagFilter.value"
+          :documents-folder-id="state.locations.value.documents?.id ?? null"
+          :downloads-folder-id="state.locations.value.downloads?.id ?? null"
           @go-root="() => { state.setTagFilter(null); state.goRoot() }"
           @open-recycle="() => { state.setTagFilter(null); state.openRecycle() }"
           @open-named="(key) => { state.setTagFilter(null); state.openNamedLocation(key) }"
@@ -108,6 +112,8 @@
           :selected-count="state.selectedIds.value.length"
           :view-mode="state.viewMode.value"
           :search-keyword="state.searchKeyword.value"
+          :search-scope="state.searchScope.value"
+          :search-loading="state.searchLoading.value"
           :filtered-count="state.filteredItems.value.length"
           :display-name="state.displayName"
           :icon-size="iconSize"
@@ -158,7 +164,7 @@ import { MacAppShell, useAppFeedback } from '@/desktop/app-kit'
 import { dragState } from '@/desktop/drag-drop/drag-state'
 import { useContextMenu } from '@/desktop/context-menu/use-context-menu'
 import ContextMenu from '@/desktop/context-menu/context-menu.vue'
-import { buildFileMenu, buildFolderMenu } from '@/desktop/context-menu/file-context-menu'
+import { buildFileMenu, buildFolderMenu, buildMultiSelectMenu } from '@/desktop/context-menu/file-context-menu'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { hasContent } from '@/desktop/clipboard/clipboard-state'
 import { restoreRecycleBinEntry, permanentlyDeleteEntry, emptyRecycleBinRequest } from '@/shared/api/desktop'
@@ -377,7 +383,7 @@ function handleKeydown(e: KeyboardEvent) {
     return
   }
   if (e.key === 'Delete' || ((e.metaKey || e.ctrlKey) && e.key === 'Backspace')) {
-    if (state.selectedItem.value) {
+    if (state.selectedItems.value.length || state.selectedItem.value) {
       e.preventDefault()
       void state.handleAction('delete', state.selectedItem.value)
     }
@@ -449,6 +455,10 @@ function handleItemOpen(item: FileEntry) {
 
 function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
   ctxtFile = item
+  // right-click on unselected item: switch selection to it
+  if (!state.selectedIds.value.includes(item.id)) {
+    state.selectItem(item)
+  }
   if (state.isRecycleBin.value) {
     const items: MenuItemConfig[] = []
     if (state.canWrite.value) {
@@ -461,9 +471,18 @@ function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
     return
   }
 
-  const activeTags = state.tagsOf(item)
+  const selected = state.selectedItems.value
+  const multi = selected.length > 1 && selected.some((entry) => entry.id === item.id)
+  const activeTags = multi
+    ? []
+    : state.tagsOf(item)
   let items: MenuItemConfig[]
   const sep = () => [{ key: `sep-${Date.now()}-${Math.random()}`, label: '', separator: true } as MenuItemConfig]
+  if (multi) {
+    items = buildMultiSelectMenu(state.canWrite.value, sep, selected.length, activeTags)
+    contextMenu.open(e, items, { type: 'multi-select', target: { ...item } })
+    return
+  }
   if (item.is_folder) {
     items = buildFolderMenu(state.canWrite.value, sep, activeTags)
     if (state.canWrite.value && creatableFormats.value.length) {
@@ -522,10 +541,14 @@ async function handleContextMenuSelect(key: string) {
     await handleRecycleAction(key)
     return
   }
-  if (await state.applyTagAction(key, ctxtFile)) {
-    const name = ctxtFile ? state.displayName(ctxtFile) : ''
-    if (key === 'tag:clear') feedback.success(name ? `已清除「${name}」的标签` : '已清除标签')
-    else if (key.startsWith('tag:')) feedback.success(name ? `已更新「${name}」标签` : '已更新标签')
+  if (key === 'selection-info') return
+  const multiTargets = (ctxType === 'multi-select' || state.selectedItems.value.length > 1)
+    ? state.selectedItems.value
+    : null
+  if (await state.applyTagAction(key, ctxtFile, multiTargets)) {
+    const count = multiTargets?.length || 1
+    if (key === 'tag:clear') feedback.success(count > 1 ? `已清除 ${count} 项标签` : '已清除标签')
+    else if (key.startsWith('tag:')) feedback.success(count > 1 ? `已更新 ${count} 项标签` : '已更新标签')
     return
   }
   await state.handleAction(key, ctxtFile)

@@ -5,7 +5,8 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'desktop' && !activeTag }"
+        data-folder="0"
+        :class="{ active: currentKey === 'desktop' && !activeTag, 'fm-nav-drop': dragOverId === '0' }"
         @click="$emit('go-root')"
       >
         <Monitor class="fm-nav-icon" :size="16" :stroke-width="2" />
@@ -14,7 +15,8 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'documents' && !activeTag }"
+        :data-folder="documentsFolderId != null ? String(documentsFolderId) : undefined"
+        :class="{ active: currentKey === 'documents' && !activeTag, 'fm-nav-drop': documentsFolderId != null && dragOverId === String(documentsFolderId) }"
         @click="$emit('open-named', 'documents')"
       >
         <FileText class="fm-nav-icon" :size="16" :stroke-width="2" />
@@ -23,7 +25,8 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'downloads' && !activeTag }"
+        :data-folder="downloadsFolderId != null ? String(downloadsFolderId) : undefined"
+        :class="{ active: currentKey === 'downloads' && !activeTag, 'fm-nav-drop': downloadsFolderId != null && dragOverId === String(downloadsFolderId) }"
         @click="$emit('open-named', 'downloads')"
       >
         <Download class="fm-nav-icon" :size="16" :stroke-width="2" />
@@ -45,7 +48,8 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'desktop' && !activeNamed && !activeTag }"
+        data-folder="0"
+        :class="{ active: currentKey === 'desktop' && !activeNamed && !activeTag, 'fm-nav-drop': dragOverId === '0' }"
         @click="$emit('go-root')"
       >
         <HardDrive class="fm-nav-icon" :size="16" :stroke-width="2" />
@@ -76,11 +80,15 @@ import { computed } from 'vue'
 import { Download, FileText, HardDrive, Monitor, Trash2 } from 'lucide-vue-next'
 import { FINDER_TAGS, type FinderTagColor } from './finder-tags'
 
+import { dragState } from '@/desktop/drag-drop/drag-state'
+
 const props = defineProps<{
   currentFolderId: number
   isRecycleBin: boolean
   activeNamed?: 'documents' | 'downloads' | null
   activeTag?: FinderTagColor | null
+  documentsFolderId?: number | null
+  downloadsFolderId?: number | null
 }>()
 
 defineEmits<{
@@ -99,6 +107,9 @@ const currentKey = computed(() => {
 })
 
 const tags = FINDER_TAGS
+const dragOverId = computed(() => (dragState.isDragging ? dragState.dragOverId : null))
+const documentsFolderId = computed(() => props.documentsFolderId ?? null)
+const downloadsFolderId = computed(() => props.downloadsFolderId ?? null)
 </script>
 
 <style scoped>
@@ -174,5 +185,10 @@ const tags = FINDER_TAGS
   border-radius: 999px;
   box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.22);
   flex-shrink: 0;
+}
+
+.fm-nav-item.fm-nav-drop {
+  background: color-mix(in srgb, rgba(0, 122, 255, 0.18) 80%, rgba(255, 255, 255, 0.4));
+  box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.35);
 }
 </style>

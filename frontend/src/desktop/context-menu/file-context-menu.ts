@@ -76,6 +76,28 @@ export function buildDesktopBlankMenu(writable: boolean, separatorItems: () => M
   ]
 }
 
+
+export function buildMultiSelectMenu(
+  writable: boolean,
+  separatorItems: () => MenuItemConfig[],
+  count: number,
+  activeTags: FinderTagColor[] = [],
+): MenuItemConfig[] {
+  const label = count > 1 ? `已选 ${count} 项` : '已选 1 项'
+  return [
+    { key: 'selection-info', label, icon: '☑', disabled: true },
+    ...separatorItems(),
+    ...(writable ? [{ key: 'cut', label: '剪切', icon: '✂' }, { key: 'copy', label: '复制', icon: '📋' }] : []),
+    {
+      key: 'tags',
+      label: '标签',
+      icon: '🏷',
+      children: buildTagMenuChildren(activeTags),
+    },
+    ...(writable ? [...separatorItems(), { key: 'delete', label: '删除', icon: '🗑', danger: true }] : []),
+  ]
+}
+
 export function buildFolderTreeNodeMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
   return [
     { key: 'open', label: '打开', icon: '📂' },

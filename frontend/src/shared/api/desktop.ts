@@ -11,6 +11,7 @@ interface BackendFileListItem {
   extension?: string | null
   size: number
   parent_id?: number | null
+  folder_id?: number | null
   created_at?: string | null
   is_folder: boolean
   mime_type?: string | null
@@ -61,7 +62,7 @@ function toFileEntry(item: BackendFileListItem): FileEntry {
     created_at: item.created_at ?? '',
     storage_path: item.storage_path ?? null,
     is_folder: item.is_folder,
-    parent_folder_id: item.parent_id ?? null,
+    parent_folder_id: item.parent_id ?? item.folder_id ?? null,
   }
 }
 
@@ -197,6 +198,41 @@ export async function moveToRecycleBinRequest(itemType: FileItemType, id: number
   return await api.post<unknown, Record<string, unknown>>('/files/delete', { type: itemType, id })
 }
 
+export interface BatchFileItem {
+  id: number
+  item_type: FileItemType
+}
+
+export async function batchDeleteRequest(items: BatchFileItem[]): Promise<{
+  success_count: number
+  failed_count: number
+  items: Array<{ id: number; type: string; success: boolean; error?: string | null }>
+}> {
+  return await api.post<unknown, {
+    success_count: number
+    failed_count: number
+    items: Array<{ id: number; type: string; success: boolean; error?: string | null }>
+  }>('/files/batch-delete', { items })
+}
+
+export async function batchMoveRequest(
+  items: BatchFileItem[],
+  targetFolderId?: number | null,
+): Promise<{
+  success_count: number
+  failed_count: number
+  items: Array<{ id: number; type: string; success: boolean; error?: string | null }>
+}> {
+  return await api.post<unknown, {
+    success_count: number
+    failed_count: number
+    items: Array<{ id: number; type: string; success: boolean; error?: string | null }>
+  }>('/files/batch-move', {
+    items,
+    target_folder_id: targetFolderId ?? null,
+  })
+}
+
 export async function downloadFileRequest(fileId: number, filename?: string) {
   const response = await api.get<unknown, Blob>(`/files/download/${fileId}`, { responseType: 'blob' })
   const objectUrl = URL.createObjectURL(response)
@@ -274,6 +310,20 @@ export async function searchFilesRequest(keyword: string, extension?: string, pa
 
 export async function fetchFileDetail(fileId: number): Promise<FileDetail> {
   return await api.get<unknown, FileDetail>(`/files/detail/${fileId}`)
+}
+
+
+export async function fetchDownloadBlob(fileId: number, variant?: 'original' | 'standard-image'): Promise<Blob> {
+  const suffix = variant ? `/${variant}` : ''
+  return await api.get<unknown, Blob>(`/files/download/${fileId}${suffix}`, { responseType: 'blob' })
+}
+
+export async function fetchBlobByApiPath(path: string): Promise<Blob> {
+  const cleaned = path
+    .replace(/^https?:\/\/[^/]+/i, '')
+    .replace(/^\/api(?=\/)/, '')
+  const url = cleaned.startsWith('/') ? cleaned : `/${cleaned}`
+  return await api.get<unknown, Blob>(url, { responseType: 'blob' })
 }
 
 export async function fetchFilePreview(fileId: number): Promise<Record<string, unknown>> {

@@ -80,11 +80,27 @@
       <input
         class="fm-search-input"
         type="text"
-        placeholder="搜索"
+        :placeholder="searchScope === 'all' ? '搜索全部' : '搜索当前文件夹'"
         spellcheck="false"
         :value="searchKeyword"
         @input="$emit('update:searchKeyword', ($event.target as HTMLInputElement).value)"
       />
+      <div class="fm-search-scope" role="group" aria-label="搜索范围">
+        <button
+          type="button"
+          class="fm-search-scope-btn"
+          :class="{ active: searchScope === 'folder' }"
+          title="当前文件夹"
+          @click="$emit('update:searchScope', 'folder')"
+        >文件夹</button>
+        <button
+          type="button"
+          class="fm-search-scope-btn"
+          :class="{ active: searchScope === 'all' }"
+          title="全部位置"
+          @click="$emit('update:searchScope', 'all')"
+        >全部</button>
+      </div>
     </div>
   </header>
 </template>
@@ -316,10 +332,10 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 188px;
+  width: 268px;
   height: 26px;
   margin-left: 6px;
-  padding: 0 10px;
+  padding: 0 8px 0 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.62);
   box-shadow: inset 0 0 0 0.5px rgba(60, 60, 67, 0.16);
@@ -335,6 +351,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
 .fm-search-input {
   width: 100%;
+  min-width: 0;
   border: 0;
   outline: none;
   background: transparent;
@@ -344,5 +361,32 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
 .fm-search-input::placeholder {
   color: rgba(60, 60, 67, 0.48);
+}
+
+.fm-search-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 4px;
+  padding: 1px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+.fm-search-scope-btn {
+  border: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(60, 60, 67, 0.62);
+  font: 500 10px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fm-search-scope-btn.active {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1d1d1f;
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.08);
 }
 </style>

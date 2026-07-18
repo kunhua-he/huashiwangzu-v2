@@ -65,7 +65,7 @@
           class="fm-entry"
           :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
           :data-folder="item.is_folder ? String(item.id) : undefined"
-          :class="{ 'fm-entry-selected': isSelected(item.id) }"
+          :class="{ 'fm-entry-selected': isSelected(item.id), 'fm-entry-drop': isDropTarget(item) }"
           type="button"
           @click="handleClick(item, $event)"
           @dblclick="handleDoubleClick(item, $event)"
@@ -99,7 +99,7 @@
             class="fm-column-row"
             :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
             :data-folder="item.is_folder ? String(item.id) : undefined"
-            :class="{ 'fm-entry-selected': col.selectedId === item.id }"
+            :class="{ 'fm-entry-selected': col.selectedId === item.id, 'fm-entry-drop': isDropTarget(item) }"
             type="button"
             @click="handleColumnClick(item, colIndex, $event)"
             @dblclick="handleColumnDoubleClick(item, colIndex, $event)"
@@ -154,7 +154,7 @@
             :key="`g-${item.is_folder ? 'folder' : 'file'}-${item.id}`"
             type="button"
             class="fm-gallery-thumb"
-            :class="{ 'fm-entry-selected': isSelected(item.id) }"
+            :class="{ 'fm-entry-selected': isSelected(item.id), 'fm-entry-drop': isDropTarget(item) }"
             :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
             @click="handleClick(item, $event)"
             @dblclick="handleDoubleClick(item, $event)"
@@ -175,7 +175,7 @@
           class="fm-entry"
           :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
           :data-folder="item.is_folder ? String(item.id) : undefined"
-          :class="{ 'fm-entry-selected': isSelected(item.id) }"
+          :class="{ 'fm-entry-selected': isSelected(item.id), 'fm-entry-drop': isDropTarget(item) }"
           type="button"
           @click="handleClick(item, $event)"
           @dblclick="handleDoubleClick(item, $event)"
@@ -202,7 +202,7 @@
 import { computed } from 'vue'
 import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
 import type { FileEntry } from '@/shared/api/types'
-import { startDrag } from '@/desktop/drag-drop/drag-state'
+import { startDrag, dragState } from '@/desktop/drag-drop/drag-state'
 import LoadStateBanner from '@/shared/components/load-state-banner.vue'
 import { MacEmptyState } from '@/desktop/app-kit'
 import { FINDER_TAGS } from './finder-tags'
@@ -210,7 +210,7 @@ import type { ApiErrorInfo } from '@/shared/api/response-transform'
 import type { LoadStatus } from '@/shared/composables/use-load-state'
 
 let suppressNextClick = false
-let pendingDrag: { key: string; startX: number; startY: number } | null = null
+let pendingDrag: { key: string; keys: string[]; startX: number; startY: number } | null = null
 
 export type ColumnStackItem = {
   folderId: number
@@ -246,6 +246,11 @@ const props = withDefaults(defineProps<{
 function isSelected(id: number) {
   if (props.selectedIds?.length) return props.selectedIds.includes(id)
   return props.selectedId === id
+}
+
+function isDropTarget(item: FileEntry) {
+  if (!item.is_folder || !dragState.isDragging || !dragState.dragOverId) return false
+  return dragState.dragOverId === String(item.id)
 }
 
 function itemTags(item: FileEntry) {
@@ -293,10 +298,31 @@ const nameStyle = computed(() => ({
   maxWidth: `${Math.max(76, props.iconSize + 26)}px`,
 }))
 
+function selectionKeyOf(item: FileEntry) {
+  return (item.is_folder ? 'folder' : 'file') + ':' + item.id
+}
+
+function resolveDragKeys(item: FileEntry): string[] {
+  const primary = selectionKeyOf(item)
+  if (props.selectedIds?.includes(item.id) && props.selectedIds.length > 1) {
+    const byId = new Map(props.items.map((entry) => [entry.id, entry]))
+    const keys = props.selectedIds
+      .map((id) => byId.get(id))
+      .filter((entry): entry is FileEntry => Boolean(entry))
+      .map(selectionKeyOf)
+    if (keys.length) {
+      // keep primary first for ghost origin
+      return [primary, ...keys.filter((key) => key !== primary)]
+    }
+  }
+  return [primary]
+}
+
 function handleEntryMouseDown(item: FileEntry, e: MouseEvent) {
   if (e.button !== 0) return
   pendingDrag = {
-    key: (item.is_folder ? 'folder' : 'file') + ':' + item.id,
+    key: selectionKeyOf(item),
+    keys: resolveDragKeys(item),
     startX: e.clientX,
     startY: e.clientY,
   }
@@ -310,7 +336,7 @@ function handlePendingDragMove(e: MouseEvent) {
   const dy = e.clientY - pendingDrag.startY
   if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return
   suppressNextClick = true
-  startDrag([pendingDrag.key], pendingDrag.startX, pendingDrag.startY)
+  startDrag(pendingDrag.keys, pendingDrag.startX, pendingDrag.startY)
   clearPendingDrag()
 }
 
@@ -744,5 +770,12 @@ function formatListDate(raw?: string | null) {
   border-radius: 999px;
   display: inline-block;
   box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.2);
+}
+
+.fm-entry.fm-entry-drop,
+.fm-column-row.fm-entry-drop,
+.fm-gallery-thumb.fm-entry-drop {
+  box-shadow: inset 0 0 0 2px rgba(0, 122, 255, 0.55);
+  background: color-mix(in srgb, rgba(0, 122, 255, 0.12) 70%, rgba(255, 255, 255, 0.5));
 }
 </style>

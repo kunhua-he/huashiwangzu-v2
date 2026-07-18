@@ -20,10 +20,12 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
   const ops = createFileOperations({
     uploadInput: state.uploadInput,
     currentFolderId: state.currentFolderId,
+    selectedItems: state.selectedItems,
     loadFiles: state.loadFiles,
     displayName: state.displayName,
     openItem: state.openItem,
     showProperties: state.showProperties,
+    clearSelection: state.clearSelection,
     emit: state.emit,
   })
 
@@ -49,6 +51,11 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
     sortColumn: state.sortColumn,
     sortDirection: state.sortDirection,
     searchKeyword: state.searchKeyword,
+    searchScope: state.searchScope,
+    searchResults: state.searchResults,
+    searchLoading: state.searchLoading,
+    setSearchScope: state.setSearchScope,
+    setSearchKeyword: state.setSearchKeyword,
     navigationHistory: state.navigationHistory,
     historyIndex: state.historyIndex,
     isRecycleBin: state.isRecycleBin,
@@ -107,5 +114,7 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
     copyPath: ops.copyPath,
     renameEntry: ops.renameEntry,
     deleteEntry: ops.deleteEntry,
+    deleteEntries: ops.deleteEntries,
+    moveEntries: ops.moveEntries,
   }
 }

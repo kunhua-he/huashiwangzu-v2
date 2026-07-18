@@ -2,7 +2,8 @@
   <footer class="fm-status-bar">
     <div class="fm-status-left">
       <template v-if="searchKeyword">
-        找到 {{ filteredCount }} 个结果
+        {{ searchScope === 'all' ? '全部位置' : '当前文件夹' }} · 找到 {{ filteredCount }} 个结果
+        <span v-if="searchLoading">· 搜索中…</span>
       </template>
       <template v-else>
         <span>{{ itemCount }} 个项目</span>
@@ -39,11 +40,15 @@ withDefaults(defineProps<{
   selectedCount?: number
   viewMode: 'grid' | 'list' | 'column' | 'gallery'
   searchKeyword: string
+  searchScope?: 'folder' | 'all'
+  searchLoading?: boolean
   filteredCount: number
   displayName: (file: FileEntry) => string
   iconSize: number
 }>(), {
   selectedCount: 0,
+  searchScope: 'folder',
+  searchLoading: false,
 })
 
 defineEmits<{

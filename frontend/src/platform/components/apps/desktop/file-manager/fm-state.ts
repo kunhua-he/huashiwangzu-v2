@@ -1,5 +1,5 @@
 import { computed, ref, watch } from 'vue'
-import { fetchFileList, fetchFinderLocations, fetchRecycleBinList } from '@/shared/api/desktop'
+import { fetchFileList, fetchFinderLocations, fetchRecycleBinList, searchFilesRequest } from '@/shared/api/desktop'
 import type { FinderLocation } from '@/shared/api/desktop'
 import type { RecycleBinEntry } from '@/shared/api/types'
 import { openFileByRecord } from '@/desktop/app-registry/app-opener'
@@ -51,6 +51,11 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   const sortColumn = ref<'name' | 'date' | 'type' | 'size'>('name')
   const sortDirection = ref<'asc' | 'desc'>('asc')
   const searchKeyword = ref('')
+  const searchScope = ref<'folder' | 'all'>('folder')
+  const searchResults = ref<FileEntry[] | null>(null)
+  const searchLoading = ref(false)
+  let searchTimer: ReturnType<typeof setTimeout> | null = null
+  let searchToken = 0
   const navigationHistory = ref<NavigationEntry[]>([{ id: 0, name: '桌面' }])
   const navigationBreadcrumbs = ref<DesktopFileManagerBreadcrumbItem[][]>([[{ id: null, name: '桌面' }]])
   const historyIndex = ref(0)
@@ -72,10 +77,13 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   }
 
   const filteredItems = computed(() => {
+    const keyword = searchKeyword.value.trim()
     let filtered = items.value
-    if (searchKeyword.value) {
-      const keyword = searchKeyword.value.toLowerCase()
-      filtered = filtered.filter(item => item.file_name.toLowerCase().includes(keyword))
+    if (keyword && searchScope.value === 'all' && searchResults.value) {
+      filtered = searchResults.value
+    } else if (keyword) {
+      const needle = keyword.toLowerCase()
+      filtered = filtered.filter(item => item.file_name.toLowerCase().includes(needle))
     }
     if (activeTagFilter.value) {
       const tag = activeTagFilter.value
@@ -189,6 +197,9 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
       }
       items.value = nextItems
       finishLoading(loadState, nextItems)
+      if (searchKeyword.value.trim() && searchScope.value === 'all' && !isRecycleBin.value) {
+        void runGlobalSearch(searchKeyword.value)
+      }
     } catch (error: unknown) {
       failLoading(loadState, error, '文件列表加载失败')
     } finally {
@@ -196,10 +207,67 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     }
   }
 
+  function clearSearchResults() {
+    searchResults.value = null
+    searchLoading.value = false
+  }
+
+  async function runGlobalSearch(raw: string) {
+    const keyword = raw.trim()
+    if (!keyword || isRecycleBin.value) {
+      clearSearchResults()
+      return
+    }
+    const token = ++searchToken
+    searchLoading.value = true
+    try {
+      const page = await searchFilesRequest(keyword, undefined, 1, 200)
+      if (token !== searchToken) return
+      searchResults.value = page.items || []
+    } catch {
+      if (token !== searchToken) return
+      searchResults.value = []
+    } finally {
+      if (token === searchToken) searchLoading.value = false
+    }
+  }
+
+  function scheduleSearch() {
+    if (searchTimer) clearTimeout(searchTimer)
+    const keyword = searchKeyword.value.trim()
+    if (!keyword || searchScope.value !== 'all' || isRecycleBin.value) {
+      clearSearchResults()
+      return
+    }
+    searchTimer = setTimeout(() => {
+      void runGlobalSearch(keyword)
+    }, 220)
+  }
+
+  function setSearchScope(scope: 'folder' | 'all') {
+    if (searchScope.value === scope) return
+    searchScope.value = scope
+    if (scope === 'all') scheduleSearch()
+    else clearSearchResults()
+  }
+
+  function setSearchKeyword(value: string) {
+    searchKeyword.value = value
+    if (searchScope.value === 'all') scheduleSearch()
+    else clearSearchResults()
+  }
+
+  watch(searchKeyword, () => {
+    // keep compatibility for direct writes from templates
+    if (searchScope.value === 'all') scheduleSearch()
+    else clearSearchResults()
+  })
+
   function enterFolder(folderId: number) {
     sortColumn.value = 'name'
     sortDirection.value = 'asc'
     searchKeyword.value = ''
+    clearSearchResults()
     clearSelection()
     closeQuickLook()
     currentFolderId.value = folderId
@@ -458,18 +526,20 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     tagRevision.value += 1
   }
 
-  async function applyTagAction(key: string, item: FileEntry | null) {
-    if (!item) return false
+  async function applyTagAction(key: string, item: FileEntry | null, items?: FileEntry[] | null) {
+    const targets = (items && items.length)
+      ? items
+      : (item ? [item] : [])
+    if (!targets.length) return false
     if (key === 'tag:clear') {
-      await clearTagsOnItem(item)
+      for (const target of targets) await clearTagsOnItem(target)
       return true
     }
     if (key.startsWith('tag:')) {
       const tag = key.slice(4) as FinderTagColor
-      if (FINDER_TAGS.some((t) => t.key === tag)) {
-        await toggleTagOnItem(item, tag)
-        return true
-      }
+      if (!FINDER_TAGS.some((t) => t.key === tag)) return false
+      for (const target of targets) await toggleTagOnItem(target, tag)
+      return true
     }
     return false
   }
@@ -568,6 +638,11 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     sortColumn,
     sortDirection,
     searchKeyword,
+    searchScope,
+    searchResults,
+    searchLoading,
+    setSearchScope,
+    setSearchKeyword,
     navigationHistory,
     historyIndex,
     isRecycleBin,

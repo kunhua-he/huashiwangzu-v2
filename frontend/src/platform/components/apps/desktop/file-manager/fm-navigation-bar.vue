@@ -1,49 +1,61 @@
 <template>
   <header class="fm-navigation-bar">
     <div class="fm-nav-left">
-      <button class="fm-icon-button" type="button" :disabled="!canGoBack" title="后退" aria-label="后退" @click="$emit('go-back')">
-        <ChevronLeft :size="17" :stroke-width="2" />
-      </button>
-      <button class="fm-icon-button" type="button" :disabled="!canGoForward" title="前进" aria-label="前进" @click="$emit('go-forward')">
-        <ChevronRight :size="17" :stroke-width="2" />
-      </button>
       <button
-        v-if="canGoUp"
         class="fm-icon-button"
         type="button"
-        title="上级"
-        aria-label="上级"
-        :data-folder="parentFolderId() || undefined"
-        @click="$emit('go-up')"
+        :disabled="!canGoBack"
+        title="后退"
+        aria-label="后退"
+        @click="$emit('go-back')"
       >
-        <ArrowUp :size="16" :stroke-width="2" />
+        <ChevronLeft :size="17" :stroke-width="2" />
+      </button>
+      <button
+        class="fm-icon-button"
+        type="button"
+        :disabled="!canGoForward"
+        title="前进"
+        aria-label="前进"
+        @click="$emit('go-forward')"
+      >
+        <ChevronRight :size="17" :stroke-width="2" />
       </button>
     </div>
 
-    <div class="fm-nav-address">
-      <button class="fm-root-btn" type="button" title="桌面" @click="$emit('go-root')">
-        <Monitor :size="15" :stroke-width="2" />
+    <div class="fm-view-switch" role="group" aria-label="视图">
+      <span class="fm-view-thumb" :class="`is-${viewMode}`" aria-hidden="true" />
+      <button
+        type="button"
+        class="fm-view-btn"
+        :class="{ active: viewMode === 'grid' }"
+        title="图标"
+        aria-label="图标视图"
+        @click="$emit('update:viewMode', 'grid')"
+      >
+        <LayoutGrid :size="15" :stroke-width="2" />
       </button>
-      <span v-for="(crumb, index) in breadcrumb" :key="`crumb-${index}`" class="fm-crumb-segment">
-        <ChevronRight class="fm-crumb-sep" :size="13" :stroke-width="1.75" />
-        <button
-          class="fm-crumb-btn"
-          :class="{ 'fm-crumb-active': index === breadcrumb.length - 1 }"
-          type="button"
-          :data-folder="crumb.id ?? undefined"
-          @click="$emit('navigate', index)"
-        >
-          {{ crumb.name }}
-        </button>
-      </span>
+      <button
+        type="button"
+        class="fm-view-btn"
+        :class="{ active: viewMode === 'list' }"
+        title="列表"
+        aria-label="列表视图"
+        @click="$emit('update:viewMode', 'list')"
+      >
+        <List :size="15" :stroke-width="2" />
+      </button>
     </div>
 
-    <div class="fm-nav-search">
-      <Search class="fm-search-icon" :size="14" :stroke-width="2" />
+    <div class="fm-toolbar-spacer" />
+
+    <div class="fm-search-pill">
+      <Search class="fm-search-icon" :size="13" :stroke-width="2" />
       <input
         class="fm-search-input"
         type="text"
         placeholder="搜索"
+        spellcheck="false"
         :value="searchKeyword"
         @input="$emit('update:searchKeyword', ($event.target as HTMLInputElement).value)"
       />
@@ -52,15 +64,16 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowUp, ChevronLeft, ChevronRight, Monitor, Search } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, LayoutGrid, List, Search } from 'lucide-vue-next'
 import type { DesktopFileManagerBreadcrumbItem } from './types'
 
-const props = defineProps<{
+defineProps<{
   canGoBack: boolean
   canGoForward: boolean
   canGoUp: boolean
   breadcrumb: DesktopFileManagerBreadcrumbItem[]
   searchKeyword: string
+  viewMode: 'grid' | 'list'
 }>()
 
 defineEmits<{
@@ -70,35 +83,29 @@ defineEmits<{
   (e: 'go-root'): void
   (e: 'navigate', index: number): void
   (e: 'update:searchKeyword', value: string): void
+  (e: 'update:viewMode', mode: 'grid' | 'list'): void
 }>()
-
-const parentFolderId = () => {
-  if (props.breadcrumb.length < 2) return ''
-  return props.breadcrumb[props.breadcrumb.length - 2]?.id ?? ''
-}
 </script>
 
 <style scoped>
 .fm-navigation-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   width: 100%;
   min-width: 0;
+  height: 44px;
+  min-height: 44px;
   padding: 0 12px;
-  min-height: var(--mac-app-toolbar-height, 44px);
+  box-sizing: border-box;
   background: transparent;
+  box-shadow: inset 0 -0.5px 0 var(--mac-app-border, rgba(60, 60, 67, 0.18));
 }
 
 .fm-nav-left {
   display: flex;
   align-items: center;
-  gap: 1px;
   flex-shrink: 0;
-  padding: 2px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--mac-app-border, rgba(60, 60, 67, 0.12)) 58%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .fm-icon-button {
@@ -107,124 +114,114 @@ const parentFolderId = () => {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--mac-app-text, #343438);
-  line-height: 1;
+  color: var(--mac-app-text-secondary, #6e6e73);
+  display: grid;
+  place-items: center;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
+
 .fm-icon-button:hover:not(:disabled) {
-  background: color-mix(in srgb, white 78%, transparent);
-}
-.fm-icon-button:disabled {
-  opacity: 0.34;
-  cursor: not-allowed;
-}
-
-.fm-nav-address {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  padding: 0 8px;
-  height: 30px;
-  border: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.14));
-  border-radius: 9px;
-  background: color-mix(in srgb, white 78%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  overflow: hidden;
-}
-
-.fm-root-btn {
-  border: none;
-  background: transparent;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 4px;
-  flex-shrink: 0;
-  color: var(--mac-app-text-secondary, #4b4b50);
-}
-.fm-root-btn:hover {
-  color: var(--mac-app-accent, #0a84ff);
-}
-
-.fm-crumb-segment {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  min-width: 0;
-}
-
-.fm-crumb-sep {
-  color: var(--mac-app-text-secondary, #99999f);
-  margin: 0 1px;
-  flex-shrink: 0;
-}
-
-.fm-crumb-btn {
-  border: none;
-  background: transparent;
-  font-size: 12px;
-  color: var(--mac-app-text-secondary, #55555a);
-  cursor: pointer;
-  padding: 2px 6px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 140px;
-  border-radius: 6px;
-}
-.fm-crumb-btn:hover {
-  color: var(--mac-app-accent, #0a84ff);
-  background: var(--mac-app-selection, rgba(10, 132, 255, 0.12));
-}
-.fm-crumb-active {
+  background: color-mix(in srgb, var(--mac-app-text, #1d1d1f) 7%, transparent);
   color: var(--mac-app-text, #1d1d1f);
-  font-weight: 600;
 }
 
-.fm-nav-search {
+.fm-icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fm-view-switch {
   position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 8px;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--mac-app-text-secondary, #8e8e93) 16%, transparent);
+  box-shadow: inset 0 0 0 0.5px var(--mac-app-border, rgba(60, 60, 67, 0.16));
+  flex-shrink: 0;
+}
+
+.fm-view-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: 30px;
+  border-radius: 7px;
+  background: color-mix(in srgb, white 92%, #f2f2f7);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 0.5px var(--mac-app-border, rgba(60, 60, 67, 0.14));
+  transition: left 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+
+.fm-view-thumb.is-list {
+  left: 32px;
+}
+
+.fm-view-btn {
+  position: relative;
+  z-index: 1;
+  width: 30px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--mac-app-text-secondary, #6e6e73);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  border-radius: 7px;
+}
+
+.fm-view-btn.active {
+  color: var(--mac-app-text, #1d1d1f);
+}
+
+.fm-toolbar-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.fm-search-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 180px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, white 62%, rgba(246, 246, 248, 0.55));
+  box-shadow:
+    inset 0 0 0 0.5px var(--mac-app-border, rgba(60, 60, 67, 0.16)),
+    0 1px 1px rgba(255, 255, 255, 0.35) inset;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   flex-shrink: 0;
 }
 
 .fm-search-icon {
-  position: absolute;
-  left: 9px;
-  top: 50%;
-  z-index: 1;
   color: var(--mac-app-text-secondary, #8e8e93);
-  pointer-events: none;
-  transform: translateY(-50%);
+  flex-shrink: 0;
 }
 
 .fm-search-input {
-  width: 168px;
-  height: 30px;
-  padding: 0 10px 0 28px;
-  border: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.14));
-  border-radius: 9px;
-  background: color-mix(in srgb, white 78%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  font-size: 12px;
-  color: var(--mac-app-text, #1d1d1f);
+  width: 100%;
+  border: 0;
   outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--mac-app-text, #1d1d1f);
 }
+
 .fm-search-input::placeholder {
   color: var(--mac-app-text-secondary, #8e8e93);
 }
-.fm-search-input:focus {
-  border-color: var(--mac-app-accent, #0a84ff);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--mac-app-accent, #0a84ff) 16%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.55);
-}
 
 @media (max-width: 720px) {
-  .fm-nav-address { display: none; }
-  .fm-nav-search { flex: 1; }
-  .fm-search-input { width: 100%; }
+  .fm-search-pill {
+    width: min(180px, 34vw);
+  }
 }
 </style>

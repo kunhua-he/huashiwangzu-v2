@@ -49,7 +49,11 @@
 
     <!-- File entries -->
     <template v-else>
-      <div v-if="viewMode === 'grid'" class="fm-content-grid">
+      <div
+        v-if="viewMode === 'grid'"
+        class="fm-content-grid"
+        :style="gridStyle"
+      >
         <button
           v-for="item in items"
           :key="`${item.is_folder ? 'folder' : 'file'}-${item.id}`"
@@ -64,8 +68,14 @@
           @contextmenu.prevent.stop="$emit('context-menu', item, $event)"
           @mousedown.stop="handleEntryMouseDown(item, $event)"
         >
-          <FileVisualIcon :kind="item.is_folder || !item.format ? 'folder' : 'file'" :extension="item.format || ''" :size="52" />
-          <span class="fm-entry-name">{{ displayName(item) }}</span>
+          <span class="fm-entry-icon-wrap" :style="iconWrapStyle">
+            <FileVisualIcon
+              :kind="item.is_folder || !item.format ? 'folder' : 'file'"
+              :extension="item.format || ''"
+              :size="gridIconSize"
+            />
+          </span>
+          <span class="fm-entry-name" :style="nameStyle">{{ displayName(item) }}</span>
         </button>
       </div>
 
@@ -96,6 +106,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
 import type { FileEntry } from '@/shared/api/types'
 import { startDrag } from '@/desktop/drag-drop/drag-state'
@@ -107,10 +118,11 @@ import type { LoadStatus } from '@/shared/composables/use-load-state'
 let suppressNextClick = false
 let pendingDrag: { key: string; startX: number; startY: number } | null = null
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   items: FileEntry[]
   selectedId: number | null
   viewMode: 'grid' | 'list'
+  iconSize?: number
   loading: boolean
   displayName: (file: FileEntry) => string
   formatSize: (size: number) => string
@@ -118,7 +130,22 @@ const props = defineProps<{
   sortDirection: 'asc' | 'desc'
   loadStatus: LoadStatus
   loadError: ApiErrorInfo | null
-}>()
+}>(), {
+  iconSize: 50,
+})
+
+const gridIconSize = computed(() => Math.round(props.iconSize * 0.78))
+const gridStyle = computed(() => ({
+  gridTemplateColumns: `repeat(auto-fill, minmax(${Math.max(72, props.iconSize + 30)}px, 1fr))`,
+  gap: '10px',
+}))
+const iconWrapStyle = computed(() => ({
+  width: `${props.iconSize + 14}px`,
+  height: `${Math.round(props.iconSize * 1.09)}px`,
+}))
+const nameStyle = computed(() => ({
+  maxWidth: `${props.iconSize + 26}px`,
+}))
 
 function handleEntryMouseDown(item: FileEntry, e: MouseEvent) {
   if (e.button !== 0) return
@@ -181,9 +208,7 @@ const emit = defineEmits<{
   min-height: 0;
   height: 100%;
   overflow: auto;
-  background:
-    radial-gradient(120% 80% at 0% 0%, rgba(255, 255, 255, 0.55), transparent 48%),
-    var(--mac-app-surface, #fbfbfd);
+  background: #fff;
   color: var(--mac-app-text, #1d1d1f);
 }
 
@@ -205,11 +230,9 @@ const emit = defineEmits<{
   position: sticky;
   top: 0;
   z-index: 1;
-  height: 30px;
+  height: 28px;
   border-bottom: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.12));
-  background: color-mix(in srgb, var(--mac-app-surface-toolbar, rgba(246, 246, 250, 0.92)) 94%, white);
-  backdrop-filter: var(--desktop-lg-filter-soft, blur(20px) saturate(150%));
-  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(20px) saturate(150%));
+  background: color-mix(in srgb, #f6f6f8 90%, white);
 }
 
 .fm-list-header button {
@@ -232,10 +255,8 @@ const emit = defineEmits<{
 
 .fm-content-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   align-content: start;
-  gap: 6px 8px;
-  padding: 16px 14px 18px;
+  padding: 12px;
 }
 
 .fm-content-list {
@@ -253,39 +274,44 @@ const emit = defineEmits<{
 
 .fm-entry {
   min-width: 0;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  border: 0;
   background: transparent;
-  color: var(--mac-app-text, #242426);
-  cursor: pointer;
+  color: var(--mac-app-text, #1d1d1f);
+  cursor: default;
   user-select: none;
   text-align: left;
-  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .fm-content-grid .fm-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 4px 2px;
+  border-radius: 0;
+}
+
+.fm-entry-icon-wrap {
   display: grid;
   place-items: center;
-  align-content: start;
-  gap: 8px;
-  min-height: 112px;
-  padding: 12px 8px 10px;
+  border-radius: 8px;
+  transition: background 100ms ease;
 }
 
-.fm-entry:hover {
-  background: color-mix(in srgb, var(--mac-app-text, #242426) 5.5%, transparent);
+.fm-content-grid .fm-entry:hover .fm-entry-icon-wrap {
+  background: color-mix(in srgb, var(--mac-app-text, #1d1d1f) 5%, transparent);
 }
 
-.fm-entry-selected {
-  border-color: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 28%, transparent);
-  background: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 14%, transparent);
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--mac-app-accent, #0a84ff) 22%, transparent);
-  color: var(--mac-app-text, #1d1d1f);
+.fm-content-grid .fm-entry-selected .fm-entry-icon-wrap {
+  background: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mac-app-accent, #0a84ff) 35%, transparent);
+}
+
+.fm-content-list .fm-entry:hover {
+  background: color-mix(in srgb, var(--mac-app-text, #1d1d1f) 5%, transparent);
 }
 
 .fm-content-list .fm-entry-selected {
-  border-color: transparent;
-  box-shadow: none;
   background: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 16%, transparent);
 }
 
@@ -293,18 +319,24 @@ const emit = defineEmits<{
   max-width: 100%;
   overflow: hidden;
   font-size: 12px;
-  line-height: 1.28;
-  letter-spacing: -0.01em;
+  line-height: 1.25;
   text-overflow: ellipsis;
 }
 
 .fm-content-grid .fm-entry-name {
+  margin-top: 3px;
+  padding: 1px 5px;
+  border-radius: 5px;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   text-align: center;
-  width: 100%;
   word-break: break-word;
+}
+
+.fm-content-grid .fm-entry-selected .fm-entry-name {
+  background: var(--mac-app-accent, #0a84ff);
+  color: #fff;
 }
 
 .fm-content-list .fm-entry-name {
@@ -322,12 +354,6 @@ const emit = defineEmits<{
 
 .fm-entry-kind,
 .fm-entry-size { text-align: right; }
-
-.fm-entry-selected .fm-entry-date,
-.fm-entry-selected .fm-entry-kind,
-.fm-entry-selected .fm-entry-size {
-  color: color-mix(in srgb, var(--mac-app-text, #1d1d1f) 72%, #6e6e73);
-}
 
 .fm-state {
   display: grid;

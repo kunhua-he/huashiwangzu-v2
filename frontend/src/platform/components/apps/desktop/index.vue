@@ -6,7 +6,7 @@
     data-mac-app-layout="finder"
     @contextmenu.prevent="handleBlankContextMenu"
   >
-    <MacAppShell layout="finder" :sidebar-width="208">
+    <MacAppShell layout="finder" :sidebar-width="216">
       <template #toolbar>
         <FmNavigationBar
           :can-go-back="state.canGoBack.value"
@@ -14,12 +14,14 @@
           :can-go-up="state.canGoUp.value"
           :breadcrumb="state.breadcrumb.value"
           :search-keyword="state.searchKeyword.value"
+          :view-mode="state.viewMode.value"
           @go-back="state.goBack"
           @go-forward="state.goForward"
           @go-up="state.goUp"
           @go-root="state.goRoot"
           @navigate="state.navigateToCrumb"
           @update:search-keyword="state.searchKeyword.value = $event"
+          @update:view-mode="state.viewMode.value = $event"
         />
       </template>
 
@@ -41,6 +43,7 @@
           :items="state.sortedItems.value"
           :selected-id="state.selectedId.value"
           :view-mode="state.viewMode.value"
+          :icon-size="iconSize"
           :loading="state.loading.value"
           :display-name="state.displayName"
           :format-size="state.formatSize"
@@ -67,7 +70,9 @@
           :search-keyword="state.searchKeyword.value"
           :filtered-count="state.filteredItems.value.length"
           :display-name="state.displayName"
+          :icon-size="iconSize"
           @update:view-mode="state.viewMode.value = $event"
+          @update:icon-size="iconSize = $event"
         />
       </template>
     </MacAppShell>
@@ -125,6 +130,7 @@ const props = defineProps<{
 
 const feedback = useAppFeedback()
 const uploadInputRef = ref<HTMLInputElement | null>(null)
+const iconSize = ref(50)
 const state = useFileManagerState({
   folderId: () => props.folderId,
   folderName: () => props.folderName,
@@ -276,11 +282,11 @@ onMounted(() => {
   position: relative;
   color: var(--mac-app-text, #1d1d1f);
   --mac-app-toolbar-height: 44px;
-  --mac-app-statusbar-height: 28px;
-  --mac-app-surface: #fbfbfd;
-  --mac-app-surface-sidebar: color-mix(in srgb, #eef0f3 72%, rgba(255, 255, 255, 0.55));
-  --mac-app-surface-toolbar: color-mix(in srgb, #f4f4f6 78%, rgba(255, 255, 255, 0.7));
-  --mac-app-surface-status: color-mix(in srgb, #f2f2f4 84%, rgba(255, 255, 255, 0.72));
+  --mac-app-statusbar-height: 22px;
+  --mac-app-surface: #ffffff;
+  --mac-app-surface-sidebar: transparent;
+  --mac-app-surface-toolbar: color-mix(in srgb, #f6f6f8 86%, white);
+  --mac-app-surface-status: color-mix(in srgb, #f4f4f6 90%, white);
 }
 
 .fm-main {
@@ -289,6 +295,7 @@ onMounted(() => {
   height: 100%;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+  background: var(--mac-app-surface, #fff);
 }
 
 .fm-hidden-input {
@@ -296,41 +303,46 @@ onMounted(() => {
 }
 
 .fm-main-drag-over {
-  background: var(--mac-app-selection, rgba(10, 132, 255, 0.08)) !important;
-  box-shadow: inset 0 0 0 1.5px var(--mac-app-accent, #0a84ff);
-  border-radius: 10px;
+  background: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 8%, transparent) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mac-app-accent, #0a84ff) 45%, transparent);
+  border-radius: 8px;
 }
 
 :deep(.mac-app-kit),
 :deep(.app-window-frame) {
   height: 100%;
   min-height: 0;
+  background: transparent;
 }
 
 :deep(.app-window-frame_toolbar) {
   padding: 0;
-  min-height: var(--mac-app-toolbar-height, 44px);
+  min-height: 44px;
   background: var(--mac-app-surface-toolbar);
-  border-bottom: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.12));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  border-bottom: 0;
+  box-shadow: none;
 }
 
 :deep(.app-window-frame_sidebar) {
-  border-right: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.12));
-  background: var(--mac-app-surface-sidebar);
-  backdrop-filter: blur(28px) saturate(165%);
-  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  border-right: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+:deep(.app-window-frame_body) {
+  background:
+    linear-gradient(180deg, rgba(250, 250, 252, 0.92), rgba(255, 255, 255, 0.98));
 }
 
 :deep(.app-window-frame--file-manager .app-window-frame_content) {
   padding: 0;
-  background: var(--mac-app-surface, #fbfbfd);
+  background: #fff;
   overflow: hidden;
 }
 
 :deep(.app-window-frame_statusbar) {
-  min-height: var(--mac-app-statusbar-height, 28px);
+  min-height: 22px;
   background: var(--mac-app-surface-status);
-  border-top: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.1));
+  border-top: 0;
 }
 </style>

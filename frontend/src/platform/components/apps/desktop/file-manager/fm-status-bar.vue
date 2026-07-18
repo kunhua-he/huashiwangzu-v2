@@ -6,35 +6,27 @@
       </template>
       <template v-else>
         <span>{{ itemCount }} 个项目</span>
-        <span v-if="selectedItem">已选择 {{ displayName(selectedItem) }}</span>
+        <span v-if="selectedItem">· 已选择 {{ displayName(selectedItem) }}</span>
         <span v-if="selectedItem && !selectedItem.is_folder">({{ selectedSize }})</span>
       </template>
     </div>
     <div class="fm-status-right">
-      <button
-        class="fm-view-btn"
-        :class="{ 'fm-view-btn-active': viewMode === 'list' }"
-        type="button"
-        title="列表"
-        @click="$emit('update:viewMode', 'list')"
-      >
-        <List :size="15" :stroke-width="2" />
-      </button>
-      <button
-        class="fm-view-btn"
-        :class="{ 'fm-view-btn-active': viewMode === 'grid' }"
-        type="button"
-        title="图标"
-        @click="$emit('update:viewMode', 'grid')"
-      >
-        <Grid3X3 :size="14" :stroke-width="2" />
-      </button>
+      <span class="fm-icon-size-label">图标大小</span>
+      <input
+        class="fm-icon-size"
+        type="range"
+        min="36"
+        max="72"
+        step="2"
+        :value="iconSize"
+        aria-label="图标大小"
+        @input="$emit('update:iconSize', Number(($event.target as HTMLInputElement).value))"
+      />
     </div>
   </footer>
 </template>
 
 <script setup lang="ts">
-import { Grid3X3, List } from 'lucide-vue-next'
 import type { FileEntry } from '@/shared/api/types'
 
 defineProps<{
@@ -47,10 +39,12 @@ defineProps<{
   searchKeyword: string
   filteredCount: number
   displayName: (file: FileEntry) => string
+  iconSize: number
 }>()
 
 defineEmits<{
   (e: 'update:viewMode', mode: 'grid' | 'list'): void
+  (e: 'update:iconSize', size: number): void
 }>()
 </script>
 
@@ -60,56 +54,42 @@ defineEmits<{
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  height: 100%;
-  min-height: var(--mac-app-statusbar-height, 28px);
-  padding: 0 8px 0 12px;
-  font: var(--mac-app-font-caption, 400 11px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
+  height: 22px;
+  min-height: 22px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  font: 400 11px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
   color: var(--mac-app-text-secondary, #6e6e73);
   background: transparent;
+  box-shadow: inset 0 0.5px 0 var(--mac-app-border, rgba(60, 60, 67, 0.16));
 }
 
 .fm-status-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .fm-status-right {
   display: flex;
   align-items: center;
-  gap: 0;
-  padding: 2px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--mac-app-border, rgba(60, 60, 67, 0.12)) 72%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.fm-view-btn {
-  width: 28px;
-  height: 22px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--mac-app-text-secondary, #626267);
+.fm-icon-size-label {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--mac-app-text-secondary, #6e6e73) 88%, transparent);
+}
+
+.fm-icon-size {
+  width: 110px;
+  height: 14px;
+  accent-color: var(--mac-app-accent, #0a84ff);
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-
-.fm-view-btn:hover {
-  background: color-mix(in srgb, white 74%, transparent);
-}
-
-.fm-view-btn-active {
-  color: var(--mac-app-text, #1d1d1f);
-  background: color-mix(in srgb, white 94%, transparent);
-  border-color: var(--mac-app-border, rgba(60, 60, 67, 0.1));
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 </style>

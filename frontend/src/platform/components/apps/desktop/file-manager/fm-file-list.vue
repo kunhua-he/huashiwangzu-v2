@@ -39,7 +39,13 @@
     </div>
 
     <!-- Empty state -->
-    <div v-else-if="items.length === 0" class="fm-state">这个文件夹是空的</div>
+    <MacEmptyState
+      v-else-if="items.length === 0"
+      class="fm-empty"
+      title="这个文件夹是空的"
+      description="把文件拖到这里，或从菜单新建。"
+      icon="📁"
+    />
 
     <!-- File entries -->
     <template v-else>
@@ -94,6 +100,7 @@ import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
 import type { FileEntry } from '@/shared/api/types'
 import { startDrag } from '@/desktop/drag-drop/drag-state'
 import LoadStateBanner from '@/shared/components/load-state-banner.vue'
+import { MacEmptyState } from '@/desktop/app-kit'
 import type { ApiErrorInfo } from '@/shared/api/response-transform'
 import type { LoadStatus } from '@/shared/composables/use-load-state'
 
@@ -185,17 +192,17 @@ const emit = defineEmits<{
 .fm-list-header,
 .fm-content-list .fm-entry {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 140px 92px 80px;
+  grid-template-columns: 28px minmax(0, 1fr) 132px 88px 76px;
   align-items: center;
   gap: 8px;
-  padding: 0 10px;
+  padding: 0 12px;
 }
 
 .fm-list-header {
   position: sticky;
   top: 0;
   z-index: 1;
-  height: 28px;
+  height: 26px;
   border-bottom: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.12));
   background: color-mix(in srgb, var(--mac-app-surface-toolbar, rgba(246, 246, 250, 0.9)) 92%, white);
   backdrop-filter: var(--desktop-lg-filter-soft, blur(20px) saturate(150%));
@@ -236,14 +243,14 @@ const emit = defineEmits<{
 }
 
 .fm-content-list .fm-entry {
-  min-height: 27px;
-  padding-block: 2px;
+  min-height: 30px;
+  padding-block: 3px;
 }
 
 .fm-entry {
   min-width: 0;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--mac-app-text, #242426);
   cursor: pointer;
@@ -271,7 +278,7 @@ const emit = defineEmits<{
 .fm-entry-name {
   max-width: 100%;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.25;
   text-overflow: ellipsis;
 }
@@ -308,8 +315,12 @@ const emit = defineEmits<{
   place-items: center;
   min-height: 100%;
   padding: 40px;
-  color: #77777c;
+  color: var(--mac-app-text-secondary, #6e6e73);
   font-size: 13px;
+}
+
+.fm-empty {
+  min-height: 100%;
 }
 
 .fm-state-error { align-content: center; }

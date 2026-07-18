@@ -100,8 +100,8 @@ const sidebarStyle = computed(() => ({
 }
 .app-window-frame_statusbar {
   flex-shrink: 0;
-  border-top: 1px solid rgba(60, 60, 67, 0.1);
-  background: rgba(248, 250, 252, 0.86);
+  border-top: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.1));
+  background: var(--mac-app-surface-status, rgba(248, 250, 252, 0.86));
 }
 .app-window-frame--chat .app-window-frame_sidebar {
   border-right: none;
@@ -120,6 +120,6 @@ const sidebarStyle = computed(() => ({
 }
 .app-window-frame--file-manager .app-window-frame_content {
   padding: 0;
-  background: #fff;
+  background: var(--mac-app-surface, #fbfbfd);
 }
 </style>

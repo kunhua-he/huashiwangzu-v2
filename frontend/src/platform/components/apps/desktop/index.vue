@@ -6,7 +6,7 @@
     data-mac-app-layout="finder"
     @contextmenu.prevent="handleBlankContextMenu"
   >
-    <MacAppShell layout="finder" :sidebar-width="200">
+    <MacAppShell layout="finder" :sidebar-width="208">
       <template #toolbar>
         <FmNavigationBar
           :can-go-back="state.canGoBack.value"
@@ -301,10 +301,15 @@ onMounted(() => {
 
 :deep(.app-window-frame_sidebar) {
   border-right: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.12));
+  background: var(--mac-app-surface-sidebar, rgba(245, 246, 248, 0.82));
 }
 
 :deep(.app-window-frame--file-manager .app-window-frame_content) {
   padding: 0;
-  background: var(--mac-app-surface, #fff);
+  background: var(--mac-app-surface, #fbfbfd);
+}
+
+:deep(.app-window-frame_statusbar) {
+  background: var(--mac-app-surface-status, rgba(246, 246, 248, 0.9));
 }
 </style>

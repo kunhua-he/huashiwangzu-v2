@@ -86,7 +86,7 @@ const parentFolderId = () => {
   width: 100%;
   min-width: 0;
   padding: 0 10px;
-  min-height: var(--mac-app-toolbar-height, 42px);
+  min-height: 40px;
   background: transparent;
 }
 
@@ -199,7 +199,7 @@ const parentFolderId = () => {
 }
 
 .fm-search-input {
-  width: 148px;
+  width: 168px;
   height: 28px;
   padding: 0 9px 0 27px;
   border: 1px solid var(--mac-app-border, rgba(60, 60, 67, 0.14));

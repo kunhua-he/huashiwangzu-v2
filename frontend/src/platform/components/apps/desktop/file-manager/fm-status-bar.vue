@@ -61,7 +61,7 @@ defineEmits<{
   justify-content: space-between;
   width: 100%;
   height: 100%;
-  min-height: var(--mac-app-statusbar-height, 26px);
+  min-height: 24px;
   padding: 0 4px;
   font: var(--mac-app-font-caption, 400 11px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
   color: var(--mac-app-text-secondary, #6e6e73);

@@ -104,7 +104,12 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
         let cmp = 0
         switch (sortColumn.value) {
           case 'name': cmp = a.file_name.localeCompare(b.file_name); break
-          case 'date': cmp = a.created_at.localeCompare(b.created_at); break
+          case 'date': {
+            const da = a.updated_at || a.created_at || ''
+            const db = b.updated_at || b.created_at || ''
+            cmp = da.localeCompare(db)
+            break
+          }
           case 'type': cmp = (a.format || '').localeCompare(b.format || ''); break
           case 'size': cmp = a.file_size - b.file_size; break
         }

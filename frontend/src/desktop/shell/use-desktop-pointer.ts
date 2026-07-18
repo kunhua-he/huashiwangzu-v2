@@ -2,7 +2,7 @@ import { onMounted, onUnmounted } from 'vue'
 import { useDesktopEventBus } from '@/desktop/events/use-desktop-event-bus'
 import { startBoxSelection, updateBoxSelection, endBoxSelection, selectionRect } from '@/desktop/selection/selection-box-state'
 import { clearSelection, setSelection } from '@/desktop/selection/desktop-selection-state'
-import { updateDragOffset, enterFolder, leaveFolder, endDrag, dragState } from '@/desktop/drag-drop/drag-state'
+import { updateDragOffset, enterFolder, leaveFolder, endDrag, dragState, setDragCopyMode } from '@/desktop/drag-drop/drag-state'
 import { clampIconPosition, commitDropOverlayBatch } from '@/desktop/drag-drop/drag-tool'
 
 function hitTestSelection(sel: { x: number; y: number; w: number; h: number }, e: MouseEvent) {
@@ -72,6 +72,8 @@ export function useDesktopPointer() {
 
   function handleDesktopMouseMove(e: MouseEvent) {
     if (dragState.isDragging) {
+      // Option/Alt toggles copy while dragging (Finder-like)
+      setDragCopyMode(Boolean(e.altKey))
       updateDragOffset(e.clientX - dragState.originX, e.clientY - dragState.originY)
       detectHoveredFolder(e)
       return
@@ -84,22 +86,24 @@ export function useDesktopPointer() {
 
   function handleDesktopMouseUp(e: MouseEvent) {
     if (dragState.isDragging) {
+      setDragCopyMode(Boolean(e.altKey))
+      const copy = Boolean(e.altKey || dragState.copyMode)
       const el = document.elementFromPoint(e.clientX, e.clientY)
       const folderEl = el?.closest?.('[data-folder]') as HTMLElement | null
       if (folderEl) {
         const targetId = folderEl.getAttribute('data-folder')
         const srcFolderId = getSourceFolderId(dragState.draggedIds[0])
-        if (srcFolderId !== null && String(srcFolderId) === targetId) {
+        if (srcFolderId !== null && String(srcFolderId) === targetId && !copy) {
           endDrag()
         } else {
-          emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: targetId })
-          endDrag({ keepTransform: true })
+          emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: targetId, copy })
+          endDrag({ keepTransform: !copy })
         }
-      } else if (isDesktopSource()) {
+      } else if (isDesktopSource() && !copy) {
         snapDraggedIcons(e)
         endDrag()
       } else {
-        emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: null })
+        emit('desktop:move-to-folder', { ids: dragState.draggedIds, targetFolderId: null, copy })
         endDrag()
       }
       return

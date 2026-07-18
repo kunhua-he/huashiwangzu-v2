@@ -7,7 +7,7 @@ export type DesktopEventTypes = {
   'file:created': { folderId: number; name: string }
   'desktop:create-folder': { folderId?: number | null }
   'desktop:upload-file': { folderId?: number | null }
-  'desktop:move-to-folder': { ids: string[]; targetFolderId: string | null }
+  'desktop:move-to-folder': { ids: string[]; targetFolderId: string | null; copy?: boolean }
   'task:completed': { taskId: number | string; taskType: string }
   'notification:created': { id: number; title: string }
   'refresh:file-list': { folderId?: number }

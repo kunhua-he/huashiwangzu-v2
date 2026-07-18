@@ -26,6 +26,10 @@
           <dd>{{ item.is_folder ? '—' : formatSize(item.file_size) }}</dd>
         </div>
         <div class="fm-preview-row">
+          <dt>修改</dt>
+          <dd>{{ formatDate(item.updated_at || item.created_at) }}</dd>
+        </div>
+        <div v-if="item.updated_at && item.created_at && item.updated_at !== item.created_at" class="fm-preview-row">
           <dt>创建</dt>
           <dd>{{ formatDate(item.created_at) }}</dd>
         </div>

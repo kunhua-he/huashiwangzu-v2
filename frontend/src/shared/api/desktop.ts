@@ -13,6 +13,7 @@ interface BackendFileListItem {
   parent_id?: number | null
   folder_id?: number | null
   created_at?: string | null
+  updated_at?: string | null
   is_folder: boolean
   mime_type?: string | null
   storage_path?: string | null
@@ -60,6 +61,7 @@ function toFileEntry(item: BackendFileListItem): FileEntry {
     format: item.extension ?? null,
     file_size: item.size,
     created_at: item.created_at ?? '',
+    updated_at: item.updated_at ?? item.created_at ?? null,
     storage_path: item.storage_path ?? null,
     is_folder: item.is_folder,
     parent_folder_id: item.parent_id ?? item.folder_id ?? null,

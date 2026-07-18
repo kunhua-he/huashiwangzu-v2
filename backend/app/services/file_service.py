@@ -181,12 +181,12 @@ async def get_file_list(db: AsyncSession, folder_id: int, owner_id: int, page: i
         if not folder or folder.deleted or folder.owner_id != owner_id:
             raise NotFound("Folder not found")
         subfolders = await db.execute(select(Folder).where(Folder.parent_id == folder_id, Folder.owner_id == owner_id, Folder.deleted.is_(False)).order_by(Folder.name))
-    folder_list = [{"id": f.id, "name": f.name, "extension": None, "size": 0, "created_at": f.created_at, "storage_path": None, "is_folder": True, "parent_id": f.parent_id, "mime_type": None} for f in subfolders.scalars().all()]
+    folder_list = [{"id": f.id, "name": f.name, "extension": None, "size": 0, "created_at": f.created_at, "updated_at": f.updated_at, "storage_path": None, "is_folder": True, "parent_id": f.parent_id, "mime_type": None} for f in subfolders.scalars().all()]
     if folder_id == 0:
         folder_list.extend(await _get_shared_root_folders(db, owner_id))
     cond = File.folder_id.is_(None) if folder_id == 0 else File.folder_id == folder_id
-    result = await db.execute(select(File).where(cond, File.owner_id == owner_id, File.deleted.is_(False)).order_by(File.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
-    file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "created_at": f.created_at, "storage_path": f.storage_path, "is_folder": False, "parent_id": f.folder_id, "mime_type": f.mime_type} for f in result.scalars().all()]
+    result = await db.execute(select(File).where(cond, File.owner_id == owner_id, File.deleted.is_(False)).order_by(File.updated_at.desc(), File.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
+    file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "created_at": f.created_at, "updated_at": f.updated_at, "storage_path": f.storage_path, "is_folder": False, "parent_id": f.folder_id, "mime_type": f.mime_type} for f in result.scalars().all()]
     return {"items": folder_list + file_list, "total": len(folder_list) + len(file_list), "page": page, "page_size": page_size}
 
 
@@ -385,7 +385,7 @@ async def _get_shared_folder_file_list(
             .limit(file_limit)
         )
         files = files_result.scalars().all()
-    file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "created_at": f.created_at, "storage_path": f.storage_path, "is_folder": False, "parent_id": -int(f.folder_id) if f.folder_id else None, "mime_type": f.mime_type} for f in files]
+    file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "created_at": f.created_at, "updated_at": f.updated_at, "storage_path": f.storage_path, "is_folder": False, "parent_id": -int(f.folder_id) if f.folder_id else None, "mime_type": f.mime_type} for f in files]
     return {
         "items": paged_folders + file_list,
         "total": len(folder_list) + file_total,
@@ -545,8 +545,8 @@ async def search_files(db: AsyncSession, owner_id: int, keyword: str = "", exten
     if extension:
         fq = fq.where(File.extension == extension)
     total = len((await db.execute(fq.with_only_columns(File.id))).scalars().all())
-    result = await db.execute(fq.order_by(File.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
-    file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "folder_id": f.folder_id, "created_at": f.created_at, "is_folder": False} for f in result.scalars().all()]
+    result = await db.execute(fq.order_by(File.updated_at.desc(), File.created_at.desc()).offset((page - 1) * page_size).limit(page_size))
+    file_list = [{"id": f.id, "name": f.name, "extension": f.extension, "size": f.size, "folder_id": f.folder_id, "created_at": f.created_at, "updated_at": f.updated_at, "is_folder": False} for f in result.scalars().all()]
     if extension:
         return {"items": file_list, "total": total, "page": page, "page_size": page_size}
     fld_q = select(Folder).where(Folder.deleted.is_(False), Folder.owner_id == owner_id)
@@ -554,7 +554,7 @@ async def search_files(db: AsyncSession, owner_id: int, keyword: str = "", exten
         fld_q = fld_q.where(Folder.name.ilike(f"%{keyword}%"))
     fld_total = len((await db.execute(fld_q.with_only_columns(Folder.id))).scalars().all())
     fld_result = await db.execute(fld_q.order_by(Folder.name).offset((page - 1) * page_size).limit(page_size))
-    folder_list = [{"id": f.id, "name": f.name, "extension": None, "size": 0, "folder_id": f.parent_id, "created_at": None, "is_folder": True} for f in fld_result.scalars().all()]
+    folder_list = [{"id": f.id, "name": f.name, "extension": None, "size": 0, "folder_id": f.parent_id, "created_at": f.created_at, "updated_at": f.updated_at, "is_folder": True} for f in fld_result.scalars().all()]
     return {"items": folder_list + file_list, "total": fld_total + total, "page": page, "page_size": page_size}
 
 

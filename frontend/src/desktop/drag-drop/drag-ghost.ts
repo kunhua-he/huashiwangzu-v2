@@ -36,11 +36,29 @@ function buildGhost(ids: string[]): HTMLElement {
   return ghost
 }
 
-export function createDragGhost(ids: string[], x: number, y: number, grabOffsetX = 16, grabOffsetY = 16): void {
+export function createDragGhost(
+  ids: string[],
+  x: number,
+  y: number,
+  grabOffsetX = 16,
+  grabOffsetY = 16,
+  opts?: { copyMode?: boolean },
+): void {
   removeDragGhost()
   ghostEl = buildGhost(ids)
   ghostEl.style.left = `${x - grabOffsetX}px`
   ghostEl.style.top = `${y - grabOffsetY}px`
+  if (opts?.copyMode) {
+    ghostEl.dataset.copyMode = '1'
+    ghostEl.style.cursor = 'copy'
+    const plus = document.createElement('span')
+    plus.textContent = '+'
+    plus.style.cssText =
+      'position:absolute;left:-4px;bottom:-4px;width:18px;height:18px;border-radius:50%;' +
+      'background:#0a84ff;color:#fff;font:700 13px/18px -apple-system,sans-serif;text-align:center;' +
+      'box-shadow:0 1px 3px rgba(0,0,0,.25);'
+    ghostEl.appendChild(plus)
+  }
   document.body.appendChild(ghostEl)
 }
 

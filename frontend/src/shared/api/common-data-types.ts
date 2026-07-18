@@ -30,6 +30,8 @@ export interface FileEntry {
   format: string | null
   file_size: number
   created_at: string
+  /** 修改时间；列表/搜索优先展示与排序 */
+  updated_at?: string | null
   storage_path: string | null
   is_folder?: boolean
   parent_folder_id?: number | null

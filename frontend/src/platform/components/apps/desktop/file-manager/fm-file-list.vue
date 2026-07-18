@@ -139,15 +139,32 @@
       >
         <div class="fm-gallery-stage">
           <template v-if="selected">
-            <FileVisualIcon
-              :kind="selected.is_folder || !selected.format ? 'folder' : 'file'"
-              :extension="selected.format || ''"
-              :size="148"
+            <div v-if="galleryPreview.loading" class="fm-gallery-state">加载预览…</div>
+            <img
+              v-else-if="galleryPreview.mode === 'image' && galleryPreview.objectUrl"
+              class="fm-gallery-media"
+              :src="galleryPreview.objectUrl"
+              :alt="displayName(selected)"
+            >
+            <iframe
+              v-else-if="galleryPreview.mode === 'pdf' && galleryPreview.objectUrl"
+              class="fm-gallery-pdf"
+              :src="galleryPreview.objectUrl"
+              title="PDF 预览"
             />
+            <pre v-else-if="galleryPreview.mode === 'text'" class="fm-gallery-text">{{ galleryPreview.text }}</pre>
+            <template v-else>
+              <FileVisualIcon
+                :kind="selected.is_folder || !selected.format ? 'folder' : 'file'"
+                :extension="selected.format || ''"
+                :size="148"
+              />
+            </template>
             <div class="fm-gallery-name">{{ displayName(selected) }}</div>
             <div class="fm-gallery-meta">
               {{ selected.is_folder ? '文件夹' : ((selected.format || '文件').toUpperCase()) }}
               <template v-if="!selected.is_folder"> · {{ formatSize(selected.file_size) }}</template>
+              <template v-if="galleryPreview.truncated"> · 已截断</template>
             </div>
           </template>
           <div v-else class="fm-gallery-empty">选择一个项目以在画廊中预览</div>
@@ -165,7 +182,18 @@
             @contextmenu.prevent.stop="$emit('context-menu', item, $event)"
             @mousedown.stop="handleEntryMouseDown(item, $event)"
           >
-            <FileVisualIcon :kind="item.is_folder || !item.format ? 'folder' : 'file'" :extension="item.format || ''" :size="42" />
+            <img
+              v-if="stripThumbs[item.id]"
+              class="fm-gallery-strip-img"
+              :src="stripThumbs[item.id]"
+              :alt="displayName(item)"
+            >
+            <FileVisualIcon
+              v-else
+              :kind="item.is_folder || !item.format ? 'folder' : 'file'"
+              :extension="item.format || ''"
+              :size="42"
+            />
             <span class="fm-gallery-thumb-name">{{ displayName(item) }}</span>
           </button>
         </div>
@@ -195,7 +223,7 @@
             </span>
           </span>
           <span class="fm-entry-spacer" aria-hidden="true" />
-          <span class="fm-entry-date">{{ formatListDate(item.created_at) }}</span>
+          <span class="fm-entry-date">{{ formatListDate(item.updated_at || item.created_at) }}</span>
           <span class="fm-entry-spacer" aria-hidden="true" />
           <span class="fm-entry-kind">{{ item.is_folder ? '文件夹' : ((item.format || '文件').toUpperCase()) }}</span>
           <span class="fm-entry-spacer" aria-hidden="true" />
@@ -208,10 +236,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
 import type { FileEntry } from '@/shared/api/types'
 import { startDrag, dragState } from '@/desktop/drag-drop/drag-state'
+import { fetchBlobByApiPath, fetchDownloadBlob, fetchFilePreview } from '@/shared/api/desktop'
 import LoadStateBanner from '@/shared/components/load-state-banner.vue'
 import { MacEmptyState } from '@/desktop/app-kit'
 import { FINDER_TAGS } from './finder-tags'
@@ -297,6 +326,197 @@ function tagColor(tag: string) {
 
 const selected = computed(() => props.items.find((item) => item.id === props.selectedId) || null)
 
+const IMAGE_EXTS = new Set([
+  'jpg', 'jpeg', 'jpe', 'jfif', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tif', 'tiff', 'avif',
+])
+const TEXT_EXTS = new Set([
+  'txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml', 'ini', 'cfg', 'conf', 'env', 'sql', 'toml',
+  'php', 'js', 'ts', 'jsx', 'tsx', 'css', 'scss', 'less', 'html', 'htm', 'vue',
+  'py', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'cs', 'rb', 'sh', 'bash', 'zsh',
+])
+
+type GalleryPreviewMode = 'idle' | 'image' | 'pdf' | 'text' | 'fallback'
+const galleryPreview = reactive({
+  loading: false,
+  mode: 'idle' as GalleryPreviewMode,
+  text: '',
+  objectUrl: '',
+  truncated: false,
+})
+const stripThumbs = reactive<Record<number, string>>({})
+let galleryToken = 0
+let stripToken = 0
+
+function extOf(item: FileEntry) {
+  return String(item.format || '').toLowerCase().replace(/^\./, '')
+}
+function asString(value: unknown) {
+  return typeof value === 'string' ? value : ''
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function revokeGalleryUrl() {
+  if (galleryPreview.objectUrl) {
+    URL.revokeObjectURL(galleryPreview.objectUrl)
+    galleryPreview.objectUrl = ''
+  }
+}
+
+function resetGalleryPreview() {
+  revokeGalleryUrl()
+  galleryPreview.loading = false
+  galleryPreview.mode = 'idle'
+  galleryPreview.text = ''
+  galleryPreview.truncated = false
+}
+
+async function resolveMediaBlob(data: Record<string, unknown>, fileId: number, preferStandardImage: boolean) {
+  const downloadUrl = asString(data.download_url)
+  if (downloadUrl) {
+    try {
+      return await fetchBlobByApiPath(downloadUrl)
+    } catch {
+      // fall through
+    }
+  }
+  if (preferStandardImage) {
+    try {
+      return await fetchDownloadBlob(fileId, 'standard-image')
+    } catch {
+      // fall through
+    }
+  }
+  return await fetchDownloadBlob(fileId)
+}
+
+async function loadGalleryPreview(item: FileEntry | null) {
+  const token = ++galleryToken
+  resetGalleryPreview()
+  if (!item || item.is_folder) {
+    galleryPreview.mode = 'fallback'
+    return
+  }
+  galleryPreview.loading = true
+  const ext = extOf(item)
+  try {
+    const data = await fetchFilePreview(item.id)
+    if (token !== galleryToken) return
+    if (!isRecord(data)) throw new Error('invalid preview')
+    const content = asString(data.content)
+    if (content) {
+      galleryPreview.mode = 'text'
+      galleryPreview.text = content
+      galleryPreview.truncated = content.includes('--- File too long')
+      return
+    }
+    const mime = asString(data.mime_type).toLowerCase()
+    const looksImage = mime.startsWith('image/') || IMAGE_EXTS.has(ext)
+    const looksPdf = mime === 'application/pdf' || ext === 'pdf'
+    if (looksImage) {
+      const blob = await resolveMediaBlob(data, item.id, true)
+      if (token !== galleryToken) return
+      galleryPreview.objectUrl = URL.createObjectURL(blob)
+      galleryPreview.mode = 'image'
+      return
+    }
+    if (looksPdf) {
+      const blob = await resolveMediaBlob(data, item.id, false)
+      if (token !== galleryToken) return
+      galleryPreview.objectUrl = URL.createObjectURL(blob)
+      galleryPreview.mode = 'pdf'
+      return
+    }
+    if (TEXT_EXTS.has(ext)) {
+      galleryPreview.mode = 'text'
+      galleryPreview.text = content || '(空文件)'
+      return
+    }
+    galleryPreview.mode = 'fallback'
+  } catch {
+    if (token !== galleryToken) return
+    try {
+      if (IMAGE_EXTS.has(ext)) {
+        const blob = await fetchDownloadBlob(item.id)
+        if (token !== galleryToken) return
+        galleryPreview.objectUrl = URL.createObjectURL(blob)
+        galleryPreview.mode = 'image'
+        return
+      }
+      if (ext === 'pdf') {
+        const blob = await fetchDownloadBlob(item.id)
+        if (token !== galleryToken) return
+        galleryPreview.objectUrl = URL.createObjectURL(blob)
+        galleryPreview.mode = 'pdf'
+        return
+      }
+    } catch {
+      // keep fallback
+    }
+    galleryPreview.mode = 'fallback'
+  } finally {
+    if (token === galleryToken) galleryPreview.loading = false
+  }
+}
+
+function clearStripThumbs() {
+  Object.keys(stripThumbs).forEach((key) => {
+    const id = Number(key)
+    if (stripThumbs[id]) URL.revokeObjectURL(stripThumbs[id])
+    delete stripThumbs[id]
+  })
+}
+
+async function loadStripThumbs(items: FileEntry[]) {
+  const token = ++stripToken
+  clearStripThumbs()
+  const images = items.filter((item) => !item.is_folder && IMAGE_EXTS.has(extOf(item))).slice(0, 24)
+  for (const item of images) {
+    if (token !== stripToken) return
+    try {
+      const data = await fetchFilePreview(item.id)
+      if (token !== stripToken) return
+      let blob: Blob
+      if (isRecord(data)) {
+        blob = await resolveMediaBlob(data, item.id, true)
+      } else {
+        blob = await fetchDownloadBlob(item.id, 'standard-image').catch(() => fetchDownloadBlob(item.id))
+      }
+      if (token !== stripToken) return
+      stripThumbs[item.id] = URL.createObjectURL(blob)
+    } catch {
+      // keep icon
+    }
+  }
+}
+
+watch(
+  () => [props.viewMode, selected.value?.id, selected.value?.format, selected.value?.is_folder] as const,
+  () => {
+    if (props.viewMode !== 'gallery') {
+      galleryToken += 1
+      resetGalleryPreview()
+      return
+    }
+    void loadGalleryPreview(selected.value)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [props.viewMode, props.items.map((item) => `${item.id}:${item.format || ''}`).join('|')] as const,
+  () => {
+    if (props.viewMode !== 'gallery') {
+      stripToken += 1
+      clearStripThumbs()
+      return
+    }
+    void loadStripThumbs(props.items)
+  },
+  { immediate: true },
+)
+
 const effectiveColumns = computed<ColumnStackItem[]>(() => {
   if (props.columnStack?.length) return props.columnStack
   return [{
@@ -370,7 +590,7 @@ function handlePendingDragMove(e: MouseEvent) {
   const dy = e.clientY - pendingDrag.startY
   if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return
   suppressNextClick = true
-  startDrag(pendingDrag.keys, pendingDrag.startX, pendingDrag.startY)
+  startDrag(pendingDrag.keys, pendingDrag.startX, pendingDrag.startY, { copyMode: e.altKey })
   clearPendingDrag()
 }
 
@@ -463,6 +683,10 @@ function onColumnResizeEnd() {
 onBeforeUnmount(() => {
   onColumnResizeEnd()
   clearPendingDrag()
+  galleryToken += 1
+  stripToken += 1
+  resetGalleryPreview()
+  clearStripThumbs()
 })
 
 function handleColumnClick(item: FileEntry, columnIndex: number, e: MouseEvent) {
@@ -823,6 +1047,41 @@ function formatListDate(raw?: string | null) {
     radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,0.9), transparent 55%),
     #f7f7f9;
 }
+.fm-gallery-media {
+  max-width: min(720px, 90%);
+  max-height: min(420px, 62vh);
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+  background: #fff;
+}
+.fm-gallery-pdf {
+  width: min(760px, 92%);
+  height: min(420px, 62vh);
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+}
+.fm-gallery-text {
+  width: min(720px, 92%);
+  max-height: min(420px, 62vh);
+  overflow: auto;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+  color: #1d1d1f;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+.fm-gallery-state {
+  color: rgba(60, 60, 67, 0.55);
+  font-size: 13px;
+}
 .fm-gallery-name {
   max-width: 420px;
   text-align: center;
@@ -856,6 +1115,14 @@ function formatListDate(raw?: string | null) {
   gap: 6px;
   cursor: default;
   color: #1d1d1f;
+}
+.fm-gallery-strip-img {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: inset 0 0 0 0.5px rgba(60, 60, 67, 0.16);
 }
 .fm-gallery-thumb:hover {
   background: rgba(0,0,0,0.05);

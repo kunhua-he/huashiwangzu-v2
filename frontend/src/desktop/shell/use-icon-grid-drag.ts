@@ -28,6 +28,8 @@ export interface DragResult {
   isDropOnWindow: boolean
   /** 目标窗口ID */
   targetWindowId: string | null
+  /** Option/Alt 拖 = 复制 */
+  copy: boolean
 }
 
 export interface IconGridDragState {
@@ -40,6 +42,7 @@ export interface IconGridDragState {
   highlightFolderKey: string | null
   /** 当前悬停的窗口ID（拖到窗口上时） */
   hoverWindowId: string | null
+  copyMode: boolean
 }
 
 // ═══════════════════════════════════════════════════
@@ -67,6 +70,7 @@ export function useIconGridDrag(
     targetCell: null,
     highlightFolderKey: null,
     hoverWindowId: null,
+    copyMode: false,
   })
 
   // 内部追踪
@@ -76,6 +80,7 @@ export function useIconGridDrag(
   let grabOffsetY = 0
   let ghostEl: HTMLElement | null = null
   let highlightedWindow: HTMLElement | null = null
+  let plusBadge: HTMLElement | null = null
   /** 记录哪些格子上有文件夹 */
   let folderCellMap: Map<string, string> = new Map()
 
@@ -102,9 +107,10 @@ export function useIconGridDrag(
       const dx = e.clientX - startX
       const dy = e.clientY - startY
       if (!state.isDragging && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
-        activateDrag(keys, e.clientX, e.clientY)
+        activateDrag(keys, e.clientX, e.clientY, e.altKey)
       }
       if (state.isDragging) {
+        setCopyMode(Boolean(e.altKey))
         updateDrag(e.clientX, e.clientY)
       }
     }
@@ -113,7 +119,8 @@ export function useIconGridDrag(
       document.removeEventListener('mousemove', handleMove)
       document.removeEventListener('mouseup', handleUp)
       if (state.isDragging) {
-        finishDrag(e.clientX, e.clientY)
+        setCopyMode(Boolean(e.altKey))
+        finishDrag(e.clientX, e.clientY, Boolean(e.altKey || state.copyMode))
       }
     }
 
@@ -124,13 +131,35 @@ export function useIconGridDrag(
   /**
    * 真正进入拖拽模式
    */
-  function activateDrag(keys: string[], clientX: number, clientY: number): void {
+  function activateDrag(keys: string[], clientX: number, clientY: number, copyMode = false): void {
     state.isDragging = true
     state.draggedKeys = [...keys]
+    state.copyMode = copyMode
     state.ghostX = clientX - grabOffsetX
     state.ghostY = clientY - grabOffsetY
     document.body.classList.add('desktop-grid-dragging')
-    createGhost(keys)
+    if (copyMode) document.body.classList.add('desktop-grid-dragging-copy')
+    createGhost(keys, copyMode)
+  }
+
+  function setCopyMode(copyMode: boolean): void {
+    if (!state.isDragging || state.copyMode === copyMode) return
+    state.copyMode = copyMode
+    if (copyMode) document.body.classList.add('desktop-grid-dragging-copy')
+    else document.body.classList.remove('desktop-grid-dragging-copy')
+    if (!ghostEl) return
+    if (copyMode && !plusBadge) {
+      plusBadge = document.createElement('span')
+      plusBadge.textContent = '+'
+      plusBadge.style.cssText =
+        'position:absolute;left:-4px;bottom:-4px;width:18px;height:18px;border-radius:50%;' +
+        'background:#0a84ff;color:#fff;font:700 13px/18px -apple-system,sans-serif;text-align:center;' +
+        'box-shadow:0 1px 3px rgba(0,0,0,.25);'
+      ghostEl.appendChild(plusBadge)
+    } else if (!copyMode && plusBadge) {
+      plusBadge.remove()
+      plusBadge = null
+    }
   }
 
   /**
@@ -205,11 +234,12 @@ export function useIconGridDrag(
   /**
    * 释放拖拽
    */
-  function finishDrag(clientX: number, clientY: number): void {
+  function finishDrag(clientX: number, clientY: number, copy = false): void {
     const container = containerRef.value
     const metrics = metricsRef.value
     removeGhost()
     document.body.classList.remove('desktop-grid-dragging')
+    document.body.classList.remove('desktop-grid-dragging-copy')
 
     let targetCell: GridCell = { row: 0, col: 0 }
     let isDropOnFolder = false
@@ -234,9 +264,11 @@ export function useIconGridDrag(
         isDropOnFolder = true
         folderKey = fKey
         targetCell = cell
-      } else {
-        // 找最近空格子吸附
+      } else if (!copy) {
+        // 找最近空格子吸附（复制到空白桌面无意义，保持位置）
         targetCell = findNearestFreeCell(cell, metrics, state.draggedKeys)
+      } else {
+        targetCell = cell
       }
     }
 
@@ -247,6 +279,7 @@ export function useIconGridDrag(
       folderKey,
       isDropOnWindow,
       targetWindowId,
+      copy,
     }
 
     // 重置状态
@@ -255,6 +288,7 @@ export function useIconGridDrag(
     state.targetCell = null
     state.highlightFolderKey = null
     state.hoverWindowId = null
+    state.copyMode = false
     setHighlightedWindow(null)
 
     emit.onDragEnd(result)
@@ -263,7 +297,7 @@ export function useIconGridDrag(
   /**
    * 创建幽灵元素（半透明图标副本跟随鼠标）
    */
-  function createGhost(keys: string[]): void {
+  function createGhost(keys: string[], copyMode = false): void {
     removeGhost()
     const el = document.createElement('div')
     el.className = 'desktop-icon-drag-ghost'
@@ -290,6 +324,15 @@ export function useIconGridDrag(
         el.appendChild(badge)
       }
     }
+    if (copyMode) {
+      plusBadge = document.createElement('span')
+      plusBadge.textContent = '+'
+      plusBadge.style.cssText =
+        'position:absolute;left:-4px;bottom:-4px;width:18px;height:18px;border-radius:50%;' +
+        'background:#0a84ff;color:#fff;font:700 13px/18px -apple-system,sans-serif;text-align:center;' +
+        'box-shadow:0 1px 3px rgba(0,0,0,.25);'
+      el.appendChild(plusBadge)
+    }
     document.body.appendChild(el)
     ghostEl = el
   }
@@ -302,6 +345,7 @@ export function useIconGridDrag(
       ghostEl.remove()
       ghostEl = null
     }
+    plusBadge = null
   }
 
   function setHighlightedWindow(windowEl: HTMLElement | null): void {
@@ -316,6 +360,7 @@ export function useIconGridDrag(
     removeGhost()
     setHighlightedWindow(null)
     document.body.classList.remove('desktop-grid-dragging')
+    document.body.classList.remove('desktop-grid-dragging-copy')
   })
 
   return {

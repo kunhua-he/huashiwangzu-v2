@@ -146,7 +146,7 @@ import type { ClipboardItem } from '@/desktop/clipboard/clipboard-state'
 // 旧 drag-tool 已被 icon-grid-model 替代，图标网格组件自管理位置
 // import { restorePersistedIconPositions } from '@/desktop/drag-drop/drag-tool'
 import {
-  moveEntryRequest, batchMoveRequest, emptyRecycleBinRequest,
+  moveEntryRequest, batchMoveRequest, copyEntryRequest, emptyRecycleBinRequest,
 } from '@/shared/api/desktop'
 import type { FileEntry } from '@/shared/api/types'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
@@ -356,13 +356,14 @@ function getSourceFolderId(key: string): number | null {
   return 0
 }
 
-on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
+on('desktop:move-to-folder', async ({ ids, targetFolderId, copy }) => {
   let targetId = targetFolderId !== null && targetFolderId !== undefined
     ? Number(targetFolderId)
     : null
   if (targetId !== null && !Number.isFinite(targetId)) return
   // desktop root is virtual folder id 0 / null in API
   if (targetId === 0) targetId = null
+  const isCopy = Boolean(copy)
 
   const affectedFolders = new Set<number>()
   affectedFolders.add(0)
@@ -379,33 +380,30 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
     if (!Number.isFinite(fileId)) continue
     if (fileId === targetId) continue
     const srcFolderId = getSourceFolderId(key)
-    if (srcFolderId !== null && srcFolderId === targetId) continue
+    // same-folder drop is no-op for move; copy still allowed (creates "xxx copy")
+    if (!isCopy && srcFolderId !== null && srcFolderId === targetId) continue
     // desktop icons always use file:id even for folders — prefer list lookup when present
     let itemType: 'file' | 'folder' = kind === 'folder' ? 'folder' : 'file'
     if (kind === 'file') {
       const entry = desktopFileList.value?.find((f: FileEntry) => f.id === fileId)
       if (entry?.is_folder) itemType = 'folder'
     }
+    // backend copy currently supports files only
+    if (isCopy && itemType === 'folder') continue
     items.push({ id: fileId, item_type: itemType })
     if (srcFolderId !== null) affectedFolders.add(srcFolderId)
   }
-  if (!items.length) return
+  if (!items.length) {
+    if (isCopy) desktopMessage.warning('暂不支持复制文件夹')
+    return
+  }
 
-  let movedCount = 0
-  try {
-    const resp = await batchMoveRequest(items, targetId)
-    movedCount = Number(resp.success_count || 0)
-    const failed = Number(resp.failed_count || 0)
-    if (failed > 0 && movedCount === 0) {
-      desktopMessage.warning('移动失败')
-    } else if (failed > 0) {
-      desktopMessage.warning(`已移动 ${movedCount} 个，失败 ${failed} 个`)
-    }
-  } catch {
+  let doneCount = 0
+  if (isCopy) {
     for (const item of items) {
       try {
-        await moveEntryRequest(item.item_type, item.id, targetId)
-        movedCount += 1
+        await copyEntryRequest(item.item_type, item.id, targetId)
+        doneCount += 1
       } catch (e: unknown) {
         const err = e as { http_status?: number; response?: { status?: number } } | null
         if (err?.http_status === 409 || err?.response?.status === 409) {
@@ -413,11 +411,41 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId }) => {
         }
       }
     }
+    if (doneCount === 0) desktopMessage.warning('复制失败')
+  } else {
+    try {
+      const resp = await batchMoveRequest(items, targetId)
+      doneCount = Number(resp.success_count || 0)
+      const failed = Number(resp.failed_count || 0)
+      if (failed > 0 && doneCount === 0) {
+        desktopMessage.warning('移动失败')
+      } else if (failed > 0) {
+        desktopMessage.warning(`已移动 ${doneCount} 个，失败 ${failed} 个`)
+      }
+    } catch {
+      for (const item of items) {
+        try {
+          await moveEntryRequest(item.item_type, item.id, targetId)
+          doneCount += 1
+        } catch (e: unknown) {
+          const err = e as { http_status?: number; response?: { status?: number } } | null
+          if (err?.http_status === 409 || err?.response?.status === 409) {
+            desktopMessage.warning('目标已有同名文件')
+          }
+        }
+      }
+    }
   }
 
-  if (movedCount > 0) {
-    if (movedCount === items.length) {
-      desktopMessage.success(movedCount > 1 ? `已移动 ${movedCount} 个项目` : '已移动')
+  if (doneCount > 0) {
+    if (doneCount === items.length) {
+      desktopMessage.success(
+        isCopy
+          ? (doneCount > 1 ? `已复制 ${doneCount} 个项目` : '已复制')
+          : (doneCount > 1 ? `已移动 ${doneCount} 个项目` : '已移动'),
+      )
+    } else if (isCopy) {
+      desktopMessage.warning(`已复制 ${doneCount} 个，失败 ${items.length - doneCount} 个`)
     }
     affectedFolders.forEach(folderId => {
       emit('refresh:file-list', { folderId })
@@ -618,22 +646,22 @@ function handleShowDesktop() {
   windowManager.toggleDesktopVisibility()
 }
 
-function handleIconMoveToFolder(keys: string[], folderKey: string) {
-  // folderKey 格式为 "file:{id}"，提取 folderId
+function handleIconMoveToFolder(keys: string[], folderKey: string, copy = false) {
+  // folderKey 格式为 "file:{id}"，提取 folderId；file:0 = 桌面根
   const colonIdx = folderKey.indexOf(':')
   if (colonIdx === -1) return
   const targetFolderId = folderKey.slice(colonIdx + 1)
   if (!Number.isFinite(Number(targetFolderId))) return
-  emit('desktop:move-to-folder', { ids: keys, targetFolderId })
+  emit('desktop:move-to-folder', { ids: keys, targetFolderId, copy })
 }
 
-function handleDropOnWindow(keys: string[], windowId: string) {
+function handleDropOnWindow(keys: string[], windowId: string, copy = false) {
   // 从窗口ID找到对应窗口的payload（获取目标文件夹ID）
   const w = windowManager.windows.find(x => x.id === windowId)
   if (!w) return
   const rawFolderId = w.payload?.folderId as number | string | null | undefined
   const targetFolderId = rawFolderId === null || rawFolderId === undefined ? null : String(rawFolderId)
   // 触发和拖到文件夹图标相同的事件
-  emit('desktop:move-to-folder', { ids: keys, targetFolderId })
+  emit('desktop:move-to-folder', { ids: keys, targetFolderId, copy })
 }
 </script>

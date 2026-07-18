@@ -5,6 +5,8 @@ interface DragState {
   isDragging: boolean
   draggedIds: string[]
   dragOverId: string | null
+  /** Option/Alt held while dragging → copy instead of move (Finder-like) */
+  copyMode: boolean
   originX: number
   originY: number
   originLeft: number
@@ -18,6 +20,7 @@ const dragState = reactive<DragState>({
   isDragging: false,
   draggedIds: [],
   dragOverId: null,
+  copyMode: false,
   originX: 0, originY: 0,
   originLeft: 0, originTop: 0,
   grabOffsetX: 0, grabOffsetY: 0,
@@ -38,9 +41,10 @@ function getTranslateOffset(el: Element): { x: number; y: number } {
   return { x: Number.isFinite(parts[4]) ? parts[4] : 0, y: Number.isFinite(parts[5]) ? parts[5] : 0 }
 }
 
-export function startDrag(ids: string[], x: number, y: number): void {
+export function startDrag(ids: string[], x: number, y: number, opts?: { copyMode?: boolean }): void {
   dragState.isDragging = true
   dragState.draggedIds = ids
+  dragState.copyMode = Boolean(opts?.copyMode)
   dragState.originX = x
   dragState.originY = y
   const primaryEl = document.querySelector(`[data-selection-key="${ids[0]}"]`)
@@ -63,15 +67,30 @@ export function startDrag(ids: string[], x: number, y: number): void {
     }
   })
   document.body.classList.add('desktop-dragging')
+  if (dragState.copyMode) document.body.classList.add('desktop-dragging-copy')
+  else document.body.classList.remove('desktop-dragging-copy')
 
   ids.forEach(id => {
     const el = document.querySelector(`[data-selection-key="${id}"]`) as HTMLElement | null
     if (!el) return
-    el.style.opacity = '0.4'
+    // copy keeps source fully visible (Finder-like)
+    el.style.opacity = dragState.copyMode ? '1' : '0.4'
     el.style.pointerEvents = 'none'
   })
 
-  createDragGhost(ids, x, y, dragState.grabOffsetX, dragState.grabOffsetY)
+  createDragGhost(ids, x, y, dragState.grabOffsetX, dragState.grabOffsetY, { copyMode: dragState.copyMode })
+}
+
+export function setDragCopyMode(copyMode: boolean): void {
+  if (!dragState.isDragging || dragState.copyMode === copyMode) return
+  dragState.copyMode = copyMode
+  if (copyMode) document.body.classList.add('desktop-dragging-copy')
+  else document.body.classList.remove('desktop-dragging-copy')
+  dragState.draggedIds.forEach((id) => {
+    const el = document.querySelector(`[data-selection-key="${id}"]`) as HTMLElement | null
+    if (!el) return
+    el.style.opacity = copyMode ? '1' : '0.4'
+  })
 }
 
 export function updateDragOffset(dx: number, dy: number): void {
@@ -92,8 +111,10 @@ export function endDrag(options: { keepTransform?: boolean } = {}): void {
   dragState.isDragging = false
   dragState.draggedIds = []
   dragState.dragOverId = null
+  dragState.copyMode = false
   dragState.offsetList = []
   document.body.classList.remove('desktop-dragging')
+  document.body.classList.remove('desktop-dragging-copy')
   removeDragGhost()
   document.querySelectorAll('[data-selection-key]').forEach(el => {
     (el as HTMLElement).style.position = ''

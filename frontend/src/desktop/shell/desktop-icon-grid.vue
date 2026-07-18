@@ -99,8 +99,8 @@ const emit = defineEmits<{
   (e: 'openFile', file: FileEntry): void
   (e: 'app-context-menu', appKey: string, event: MouseEvent): void
   (e: 'file-context-menu', file: FileEntry, event: MouseEvent): void
-  (e: 'move-to-folder', keys: string[], folderKey: string): void
-  (e: 'drop-on-window', keys: string[], windowId: string): void
+  (e: 'move-to-folder', keys: string[], folderKey: string, copy?: boolean): void
+  (e: 'drop-on-window', keys: string[], windowId: string, copy?: boolean): void
 }>()
 
 // ═══════════════════════════════════════════════════
@@ -267,17 +267,33 @@ watch([() => props.fileList, positions], () => {
 }, { deep: true, immediate: true })
 
 function handleDragEnd(result: DragResult): void {
+  if (result.copy && (result.isDropOnWindow || result.isDropOnFolder)) {
+    if (result.isDropOnWindow && result.targetWindowId) {
+      emit('drop-on-window', result.keys, result.targetWindowId, true)
+    } else if (result.folderKey) {
+      emit('move-to-folder', result.keys, result.folderKey, true)
+      const folderEl = containerRef.value?.querySelector(
+        `[data-grid-key="${result.folderKey}"]`
+      ) as HTMLElement | null
+      animateFlash(folderEl)
+    }
+    return
+  }
   if (result.isDropOnWindow && result.targetWindowId) {
     // 拖到打开的文件夹窗口
-    emit('drop-on-window', result.keys, result.targetWindowId)
+    emit('drop-on-window', result.keys, result.targetWindowId, false)
   } else if (result.isDropOnFolder && result.folderKey) {
     // 移入文件夹
-    emit('move-to-folder', result.keys, result.folderKey)
+    emit('move-to-folder', result.keys, result.folderKey, false)
     // 文件夹闪烁反馈
     const folderEl = containerRef.value?.querySelector(
       `[data-grid-key="${result.folderKey}"]`
     ) as HTMLElement | null
     animateFlash(folderEl)
+  } else if (result.copy) {
+    // 复制到桌面空白区：目标桌面根目录
+    emit('move-to-folder', result.keys, 'file:0', true)
+    return
   } else {
     // 吸附到格子
     const m = metrics.value

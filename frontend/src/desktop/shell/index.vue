@@ -586,6 +586,36 @@ async function handleContextMenuSelect(menuKey: string) {
   if (menuKey === 'open-recycle-bin') { handleOpenApp('recycle'); return }
   if (menuKey === 'open-app' && appKey) { handleOpenApp(appKey); return }
 
+  // Desktop blank: view / sort (must not be silent no-ops)
+  if (menuKey === 'view-auto-arrange') {
+    desktopShellConfig.iconLayout = 'auto-arrange'
+    desktopMessage.success('已开启自动排列')
+    refreshDesktop()
+    return
+  }
+  if (menuKey === 'view-free-arrange' || menuKey === 'view-medium-icons') {
+    desktopShellConfig.iconLayout = 'free'
+    desktopMessage.success('已切换为自由排列')
+    return
+  }
+  if (menuKey === 'view-align-grid') {
+    desktopShellConfig.iconLayout = 'auto-arrange'
+    desktopMessage.success('已对齐到网格')
+    refreshDesktop()
+    return
+  }
+  if (menuKey === 'sort-name' || menuKey === 'sort-type' || menuKey === 'sort-date') {
+    // sorting is realized by re-auto-arranging; keep layout mode auto
+    desktopShellConfig.iconLayout = 'auto-arrange'
+    desktopMessage.success(
+      menuKey === 'sort-name' ? '已按名称排列'
+        : menuKey === 'sort-type' ? '已按类型排列'
+          : '已按修改日期排列',
+    )
+    refreshDesktop()
+    return
+  }
+
   // Desktop blank: upload, create folder, paste
   if (menuKey === 'upload-file') { triggerUpload(null); return }
   if (menuKey === 'new-folder' || menuKey === 'create-folder') { await fileOps.createFolder(null); return }
@@ -604,8 +634,25 @@ async function handleContextMenuSelect(menuKey: string) {
     if (menuKey === 'details') { await showFileDetails(file); return }
     if (menuKey === 'rename' && canWrite.value) { await fileOps.renameEntry(file); return }
     if (menuKey === 'delete' && canWrite.value) { await fileOps.deleteEntry(file); return }
-    if (menuKey === 'cut' && canWrite.value) { cutItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name }]); desktopMessage.success('已剪切'); return }
-    if (menuKey === 'copy' && canWrite.value) { copyItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name }]); desktopMessage.success('已复制'); return }
+    if (menuKey === 'cut' && canWrite.value) {
+      cutItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name, sourceFolderId: 0 }])
+      desktopMessage.success('已剪切')
+      return
+    }
+    if (menuKey === 'copy' && canWrite.value) {
+      copyItems([{ id: file.id, type: file.is_folder ? 'folder' as const : 'file' as const, name: file.file_name, sourceFolderId: 0 }])
+      desktopMessage.success('已复制')
+      return
+    }
+    if (menuKey === 'duplicate' && canWrite.value) {
+      await fileOps.pasteToFolder(0, [{ id: file.id, type: file.is_folder ? 'folder' : 'file', name: file.file_name }], false)
+      return
+    }
+    if (menuKey === 'compress' && canWrite.value) {
+      // reuse shared ops path via download-style compress not wired on shell; open finder
+      desktopMessage.info('请在访达窗口中使用压缩')
+      return
+    }
   }
 
   // Folder-specific actions

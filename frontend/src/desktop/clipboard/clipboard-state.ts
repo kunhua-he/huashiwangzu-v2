@@ -14,6 +14,8 @@ export interface ClipboardItem {
   type: 'file' | 'folder'
   name: string
   originalPath?: string
+  /** folder the item lived in when cut/copied (for undo) */
+  sourceFolderId?: number | null
 }
 
 interface ClipboardState {

@@ -21,11 +21,12 @@ interface FileOperationsDeps {
   }
 }
 
-function toClipboardItem(file: FileEntry) {
+function toClipboardItem(file: FileEntry, sourceFolderId?: number | null) {
   return {
     id: file.id,
     type: (file.is_folder ? 'folder' : 'file') as 'folder' | 'file',
     name: file.file_name,
+    sourceFolderId: sourceFolderId ?? null,
   }
 }
 
@@ -39,6 +40,8 @@ function resolveActionTargets(file: FileEntry | null, selected: FileEntry[]): Fi
 
 export function createFileOperations(deps: FileOperationsDeps) {
   const { creatableFormats } = useCreatableFormats()
+  /** target for "upload/create here" — null means current folder */
+  let pendingTargetFolderId: number | null | undefined
 
   const ops = useFileOperations({
     refresh: async () => {
@@ -47,7 +50,14 @@ export function createFileOperations(deps: FileOperationsDeps) {
     },
   })
 
-  function triggerUpload() {
+  function resolveTargetFolderId(override?: number | null) {
+    if (override !== undefined) return override
+    if (pendingTargetFolderId !== undefined) return pendingTargetFolderId
+    return deps.currentFolderId.value || null
+  }
+
+  function triggerUpload(targetFolderId?: number | null) {
+    pendingTargetFolderId = targetFolderId
     deps.uploadInput.value?.click()
   }
 
@@ -56,18 +66,24 @@ export function createFileOperations(deps: FileOperationsDeps) {
     const file = input.files?.[0]
     if (!file) return
     input.value = ''
-    await ops.uploadFile(file, deps.currentFolderId.value || null)
+    const folderId = resolveTargetFolderId()
+    pendingTargetFolderId = undefined
+    await ops.uploadFile(file, folderId)
   }
 
-  async function createFolder() {
-    await ops.createFolder(deps.currentFolderId.value || null)
+  async function createFolder(parentId?: number | null) {
+    const folderId = resolveTargetFolderId(parentId)
+    pendingTargetFolderId = undefined
+    await ops.createFolder(folderId)
   }
 
-  async function createFileFromMenuKey(key: string) {
+  async function createFileFromMenuKey(key: string, parentId?: number | null) {
     const ext = key.slice('create-file:'.length)
     const fmt = creatableFormats.value.find(format => format.extension === ext)
     const label = fmt?.label || `.${ext}`
-    await ops.createFile(ext, deps.currentFolderId.value || null, label)
+    const folderId = resolveTargetFolderId(parentId)
+    pendingTargetFolderId = undefined
+    await ops.createFile(ext, folderId, label)
   }
 
   async function downloadFile(file: FileEntry) {
@@ -150,10 +166,28 @@ export function createFileOperations(deps: FileOperationsDeps) {
     const targets = resolveActionTargets(file, selected)
 
     if (key === 'refresh') { await deps.loadFiles(); return }
-    if (key === 'upload-file' || key === 'upload-here') { triggerUpload(); return }
-    if (key === 'create-folder' || key === 'create-folder-here') { await createFolder(); return }
+    if (key === 'upload-file') {
+      triggerUpload(deps.currentFolderId.value || null)
+      return
+    }
+    if (key === 'upload-here') {
+      // must land in the folder that was right-clicked
+      const target = (file && file.is_folder) ? file.id : (deps.currentFolderId.value || null)
+      triggerUpload(target)
+      return
+    }
+    if (key === 'create-folder') {
+      await createFolder(deps.currentFolderId.value || null)
+      return
+    }
+    if (key === 'create-folder-here') {
+      const target = (file && file.is_folder) ? file.id : (deps.currentFolderId.value || null)
+      await createFolder(target)
+      return
+    }
     if (key.startsWith('create-file:')) {
-      await createFileFromMenuKey(key)
+      const target = (file && file.is_folder) ? file.id : (deps.currentFolderId.value || null)
+      await createFileFromMenuKey(key, target)
       return
     }
     if (key === 'paste' || key === 'paste-here') {
@@ -161,7 +195,6 @@ export function createFileOperations(deps: FileOperationsDeps) {
         const isCut = currentClipboardType.value === 'cut'
         const folderId = (file && file.is_folder) ? file.id : deps.currentFolderId.value
         const clip = currentClipboardItems.value
-        const fromFolder = deps.currentFolderId.value || null
         const result = await ops.pasteToFolder(folderId, clip, isCut)
         if (isCut) {
           pushUndo({
@@ -169,7 +202,8 @@ export function createFileOperations(deps: FileOperationsDeps) {
             items: clip.map((c) => ({
               id: c.id,
               type: c.type,
-              from: fromFolder,
+              // undo back to where the item was cut from
+              from: c.sourceFolderId ?? null,
               to: folderId,
             })),
           })
@@ -191,12 +225,16 @@ export function createFileOperations(deps: FileOperationsDeps) {
     }
     if (key === 'cut') {
       if (!targets.length) return
-      cutItems(targets.map(toClipboardItem))
+      const src = deps.currentFolderId.value || null
+      cutItems(targets.map((t) => toClipboardItem(t, src)))
+      ElMessage.success(targets.length > 1 ? `已剪切 ${targets.length} 项` : '已剪切')
       return
     }
     if (key === 'copy') {
       if (!targets.length) return
-      copyItems(targets.map(toClipboardItem))
+      const src = deps.currentFolderId.value || null
+      copyItems(targets.map((t) => toClipboardItem(t, src)))
+      ElMessage.success(targets.length > 1 ? `已复制 ${targets.length} 项` : '已复制')
       return
     }
     if (key === 'duplicate') {

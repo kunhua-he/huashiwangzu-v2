@@ -287,8 +287,10 @@ export async function compressEntriesRequest(items: BatchFileItem[]): Promise<{ 
   if (!(blob instanceof Blob)) {
     throw new Error('compress response is not a blob')
   }
-  // response interceptor strips headers for blob; name is best-effort client default
-  const filename = items.length === 1 ? '归档.zip' : `归档-${items.length}项.zip`
+  // response interceptor strips headers for blob; derive a better client default
+  const filename = items.length === 1
+    ? (items[0].item_type === 'folder' ? '文件夹.zip' : '文件.zip')
+    : `归档-${items.length}项.zip`
   return { blob, filename }
 }
 

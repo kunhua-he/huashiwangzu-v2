@@ -7,6 +7,9 @@
       <button class="fm-icon-button" type="button" :disabled="!canGoForward" title="前进 ⌘]" aria-label="前进" @click="$emit('go-forward')">
         <ChevronRight :size="17" :stroke-width="2" />
       </button>
+      <button class="fm-icon-button" type="button" :disabled="!canGoUp" title="上层" aria-label="上层" @click="$emit('go-up')">
+        <ChevronUp :size="17" :stroke-width="2" />
+      </button>
     </div>
 
     <div class="fm-view-switch" role="group" aria-label="视图">
@@ -110,6 +113,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Columns3,
   FolderTree,
   GalleryHorizontal,

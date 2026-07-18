@@ -123,29 +123,33 @@ const tags = computed<FinderTagDef[]>(() => {
 })
 
 async function editLabels() {
+  // one-by-one prompts are more reliable than textarea MessageBox
   const current = listTagsWithCustomNames()
-  const lines = current.map((t) => t.name).join('\n')
+  const next: Partial<Record<FinderTagColor, string>> = {}
   try {
-    const { value } = await ElMessageBox.prompt(
-      '按行输入 7 个标签名（红→灰），留空恢复默认',
-      '自定义标签名',
-      {
-        inputValue: lines,
-        inputType: 'textarea',
-        confirmButtonText: '保存',
-        cancelButtonText: '取消',
-      },
-    )
-    const parts = String(value || '').split('\n').map((s) => s.trim())
-    const keys: FinderTagColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray']
-    const next: Partial<Record<FinderTagColor, string>> = {}
-    keys.forEach((key, i) => {
-      if (parts[i]) next[key] = parts[i]
-    })
+    for (const tag of current) {
+      const { value } = await ElMessageBox.prompt(
+        `标签「${tag.key}」显示名（留空恢复默认「${tag.name}」）`,
+        '自定义标签名',
+        {
+          inputValue: tag.name,
+          confirmButtonText: '下一个',
+          cancelButtonText: '完成',
+          distinguishCancelAndClose: true,
+        },
+      )
+      const name = String(value || '').trim()
+      if (name) next[tag.key] = name.slice(0, 16)
+    }
     saveCustomTagLabels(next)
     labelTick.value += 1
-  } catch {
-    // cancelled
+  } catch (action) {
+    // cancel/close = save what we already collected
+    if (Object.keys(next).length) {
+      saveCustomTagLabels(next)
+      labelTick.value += 1
+    }
+    void action
   }
 }
 

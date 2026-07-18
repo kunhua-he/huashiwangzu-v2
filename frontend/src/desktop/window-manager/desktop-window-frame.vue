@@ -289,17 +289,27 @@ function seedFinderTabs() {
 function addFinderTab() {
   if (!isFinderWindow.value) return
   seedFinderTabs()
+  // Finder-like: new tab clones current path (not always desktop)
+  const current = activeFinderTab.value
+  const folderId = current?.folderId ?? (props.payload?.folderId as number | undefined) ?? 0
+  const folderName = current?.folderName
+    || (typeof props.payload?.folderName === 'string' ? props.payload.folderName : '')
+    || props.title
+    || '桌面'
   const tab: FinderTab = {
     id: `tab-${props.id}-${Date.now()}`,
-    title: '桌面',
-    folderId: 0,
-    folderName: '桌面',
+    title: folderName,
+    folderId,
+    folderName,
   }
   finderTabs.value = [...finderTabs.value, tab]
   activeFinderTabId.value = tab.id
 }
 
 function activateFinderTab(tabId: string) {
+  if (activeFinderTabId.value === tabId) return
+  // snapshot active tab from live payload before switching away
+  syncActiveTabFromPayload()
   activeFinderTabId.value = tabId
 }
 
@@ -308,51 +318,61 @@ function closeFinderTab(tabId: string) {
     requestClose()
     return
   }
+  const closingActive = activeFinderTabId.value === tabId
+  if (closingActive) syncActiveTabFromPayload()
+  const idx = finderTabs.value.findIndex((t) => t.id === tabId)
   const next = finderTabs.value.filter((t) => t.id !== tabId)
   finderTabs.value = next
-  if (activeFinderTabId.value === tabId) {
-    activeFinderTabId.value = next[next.length - 1]?.id || next[0].id
+  if (closingActive) {
+    const fallback = next[Math.max(0, idx - 1)] || next[0]
+    activeFinderTabId.value = fallback.id
   }
 }
 
 const activeFinderTab = computed(() => finderTabs.value.find((t) => t.id === activeFinderTabId.value) || null)
+
+function syncActiveTabFromPayload() {
+  const tab = activeFinderTab.value
+  if (!tab) return
+  const folderName = typeof props.payload?.folderName === 'string' && props.payload.folderName.trim()
+    ? props.payload.folderName.trim()
+    : (props.title || tab.title)
+  const folderId = props.payload?.folderId as number | undefined
+  const idx = finderTabs.value.findIndex((t) => t.id === tab.id)
+  if (idx < 0) return
+  const next = [...finderTabs.value]
+  next[idx] = {
+    ...next[idx],
+    title: folderName || next[idx].title,
+    // only write folderId when payload carries it (avoid wiping on empty)
+    folderId: folderId !== undefined ? folderId : next[idx].folderId,
+    folderName: folderName || next[idx].folderName,
+  }
+  finderTabs.value = next
+}
 
 const finderComponentBind = computed(() => {
   if (!isFinderWindow.value) return { ...(props.payload || {}), windowId: props.id }
   seedFinderTabs()
   const tab = activeFinderTab.value
   return {
-    ...(props.payload || {}),
     windowId: props.id,
-    folderId: tab?.folderId ?? props.payload?.folderId,
-    folderName: tab?.folderName ?? props.payload?.folderName,
+    // tab-local navigation state must not be overridden by stale window payload
+    folderId: tab?.folderId ?? 0,
+    folderName: tab?.folderName || '桌面',
   }
 })
 
+// only sync the *active* tab from payload updates produced by that tab's navigation
 watch(
-  () => [isFinderWindow.value, props.payload?.folderId, props.payload?.folderName, props.title] as const,
+  () => [isFinderWindow.value, activeFinderTabId.value, props.payload?.folderId, props.payload?.folderName, props.title] as const,
   () => {
     if (!isFinderWindow.value) return
     if (!finderTabs.value.length) {
       seedFinderTabs()
       return
     }
-    // keep active tab title in sync when navigating inside the same tab instance
-    const tab = activeFinderTab.value
-    if (!tab) return
-    const folderName = typeof props.payload?.folderName === 'string' ? props.payload.folderName : props.title
-    const folderId = props.payload?.folderId as number | undefined
-    const idx = finderTabs.value.findIndex((t) => t.id === tab.id)
-    if (idx >= 0) {
-      const next = [...finderTabs.value]
-      next[idx] = {
-        ...next[idx],
-        title: folderName || next[idx].title,
-        folderId: folderId as number | undefined,
-        folderName: folderName || next[idx].folderName,
-      }
-      finderTabs.value = next
-    }
+    syncActiveTabFromPayload()
   },
   { immediate: true },
 )

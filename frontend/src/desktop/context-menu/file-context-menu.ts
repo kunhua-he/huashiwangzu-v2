@@ -1,6 +1,9 @@
 import type { MenuItemConfig } from './use-context-menu'
 import { hasContent } from '@/desktop/clipboard/clipboard-state'
-import { FINDER_TAGS, type FinderTagColor } from '@/platform/components/apps/desktop/file-manager/finder-tags'
+import {
+  listTagsWithCustomNames,
+  type FinderTagColor,
+} from '@/platform/components/apps/desktop/file-manager/finder-tags'
 
 function viewSubItems(_separatorItems: () => MenuItemConfig[]) {
   return [{ key: 'view-list', label: '列表', icon: '≣' }, { key: 'view-icons', label: '图标', icon: '▦' }]
@@ -8,8 +11,9 @@ function viewSubItems(_separatorItems: () => MenuItemConfig[]) {
 
 function buildTagMenuChildren(activeTags: FinderTagColor[] = []): MenuItemConfig[] {
   const active = new Set(activeTags)
+  const tags = listTagsWithCustomNames()
   return [
-    ...FINDER_TAGS.map((tag) => ({
+    ...tags.map((tag) => ({
       key: `tag:${tag.key}`,
       label: active.has(tag.key) ? `✓ ${tag.name}` : tag.name,
       icon: '●',

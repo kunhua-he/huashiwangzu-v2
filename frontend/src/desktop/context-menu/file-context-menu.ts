@@ -1,23 +1,51 @@
 import type { MenuItemConfig } from './use-context-menu'
 import { hasContent } from '@/desktop/clipboard/clipboard-state'
+import { FINDER_TAGS, type FinderTagColor } from '@/platform/components/apps/desktop/file-manager/finder-tags'
 
-function viewSubItems(separatorItems: () => MenuItemConfig[]) {
+function viewSubItems(_separatorItems: () => MenuItemConfig[]) {
   return [{ key: 'view-list', label: '列表', icon: '≣' }, { key: 'view-icons', label: '图标', icon: '▦' }]
 }
 
-export function buildFileMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
+function buildTagMenuChildren(activeTags: FinderTagColor[] = []): MenuItemConfig[] {
+  const active = new Set(activeTags)
+  return [
+    ...FINDER_TAGS.map((tag) => ({
+      key: `tag:${tag.key}`,
+      label: active.has(tag.key) ? `✓ ${tag.name}` : tag.name,
+      icon: '●',
+    })),
+    { key: 'sep-tag-clear', label: '', separator: true },
+    { key: 'tag:clear', label: '移除全部标签', icon: '○' },
+  ]
+}
+
+export function buildFileMenu(
+  writable: boolean,
+  separatorItems: () => MenuItemConfig[],
+  activeTags: FinderTagColor[] = [],
+): MenuItemConfig[] {
   return [
     { key: 'open', label: '打开', icon: '↗' },
     { key: 'download', label: '下载到本地', icon: '⬇' },
     ...separatorItems(),
     ...(writable ? [{ key: 'cut', label: '剪切', icon: '✂' }, { key: 'copy', label: '复制', icon: '📋' }] : []),
     { key: 'copy-path', label: '复制路径', icon: '⎘' },
+    {
+      key: 'tags',
+      label: '标签',
+      icon: '🏷',
+      children: buildTagMenuChildren(activeTags),
+    },
     { key: 'details', label: '属性', icon: 'ⓘ' },
     ...(writable ? [...separatorItems(), { key: 'rename', label: '重命名', icon: '✎' }, { key: 'delete', label: '删除', icon: '🗑', danger: true }] : []),
   ]
 }
 
-export function buildFolderMenu(writable: boolean, separatorItems: () => MenuItemConfig[]): MenuItemConfig[] {
+export function buildFolderMenu(
+  writable: boolean,
+  separatorItems: () => MenuItemConfig[],
+  activeTags: FinderTagColor[] = [],
+): MenuItemConfig[] {
   return [
     { key: 'open', label: '打开', icon: '📂' },
     { key: 'upload-here', label: '上传文件', icon: '⬆', disabled: !writable },
@@ -25,6 +53,12 @@ export function buildFolderMenu(writable: boolean, separatorItems: () => MenuIte
     ...separatorItems(),
     ...(writable ? [{ key: 'cut', label: '剪切', icon: '✂' }, { key: 'copy', label: '复制', icon: '📋' }] : []),
     { key: 'copy-path', label: '复制路径', icon: '⎘' },
+    {
+      key: 'tags',
+      label: '标签',
+      icon: '🏷',
+      children: buildTagMenuChildren(activeTags),
+    },
     ...(writable && hasContent.value ? [...separatorItems(), { key: 'paste-here', label: '粘贴', icon: '📌' }] : []),
     ...(writable ? [...separatorItems(), { key: 'rename', label: '重命名', icon: '✎' }, { key: 'delete', label: '删除', icon: '🗑', danger: true }] : []),
   ]

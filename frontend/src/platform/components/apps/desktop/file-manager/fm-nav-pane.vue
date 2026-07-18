@@ -5,7 +5,7 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'desktop' }"
+        :class="{ active: currentKey === 'desktop' && !activeTag }"
         @click="$emit('go-root')"
       >
         <Monitor class="fm-nav-icon" :size="16" :stroke-width="2" />
@@ -14,7 +14,7 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'documents' }"
+        :class="{ active: currentKey === 'documents' && !activeTag }"
         @click="$emit('open-named', 'documents')"
       >
         <FileText class="fm-nav-icon" :size="16" :stroke-width="2" />
@@ -23,7 +23,7 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'downloads' }"
+        :class="{ active: currentKey === 'downloads' && !activeTag }"
         @click="$emit('open-named', 'downloads')"
       >
         <Download class="fm-nav-icon" :size="16" :stroke-width="2" />
@@ -36,13 +36,18 @@
       <button
         type="button"
         class="fm-nav-item"
-        :class="{ active: currentKey === 'recycle' }"
+        :class="{ active: currentKey === 'recycle' && !activeTag }"
         @click="$emit('open-recycle')"
       >
         <Trash2 class="fm-nav-icon" :size="16" :stroke-width="2" />
         <span class="fm-nav-label">回收站</span>
       </button>
-      <button type="button" class="fm-nav-item" :class="{ active: currentKey === 'desktop' && !activeNamed }" @click="$emit('go-root')">
+      <button
+        type="button"
+        class="fm-nav-item"
+        :class="{ active: currentKey === 'desktop' && !activeNamed && !activeTag }"
+        @click="$emit('go-root')"
+      >
         <HardDrive class="fm-nav-icon" :size="16" :stroke-width="2" />
         <span class="fm-nav-label">本机</span>
       </button>
@@ -52,11 +57,12 @@
       <div class="fm-nav-section-label">标签</div>
       <button
         v-for="tag in tags"
-        :key="tag.name"
+        :key="tag.key"
         type="button"
-        class="fm-nav-item is-tag"
-        disabled
-        :title="`${tag.name}（标签筛选即将接入）`"
+        class="fm-nav-item"
+        :class="{ active: activeTag === tag.key }"
+        :title="`筛选 ${tag.name}`"
+        @click="$emit('filter-tag', activeTag === tag.key ? null : tag.key)"
       >
         <span class="fm-tag-dot" :style="{ background: tag.color }" />
         <span class="fm-nav-label">{{ tag.name }}</span>
@@ -68,17 +74,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Download, FileText, HardDrive, Monitor, Trash2 } from 'lucide-vue-next'
+import { FINDER_TAGS, type FinderTagColor } from './finder-tags'
 
 const props = defineProps<{
   currentFolderId: number
   isRecycleBin: boolean
   activeNamed?: 'documents' | 'downloads' | null
+  activeTag?: FinderTagColor | null
 }>()
 
 defineEmits<{
   (e: 'go-root'): void
   (e: 'open-recycle'): void
   (e: 'open-named', key: 'documents' | 'downloads'): void
+  (e: 'filter-tag', tag: FinderTagColor | null): void
 }>()
 
 const currentKey = computed(() => {
@@ -89,15 +98,7 @@ const currentKey = computed(() => {
   return 'folder'
 })
 
-const tags = [
-  { name: '红色', color: 'rgb(255, 69, 58)' },
-  { name: '橙色', color: 'rgb(255, 159, 10)' },
-  { name: '黄色', color: 'rgb(255, 214, 10)' },
-  { name: '绿色', color: 'rgb(48, 209, 88)' },
-  { name: '蓝色', color: 'rgb(10, 132, 255)' },
-  { name: '紫色', color: 'rgb(191, 90, 242)' },
-  { name: '灰色', color: 'rgb(152, 152, 157)' },
-]
+const tags = FINDER_TAGS
 </script>
 
 <style scoped>
@@ -143,7 +144,7 @@ const tags = [
   font: 400 13px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
 }
 
-.fm-nav-item:hover:not(:disabled) {
+.fm-nav-item:hover {
   background: rgba(0, 0, 0, 0.05);
 }
 
@@ -155,12 +156,6 @@ const tags = [
   color: var(--mac-app-accent, #0a84ff);
 }
 
-.fm-nav-item:disabled {
-  opacity: 0.72;
-  cursor: default;
-}
-
-/* Source list: monochrome SF-like glyphs, not filled app tiles */
 .fm-nav-icon {
   flex-shrink: 0;
   color: rgba(60, 60, 67, 0.62);

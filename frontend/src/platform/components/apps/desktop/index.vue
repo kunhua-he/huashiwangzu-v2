@@ -38,9 +38,11 @@
           :current-folder-id="state.currentFolderId.value"
           :is-recycle-bin="state.isRecycleBin.value"
           :active-named="state.activeNamed.value"
-          @go-root="state.goRoot"
-          @open-recycle="state.openRecycle"
-          @open-named="state.openNamedLocation"
+          :active-tag="state.activeTagFilter.value"
+          @go-root="() => { state.setTagFilter(null); state.goRoot() }"
+          @open-recycle="() => { state.setTagFilter(null); state.openRecycle() }"
+          @open-named="(key) => { state.setTagFilter(null); state.openNamedLocation(key) }"
+          @filter-tag="state.setTagFilter"
         />
       </template>
 
@@ -72,6 +74,8 @@
             :sort-direction="state.sortDirection.value"
             :load-status="state.loadState.value.status"
             :load-error="state.loadState.value.error"
+            :tags-of="state.tagsOf"
+            :tag-revision="state.tagRevision.value"
             @select="onSelectItem"
             @open="handleItemOpen"
             @context-menu="handleItemContextMenu"
@@ -455,9 +459,11 @@ function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
     return
   }
 
+  const activeTags = state.tagsOf(item)
   let items: MenuItemConfig[]
+  const sep = () => [{ key: `sep-${Date.now()}-${Math.random()}`, label: '', separator: true } as MenuItemConfig]
   if (item.is_folder) {
-    items = buildFolderMenu(state.canWrite.value, () => [])
+    items = buildFolderMenu(state.canWrite.value, sep, activeTags)
     if (state.canWrite.value && creatableFormats.value.length) {
       items.splice(3, 0, {
         key: 'new-file',
@@ -467,7 +473,7 @@ function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
       })
     }
   } else {
-    items = buildFileMenu(state.canWrite.value, () => [])
+    items = buildFileMenu(state.canWrite.value, sep, activeTags)
   }
   contextMenu.open(e, items, { type: item.is_folder ? 'folder' : 'file', target: { ...item } })
 }
@@ -512,6 +518,12 @@ async function handleContextMenuSelect(key: string) {
   contextMenu.close()
   if (ctxType === 'recycle-bin' || ctxType === 'recycle-bin-item') {
     await handleRecycleAction(key)
+    return
+  }
+  if (state.applyTagAction(key, ctxtFile)) {
+    const name = ctxtFile ? state.displayName(ctxtFile) : ''
+    if (key === 'tag:clear') feedback.success(name ? `已清除「${name}」的标签` : '已清除标签')
+    else if (key.startsWith('tag:')) feedback.success(name ? `已更新「${name}」标签` : '已更新标签')
     return
   }
   await state.handleAction(key, ctxtFile)

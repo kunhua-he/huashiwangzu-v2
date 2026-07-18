@@ -80,6 +80,9 @@
             />
           </span>
           <span class="fm-entry-name" :style="nameStyle">{{ displayName(item) }}</span>
+          <span v-if="itemTags(item).length" class="fm-entry-tags">
+            <i v-for="tag in itemTags(item)" :key="tag" class="fm-entry-tag-dot" :style="{ background: tagColor(tag) }" />
+          </span>
         </button>
       </div>
 
@@ -180,7 +183,12 @@
           @mousedown.stop="handleEntryMouseDown(item, $event)"
         >
           <FileVisualIcon :kind="item.is_folder || !item.format ? 'folder' : 'file'" :extension="item.format || ''" :size="18" />
-          <span class="fm-entry-name">{{ displayName(item) }}</span>
+          <span class="fm-entry-name">
+            {{ displayName(item) }}
+            <span v-if="itemTags(item).length" class="fm-entry-tags inline">
+              <i v-for="tag in itemTags(item)" :key="tag" class="fm-entry-tag-dot" :style="{ background: tagColor(tag) }" />
+            </span>
+          </span>
           <span class="fm-entry-date">{{ formatListDate(item.created_at) }}</span>
           <span class="fm-entry-kind">{{ item.is_folder ? '文件夹' : ((item.format || '文件').toUpperCase()) }}</span>
           <span class="fm-entry-size">{{ item.is_folder ? '—' : formatSize(item.file_size) }}</span>
@@ -197,6 +205,7 @@ import type { FileEntry } from '@/shared/api/types'
 import { startDrag } from '@/desktop/drag-drop/drag-state'
 import LoadStateBanner from '@/shared/components/load-state-banner.vue'
 import { MacEmptyState } from '@/desktop/app-kit'
+import { FINDER_TAGS } from './finder-tags'
 import type { ApiErrorInfo } from '@/shared/api/response-transform'
 import type { LoadStatus } from '@/shared/composables/use-load-state'
 
@@ -220,6 +229,8 @@ const props = withDefaults(defineProps<{
   loading: boolean
   displayName: (file: FileEntry) => string
   formatSize: (size: number) => string
+  tagsOf?: (file: FileEntry) => string[]
+  tagRevision?: number
   sortColumn: 'name' | 'date' | 'type' | 'size'
   sortDirection: 'asc' | 'desc'
   loadStatus: LoadStatus
@@ -228,11 +239,21 @@ const props = withDefaults(defineProps<{
   iconSize: 50,
   columnStack: () => [],
   selectedIds: () => [],
+  tagsOf: () => [],
+  tagRevision: 0,
 })
 
 function isSelected(id: number) {
   if (props.selectedIds?.length) return props.selectedIds.includes(id)
   return props.selectedId === id
+}
+
+function itemTags(item: FileEntry) {
+  void props.tagRevision
+  return props.tagsOf ? props.tagsOf(item) : []
+}
+function tagColor(tag: string) {
+  return FINDER_TAGS.find((t) => t.key === tag)?.color || 'rgb(152,152,157)'
 }
 
 const selected = computed(() => props.items.find((item) => item.id === props.selectedId) || null)
@@ -704,5 +725,24 @@ function formatListDate(raw?: string | null) {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   word-break: break-word;
+}
+
+.fm-entry-tags {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  min-height: 8px;
+}
+.fm-entry-tags.inline {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.fm-entry-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+  box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.2);
 }
 </style>

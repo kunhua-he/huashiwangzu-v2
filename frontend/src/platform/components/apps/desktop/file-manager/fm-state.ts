@@ -9,6 +9,13 @@ import { formatFileDisplayName } from '@/shared/files/display-name'
 import type { DesktopFileManagerBreadcrumbItem, NavigationEntry } from './types'
 import { createLoadState, failLoading, finishLoading, startLoading } from '@/shared/composables/use-load-state'
 import { windowManager } from '@/desktop/window-manager/window-manager'
+import {
+  FINDER_TAGS,
+  clearItemTags,
+  getItemTags,
+  toggleItemTag,
+  type FinderTagColor,
+} from './finder-tags'
 
 interface CreateFileManagerStateOptions {
   folderId: () => number | undefined
@@ -35,6 +42,9 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   const selectionAnchorId = ref<number | null>(null)
   const quickLookVisible = ref(false)
   const quickLookItem = ref<FileEntry | null>(null)
+  /** local tag map revision — bump to refresh list/sidebar dots */
+  const tagRevision = ref(0)
+  const activeTagFilter = ref<FinderTagColor | null>(null)
   /** Miller Columns: stack of folder columns (folderId + items + selection) */
   const columnStack = ref<Array<{ folderId: number; name: string; items: FileEntry[]; selectedId: number | null }>>([])
 
@@ -52,11 +62,24 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   const folders = computed(() => items.value.filter(item => item.is_folder))
   const files = computed(() => items.value.filter(item => !item.is_folder))
 
+  function itemTypeOf(item: FileEntry): 'file' | 'folder' {
+    return item.is_folder ? 'folder' : 'file'
+  }
+
+  function tagsOf(item: FileEntry): FinderTagColor[] {
+    void tagRevision.value
+    return getItemTags(itemTypeOf(item), item.id)
+  }
+
   const filteredItems = computed(() => {
     let filtered = items.value
     if (searchKeyword.value) {
       const keyword = searchKeyword.value.toLowerCase()
       filtered = filtered.filter(item => item.file_name.toLowerCase().includes(keyword))
+    }
+    if (activeTagFilter.value) {
+      const tag = activeTagFilter.value
+      filtered = filtered.filter((item) => tagsOf(item).includes(tag))
     }
     const folderList = filtered.filter(item => item.is_folder)
     const fileList = filtered.filter(item => !item.is_folder)
@@ -425,6 +448,38 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     quickLookItem.value = null
   }
 
+  function toggleTagOnItem(item: FileEntry, tag: FinderTagColor) {
+    toggleItemTag(itemTypeOf(item), item.id, tag)
+    tagRevision.value += 1
+  }
+
+  function clearTagsOnItem(item: FileEntry) {
+    clearItemTags(itemTypeOf(item), item.id)
+    tagRevision.value += 1
+  }
+
+  function applyTagAction(key: string, item: FileEntry | null) {
+    if (!item) return false
+    if (key === 'tag:clear') {
+      clearTagsOnItem(item)
+      return true
+    }
+    if (key.startsWith('tag:')) {
+      const tag = key.slice(4) as FinderTagColor
+      if (FINDER_TAGS.some((t) => t.key === tag)) {
+        toggleTagOnItem(item, tag)
+        return true
+      }
+    }
+    return false
+  }
+
+  function setTagFilter(tag: FinderTagColor | null) {
+    activeTagFilter.value = tag
+    // 标签筛选是当前目录视图过滤，不离开当前文件夹
+    clearSelection()
+  }
+
   function openSelected() {
     if (selectedItem.value) openItem(selectedItem.value)
   }
@@ -502,6 +557,8 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     selectionAnchorId,
     quickLookVisible,
     quickLookItem,
+    tagRevision,
+    activeTagFilter,
     sortColumn,
     sortDirection,
     searchKeyword,
@@ -535,6 +592,11 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     clearSelection,
     openQuickLook,
     closeQuickLook,
+    tagsOf,
+    toggleTagOnItem,
+    clearTagsOnItem,
+    applyTagAction,
+    setTagFilter,
     openSelected,
     openItem,
     openRecycle,

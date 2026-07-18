@@ -54,10 +54,14 @@
           :crumbs="state.breadcrumb.value"
           @navigate="state.navigateToCrumb"
         />
-        <div class="fm-body">
+        <div
+          class="fm-body"
+          @mousedown="onBodyMouseDown"
+        >
           <FmFileList
             :items="state.sortedItems.value"
             :selected-id="state.selectedId.value"
+            :selected-ids="state.selectedIds.value"
             :view-mode="state.viewMode.value"
             :icon-size="iconSize"
             :column-stack="state.columnStack.value"
@@ -68,7 +72,7 @@
             :sort-direction="state.sortDirection.value"
             :load-status="state.loadState.value.status"
             :load-error="state.loadState.value.error"
-            @select="state.selectItem"
+            @select="onSelectItem"
             @open="handleItemOpen"
             @context-menu="handleItemContextMenu"
             @sort="handleSort"
@@ -82,6 +86,11 @@
             :display-name="state.displayName"
             :format-size="state.formatSize"
           />
+          <div
+            v-if="marquee"
+            class="fm-marquee"
+            :style="marqueeStyle"
+          />
         </div>
       </div>
 
@@ -92,6 +101,7 @@
           :file-count="state.files.value.length"
           :selected-item="state.selectedItem.value"
           :selected-size="state.selectedItem.value ? state.formatSize(state.selectedItem.value.file_size) : ''"
+          :selected-count="state.selectedIds.value.length"
           :view-mode="state.viewMode.value"
           :search-keyword="state.searchKeyword.value"
           :filtered-count="state.filteredItems.value.length"
@@ -109,6 +119,15 @@
       :display-name="state.displayName"
       :format-size="state.formatSize"
       @update:visible="state.closeProperties"
+    />
+
+    <FmQuickLook
+      :visible="state.quickLookVisible.value"
+      :item="state.quickLookItem.value"
+      :display-name="state.displayName"
+      :format-size="state.formatSize"
+      @close="state.closeQuickLook"
+      @open="(item) => { state.closeQuickLook(); handleItemOpen(item) }"
     />
 
     <input ref="uploadInputRef" type="file" class="fm-hidden-input" @change="state.onUploadFile" />
@@ -130,7 +149,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { MacAppShell, useAppFeedback } from '@/desktop/app-kit'
 import { dragState } from '@/desktop/drag-drop/drag-state'
 import { useContextMenu } from '@/desktop/context-menu/use-context-menu'
@@ -144,6 +163,7 @@ import FmNavPane from './file-manager/fm-nav-pane.vue'
 import FmPathBar from './file-manager/fm-path-bar.vue'
 import FmFileList from './file-manager/fm-file-list.vue'
 import FmPreviewPane from './file-manager/fm-preview-pane.vue'
+import FmQuickLook from './file-manager/fm-quick-look.vue'
 import FmStatusBar from './file-manager/fm-status-bar.vue'
 import FmPropertiesDialog from './file-manager/fm-properties-dialog.vue'
 import { useFileManagerState } from './file-manager/use-file-manager-state'
@@ -190,6 +210,74 @@ const { creatableFormats } = useCreatableFormats()
 
 let ctxtFile: FileEntry | null = null
 
+const marquee = ref<null | { x1: number; y1: number; x2: number; y2: number; originX: number; originY: number }>(null)
+const marqueeStyle = computed(() => {
+  const m = marquee.value
+  if (!m) return {}
+  const left = Math.min(m.x1, m.x2)
+  const top = Math.min(m.y1, m.y2)
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${Math.abs(m.x2 - m.x1)}px`,
+    height: `${Math.abs(m.y2 - m.y1)}px`,
+  }
+})
+
+function onSelectItem(item: FileEntry, opts?: { additive?: boolean; range?: boolean }) {
+  state.selectItem(item, opts)
+}
+
+function onBodyMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return
+  const target = e.target as HTMLElement
+  if (target.closest('.fm-entry, .fm-column-row, .fm-gallery-thumb, .fm-preview-pane, button, input, a')) return
+  if (state.viewMode.value === 'column') return
+  const body = e.currentTarget as HTMLElement
+  const rect = body.getBoundingClientRect()
+  const x = e.clientX - rect.left + body.scrollLeft
+  const y = e.clientY - rect.top + body.scrollTop
+  marquee.value = { x1: x, y1: y, x2: x, y2: y, originX: e.clientX, originY: e.clientY }
+  if (!(e.metaKey || e.ctrlKey || e.shiftKey)) state.clearSelection()
+
+  const onMove = (ev: MouseEvent) => {
+    if (!marquee.value) return
+    marquee.value = {
+      ...marquee.value,
+      x2: ev.clientX - rect.left + body.scrollLeft,
+      y2: ev.clientY - rect.top + body.scrollTop,
+    }
+  }
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    const box = marquee.value
+    marquee.value = null
+    if (!box) return
+    if (Math.abs(box.x2 - box.x1) < 4 && Math.abs(box.y2 - box.y1) < 4) return
+    const left = Math.min(box.x1, box.x2)
+    const right = Math.max(box.x1, box.x2)
+    const top = Math.min(box.y1, box.y2)
+    const bottom = Math.max(box.y1, box.y2)
+    const hits: number[] = []
+    body.querySelectorAll<HTMLElement>('[data-selection-key]').forEach((el) => {
+      const er = el.getBoundingClientRect()
+      const elLeft = er.left - rect.left + body.scrollLeft
+      const elTop = er.top - rect.top + body.scrollTop
+      const elRight = elLeft + er.width
+      const elBottom = elTop + er.height
+      const overlap = !(elRight < left || elLeft > right || elBottom < top || elTop > bottom)
+      if (!overlap) return
+      const key = el.getAttribute('data-selection-key') || ''
+      const id = Number(key.split(':')[1])
+      if (Number.isFinite(id)) hits.push(id)
+    })
+    if (hits.length) state.selectByIds(hits, hits[hits.length - 1])
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
 function persistPrefs() {
   localStorage.setItem(PREFS_KEY, JSON.stringify({
     iconSize: iconSize.value,
@@ -234,6 +322,27 @@ function handleKeydown(e: KeyboardEvent) {
   const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
 
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault()
+    if (state.quickLookVisible.value) state.closeQuickLook()
+    else state.openQuickLook()
+    return
+  }
+  if (state.quickLookVisible.value && e.key === 'Escape') {
+    e.preventDefault()
+    state.closeQuickLook()
+    return
+  }
+  if (state.quickLookVisible.value && e.key === 'Enter') {
+    e.preventDefault()
+    const item = state.quickLookItem.value
+    if (item) {
+      state.closeQuickLook()
+      handleItemOpen(item)
+    }
+    return
+  }
+
   const items = state.sortedItems.value
   if (!items.length && !['Backspace', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
 
@@ -242,18 +351,18 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
     e.preventDefault()
     const next = items[Math.min(items.length - 1, Math.max(0, idx + 1))] || items[0]
-    if (next) state.selectItem(next)
+    if (next) state.selectItem(next, { range: e.shiftKey })
     return
   }
   if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
     e.preventDefault()
     if (idx <= 0) {
       const first = items[0]
-      if (first) state.selectItem(first)
+      if (first) state.selectItem(first, { range: e.shiftKey })
       return
     }
     const prev = items[idx - 1]
-    if (prev) state.selectItem(prev)
+    if (prev) state.selectItem(prev, { range: e.shiftKey })
     return
   }
   if (e.key === 'Enter') {
@@ -276,7 +385,7 @@ function handleKeydown(e: KeyboardEvent) {
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
     e.preventDefault()
-    if (items[0]) state.selectItem(items[0])
+    state.selectAll()
   }
 }
 
@@ -444,6 +553,7 @@ onMounted(async () => {
 }
 
 .fm-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -454,6 +564,15 @@ onMounted(async () => {
   flex: 1;
   min-width: 0;
   min-height: 0;
+}
+
+.fm-marquee {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--mac-app-accent, #0a84ff) 70%, white);
+  background: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 16%, transparent);
+  border-radius: 3px;
 }
 
 .fm-hidden-input {

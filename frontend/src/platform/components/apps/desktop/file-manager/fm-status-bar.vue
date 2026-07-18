@@ -6,8 +6,9 @@
       </template>
       <template v-else>
         <span>{{ itemCount }} 个项目</span>
-        <span v-if="selectedItem">· 已选择 {{ displayName(selectedItem) }}</span>
-        <span v-if="selectedItem && !selectedItem.is_folder">({{ selectedSize }})</span>
+        <span v-if="selectedCount > 1">· 已选择 {{ selectedCount }} 项</span>
+        <span v-else-if="selectedItem">· 已选择 {{ displayName(selectedItem) }}</span>
+        <span v-if="selectedCount <= 1 && selectedItem && !selectedItem.is_folder">({{ selectedSize }})</span>
       </template>
     </div>
     <div v-if="viewMode === 'grid' || viewMode === 'gallery'" class="fm-status-right">
@@ -29,18 +30,21 @@
 <script setup lang="ts">
 import type { FileEntry } from '@/shared/api/types'
 
-defineProps<{
+withDefaults(defineProps<{
   itemCount: number
   folderCount: number
   fileCount: number
   selectedItem: FileEntry | null
   selectedSize: string
+  selectedCount?: number
   viewMode: 'grid' | 'list' | 'column' | 'gallery'
   searchKeyword: string
   filteredCount: number
   displayName: (file: FileEntry) => string
   iconSize: number
-}>()
+}>(), {
+  selectedCount: 0,
+})
 
 defineEmits<{
   (e: 'update:viewMode', mode: 'grid' | 'list' | 'column' | 'gallery'): void

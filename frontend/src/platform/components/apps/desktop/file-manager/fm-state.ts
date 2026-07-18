@@ -31,6 +31,10 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     desktop: { key: 'desktop', id: 0, name: '桌面' },
   })
   const selectedId = ref<number | null>(null)
+  const selectedIds = ref<number[]>([])
+  const selectionAnchorId = ref<number | null>(null)
+  const quickLookVisible = ref(false)
+  const quickLookItem = ref<FileEntry | null>(null)
   /** Miller Columns: stack of folder columns (folderId + items + selection) */
   const columnStack = ref<Array<{ folderId: number; name: string; items: FileEntry[]; selectedId: number | null }>>([])
 
@@ -73,7 +77,21 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   })
   const sortedItems = filteredItems
 
-  const selectedItem = computed(() => items.value.find(item => item.id === selectedId.value) || null)
+  const selectedItem = computed(() => {
+    if (selectedId.value != null) {
+      return items.value.find(item => item.id === selectedId.value)
+        || sortedItems.value.find(item => item.id === selectedId.value)
+        || null
+    }
+    if (selectedIds.value.length) {
+      return sortedItems.value.find(item => item.id === selectedIds.value[selectedIds.value.length - 1]) || null
+    }
+    return null
+  })
+  const selectedItems = computed(() => {
+    const set = new Set(selectedIds.value)
+    return sortedItems.value.filter(item => set.has(item.id))
+  })
   const canGoUp = computed(() => !isRecycleBin.value && breadcrumb.value.length > 1)
   const pageTitle = computed(() => breadcrumb.value.map(item => item.name).join(' / '))
   const selectedSummary = computed(() => selectedItem.value ? `当前选中 ${displayName(selectedItem.value)}` : '系统文件管理器')
@@ -81,14 +99,22 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   const canGoBack = computed(() => !isRecycleBin.value && historyIndex.value > 0)
   const canGoForward = computed(() => !isRecycleBin.value && historyIndex.value < navigationHistory.value.length - 1)
 
-  watch(options.folderId, () => {
+  // 仅外部打开（桌面双击文件夹开窗）时按 props 初始化。
+  // 内部导航会 push breadcrumb，不能被 payload 回写截成两级。
+  watch(options.folderId, (raw) => {
+    const next = Number(raw || 0)
+    if (!Number.isFinite(next)) return
+    if (next === currentFolderId.value) return
     applyInitialFolder()
     enterFolder(currentFolderId.value)
   })
 
-  watch(options.folderName, () => {
-    if (currentFolderId.value > 0 && breadcrumb.value.length > 1) {
-      breadcrumb.value = [{ id: null, name: '桌面' }, { id: currentFolderId.value, name: options.folderName() || '文件夹' }]
+  watch(options.folderName, (name) => {
+    const label = typeof name === 'string' ? name.trim() : ''
+    if (!label) return
+    const last = breadcrumb.value[breadcrumb.value.length - 1]
+    if (last && (last.id === currentFolderId.value || (currentFolderId.value === 0 && last.id == null))) {
+      last.name = label
     }
   })
 
@@ -104,7 +130,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     breadcrumb.value = currentFolderId.value
       ? [{ id: null, name: '桌面' }, { id: currentFolderId.value, name: options.folderName() || '文件夹' }]
       : [{ id: null, name: '桌面' }]
-    selectedId.value = null
+    clearSelection()
     navigationHistory.value = currentFolderId.value
       ? [{ id: 0, name: '桌面' }, { id: currentFolderId.value, name: options.folderName() || '文件夹' }]
       : [{ id: 0, name: '桌面' }]
@@ -151,7 +177,8 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     sortColumn.value = 'name'
     sortDirection.value = 'asc'
     searchKeyword.value = ''
-    selectedId.value = null
+    clearSelection()
+    closeQuickLook()
     currentFolderId.value = folderId
     if (folderId === 0) activeNamed.value = null
     else if (locations.value.documents?.id === folderId) activeNamed.value = 'documents'
@@ -231,8 +258,8 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   function syncWindowTitle(folderName: string) {
     const windowId = options.windowId?.()
     if (!windowId) return
+    // 只回写标题用 folderName，避免 folderId 回灌 props 触发 watch 截断路径栈
     windowManager.updateWindowPayload(windowId, {
-      folderId: currentFolderId.value,
       folderName,
     })
   }
@@ -333,8 +360,69 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     return file.is_folder ? String(file.file_name || '') : formatFileDisplayName(file.file_name, file.format)
   }
 
-  function selectItem(item: FileEntry) {
-    selectedId.value = item.id
+  function setSelection(ids: number[], primaryId?: number | null) {
+    const unique = Array.from(new Set(ids.filter((id) => Number.isFinite(id))))
+    selectedIds.value = unique
+    selectedId.value = primaryId != null
+      ? primaryId
+      : (unique.length ? unique[unique.length - 1] : null)
+  }
+
+  function clearSelection() {
+    selectedIds.value = []
+    selectedId.value = null
+    selectionAnchorId.value = null
+  }
+
+  function selectItem(
+    item: FileEntry,
+    opts: { additive?: boolean; range?: boolean } = {},
+  ) {
+    const list = sortedItems.value
+    if (opts.range && selectionAnchorId.value != null) {
+      const a = list.findIndex((x) => x.id === selectionAnchorId.value)
+      const b = list.findIndex((x) => x.id === item.id)
+      if (a >= 0 && b >= 0) {
+        const [from, to] = a < b ? [a, b] : [b, a]
+        const rangeIds = list.slice(from, to + 1).map((x) => x.id)
+        setSelection(rangeIds, item.id)
+        return
+      }
+    }
+    if (opts.additive) {
+      const set = new Set(selectedIds.value)
+      if (set.has(item.id)) set.delete(item.id)
+      else set.add(item.id)
+      const next = Array.from(set)
+      setSelection(next, item.id)
+      selectionAnchorId.value = item.id
+      return
+    }
+    setSelection([item.id], item.id)
+    selectionAnchorId.value = item.id
+  }
+
+  function selectAll() {
+    const ids = sortedItems.value.map((item) => item.id)
+    setSelection(ids, ids[ids.length - 1] ?? null)
+    selectionAnchorId.value = ids[0] ?? null
+  }
+
+  function selectByIds(ids: number[], primaryId?: number | null) {
+    setSelection(ids, primaryId)
+    if (primaryId != null) selectionAnchorId.value = primaryId
+  }
+
+  function openQuickLook(item?: FileEntry | null) {
+    const target = item || selectedItem.value
+    if (!target) return
+    quickLookItem.value = target
+    quickLookVisible.value = true
+  }
+
+  function closeQuickLook() {
+    quickLookVisible.value = false
+    quickLookItem.value = null
   }
 
   function openSelected() {
@@ -344,7 +432,16 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   function openItem(item: FileEntry) {
     if (item.is_folder) {
       activeNamed.value = null
-      breadcrumb.value.push({ id: item.id, name: item.file_name })
+      const last = breadcrumb.value[breadcrumb.value.length - 1]
+      // 深层路径持续追加；避免重复 push 同一层
+      if (!last || last.id !== item.id) {
+        breadcrumb.value = [
+          ...breadcrumb.value,
+          { id: item.id, name: item.file_name },
+        ]
+      } else {
+        last.name = item.file_name
+      }
       pushHistory(item.id, item.file_name)
       enterFolder(item.id)
       syncWindowTitle(item.file_name)
@@ -358,7 +455,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     isRecycleBin.value = true
     activeNamed.value = null
     breadcrumb.value = [{ id: null, name: '回收站' }]
-    selectedId.value = null
+    clearSelection()
     searchKeyword.value = ''
     columnStack.value = []
     void loadFiles()
@@ -400,6 +497,11 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     locations,
     columnStack,
     selectedId,
+    selectedIds,
+    selectedItems,
+    selectionAnchorId,
+    quickLookVisible,
+    quickLookItem,
     sortColumn,
     sortDirection,
     searchKeyword,
@@ -428,6 +530,11 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     goForward,
     displayName,
     selectItem,
+    selectAll,
+    selectByIds,
+    clearSelection,
+    openQuickLook,
+    closeQuickLook,
     openSelected,
     openItem,
     openRecycle,

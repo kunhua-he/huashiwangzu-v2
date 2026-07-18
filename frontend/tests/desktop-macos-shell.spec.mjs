@@ -538,6 +538,19 @@ test('files finder app mounts MacAppShell contract', async ({ page }) => {
   await expect(finder.locator('.fm-preview-pane')).toBeVisible()
   await expect(finder.getByRole('button', { name: '显示预览' })).toBeVisible()
   await expect(finder.getByRole('button', { name: '显示路径栏' })).toBeVisible()
+
+  // path bar should keep deep stack after successive folder opens (not truncated to 2)
+  const firstFolder = finder.locator('.fm-entry[data-folder]').first()
+  if (await firstFolder.count()) {
+    await firstFolder.dblclick()
+    await expect(finder.locator('.fm-path-item')).toHaveCount(2, { timeout: 10000 })
+    const nested = finder.locator('.fm-entry[data-folder]').first()
+    if (await nested.count()) {
+      await nested.dblclick()
+      await expect(finder.locator('.fm-path-item')).toHaveCount(3, { timeout: 10000 })
+    }
+  }
+
   await finder.locator('.fm-view-btn[aria-label="列表"]').click()
   await expect(finder.locator('.fm-list-header')).toBeVisible()
   await expect(finder.locator('.fm-preview-pane')).toBeVisible()

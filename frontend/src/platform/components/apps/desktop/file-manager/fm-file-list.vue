@@ -65,7 +65,7 @@
           class="fm-entry"
           :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
           :data-folder="item.is_folder ? String(item.id) : undefined"
-          :class="{ 'fm-entry-selected': selectedId === item.id }"
+          :class="{ 'fm-entry-selected': isSelected(item.id) }"
           type="button"
           @click="handleClick(item, $event)"
           @dblclick="handleDoubleClick(item, $event)"
@@ -151,7 +151,7 @@
             :key="`g-${item.is_folder ? 'folder' : 'file'}-${item.id}`"
             type="button"
             class="fm-gallery-thumb"
-            :class="{ 'fm-entry-selected': selectedId === item.id }"
+            :class="{ 'fm-entry-selected': isSelected(item.id) }"
             :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
             @click="handleClick(item, $event)"
             @dblclick="handleDoubleClick(item, $event)"
@@ -172,7 +172,7 @@
           class="fm-entry"
           :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
           :data-folder="item.is_folder ? String(item.id) : undefined"
-          :class="{ 'fm-entry-selected': selectedId === item.id }"
+          :class="{ 'fm-entry-selected': isSelected(item.id) }"
           type="button"
           @click="handleClick(item, $event)"
           @dblclick="handleDoubleClick(item, $event)"
@@ -213,6 +213,7 @@ export type ColumnStackItem = {
 const props = withDefaults(defineProps<{
   items: FileEntry[]
   selectedId: number | null
+  selectedIds?: number[]
   viewMode: 'grid' | 'list' | 'column' | 'gallery'
   iconSize?: number
   columnStack?: ColumnStackItem[]
@@ -226,7 +227,13 @@ const props = withDefaults(defineProps<{
 }>(), {
   iconSize: 50,
   columnStack: () => [],
+  selectedIds: () => [],
 })
+
+function isSelected(id: number) {
+  if (props.selectedIds?.length) return props.selectedIds.includes(id)
+  return props.selectedId === id
+}
 
 const selected = computed(() => props.items.find((item) => item.id === props.selectedId) || null)
 
@@ -299,7 +306,7 @@ function handleClick(item: FileEntry, e: MouseEvent) {
     suppressNextClick = false
     return
   }
-  emit('select', item)
+  emit('select', item, { additive: e.metaKey || e.ctrlKey, range: e.shiftKey })
 }
 
 function handleDoubleClick(item: FileEntry, e: MouseEvent) {
@@ -313,7 +320,7 @@ function handleDoubleClick(item: FileEntry, e: MouseEvent) {
 }
 
 const emit = defineEmits<{
-  (e: 'select', item: FileEntry): void
+  (e: 'select', item: FileEntry, opts?: { additive?: boolean; range?: boolean }): void
   (e: 'open', item: FileEntry): void
   (e: 'context-menu', item: FileEntry, event: MouseEvent): void
   (e: 'sort', column: string): void
@@ -330,7 +337,7 @@ function handleColumnClick(item: FileEntry, columnIndex: number, e: MouseEvent) 
     return
   }
   emit('column-select', item, columnIndex)
-  emit('select', item)
+  emit('select', item, { additive: e.metaKey || e.ctrlKey, range: e.shiftKey })
 }
 
 function handleColumnDoubleClick(item: FileEntry, columnIndex: number, e: MouseEvent) {

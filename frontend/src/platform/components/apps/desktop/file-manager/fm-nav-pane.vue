@@ -8,7 +8,7 @@
         :class="{ active: currentKey === 'desktop' }"
         @click="$emit('go-root')"
       >
-        <span class="fm-nav-glyph is-desktop" aria-hidden="true"><Monitor :size="14" :stroke-width="2.2" /></span>
+        <Monitor class="fm-nav-icon" :size="16" :stroke-width="2" />
         <span class="fm-nav-label">桌面</span>
       </button>
       <button
@@ -17,7 +17,7 @@
         :class="{ active: currentKey === 'documents' }"
         @click="$emit('open-named', 'documents')"
       >
-        <span class="fm-nav-glyph is-docs" aria-hidden="true"><FileText :size="14" :stroke-width="2.2" /></span>
+        <FileText class="fm-nav-icon" :size="16" :stroke-width="2" />
         <span class="fm-nav-label">文稿</span>
       </button>
       <button
@@ -26,7 +26,7 @@
         :class="{ active: currentKey === 'downloads' }"
         @click="$emit('open-named', 'downloads')"
       >
-        <span class="fm-nav-glyph is-downloads" aria-hidden="true"><Download :size="14" :stroke-width="2.2" /></span>
+        <Download class="fm-nav-icon" :size="16" :stroke-width="2" />
         <span class="fm-nav-label">下载</span>
       </button>
     </section>
@@ -39,11 +39,11 @@
         :class="{ active: currentKey === 'recycle' }"
         @click="$emit('open-recycle')"
       >
-        <span class="fm-nav-glyph is-trash" aria-hidden="true"><Trash2 :size="14" :stroke-width="2.2" /></span>
+        <Trash2 class="fm-nav-icon" :size="16" :stroke-width="2" />
         <span class="fm-nav-label">回收站</span>
       </button>
-      <button type="button" class="fm-nav-item" :class="{ active: currentKey === 'desktop' }" @click="$emit('go-root')">
-        <span class="fm-nav-glyph is-drive" aria-hidden="true"><HardDrive :size="14" :stroke-width="2.2" /></span>
+      <button type="button" class="fm-nav-item" :class="{ active: currentKey === 'desktop' && !activeNamed }" @click="$emit('go-root')">
+        <HardDrive class="fm-nav-icon" :size="16" :stroke-width="2" />
         <span class="fm-nav-label">本机</span>
       </button>
     </section>
@@ -136,7 +136,7 @@ const tags = [
   background: transparent;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   color: rgba(29, 29, 31, 0.92);
   text-align: left;
   cursor: pointer;
@@ -149,8 +149,10 @@ const tags = [
 
 .fm-nav-item.active {
   background: rgba(10, 132, 255, 0.18);
-  color: #0b1f36;
-  font-weight: 600;
+}
+
+.fm-nav-item.active .fm-nav-icon {
+  color: var(--mac-app-accent, #0a84ff);
 }
 
 .fm-nav-item:disabled {
@@ -158,30 +160,10 @@ const tags = [
   cursor: default;
 }
 
-.fm-nav-glyph {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  display: grid;
-  place-items: center;
-  color: #fff;
+/* Source list: monochrome SF-like glyphs, not filled app tiles */
+.fm-nav-icon {
   flex-shrink: 0;
-}
-
-.fm-nav-glyph.is-desktop {
-  background: linear-gradient(180deg, #64d2ff, #0a84ff);
-}
-.fm-nav-glyph.is-docs {
-  background: linear-gradient(180deg, #5e5ce6, #3634a3);
-}
-.fm-nav-glyph.is-downloads {
-  background: linear-gradient(180deg, #30d158, #248a3d);
-}
-.fm-nav-glyph.is-trash {
-  background: linear-gradient(180deg, #aeaeb2, #636366);
-}
-.fm-nav-glyph.is-drive {
-  background: linear-gradient(180deg, #8e8e93, #48484a);
+  color: rgba(60, 60, 67, 0.62);
 }
 
 .fm-nav-label {

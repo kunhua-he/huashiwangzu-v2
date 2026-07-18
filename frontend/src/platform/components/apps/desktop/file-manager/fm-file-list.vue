@@ -174,17 +174,18 @@ const props = withDefaults(defineProps<{
 
 const selected = computed(() => props.items.find((item) => item.id === props.selectedId) || null)
 
-const gridIconSize = computed(() => Math.round(props.iconSize * 0.78))
+// mac Finder icon view proportions (reference FileIcon ~39×50 paper inside ~64×54.5 hit target)
+const gridIconSize = computed(() => Math.max(28, Math.round(props.iconSize * 0.78)))
 const gridStyle = computed(() => ({
-  gridTemplateColumns: `repeat(auto-fill, minmax(${Math.max(72, props.iconSize + 30)}px, 1fr))`,
+  gridTemplateColumns: `repeat(auto-fill, minmax(${Math.max(80, props.iconSize + 30)}px, 1fr))`,
   gap: '10px',
 }))
 const iconWrapStyle = computed(() => ({
-  width: `${props.iconSize + 14}px`,
+  width: `${Math.round(props.iconSize * 1.28)}px`,
   height: `${Math.round(props.iconSize * 1.09)}px`,
 }))
 const nameStyle = computed(() => ({
-  maxWidth: `${props.iconSize + 26}px`,
+  maxWidth: `${Math.max(76, props.iconSize + 26)}px`,
 }))
 
 function handleEntryMouseDown(item: FileEntry, e: MouseEvent) {
@@ -297,6 +298,7 @@ const emit = defineEmits<{
   display: grid;
   align-content: start;
   padding: 12px;
+  /* gap/columns set inline to track icon size slider */
 }
 
 .fm-content-column {
@@ -395,22 +397,23 @@ const emit = defineEmits<{
   width: 100%;
   padding: 4px 2px;
   border-radius: 0;
+  opacity: 1;
 }
 
 .fm-entry-icon-wrap {
   display: grid;
   place-items: center;
   border-radius: 8px;
+  background: transparent;
   transition: background 100ms ease;
 }
 
 .fm-content-grid .fm-entry:hover .fm-entry-icon-wrap {
-  background: color-mix(in srgb, var(--mac-app-text, #1d1d1f) 5%, transparent);
+  background: rgba(0, 0, 0, 0.045);
 }
 
 .fm-content-grid .fm-entry-selected .fm-entry-icon-wrap {
   background: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 15%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mac-app-accent, #0a84ff) 35%, transparent);
 }
 
 .fm-content-list .fm-entry:hover {
@@ -438,6 +441,10 @@ const emit = defineEmits<{
   -webkit-line-clamp: 2;
   text-align: center;
   word-break: break-word;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--mac-app-text, #1d1d1f);
+  background: transparent;
 }
 
 .fm-content-grid .fm-entry-selected .fm-entry-name {

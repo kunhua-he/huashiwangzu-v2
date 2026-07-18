@@ -448,30 +448,36 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     quickLookItem.value = null
   }
 
-  function toggleTagOnItem(item: FileEntry, tag: FinderTagColor) {
-    toggleItemTag(itemTypeOf(item), item.id, tag)
+  async function toggleTagOnItem(item: FileEntry, tag: FinderTagColor) {
+    await toggleItemTag(itemTypeOf(item), item.id, tag)
     tagRevision.value += 1
   }
 
-  function clearTagsOnItem(item: FileEntry) {
-    clearItemTags(itemTypeOf(item), item.id)
+  async function clearTagsOnItem(item: FileEntry) {
+    await clearItemTags(itemTypeOf(item), item.id)
     tagRevision.value += 1
   }
 
-  function applyTagAction(key: string, item: FileEntry | null) {
+  async function applyTagAction(key: string, item: FileEntry | null) {
     if (!item) return false
     if (key === 'tag:clear') {
-      clearTagsOnItem(item)
+      await clearTagsOnItem(item)
       return true
     }
     if (key.startsWith('tag:')) {
       const tag = key.slice(4) as FinderTagColor
       if (FINDER_TAGS.some((t) => t.key === tag)) {
-        toggleTagOnItem(item, tag)
+        await toggleTagOnItem(item, tag)
         return true
       }
     }
     return false
+  }
+
+  async function loadTags() {
+    const { loadFinderTagsFromServer } = await import('./finder-tags')
+    await loadFinderTagsFromServer()
+    tagRevision.value += 1
   }
 
   function setTagFilter(tag: FinderTagColor | null) {
@@ -596,6 +602,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     toggleTagOnItem,
     clearTagsOnItem,
     applyTagAction,
+    loadTags,
     setTagFilter,
     openSelected,
     openItem,

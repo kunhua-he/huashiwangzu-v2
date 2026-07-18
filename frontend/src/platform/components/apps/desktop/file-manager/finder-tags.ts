@@ -1,3 +1,10 @@
+import {
+  clearFileItemTagsRequest,
+  fetchFileTagsMap,
+  setFileItemTagsRequest,
+  toggleFileItemTagRequest,
+} from '@/shared/api/desktop'
+
 export type FinderTagColor =
   | 'red'
   | 'orange'
@@ -23,60 +30,86 @@ export const FINDER_TAGS: FinderTagDef[] = [
   { key: 'gray', name: '灰色', color: 'rgb(152, 152, 157)' },
 ]
 
-const STORAGE_KEY = 'finder.item.tags.v1'
-
-type TagMap = Record<string, FinderTagColor[]>
+/** In-memory cache mirrored from backend (per user session). */
+let tagMap: Record<string, FinderTagColor[]> = {}
+let loaded = false
+let loading: Promise<void> | null = null
 
 function entryKey(itemType: 'file' | 'folder', id: number) {
   return `${itemType}:${id}`
 }
 
-function readMap(): TagMap {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as TagMap
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
+function normalizeTags(tags: unknown): FinderTagColor[] {
+  if (!Array.isArray(tags)) return []
+  const allowed = new Set(FINDER_TAGS.map((t) => t.key))
+  const out: FinderTagColor[] = []
+  for (const raw of tags) {
+    const key = String(raw || '').toLowerCase() as FinderTagColor
+    if (allowed.has(key) && !out.includes(key)) out.push(key)
   }
+  return out
 }
 
-function writeMap(map: TagMap) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(map))
+export async function loadFinderTagsFromServer(): Promise<void> {
+  if (loading) return loading
+  loading = (async () => {
+    try {
+      const data = await fetchFileTagsMap()
+      const next: Record<string, FinderTagColor[]> = {}
+      if (data && typeof data === 'object') {
+        for (const [key, tags] of Object.entries(data)) {
+          next[key] = normalizeTags(tags)
+        }
+      }
+      tagMap = next
+      loaded = true
+    } catch {
+      // keep existing cache on failure
+      loaded = true
+    } finally {
+      loading = null
+    }
+  })()
+  return loading
+}
+
+export function isFinderTagsLoaded() {
+  return loaded
 }
 
 export function getItemTags(itemType: 'file' | 'folder', id: number): FinderTagColor[] {
-  const map = readMap()
-  const tags = map[entryKey(itemType, id)]
-  return Array.isArray(tags) ? tags : []
+  return tagMap[entryKey(itemType, id)] || []
 }
 
-export function setItemTags(itemType: 'file' | 'folder', id: number, tags: FinderTagColor[]) {
-  const map = readMap()
-  const key = entryKey(itemType, id)
+export async function setItemTags(
+  itemType: 'file' | 'folder',
+  id: number,
+  tags: FinderTagColor[],
+): Promise<FinderTagColor[]> {
   const unique = Array.from(new Set(tags))
-  if (!unique.length) delete map[key]
-  else map[key] = unique
-  writeMap(map)
+  const saved = normalizeTags(await setFileItemTagsRequest(itemType, id, unique))
+  const key = entryKey(itemType, id)
+  if (!saved.length) delete tagMap[key]
+  else tagMap[key] = saved
+  return saved
 }
 
-/** Toggle one tag on/off for an item. */
-export function toggleItemTag(
+/** Toggle one tag on/off for an item (server-backed). */
+export async function toggleItemTag(
   itemType: 'file' | 'folder',
   id: number,
   tag: FinderTagColor,
-): FinderTagColor[] {
-  const current = new Set(getItemTags(itemType, id))
-  if (current.has(tag)) current.delete(tag)
-  else current.add(tag)
-  const next = Array.from(current)
-  setItemTags(itemType, id, next)
-  return next
+): Promise<FinderTagColor[]> {
+  const saved = normalizeTags(await toggleFileItemTagRequest(itemType, id, tag))
+  const key = entryKey(itemType, id)
+  if (!saved.length) delete tagMap[key]
+  else tagMap[key] = saved
+  return saved
 }
 
-export function clearItemTags(itemType: 'file' | 'folder', id: number) {
-  setItemTags(itemType, id, [])
+export async function clearItemTags(itemType: 'file' | 'folder', id: number): Promise<void> {
+  await clearFileItemTagsRequest(itemType, id)
+  delete tagMap[entryKey(itemType, id)]
 }
 
 export function getTagDef(key: FinderTagColor): FinderTagDef | undefined {
@@ -84,8 +117,7 @@ export function getTagDef(key: FinderTagColor): FinderTagDef | undefined {
 }
 
 export function listTaggedEntryKeys(tag: FinderTagColor): string[] {
-  const map = readMap()
-  return Object.entries(map)
+  return Object.entries(tagMap)
     .filter(([, tags]) => Array.isArray(tags) && tags.includes(tag))
     .map(([key]) => key)
 }

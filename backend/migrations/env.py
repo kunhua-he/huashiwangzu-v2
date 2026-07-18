@@ -31,6 +31,7 @@ from app.models import (  # noqa: F401 - ensure models are loaded
     Feedback,
     File,
     FileDerivative,
+    FileItemTag,
     FileShare,
     Folder,
     Notification,

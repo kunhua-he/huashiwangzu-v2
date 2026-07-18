@@ -84,6 +84,7 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
     toggleTagOnItem: state.toggleTagOnItem,
     clearTagsOnItem: state.clearTagsOnItem,
     applyTagAction: state.applyTagAction,
+    loadTags: state.loadTags,
     setTagFilter: state.setTagFilter,
     openSelected: state.openSelected,
     openItem: state.openItem,

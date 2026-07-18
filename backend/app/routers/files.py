@@ -19,7 +19,7 @@ from app.schemas.file import (
     MoveRequest,
     RenameRequest,
 )
-from app.services import file_ops_service, file_service
+from app.services import file_ops_service, file_service, file_tag_service
 from app.services.system_service import create_log
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -84,6 +84,76 @@ async def get_user_locations(
     """Return Finder special locations; creates 文稿/下载 root folders if missing."""
     data = await file_service.ensure_user_locations(db, user.id)
     return ApiResponse(data=data)
+
+
+class FileTagSetRequest(BaseModel):
+    item_type: str
+    item_id: int
+    tags: list[str] = []
+
+
+class FileTagToggleRequest(BaseModel):
+    item_type: str
+    item_id: int
+    tag: str
+
+
+@router.get("/tags")
+async def list_file_tags(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    """Return current user's file/folder tags map: { 'file:12': ['red'], ... }."""
+    data = await file_tag_service.list_tags_map(db, user.id)
+    return ApiResponse(data=data)
+
+
+@router.get("/tags/{item_type}/{item_id}")
+async def get_file_item_tags(
+    item_type: str,
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    tags = await file_tag_service.get_item_tags(
+        db,
+        owner_id=user.id,
+        item_type=item_type,
+        item_id=item_id,
+    )
+    return ApiResponse(data={"item_type": item_type, "item_id": item_id, "tags": tags})
+
+
+@router.put("/tags")
+async def set_file_item_tags(
+    body: FileTagSetRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    tags = await file_tag_service.set_item_tags(
+        db,
+        owner_id=user.id,
+        item_type=body.item_type,
+        item_id=body.item_id,
+        tags=body.tags,
+    )
+    return ApiResponse(data={"item_type": body.item_type, "item_id": body.item_id, "tags": tags})
+
+
+@router.post("/tags/toggle")
+async def toggle_file_item_tag(
+    body: FileTagToggleRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("viewer")),
+):
+    tags = await file_tag_service.toggle_item_tag(
+        db,
+        owner_id=user.id,
+        item_type=body.item_type,
+        item_id=body.item_id,
+        tag=body.tag,
+    )
+    return ApiResponse(data={"item_type": body.item_type, "item_id": body.item_id, "tags": tags})
 
 
 @router.post("/folder")

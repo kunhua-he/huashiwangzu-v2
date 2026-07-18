@@ -142,6 +142,45 @@ export async function fetchFinderLocations(): Promise<Record<string, FinderLocat
   return await api.get<unknown, Record<string, FinderLocation>>('/files/locations')
 }
 
+export type FileTagItemType = 'file' | 'folder'
+
+export async function fetchFileTagsMap(): Promise<Record<string, string[]>> {
+  return await api.get<unknown, Record<string, string[]>>('/files/tags')
+}
+
+export async function setFileItemTagsRequest(
+  itemType: FileTagItemType,
+  itemId: number,
+  tags: string[],
+): Promise<string[]> {
+  const data = await api.put<unknown, { tags?: string[] }>('/files/tags', {
+    item_type: itemType,
+    item_id: itemId,
+    tags,
+  })
+  return Array.isArray(data?.tags) ? data.tags : tags
+}
+
+export async function toggleFileItemTagRequest(
+  itemType: FileTagItemType,
+  itemId: number,
+  tag: string,
+): Promise<string[]> {
+  const data = await api.post<unknown, { tags?: string[] }>('/files/tags/toggle', {
+    item_type: itemType,
+    item_id: itemId,
+    tag,
+  })
+  return Array.isArray(data?.tags) ? data.tags : []
+}
+
+export async function clearFileItemTagsRequest(
+  itemType: FileTagItemType,
+  itemId: number,
+): Promise<void> {
+  await setFileItemTagsRequest(itemType, itemId, [])
+}
+
 export async function renameEntryRequest(itemType: FileItemType, id: number, newName: string): Promise<Record<string, unknown>> {
   return await api.post<unknown, Record<string, unknown>>('/files/rename', { type: itemType, id, new_name: newName })
 }

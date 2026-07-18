@@ -174,6 +174,7 @@ import { useFileManagerState } from './file-manager/use-file-manager-state'
 import type { FileEntry } from '@/shared/api/types'
 import type { MenuItemConfig } from '@/desktop/context-menu/use-context-menu'
 import emitter from '@/desktop/events'
+import { readAppState, updateAppState } from '@/desktop/window-manager/desktop-state-store'
 
 const props = defineProps<{
   folderId?: number
@@ -185,15 +186,16 @@ const feedback = useAppFeedback()
 const uploadInputRef = ref<HTMLInputElement | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
 
-const PREFS_KEY = 'finder.ui.prefs.v1'
-function loadPrefs() {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as { iconSize?: number; showPathBar?: boolean; showPreview?: boolean; viewMode?: string }
-  } catch {
-    return null
-  }
+type FinderUiPrefs = {
+  iconSize?: number
+  showPathBar?: boolean
+  showPreview?: boolean
+  viewMode?: string
+}
+
+function loadPrefs(): FinderUiPrefs {
+  // multi-user: desktop appState is persisted in framework_desktop_states
+  return readAppState<FinderUiPrefs>('files', 'finderUiPrefs', {})
 }
 const prefs = loadPrefs()
 const iconSize = ref(typeof prefs?.iconSize === 'number' ? prefs.iconSize : 50)
@@ -283,12 +285,12 @@ function onBodyMouseDown(e: MouseEvent) {
 }
 
 function persistPrefs() {
-  localStorage.setItem(PREFS_KEY, JSON.stringify({
+  updateAppState('files', 'finderUiPrefs', {
     iconSize: iconSize.value,
     showPathBar: showPathBar.value,
     showPreview: showPreview.value,
     viewMode: state.viewMode.value,
-  }))
+  })
 }
 
 function setShowPathBar(v: boolean) {
@@ -520,7 +522,7 @@ async function handleContextMenuSelect(key: string) {
     await handleRecycleAction(key)
     return
   }
-  if (state.applyTagAction(key, ctxtFile)) {
+  if (await state.applyTagAction(key, ctxtFile)) {
     const name = ctxtFile ? state.displayName(ctxtFile) : ''
     if (key === 'tag:clear') feedback.success(name ? `已清除「${name}」的标签` : '已清除标签')
     else if (key.startsWith('tag:')) feedback.success(name ? `已更新「${name}」标签` : '已更新标签')
@@ -531,7 +533,10 @@ async function handleContextMenuSelect(key: string) {
 
 onMounted(async () => {
   state.uploadInput.value = uploadInputRef.value
-  await state.ensureLocations()
+  await Promise.all([
+    state.ensureLocations(),
+    state.loadTags(),
+  ])
   state.applyInitialFolder()
   void state.loadFiles()
   const name = state.breadcrumb.value[state.breadcrumb.value.length - 1]?.name || '桌面'

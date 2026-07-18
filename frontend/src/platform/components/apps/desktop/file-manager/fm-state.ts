@@ -17,10 +17,17 @@ import {
   type FinderTagColor,
 } from './finder-tags'
 
+export type FinderSortColumn = 'name' | 'date' | 'type' | 'size'
+export type FinderSortDirection = 'asc' | 'desc'
+export type FinderFolderSort = { column: FinderSortColumn; direction: FinderSortDirection }
+
 interface CreateFileManagerStateOptions {
   folderId: () => number | undefined
   folderName: () => string | undefined
   windowId?: () => string | undefined
+  /** per-folder sort memory; root uses folderId 0 */
+  resolveFolderSort?: (folderId: number) => FinderFolderSort | null | undefined
+  onFolderSortChange?: (folderId: number, sort: FinderFolderSort) => void
 }
 
 export function createFileManagerState(options: CreateFileManagerStateOptions) {
@@ -257,6 +264,33 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     else clearSearchResults()
   }
 
+  function applyFolderSort(folderId: number) {
+    const remembered = options.resolveFolderSort?.(folderId)
+    if (remembered?.column) {
+      sortColumn.value = remembered.column
+      sortDirection.value = remembered.direction === 'desc' ? 'desc' : 'asc'
+      return
+    }
+    sortColumn.value = 'name'
+    sortDirection.value = 'asc'
+  }
+
+  function setSort(column: FinderSortColumn, direction?: FinderSortDirection) {
+    if (direction) {
+      sortColumn.value = column
+      sortDirection.value = direction
+    } else if (sortColumn.value === column) {
+      sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+    } else {
+      sortColumn.value = column
+      sortDirection.value = 'asc'
+    }
+    options.onFolderSortChange?.(currentFolderId.value, {
+      column: sortColumn.value,
+      direction: sortDirection.value,
+    })
+  }
+
   watch(searchKeyword, () => {
     // keep compatibility for direct writes from templates
     if (searchScope.value === 'all') scheduleSearch()
@@ -264,8 +298,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
   })
 
   function enterFolder(folderId: number) {
-    sortColumn.value = 'name'
-    sortDirection.value = 'asc'
+    applyFolderSort(folderId)
     searchKeyword.value = ''
     clearSearchResults()
     clearSelection()
@@ -397,8 +430,6 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     const folderId = Number(resolved.id)
     breadcrumb.value = [{ id: null, name: '桌面' }, { id: folderId, name: label }]
     pushHistory(folderId, label)
-    sortColumn.value = 'name'
-    sortDirection.value = 'asc'
     searchKeyword.value = ''
     selectedId.value = null
     enterFolder(folderId)
@@ -637,6 +668,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     activeTagFilter,
     sortColumn,
     sortDirection,
+    setSort,
     searchKeyword,
     searchScope,
     searchResults,

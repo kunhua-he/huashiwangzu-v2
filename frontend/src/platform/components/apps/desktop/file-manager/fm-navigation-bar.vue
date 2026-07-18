@@ -129,10 +129,12 @@ const props = withDefaults(defineProps<{
   canGoUp: boolean
   breadcrumb: DesktopFileManagerBreadcrumbItem[]
   searchKeyword: string
+  searchScope?: 'folder' | 'all'
   viewMode: FinderViewMode
   showPathBar?: boolean
   showPreview?: boolean
 }>(), {
+  searchScope: 'folder',
   showPathBar: true,
   showPreview: true,
 })
@@ -144,6 +146,7 @@ const emit = defineEmits<{
   (e: 'go-root'): void
   (e: 'navigate', index: number): void
   (e: 'update:searchKeyword', value: string): void
+  (e: 'update:searchScope', value: 'folder' | 'all'): void
   (e: 'update:viewMode', mode: FinderViewMode): void
   (e: 'update:showPathBar', value: boolean): void
   (e: 'update:showPreview', value: boolean): void

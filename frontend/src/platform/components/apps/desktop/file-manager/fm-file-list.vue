@@ -1,24 +1,28 @@
 <template>
   <section class="fm-file-list" :class="`fm-view-${viewMode}`">
     <!-- Column headers (list view only) -->
-    <div v-if="viewMode === 'list'" class="fm-list-header">
+    <div v-if="viewMode === 'list'" class="fm-list-header" :style="listGridStyle">
       <span class="fm-col-icon"></span>
       <button class="fm-col-name" type="button" @click="$emit('sort', 'name')">
         名称
         <span v-if="sortColumn === 'name'" class="fm-sort-mark">{{ sortDirection === 'asc' ? '▲' : '▼' }}</span>
       </button>
+      <span class="fm-col-resizer" @mousedown.prevent.stop="startColumnResize('name', $event)" />
       <button class="fm-col-date" type="button" @click="$emit('sort', 'date')">
         修改日期
         <span v-if="sortColumn === 'date'" class="fm-sort-mark">{{ sortDirection === 'asc' ? '▲' : '▼' }}</span>
       </button>
+      <span class="fm-col-resizer" @mousedown.prevent.stop="startColumnResize('date', $event)" />
       <button class="fm-col-type" type="button" @click="$emit('sort', 'type')">
         种类
         <span v-if="sortColumn === 'type'" class="fm-sort-mark">{{ sortDirection === 'asc' ? '▲' : '▼' }}</span>
       </button>
+      <span class="fm-col-resizer" @mousedown.prevent.stop="startColumnResize('type', $event)" />
       <button class="fm-col-size" type="button" @click="$emit('sort', 'size')">
         大小
         <span v-if="sortColumn === 'size'" class="fm-sort-mark">{{ sortDirection === 'asc' ? '▲' : '▼' }}</span>
       </button>
+      <span class="fm-col-resizer" @mousedown.prevent.stop="startColumnResize('size', $event)" />
     </div>
 
     <LoadStateBanner
@@ -173,6 +177,7 @@
           :key="`${item.is_folder ? 'folder' : 'file'}-${item.id}`"
           :draggable="false"
           class="fm-entry"
+          :style="listGridStyle"
           :data-selection-key="(item.is_folder ? 'folder' : 'file') + ':' + item.id"
           :data-folder="item.is_folder ? String(item.id) : undefined"
           :class="{ 'fm-entry-selected': isSelected(item.id), 'fm-entry-drop': isDropTarget(item) }"
@@ -189,9 +194,13 @@
               <i v-for="tag in itemTags(item)" :key="tag" class="fm-entry-tag-dot" :style="{ background: tagColor(tag) }" />
             </span>
           </span>
+          <span class="fm-entry-spacer" aria-hidden="true" />
           <span class="fm-entry-date">{{ formatListDate(item.created_at) }}</span>
+          <span class="fm-entry-spacer" aria-hidden="true" />
           <span class="fm-entry-kind">{{ item.is_folder ? '文件夹' : ((item.format || '文件').toUpperCase()) }}</span>
+          <span class="fm-entry-spacer" aria-hidden="true" />
           <span class="fm-entry-size">{{ item.is_folder ? '—' : formatSize(item.file_size) }}</span>
+          <span class="fm-entry-spacer" aria-hidden="true" />
         </button>
       </div>
     </template>
@@ -199,7 +208,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import FileVisualIcon from '@/shared/components/file-visual-icon.vue'
 import type { FileEntry } from '@/shared/api/types'
 import { startDrag, dragState } from '@/desktop/drag-drop/drag-state'
@@ -219,6 +228,29 @@ export type ColumnStackItem = {
   selectedId: number | null
 }
 
+export type ListColumnWidths = {
+  name?: number
+  date?: number
+  type?: number
+  size?: number
+}
+
+type ResizableColumn = 'name' | 'date' | 'type' | 'size'
+
+const DEFAULT_COLUMN_WIDTHS: Required<ListColumnWidths> = {
+  name: 220,
+  date: 132,
+  type: 88,
+  size: 72,
+}
+
+const COLUMN_LIMITS: Record<ResizableColumn, { min: number; max: number }> = {
+  name: { min: 120, max: 560 },
+  date: { min: 96, max: 240 },
+  type: { min: 64, max: 180 },
+  size: { min: 56, max: 140 },
+}
+
 const props = withDefaults(defineProps<{
   items: FileEntry[]
   selectedId: number | null
@@ -226,6 +258,7 @@ const props = withDefaults(defineProps<{
   viewMode: 'grid' | 'list' | 'column' | 'gallery'
   iconSize?: number
   columnStack?: ColumnStackItem[]
+  columnWidths?: ListColumnWidths
   loading: boolean
   displayName: (file: FileEntry) => string
   formatSize: (size: number) => string
@@ -238,6 +271,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   iconSize: 50,
   columnStack: () => [],
+  columnWidths: () => ({ ...DEFAULT_COLUMN_WIDTHS }),
   selectedIds: () => [],
   tagsOf: () => [],
   tagRevision: 0,
@@ -371,10 +405,65 @@ const emit = defineEmits<{
   (e: 'open', item: FileEntry): void
   (e: 'context-menu', item: FileEntry, event: MouseEvent): void
   (e: 'sort', column: string): void
+  (e: 'update:columnWidths', value: Required<ListColumnWidths>): void
   (e: 'retry'): void
   (e: 'column-select', item: FileEntry, columnIndex: number): void
   (e: 'column-open', item: FileEntry, columnIndex: number): void
 }>()
+
+const resolvedColumnWidths = computed(() => ({
+  name: props.columnWidths?.name ?? DEFAULT_COLUMN_WIDTHS.name,
+  date: props.columnWidths?.date ?? DEFAULT_COLUMN_WIDTHS.date,
+  type: props.columnWidths?.type ?? DEFAULT_COLUMN_WIDTHS.type,
+  size: props.columnWidths?.size ?? DEFAULT_COLUMN_WIDTHS.size,
+}))
+
+const listGridStyle = computed(() => {
+  const w = resolvedColumnWidths.value
+  // name is flexible floor; other columns fixed px (Finder-like)
+  // trailing 6px track hosts the size-column resizer in the header
+  return {
+    gridTemplateColumns: `24px minmax(${w.name}px, 1fr) 6px ${w.date}px 6px ${w.type}px 6px ${w.size}px 6px`,
+  }
+})
+
+const resizing = ref<null | { column: ResizableColumn; startX: number; startWidth: number }>(null)
+
+function clampColumnWidth(column: ResizableColumn, value: number) {
+  const limit = COLUMN_LIMITS[column]
+  return Math.min(limit.max, Math.max(limit.min, Math.round(value)))
+}
+
+function startColumnResize(column: ResizableColumn, e: MouseEvent) {
+  resizing.value = {
+    column,
+    startX: e.clientX,
+    startWidth: resolvedColumnWidths.value[column],
+  }
+  document.addEventListener('mousemove', onColumnResizeMove)
+  document.addEventListener('mouseup', onColumnResizeEnd)
+}
+
+function onColumnResizeMove(e: MouseEvent) {
+  if (!resizing.value) return
+  const delta = e.clientX - resizing.value.startX
+  const nextWidth = clampColumnWidth(resizing.value.column, resizing.value.startWidth + delta)
+  emit('update:columnWidths', {
+    ...resolvedColumnWidths.value,
+    [resizing.value.column]: nextWidth,
+  })
+}
+
+function onColumnResizeEnd() {
+  document.removeEventListener('mousemove', onColumnResizeMove)
+  document.removeEventListener('mouseup', onColumnResizeEnd)
+  resizing.value = null
+}
+
+onBeforeUnmount(() => {
+  onColumnResizeEnd()
+  clearPendingDrag()
+})
 
 function handleColumnClick(item: FileEntry, columnIndex: number, e: MouseEvent) {
   if (suppressNextClick) {
@@ -432,9 +521,10 @@ function formatListDate(raw?: string | null) {
 .fm-list-header,
 .fm-content-list .fm-entry {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 132px 88px 72px;
+  /* widths injected via listGridStyle */
+  grid-template-columns: 24px minmax(220px, 1fr) 6px 132px 6px 88px 6px 72px 6px;
   align-items: center;
-  gap: 6px;
+  gap: 0 2px;
   padding: 0 12px;
 }
 
@@ -451,6 +541,7 @@ function formatListDate(raw?: string | null) {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   height: 100%;
   padding: 0 2px;
   border: 0;
@@ -463,9 +554,40 @@ function formatListDate(raw?: string | null) {
 
 .fm-list-header button:hover { color: #1d1d1f; }
 .fm-col-icon { pointer-events: none; }
+.fm-col-resizer {
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  position: relative;
+}
+.fm-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 2px;
+  width: 1px;
+  background: rgba(60, 60, 67, 0.18);
+}
+.fm-col-resizer:hover::after {
+  background: rgba(10, 132, 255, 0.55);
+}
+.fm-entry-spacer {
+  width: 6px;
+  pointer-events: none;
+}
 .fm-sort-mark {
   font-size: 8px;
   opacity: 0.75;
+}
+.fm-entry-name,
+.fm-entry-date,
+.fm-entry-kind,
+.fm-entry-size {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fm-content-grid {

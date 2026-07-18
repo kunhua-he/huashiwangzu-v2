@@ -48,6 +48,7 @@ export function buildFolderMenu(
 ): MenuItemConfig[] {
   return [
     { key: 'open', label: '打开', icon: '📂' },
+    { key: 'open-in-new-window', label: '在新窗口中打开', icon: '⧉' },
     { key: 'upload-here', label: '上传文件', icon: '⬆', disabled: !writable },
     { key: 'create-folder-here', label: '新建文件夹', icon: '+', disabled: !writable },
     ...separatorItems(),

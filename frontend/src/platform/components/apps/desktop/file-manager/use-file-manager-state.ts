@@ -7,6 +7,8 @@ interface UseFileManagerStateOptions {
   folderId: () => number | undefined
   folderName: () => string | undefined
   windowId?: () => string | undefined
+  resolveFolderSort?: Parameters<typeof createFileManagerState>[0]['resolveFolderSort']
+  onFolderSortChange?: Parameters<typeof createFileManagerState>[0]['onFolderSortChange']
 }
 
 export function useFileManagerState(options: UseFileManagerStateOptions) {
@@ -50,6 +52,7 @@ export function useFileManagerState(options: UseFileManagerStateOptions) {
     activeTagFilter: state.activeTagFilter,
     sortColumn: state.sortColumn,
     sortDirection: state.sortDirection,
+    setSort: state.setSort,
     searchKeyword: state.searchKeyword,
     searchScope: state.searchScope,
     searchResults: state.searchResults,

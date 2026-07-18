@@ -27,7 +27,7 @@
           @go-root="state.goRoot"
           @navigate="state.navigateToCrumb"
           @update:search-keyword="state.setSearchKeyword($event)"
-          @update:search-scope="state.setSearchScope($event)"
+          @update:search-scope="setSearchScope"
           @update:view-mode="state.viewMode.value = $event"
           @update:show-path-bar="setShowPathBar"
           @update:show-preview="setShowPreview"
@@ -71,6 +71,7 @@
             :view-mode="state.viewMode.value"
             :icon-size="iconSize"
             :column-stack="state.columnStack.value"
+            :column-widths="listColumnWidths"
             :loading="state.loading.value"
             :display-name="state.displayName"
             :format-size="state.formatSize"
@@ -84,6 +85,7 @@
             @open="handleItemOpen"
             @context-menu="handleItemContextMenu"
             @sort="handleSort"
+            @update:column-widths="setListColumnWidths"
             @retry="state.loadFiles"
             @column-select="(item, col) => state.selectInColumn(item, col)"
             @column-open="(item, col) => state.selectInColumn(item, col)"
@@ -168,6 +170,7 @@ import { buildFileMenu, buildFolderMenu, buildMultiSelectMenu } from '@/desktop/
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { hasContent } from '@/desktop/clipboard/clipboard-state'
 import { restoreRecycleBinEntry, permanentlyDeleteEntry, emptyRecycleBinRequest } from '@/shared/api/desktop'
+import { openAppById } from '@/desktop/app-registry/app-opener'
 import FmNavigationBar from './file-manager/fm-navigation-bar.vue'
 import FmNavPane from './file-manager/fm-nav-pane.vue'
 import FmPathBar from './file-manager/fm-path-bar.vue'
@@ -177,8 +180,10 @@ import FmQuickLook from './file-manager/fm-quick-look.vue'
 import FmStatusBar from './file-manager/fm-status-bar.vue'
 import FmPropertiesDialog from './file-manager/fm-properties-dialog.vue'
 import { useFileManagerState } from './file-manager/use-file-manager-state'
+import type { FinderFolderSort, FinderSortColumn } from './file-manager/fm-state'
 import type { FileEntry } from '@/shared/api/types'
 import type { MenuItemConfig } from '@/desktop/context-menu/use-context-menu'
+import type { FinderTagColor } from './file-manager/finder-tags'
 import emitter from '@/desktop/events'
 import { readAppState, updateAppState } from '@/desktop/window-manager/desktop-state-store'
 
@@ -192,29 +197,95 @@ const feedback = useAppFeedback()
 const uploadInputRef = ref<HTMLInputElement | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
 
+type FinderListColumnWidths = {
+  name?: number
+  date?: number
+  type?: number
+  size?: number
+}
+
 type FinderUiPrefs = {
   iconSize?: number
   showPathBar?: boolean
   showPreview?: boolean
   viewMode?: string
+  searchScope?: 'folder' | 'all'
+  listColumnWidths?: FinderListColumnWidths
+  folderViews?: Record<string, { sort?: FinderFolderSort }>
+}
+
+const DEFAULT_LIST_COLUMN_WIDTHS: Required<FinderListColumnWidths> = {
+  name: 220,
+  date: 132,
+  type: 88,
+  size: 72,
 }
 
 function loadPrefs(): FinderUiPrefs {
   // multi-user: desktop appState is persisted in framework_desktop_states
   return readAppState<FinderUiPrefs>('files', 'finderUiPrefs', {})
 }
+
+function folderViewKey(folderId: number) {
+  return String(folderId || 0)
+}
+
+function normalizeListColumnWidths(raw?: FinderListColumnWidths | null): Required<FinderListColumnWidths> {
+  const clamp = (value: number | undefined, fallback: number, min: number, max: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+    return Math.min(max, Math.max(min, Math.round(value)))
+  }
+  return {
+    name: clamp(raw?.name, DEFAULT_LIST_COLUMN_WIDTHS.name, 120, 560),
+    date: clamp(raw?.date, DEFAULT_LIST_COLUMN_WIDTHS.date, 96, 240),
+    type: clamp(raw?.type, DEFAULT_LIST_COLUMN_WIDTHS.type, 64, 180),
+    size: clamp(raw?.size, DEFAULT_LIST_COLUMN_WIDTHS.size, 56, 140),
+  }
+}
+
 const prefs = loadPrefs()
 const iconSize = ref(typeof prefs?.iconSize === 'number' ? prefs.iconSize : 50)
 const showPathBar = ref(prefs?.showPathBar !== false)
 const showPreview = ref(prefs?.showPreview !== false)
+const listColumnWidths = ref(normalizeListColumnWidths(prefs?.listColumnWidths))
+
+function resolveFolderSort(folderId: number): FinderFolderSort | null {
+  const current = loadPrefs()
+  const sort = current.folderViews?.[folderViewKey(folderId)]?.sort
+  if (!sort?.column) return null
+  if (!['name', 'date', 'type', 'size'].includes(sort.column)) return null
+  return {
+    column: sort.column,
+    direction: sort.direction === 'desc' ? 'desc' : 'asc',
+  }
+}
+
+function persistFolderSort(folderId: number, sort: FinderFolderSort) {
+  const prev = loadPrefs()
+  const key = folderViewKey(folderId)
+  const folderViews = { ...(prev.folderViews || {}) }
+  folderViews[key] = { ...(folderViews[key] || {}), sort }
+  persistPrefs({ folderViews })
+}
 
 const state = useFileManagerState({
   folderId: () => props.folderId,
   folderName: () => props.folderName,
   windowId: () => props.windowId,
+  resolveFolderSort,
+  onFolderSortChange: persistFolderSort,
 })
 if (prefs?.viewMode && ['grid', 'list', 'column', 'gallery'].includes(prefs.viewMode)) {
   state.viewMode.value = prefs.viewMode as 'grid' | 'list' | 'column' | 'gallery'
+}
+if (prefs?.searchScope === 'all' || prefs?.searchScope === 'folder') {
+  state.searchScope.value = prefs.searchScope
+}
+// apply remembered sort for the initial folder before first load
+const initialSort = resolveFolderSort(Number(props.folderId || 0))
+if (initialSort) {
+  state.sortColumn.value = initialSort.column
+  state.sortDirection.value = initialSort.direction
 }
 
 const contextMenu = useContextMenu()
@@ -290,12 +361,17 @@ function onBodyMouseDown(e: MouseEvent) {
   document.addEventListener('mouseup', onUp)
 }
 
-function persistPrefs() {
+function persistPrefs(patch: Partial<FinderUiPrefs> = {}) {
+  const prev = loadPrefs()
   updateAppState('files', 'finderUiPrefs', {
+    ...prev,
     iconSize: iconSize.value,
     showPathBar: showPathBar.value,
     showPreview: showPreview.value,
     viewMode: state.viewMode.value,
+    searchScope: state.searchScope.value,
+    listColumnWidths: listColumnWidths.value,
+    ...patch,
   })
 }
 
@@ -312,6 +388,34 @@ function setShowPreview(v: boolean) {
 function setIconSize(v: number) {
   iconSize.value = v
   persistPrefs()
+}
+
+function setSearchScope(scope: 'folder' | 'all') {
+  state.setSearchScope(scope)
+  persistPrefs({ searchScope: scope })
+}
+
+function setListColumnWidths(next: FinderListColumnWidths) {
+  listColumnWidths.value = normalizeListColumnWidths({
+    ...listColumnWidths.value,
+    ...next,
+  })
+  persistPrefs({ listColumnWidths: listColumnWidths.value })
+}
+
+function openFolderInNewWindow(item: FileEntry | null | undefined) {
+  if (!item?.is_folder) return
+  openAppById('desktop', {
+    folderId: item.id,
+    folderName: state.displayName(item),
+  })
+}
+
+function commonTagsOf(items: FileEntry[]): FinderTagColor[] {
+  if (!items.length) return []
+  const sets = items.map((entry) => new Set(state.tagsOf(entry)))
+  const first = [...sets[0]]
+  return first.filter((tag) => sets.every((set) => set.has(tag))) as FinderTagColor[]
 }
 
 watch(() => state.viewMode.value, () => persistPrefs())
@@ -334,6 +438,49 @@ function handleKeydown(e: KeyboardEvent) {
   const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
 
+  const meta = e.metaKey || e.ctrlKey
+  const key = e.key.toLowerCase()
+
+  if (meta && (e.key === '[' || e.code === 'BracketLeft')) {
+    e.preventDefault()
+    if (state.canGoBack.value) state.goBack()
+    return
+  }
+  if (meta && (e.key === ']' || e.code === 'BracketRight')) {
+    e.preventDefault()
+    if (state.canGoForward.value) state.goForward()
+    return
+  }
+  if (meta && key === 'c') {
+    if (state.selectedItems.value.length || state.selectedItem.value) {
+      e.preventDefault()
+      void state.handleAction('copy', state.selectedItem.value)
+    }
+    return
+  }
+  if (meta && key === 'x') {
+    if (state.canWrite.value && (state.selectedItems.value.length || state.selectedItem.value)) {
+      e.preventDefault()
+      void state.handleAction('cut', state.selectedItem.value)
+    }
+    return
+  }
+  if (meta && key === 'v') {
+    if (state.canWrite.value && hasContent.value) {
+      e.preventDefault()
+      void state.handleAction('paste', null)
+    }
+    return
+  }
+  if (meta && key === 'n') {
+    e.preventDefault()
+    openAppById('desktop', {
+      folderId: state.currentFolderId.value || 0,
+      folderName: state.breadcrumb.value[state.breadcrumb.value.length - 1]?.name || '桌面',
+    })
+    return
+  }
+
   if (e.code === 'Space' || e.key === ' ') {
     e.preventDefault()
     if (state.quickLookVisible.value) state.closeQuickLook()
@@ -351,6 +498,22 @@ function handleKeydown(e: KeyboardEvent) {
     if (item) {
       state.closeQuickLook()
       handleItemOpen(item)
+    }
+    return
+  }
+  if (state.quickLookVisible.value && (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowLeft')) {
+    const items = state.sortedItems.value
+    if (!items.length) return
+    e.preventDefault()
+    const currentId = state.quickLookItem.value?.id ?? state.selectedId.value
+    const idx = items.findIndex((item) => item.id === currentId)
+    const nextIdx = (e.key === 'ArrowDown' || e.key === 'ArrowRight')
+      ? Math.min(items.length - 1, Math.max(0, idx + 1))
+      : Math.max(0, idx <= 0 ? 0 : idx - 1)
+    const next = items[nextIdx]
+    if (next) {
+      state.selectItem(next)
+      state.openQuickLook(next)
     }
     return
   }
@@ -382,7 +545,7 @@ function handleKeydown(e: KeyboardEvent) {
     if (state.selectedItem.value) handleItemOpen(state.selectedItem.value)
     return
   }
-  if (e.key === 'Delete' || ((e.metaKey || e.ctrlKey) && e.key === 'Backspace')) {
+  if (e.key === 'Delete' || (meta && e.key === 'Backspace')) {
     if (state.selectedItems.value.length || state.selectedItem.value) {
       e.preventDefault()
       void state.handleAction('delete', state.selectedItem.value)
@@ -395,19 +558,15 @@ function handleKeydown(e: KeyboardEvent) {
     else state.goRoot()
     return
   }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+  if (meta && key === 'a') {
     e.preventDefault()
     state.selectAll()
   }
 }
 
 function handleSort(column: string) {
-  if (state.sortColumn.value === column) {
-    state.sortDirection.value = state.sortDirection.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    state.sortColumn.value = column as 'name' | 'date' | 'type' | 'size'
-    state.sortDirection.value = 'asc'
-  }
+  if (!['name', 'date', 'type', 'size'].includes(column)) return
+  state.setSort(column as FinderSortColumn)
 }
 
 function handleBlankContextMenu(e: MouseEvent) {
@@ -473,9 +632,7 @@ function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
 
   const selected = state.selectedItems.value
   const multi = selected.length > 1 && selected.some((entry) => entry.id === item.id)
-  const activeTags = multi
-    ? []
-    : state.tagsOf(item)
+  const activeTags = multi ? commonTagsOf(selected) : state.tagsOf(item)
   let items: MenuItemConfig[]
   const sep = () => [{ key: `sep-${Date.now()}-${Math.random()}`, label: '', separator: true } as MenuItemConfig]
   if (multi) {
@@ -486,7 +643,7 @@ function handleItemContextMenu(item: FileEntry, e: MouseEvent) {
   if (item.is_folder) {
     items = buildFolderMenu(state.canWrite.value, sep, activeTags)
     if (state.canWrite.value && creatableFormats.value.length) {
-      items.splice(3, 0, {
+      items.splice(4, 0, {
         key: 'new-file',
         label: '新建文件',
         icon: '📄',
@@ -542,6 +699,10 @@ async function handleContextMenuSelect(key: string) {
     return
   }
   if (key === 'selection-info') return
+  if (key === 'open-in-new-window') {
+    openFolderInNewWindow(ctxtFile)
+    return
+  }
   const multiTargets = (ctxType === 'multi-select' || state.selectedItems.value.length > 1)
     ? state.selectedItems.value
     : null

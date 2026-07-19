@@ -2,7 +2,7 @@
   <nav class="desktop-taskbar mac-dock glass-dock" aria-label="Dock" @mouseleave="hoveredIndex = -1">
     <div class="mac-dock-item-wrap" :class="magnifyClass(0)" @mouseenter="hoveredIndex = 0">
       <button class="taskbar-start mac-dock-icon-button" type="button" title="Launchpad" aria-label="打开 Launchpad" :aria-pressed="launcherOpen" @click="emit('openLauncher')">
-        <Grid3X3 :size="27" :stroke-width="1.7" />
+        <AppIcon icon="Grid" app-key="launchpad" :size="48" />
       </button>
     </div>
     <div class="mac-dock-separator" />
@@ -28,7 +28,7 @@
           @click="activateApp(app)"
           @contextmenu.prevent="openAppMenu(app.appKey)"
         >
-          <AppIcon :icon="app.icon" :app-key="app.appKey" :size="46" />
+          <AppIcon :icon="app.icon" :app-key="app.appKey" :size="48" />
           <span v-if="app.isRunning" class="mac-dock-running-dot" />
           <span v-if="getProgress(app.appKey)" class="mac-dock-progress"><span :style="progressStyle(app.appKey)" /></span>
         </button>
@@ -62,17 +62,21 @@
     </template>
     <div class="mac-dock-separator" />
     <div class="mac-dock-item-wrap" :class="magnifyClass(dockApps.length + 1)" @mouseenter="hoveredIndex = dockApps.length + 1">
-      <button class="mac-dock-icon-button" type="button" title="调度中心" aria-label="打开调度中心" @click="emit('openMissionControl')"><Layers :size="26" :stroke-width="1.8" /></button>
+      <button class="mac-dock-icon-button" type="button" title="调度中心" aria-label="打开调度中心" @click="emit('openMissionControl')">
+        <AppIcon icon="Layers" app-key="mission-control" :size="48" />
+      </button>
     </div>
     <div class="mac-dock-item-wrap" :class="magnifyClass(dockApps.length + 2)" @mouseenter="hoveredIndex = dockApps.length + 2">
-      <button class="mac-dock-icon-button" type="button" title="Spotlight" aria-label="打开 Spotlight" @click="emit('openSpotlight')"><Search :size="28" :stroke-width="1.8" /></button>
+      <button class="mac-dock-icon-button" type="button" title="Spotlight" aria-label="打开 Spotlight" @click="emit('openSpotlight')">
+        <AppIcon icon="Search" app-key="spotlight" :size="48" />
+      </button>
     </div>
   </nav>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Check, Grid3X3, Layers, Minus, Pin, Plus, Search, X } from 'lucide-vue-next'
+import { Check, Minus, Pin, Plus, X } from 'lucide-vue-next'
 import type { AppRegistryEntry, TaskbarItem } from '@/desktop/window-manager/window-types'
 import AppIcon from '@/desktop/components/app-icon.vue'
 import { activeProgress } from '@/desktop/feedback/desktop-feedback'
@@ -220,20 +224,26 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
 }
 .mac-dock-item-wrap{
   position:relative;width:48px;height:48px;display:grid;place-items:end center;flex:0 0 48px;
-  transition:width 160ms cubic-bezier(.22,1.2,.36,1),margin 160ms cubic-bezier(.22,1.2,.36,1)
+  transition:width 160ms cubic-bezier(.22,1.2,.36,1)
 }
-.mac-dock-item-wrap.is-hovered{width:64px}
-.mac-dock-item-wrap.is-neighbor{width:56px}
-.mac-dock-item-wrap.is-near{width:52px}
+.mac-dock-item-wrap.is-hovered{width:62px}
+.mac-dock-item-wrap.is-neighbor{width:54px}
+.mac-dock-item-wrap.is-near{width:50px}
 .mac-dock-icon-button{
-  position:relative;width:48px;height:48px;padding:0;border:0;border-radius:11px;background:transparent;
+  position:relative;width:100%;height:100%;padding:0;border:0;border-radius:0;background:transparent;
   color:rgba(255,255,255,.94);display:grid;place-items:center;
   transform-origin:50% 100%;
-  filter:drop-shadow(0 2px 3px rgba(0,0,0,.28));
+  /* 阴影交给 AppIcon 本体，避免双重发光 */
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.22));
   transition:transform 160ms cubic-bezier(.22,1.2,.36,1),filter 160ms ease
 }
-.mac-dock-icon-button:hover{filter:drop-shadow(0 4px 8px rgba(0,0,0,.32)) brightness(1.04)}
-.mac-dock-icon-button:focus-visible{outline:2px solid rgba(255,255,255,.9);outline-offset:3px}
+.mac-dock-icon-button :deep(.app-icon){
+  width:100% !important;
+  height:100% !important;
+}
+.mac-dock-icon-button:hover{filter:drop-shadow(0 3px 6px rgba(0,0,0,.28))}
+.mac-dock-icon-button:focus-visible{outline:2px solid rgba(255,255,255,.9);outline-offset:3px;border-radius:12px}
+/* 悬停放大：只抬升/缩放图标按钮，槽位略变宽给邻居让位 */
 .mac-dock-item-wrap.is-hovered .mac-dock-icon-button{transform:translateY(-12px) scale(1.28)}
 .mac-dock-item-wrap.is-neighbor .mac-dock-icon-button{transform:translateY(-7px) scale(1.14)}
 .mac-dock-item-wrap.is-near .mac-dock-icon-button{transform:translateY(-3px) scale(1.06)}
@@ -247,17 +257,22 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
   86%{transform:translateY(-4px) scale(1.02)}
   100%{transform:translateY(0) scale(1)}
 }
-.taskbar-start{background:linear-gradient(145deg,rgba(37,99,235,.92),rgba(14,165,233,.92));box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 4px 12px rgba(0,0,0,.18);border-radius:12px}
+.taskbar-start{background:transparent;box-shadow:none}
 .mac-dock-separator{
-  width:0.5px;height:34px;margin:0 4px 6px;
-  background:linear-gradient(180deg,transparent,rgba(255,255,255,.38),transparent);
-  opacity:.9
+  width:1px;height:38px;margin:0 6px;align-self:center;
+  background:rgba(255,255,255,.25);
+  opacity:1
 }
 .mac-dock-running-dot{
-  position:absolute;left:50%;bottom:-6px;width:3px;height:3px;border-radius:50%;
+  position:absolute;left:50%;bottom:-5px;width:4px;height:4px;border-radius:50%;
   transform:translateX(-50%);
-  background:rgba(255,255,255,.92);
-  box-shadow:0 0 0 0.5px rgba(0,0,0,.25)
+  background:rgba(0,0,0,.55);
+  box-shadow:0 0 0 0.5px rgba(255,255,255,.25)
+}
+.mac-dock-item-wrap:has(.mac-dock-icon-button:hover) .mac-dock-running-dot,
+.mac-dock-item-wrap.is-hovered .mac-dock-running-dot{
+  /* 放大时点仍贴在槽底，不跟着飘 */
+  bottom:-5px
 }
 .mac-dock-progress{position:absolute;left:6px;right:6px;bottom:1px;height:2px;border-radius:2px;background:rgba(0,0,0,.22);overflow:hidden}
 .mac-dock-progress span{display:block;height:100%;border-radius:inherit}

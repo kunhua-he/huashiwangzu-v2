@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { Check, Minus, Pin, Plus, X } from 'lucide-vue-next'
 import type { AppRegistryEntry, TaskbarItem } from '@/desktop/window-manager/window-types'
 import AppIcon from '@/desktop/components/app-icon.vue'
@@ -107,13 +107,16 @@ import { desktopConfig } from '@/desktop/config/desktop-preferences'
 
 /** 基础边长 */
 const BASE = 48
-/** 最大放大倍数（系统 Dock 大约 1.5–1.7） */
-const MAX_SCALE = 1.58
-/** 影响半径（px，相对 dock 内容区） */
-const RANGE = 96
+/** 最大放大（略收敛，减少边缘“跳一下”） */
+const MAX_SCALE = 1.52
+/** 影响半径：更宽 → 曲线更软 */
+const RANGE = 112
 const GAP = 10
 const PAD_X = 12
-const SEP_W = 13 // 1px 线 + 两侧 margin 约略
+const SEP_W = 13
+/** 鼠标/缩放插值：越大越跟手，越小越丝滑 */
+const MOUSE_LERP = 0.22
+const SCALE_LERP = 0.28
 
 const props = withDefaults(defineProps<{ items: TaskbarItem[]; launcherOpen?: boolean; appList?: AppRegistryEntry[] }>(), {
   launcherOpen: false,
@@ -129,12 +132,18 @@ const emit = defineEmits<{
 }>()
 
 const dockRef = ref<HTMLElement | null>(null)
-/** 鼠标相对 dock 内容左缘的 X；null = 未悬停 */
-const mouseRelX = ref<number | null>(null)
+/** 目标鼠标 clientX；null = 离开 */
+const targetClientX = ref<number | null>(null)
+/** rAF 平滑后的 clientX */
+let smoothClientX: number | null = null
+/** 每枚图标当前显示 scale（rAF 平滑） */
+const scales = shallowRef<number[]>([])
 const contextAppKey = ref('')
 const bounceKey = ref('')
 const dragKey = ref('')
 let bounceTimer: ReturnType<typeof setTimeout> | null = null
+let rafId = 0
+let reducedMotion = false
 
 const dockApps = computed(() => {
   const canonicalByKey = new Map(props.appList.map(app => [app.appKey, app.canonicalAppKey || app.appKey]))
@@ -206,8 +215,8 @@ const layoutSlots = computed(() => {
 const iconCount = computed(() => dockApps.value.length + 3)
 
 /**
- * 用「未放大」布局算每个图标中心（相对 dock 内容左缘，含 padding）。
- * 放大时真实宽度会变，但距离永远在未放大坐标系里算 → 不抖动。
+ * 未放大布局：相对内容左缘的中心 + 总宽。
+ * 距离永远在 rest 坐标系算；屏幕映射用 dock 中心锚定，避免变宽反馈环。
  */
 const baseLayout = computed(() => {
   const centers: number[] = Array(iconCount.value).fill(0)
@@ -221,69 +230,113 @@ const baseLayout = computed(() => {
     centers[idx] = x + BASE / 2
     x += BASE + GAP
   }
-  // 内容总宽（含左右 padding）
   const width = x - GAP + PAD_X
   return { centers, width }
 })
 
-/**
- * 把实际像素坐标映射到未放大坐标系。
- * Dock 从中心变宽时，避免鼠标和「逻辑中心」错位。
- */
-function logicalMouseX(): number | null {
-  const mx = mouseRelX.value
-  const el = dockRef.value
-  if (mx == null || !el) return null
-  const actual = el.clientWidth || baseLayout.value.width
-  if (actual <= 0) return mx
-  return mx * (baseLayout.value.width / actual)
+function ensureScaleBuffer(n: number) {
+  if (scales.value.length === n) return
+  scales.value = Array.from({ length: n }, (_, i) => scales.value[i] ?? 1)
 }
 
-function scaleOf(index: number): number {
-  const mx = logicalMouseX()
-  if (mx == null) return 1
-  const center = baseLayout.value.centers[index]
-  if (center == null) return 1
-  const distance = Math.abs(mx - center)
+function targetScaleAt(index: number, clientX: number | null): number {
+  if (clientX == null || reducedMotion) return 1
+  const el = dockRef.value
+  if (!el) return 1
+  const rect = el.getBoundingClientRect()
+  // dock 水平居中：rest 左缘 = 当前中心 - restWidth/2
+  const dockCenter = rect.left + rect.width / 2
+  const restLeft = dockCenter - baseLayout.value.width / 2
+  const center = restLeft + (baseLayout.value.centers[index] ?? 0)
+  const distance = Math.abs(clientX - center)
   if (distance >= RANGE) return 1
+  // smoothstep * cos 混合：边缘更软，中心仍够大
   const t = distance / RANGE
-  return 1 + (MAX_SCALE - 1) * Math.cos((t * Math.PI) / 2)
+  const cos = Math.cos((t * Math.PI) / 2)
+  const smooth = cos * cos // 更圆润的衰减
+  return 1 + (MAX_SCALE - 1) * smooth
+}
+
+function tick() {
+  rafId = 0
+  const n = iconCount.value
+  ensureScaleBuffer(n)
+
+  const targetX = targetClientX.value
+  if (targetX == null) {
+    // 离开：平滑回 1
+    smoothClientX = null
+  } else if (smoothClientX == null) {
+    smoothClientX = targetX
+  } else {
+    smoothClientX += (targetX - smoothClientX) * MOUSE_LERP
+  }
+
+  const next = scales.value.slice()
+  let dirty = false
+  let stillMoving = targetX != null
+  for (let i = 0; i < n; i++) {
+    const want = targetScaleAt(i, smoothClientX)
+    const cur = next[i] ?? 1
+    const lerped = reducedMotion ? want : cur + (want - cur) * SCALE_LERP
+    // 足够接近则贴死，避免无限微抖
+    const value = Math.abs(lerped - want) < 0.0015 ? want : lerped
+    if (Math.abs(value - cur) > 0.0004) dirty = true
+    if (Math.abs(value - 1) > 0.0015) stillMoving = true
+    next[i] = value
+  }
+  if (dirty) scales.value = next
+
+  if (stillMoving || targetX != null) {
+    rafId = requestAnimationFrame(tick)
+  } else if (dirty || scales.value.some(s => Math.abs(s - 1) > 0.001)) {
+    // 最后一帧贴到 1
+    scales.value = Array(n).fill(1)
+  }
+}
+
+function kickRaf() {
+  if (!rafId) rafId = requestAnimationFrame(tick)
 }
 
 function sizeOf(index: number): number {
-  return Math.round(BASE * scaleOf(index))
+  const s = scales.value[index] ?? 1
+  // 子像素：避免 Math.round 造成 1px 抽搐
+  return BASE * s
 }
 
-/** 槽位宽度 = 图标真实宽度 → 邻居被挤开，边界不粘连 */
+/** 槽位宽度 = 图标视觉宽 → 邻居被挤开 */
 function itemStyle(index: number) {
   const size = sizeOf(index)
   return {
-    width: `${size}px`,
+    width: `${size.toFixed(2)}px`,
     height: `${BASE}px`,
   }
 }
 
-/** 真实改宽高（不用 transform:scale 溢出叠边），再 translateY 抬起 */
 function iconStyle(index: number) {
   const size = sizeOf(index)
   const lift = Math.max(0, size - BASE)
   return {
-    width: `${size}px`,
-    height: `${size}px`,
-    transform: `translateY(-${lift}px)`,
-    zIndex: size,
+    width: `${size.toFixed(2)}px`,
+    height: `${size.toFixed(2)}px`,
+    transform: `translate3d(0, ${(-lift).toFixed(2)}px, 0)`,
+    zIndex: Math.round(10 + size),
   }
 }
 
 function onDockMove(event: PointerEvent) {
-  const el = dockRef.value
-  if (!el) return
-  const rect = el.getBoundingClientRect()
-  mouseRelX.value = event.clientX - rect.left
+  targetClientX.value = event.clientX
+  kickRaf()
 }
 function onDockLeave() {
-  mouseRelX.value = null
+  targetClientX.value = null
+  kickRaf()
 }
+
+watch(iconCount, (n) => {
+  ensureScaleBuffer(n)
+}, { immediate: true })
 
 function bounce(appKey: string) {
   bounceKey.value = appKey
@@ -341,10 +394,16 @@ function onDrop(targetKey: string) {
 function onPointerDown(event: PointerEvent) {
   if (!(event.target as HTMLElement | null)?.closest('.mac-dock-item-wrap')) closeAppMenu()
 }
-onMounted(() => document.addEventListener('pointerdown', onPointerDown))
+onMounted(() => {
+  document.addEventListener('pointerdown', onPointerDown)
+  reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
+  ensureScaleBuffer(iconCount.value)
+})
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onPointerDown)
   if (bounceTimer) clearTimeout(bounceTimer)
+  if (rafId) cancelAnimationFrame(rafId)
+  rafId = 0
 })
 </script>
 
@@ -367,14 +426,13 @@ onUnmounted(() => {
     var(--glass-dock-bg, rgba(255, 255, 255, 0.22));
 }
 
-/* 槽宽 = 图标视觉宽：放大时把邻居挤开，不会叠边 */
+/* 槽宽 = 图标视觉宽；尺寸由 rAF 平滑驱动，不要再叠 CSS transition（会打架抽搐） */
 .mac-dock-item-wrap {
   position: relative;
   flex: 0 0 auto;
   display: grid;
   place-items: end center;
   height: 48px;
-  transition: width 70ms linear;
   will-change: width;
 }
 
@@ -388,13 +446,10 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   cursor: default;
-  /* 真实改宽高，禁止 transform:scale 画出槽外 */
-  transition:
-    width 70ms linear,
-    height 70ms linear,
-    transform 70ms linear;
   will-change: width, height, transform;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.18));
+  /* 尺寸动画交给 JS lerp，避免 70ms CSS 与每帧鼠标事件冲突 */
+  transition: none;
 }
 .mac-dock-icon-button :deep(.app-icon) {
   width: 100% !important;

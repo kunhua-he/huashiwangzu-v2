@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { loadAppRegistry } from '@/desktop/app-registry/app-loader'
 import { useWindowManager } from '@/desktop/window-manager/window-manager'
 import { loadDesktopState } from '@/desktop/window-manager/desktop-state-store'
@@ -21,6 +21,8 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
   const loading = ref(true)
   const desktopContainerRef = ref<HTMLElement | null>(null)
   let resizeObserver: ResizeObserver | null = null
+  let iconRestoreRaf = 0
+  let restoredOnce = false
 
   function runtimePermissions(role?: string): string[] {
     if (role === 'admin') return ['viewer', 'editor', 'admin']
@@ -30,14 +32,44 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
 
   const windowSync = createWindowStateSync(windowMgr.windows)
 
+  function scheduleIconRestore() {
+    if (iconRestoreRaf) cancelAnimationFrame(iconRestoreRaf)
+    iconRestoreRaf = requestAnimationFrame(() => {
+      iconRestoreRaf = 0
+      restorePersistedIconPositions()
+      // Second frame: icon DOM may still be mounting after file list arrives.
+      requestAnimationFrame(() => restorePersistedIconPositions())
+    })
+  }
+
   function updateContainerSize() {
-    if (desktopContainerRef.value) windowMgr.setContainerSize(desktopContainerRef.value.clientWidth, desktopContainerRef.value.clientHeight)
-    requestAnimationFrame(() => restorePersistedIconPositions())
+    const el = desktopContainerRef.value
+    if (el) {
+      const width = el.clientWidth || window.innerWidth
+      const height = el.clientHeight || window.innerHeight
+      windowMgr.setContainerSize(width, height)
+    }
+    scheduleIconRestore()
+  }
+
+  async function restoreDesktopSession() {
+    if (!userStore.userInfo?.id || restoredOnce) return
+    // Measure container before restore so maximized/clamp use real work area.
+    updateContainerSize()
+    const desktopState = await loadDesktopState()
+    // Re-measure after await — layout may have settled.
+    updateContainerSize()
+    windowMgr.restoreWindows(desktopState.windows, currentRole.value)
+    restoredOnce = true
+    await nextTick()
+    updateContainerSize()
+    scheduleIconRestore()
   }
 
   async function loadAppRegistryData() {
     registryError.value = null
     loading.value = true
+    restoredOnce = false
     try {
       const allApps = await loadAppRegistry(currentRole.value)
       const byOrder = (a: AppRegistryEntry, b: AppRegistryEntry) =>
@@ -57,14 +89,16 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
         module_settings: {},
       }
 
-      if (userStore.userInfo?.id) {
-        const desktopState = await loadDesktopState()
-        windowMgr.restoreWindows(desktopState.windows, currentRole.value)
-      }
+      await restoreDesktopSession()
 
-      updateContainerSize()
+      resizeObserver?.disconnect()
       resizeObserver = new ResizeObserver(updateContainerSize)
       if (desktopContainerRef.value) resizeObserver.observe(desktopContainerRef.value)
+      else {
+        // Container ref may not be ready on first mount race — observe next tick.
+        await nextTick()
+        if (desktopContainerRef.value) resizeObserver.observe(desktopContainerRef.value)
+      }
     } catch (e: unknown) {
       registryError.value = (e as {message?: string})?.message || '桌面应用清单加载失败，请联系管理员'
     } finally {
@@ -81,6 +115,7 @@ export function useDesktopAppLoading(currentRole: Ref<string>) {
 
   onMounted(loadAppRegistryData)
   onUnmounted(() => {
+    if (iconRestoreRaf) cancelAnimationFrame(iconRestoreRaf)
     windowSync.stopSync()
     resizeObserver?.disconnect()
   })

@@ -221,7 +221,11 @@ function updateMenuClock() {
 }
 
 watch(allAppList, apps => registerAllApps(apps), { immediate: true })
-watch(desktopFileList, files => registerAllFiles(files), { immediate: true })
+watch(desktopFileList, files => {
+  registerAllFiles(files)
+  // Icon DOM mounts after file list arrives — re-apply persisted positions.
+  nextTick(() => updateContainerSize())
+}, { immediate: true })
 
 function handleHideApp(event: Event) {
   const detail = (event as CustomEvent<{ appKey?: string }>).detail

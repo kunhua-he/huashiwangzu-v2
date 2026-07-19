@@ -2,7 +2,7 @@ import { reactive, computed, ref, watch } from 'vue'
 import type { WindowState, TaskbarItem } from '@/desktop/window-manager/window-types'
 import { getApp } from '@/desktop/app-registry/app-registry'
 import { useUserStore } from '@/platform/stores/user'
-import { MAX_WINDOWS, type DesktopWindowSnapshot } from './desktop-session-storage'
+import { isFinderAppKey, MAX_WINDOWS, normalizeFinderFolderId, type DesktopWindowSnapshot } from './desktop-session-storage'
 import { buildRestoreWindowList } from './desktop-session-restore'
 import { clampWindowToWorkArea, getDesktopWorkArea } from '@/desktop/config/desktop-chrome-metrics'
 
@@ -57,11 +57,12 @@ function openWindow(appKey: string, payload?: unknown, originRect?: WindowGeomet
     }
   }
 
-  if (appKey === 'desktop') {
+  if (isFinderAppKey(appKey) || isFinderAppKey(canonicalAppKey(appKey))) {
     const normPayload = normalizeWindowPayload(payload)
-    const targetFolderId = normPayload?.folderId ?? null
+    const targetFolderId = normalizeFinderFolderId(normPayload)
     const existingDesktop = windows.find(w =>
-      w.appKey === 'desktop' && (w.payload?.folderId ?? null) === targetFolderId
+      isFinderAppKey(w.appKey)
+      && normalizeFinderFolderId(w.payload) === targetFolderId
     )
     if (existingDesktop) {
       updateWindowPayload(existingDesktop.id, payload)
@@ -252,7 +253,7 @@ function normalizeWindowPayload(payload?: unknown): Record<string, unknown> {
 
 function resolveWindowTitle(appKey: string, defaultTitle: string, payload: Record<string, unknown>): string {
   // Finder / 文件：标题跟随当前文件夹（标准 macOS Finder 行为）
-  if (appKey === 'desktop' || appKey === 'files') {
+  if (isFinderAppKey(appKey)) {
     const folderName = typeof payload.folderName === 'string' ? payload.folderName.trim() : ''
     if (folderName && folderName !== '桌面' && folderName !== defaultTitle) return folderName
     return defaultTitle || '文件'
@@ -273,6 +274,9 @@ function updateWindowPayload(id: string, payload?: unknown) {
 
 function restoreWindows(snapshot: DesktopWindowSnapshot[], currentRole?: string) {
   windows.splice(0, windows.length)
+  showDesktopWindowIds.clear()
+  // Reset z-index counter so restored order stays coherent with new opens.
+  nextZIndex = 100
   const restoredWindows = buildRestoreWindowList({
     snapshots: snapshot,
     currentRole,
@@ -284,10 +288,17 @@ function restoreWindows(snapshot: DesktopWindowSnapshot[], currentRole?: string)
   for (const w of restoredWindows) {
     const app = getApp(w.appKey)
     if (app && !app.allowMultiple) {
-      const existingWindow = windows.find(x => canonicalAppKey(x.appKey) === canonicalAppKey(w.appKey) && x.minimized === w.minimized)
-      if (existingWindow) { activateWindow(existingWindow.id); continue }
+      const existingWindow = windows.find(x => canonicalAppKey(x.appKey) === canonicalAppKey(w.appKey))
+      if (existingWindow) {
+        // Keep the higher z / already pushed instance; skip duplicate.
+        continue
+      }
     }
     windows.push(w)
+  }
+  // Ensure zIndex counter is above any restored window.
+  for (const w of windows) {
+    if (w.zIndex >= nextZIndex) nextZIndex = w.zIndex + 1
   }
 }
 

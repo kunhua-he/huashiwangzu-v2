@@ -394,17 +394,37 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   background: var(--window-maximize-color);
   border-color: var(--window-maximize-border);
 }
-.desktop-window-active .window-action-buttons:hover .window-action-close::before {
+/* 交通灯：组悬停或单钮悬停都显示符号（更接近 macOS） */
+.desktop-window-active .window-action-buttons:hover .window-action-close::before,
+.desktop-window-active .window-action-close:hover::before,
+.desktop-window-active .window-action-close:focus-visible::before {
   opacity: 1;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3.2 3.2l5.6 5.6M8.8 3.2L3.2 8.8' stroke='%234a0002' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E");
 }
-.desktop-window-active .window-action-buttons:hover .window-action-minimize::before {
+.desktop-window-active .window-action-buttons:hover .window-action-minimize::before,
+.desktop-window-active .window-action-minimize:hover::before,
+.desktop-window-active .window-action-minimize:focus-visible::before {
   opacity: 1;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.8 6h6.4' stroke='%235a3b00' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
 }
-.desktop-window-active .window-action-buttons:hover .window-action-maximize::before {
+.desktop-window-active .window-action-buttons:hover .window-action-maximize::before,
+.desktop-window-active .window-action-maximize:hover::before,
+.desktop-window-active .window-action-maximize:focus-visible::before {
   opacity: 1;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3.4 7.1V3.4H7.1M8.6 4.9v3.7H4.9' stroke='%23053d12' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+}
+/* 非活动窗：悬停组时也短暂点亮交通灯 */
+.desktop-window:not(.desktop-window-active) .window-action-buttons:hover .window-action-close {
+  background: var(--window-close-color);
+  border-color: var(--window-close-border);
+}
+.desktop-window:not(.desktop-window-active) .window-action-buttons:hover .window-action-minimize {
+  background: var(--window-minimize-color);
+  border-color: var(--window-minimize-border);
+}
+.desktop-window:not(.desktop-window-active) .window-action-buttons:hover .window-action-maximize {
+  background: var(--window-maximize-color);
+  border-color: var(--window-maximize-border);
 }
 .window-action-btn:hover {
   filter: brightness(0.96);
@@ -455,4 +475,45 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
   }
+}
+
+/* ===== 低内存 / 重玻璃降级 ===== */
+html.desktop-low-memory .glass-dock,
+html.desktop-low-memory .glass-menubar,
+html.desktop-low-memory .glass-menu,
+html.desktop-low-memory .glass-panel,
+html.desktop-low-memory .glass-spotlight,
+html.desktop-heavy-glass-off .glass-dock,
+html.desktop-heavy-glass-off .glass-menubar,
+html.desktop-heavy-glass-off .glass-menu,
+html.desktop-heavy-glass-off .glass-panel,
+html.desktop-heavy-glass-off .glass-spotlight,
+html.desktop-heavy-glass-off .desktop-window {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+html.desktop-low-memory .desktop-window,
+html.desktop-heavy-glass-off .desktop-window {
+  background: #f1f1f3;
+}
+html.desktop-micro-off .desktop-window,
+html.desktop-micro-off .mac-dock-icon-button,
+html.desktop-micro-off .mac-dock-item-wrap {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* ===== 伪全屏沉浸：收起菜单栏/Dock 占用 ===== */
+html.desktop-presentation-mode .mac-menu-bar,
+html.desktop-presentation-mode .desktop-taskbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+}
+html.desktop-presentation-mode .desktop-taskbar {
+  transform: translate(-50%, 16px);
+}
+html.desktop-presentation-mode .desktop-shell-icon-layer {
+  top: 0;
+  bottom: 0;
 }

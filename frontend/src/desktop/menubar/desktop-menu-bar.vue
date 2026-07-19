@@ -50,12 +50,14 @@
       <template v-else-if="openMenu === 'view'">
         <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openSpotlight'); closeMenu()"><Search :size="14" /><span>Spotlight</span><kbd v-if="hotkeysEnabled">⌃⇧Space</kbd></button>
         <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openLaunchpad'); closeMenu()"><Grid3X3 :size="14" /><span>Launchpad</span><kbd v-if="hotkeysEnabled">⌃⇧L</kbd></button>
+        <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('mission-control'); closeMenu()"><PanelsTopLeft :size="14" /><span>调度中心</span><kbd v-if="hotkeysEnabled">⌃⇧M</kbd></button>
         <button class="mac-menu-row" type="button" role="menuitem" @click="emit('showDesktop'); closeMenu()"><PanelsTopLeft :size="14" /><span>显示桌面</span><kbd v-if="hotkeysEnabled">⌃⇧D</kbd></button>
         <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('refresh-desktop')"><RefreshCw :size="14" /><span>刷新桌面</span></button>
       </template>
       <template v-else-if="openMenu === 'window'">
         <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="minimizeActive"><Minus :size="14" /><span>最小化</span></button>
         <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="zoomActive"><Maximize2 :size="14" /><span>缩放</span></button>
+        <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('presentation-mode'); closeMenu()"><Maximize2 :size="14" /><span>沉浸模式</span><kbd v-if="hotkeysEnabled">⌃⇧F</kbd></button>
         <button class="mac-menu-row" type="button" role="menuitem" @click="emit('showDesktop'); closeMenu()"><PanelsTopLeft :size="14" /><span>显示桌面</span><kbd v-if="hotkeysEnabled">⌃⇧D / F11</kbd></button>
         <template v-if="windows.length">
           <div class="mac-menu-separator" />

@@ -35,11 +35,11 @@
             <small>{{ autoArrange ? '开启' : '自由' }}</small>
           </div>
         </button>
-        <button class="cc-tile" type="button" :class="{ active: focus }" @click="focus = !focus">
+        <button class="cc-tile" type="button" :class="{ active: lowMemoryOn }" @click="cycleLowMemory">
           <Moon :size="16" />
           <div>
-            <strong>专注模式</strong>
-            <small>{{ focus ? '勿扰' : '关闭' }}</small>
+            <strong>低内存模式</strong>
+            <small>{{ lowMemoryLabel }}</small>
           </div>
         </button>
       </div>
@@ -70,13 +70,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Keyboard, LayoutGrid, Moon, SlidersHorizontal, Tags } from 'lucide-vue-next'
 import { desktopConfig } from '@/desktop/config/desktop-preferences'
+import { 应用低内存样式到根, 同步缓存配额, 是否低内存生效 } from '@/desktop/runtime'
 
 const emit = defineEmits<{ openSpotlight: []; openLaunchpad: [] }>()
 const open = ref(false)
-const focus = ref(false)
 const brightness = ref(100)
 const rootRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLButtonElement | null>(null)
@@ -84,6 +84,13 @@ const triggerRef = ref<HTMLButtonElement | null>(null)
 const hotkeys = computed(() => Boolean(desktopConfig.enableDesktopHotkeys))
 const labels = computed(() => Boolean(desktopConfig.showIconLabels))
 const autoArrange = computed(() => desktopConfig.iconLayout === 'auto-arrange')
+const lowMemoryOn = computed(() => 是否低内存生效(desktopConfig))
+const lowMemoryLabel = computed(() => {
+  const mode = desktopConfig.lowMemoryMode || 'auto'
+  if (mode === 'on') return '强制开'
+  if (mode === 'off') return '强制关'
+  return lowMemoryOn.value ? '自动·已开' : '自动·关闭'
+})
 
 function toggle() { open.value = !open.value }
 function close() {
@@ -100,6 +107,12 @@ function toggleLabels() {
 function toggleArrange() {
   desktopConfig.iconLayout = desktopConfig.iconLayout === 'auto-arrange' ? 'free' : 'auto-arrange'
 }
+function cycleLowMemory() {
+  const mode = desktopConfig.lowMemoryMode || 'auto'
+  desktopConfig.lowMemoryMode = mode === 'auto' ? 'on' : mode === 'on' ? 'off' : 'auto'
+  同步缓存配额()
+  应用低内存样式到根(document.documentElement)
+}
 function setWallpaper(type: 'image' | 'gradient' | 'color', value: string) {
   desktopConfig.wallpaperType = type
   desktopConfig.wallpaperValue = value
@@ -112,9 +125,6 @@ function applyBrightness() {
 function onPointerDown(event: PointerEvent) {
   if (!(event.target as HTMLElement | null)?.closest('.control-center-root')) close()
 }
-watch(focus, (v) => {
-  document.documentElement.dataset.desktopFocusMode = v ? '1' : '0'
-})
 onMounted(() => document.addEventListener('pointerdown', onPointerDown))
 onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
 </script>

@@ -57,9 +57,28 @@
       @update-position="windowManager.updateWindowPosition"
       @update-geometry="windowManager.updateWindowGeometry"
     />
-    <component :is="desktopTaskbar" :items="unref(windowManager.taskbarItems)" :launcher-open="showLauncher" :app-list="allAppList" @switchWindow="handleSwitchWindow" @openLauncher="openLaunchpad" @openSpotlight="openSpotlight" @openApp="handleOpenApp" @closeWindow="windowManager.closeWindow" />
+    <component
+      :is="desktopTaskbar"
+      :items="unref(windowManager.taskbarItems)"
+      :launcher-open="showLauncher"
+      :app-list="allAppList"
+      @switchWindow="handleSwitchWindow"
+      @openLauncher="openLaunchpad"
+      @openSpotlight="openSpotlight"
+      @openMissionControl="openMissionControl"
+      @openApp="handleOpenApp"
+      @closeWindow="windowManager.closeWindow"
+    />
     <component :is="desktopLauncher" v-if="showLauncher" :show="showLauncher" :app-list="launcherAppList" @openApp="handleLauncherOpen" @execute-command="handleLauncherCommand" @close="closeLaunchpad" />
     <component :is="desktopSpotlight" v-if="showSpotlight" :show="showSpotlight" @close="closeSpotlight" />
+    <component
+      :is="desktopMissionControl"
+      v-if="showMissionControl"
+      :show="showMissionControl"
+      :windows="windowManager.windows"
+      @close="closeMissionControl"
+      @activate="windowManager.activateWindow"
+    />
     <DesktopAppSwitcher ref="appSwitcherRef" :show="showAppSwitcher" :windows="windowManager.windows" @close="closeAppSwitcher" @activate="windowManager.activateWindow" />
     <ContextMenu
       :visible="contextMenu.visible.value"
@@ -110,6 +129,15 @@
          <div v-for="n in 6" :key="n" class="skeleton-block" style="width:40px;height:40px;border-radius:10px;" />
        </div>
      </div>
+     <FmQuickLook
+       v-if="desktopQuickLookVisible"
+       :visible="desktopQuickLookVisible"
+       :item="desktopQuickLookItem"
+       :display-name="desktopQuickLookDisplayName"
+       :format-size="formatSize"
+       @close="closeDesktopQuickLook"
+       @open="openDesktopQuickLookEntry"
+     />
      <DesktopToastHost />
      <DesktopDialogHost />
   </div>
@@ -124,6 +152,10 @@ import { useDesktopConfig } from '@/desktop/config/desktop-preferences'
 import { listDesktopSkins, type DesktopShellSkinId } from '@/desktop/skins'
 import DesktopAppSwitcher from '@/desktop/launcher/desktop-app-switcher.vue'
 import { useContextMenu } from '@/desktop/context-menu/use-context-menu'
+import { 应用低内存样式到根, 同步缓存配额, 探测低内存 } from '@/desktop/runtime'
+import FmQuickLook from '@/platform/components/apps/desktop/file-manager/fm-quick-look.vue'
+import { selectedIds as desktopSelectedIds } from '@/desktop/selection/desktop-selection-state'
+import type { FileEntry } from '@/shared/api/types'
 import ContextMenu from '@/desktop/context-menu/context-menu.vue'
 import { useWindowManager } from '@/desktop/window-manager/window-manager'
 import { getApp } from '@/desktop/app-registry/app-registry'
@@ -151,7 +183,6 @@ import {
   resolveNameConflictRequest,
 } from '@/shared/api/desktop'
 import { ElMessageBox } from 'element-plus'
-import type { FileEntry } from '@/shared/api/types'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { useFileOperations } from '@/shared/files/use-file-operations'
 import LoadStateBanner from '@/shared/components/load-state-banner.vue'
@@ -162,6 +193,7 @@ const desktopWindowFrame = defineAsyncComponent(() => import('@/desktop/window-m
 const desktopTaskbar = defineAsyncComponent(() => import('@/desktop/taskbar/desktop-taskbar.vue'))
 const desktopLauncher = defineAsyncComponent(() => import('@/desktop/launcher/desktop-launcher.vue'))
 const desktopSpotlight = defineAsyncComponent(() => import('@/desktop/launcher/desktop-spotlight.vue'))
+const desktopMissionControl = defineAsyncComponent(() => import('@/desktop/launcher/desktop-mission-control.vue'))
 
 // 暴露 event bus 到全局，供 agent 等模块触发桌面刷新
 window.__DESKTOP_EVENT_BUS__ = desktopEmitter as Window['__DESKTOP_EVENT_BUS__']
@@ -180,7 +212,40 @@ const { registerAllApps, registerAllFiles } = useCommandRegistry(handleOpenApp, 
 
 const showLauncher = ref(false)
 const showSpotlight = ref(false)
+const showMissionControl = ref(false)
 const showAppSwitcher = ref(false)
+const presentationMode = ref(false)
+const desktopQuickLookVisible = ref(false)
+const desktopQuickLookItem = ref<FileEntry | null>(null)
+
+function desktopQuickLookDisplayName(file: FileEntry) {
+  return file.is_folder
+    ? String(file.file_name || '')
+    : (file.format ? `${file.file_name}.${file.format}` : String(file.file_name || ''))
+}
+
+function closeDesktopQuickLook() {
+  desktopQuickLookVisible.value = false
+  desktopQuickLookItem.value = null
+}
+
+function openDesktopQuickLookEntry(item: FileEntry) {
+  closeDesktopQuickLook()
+  openDesktopEntry(item)
+}
+
+function openDesktopQuickLookFromSelection() {
+  const keys = desktopSelectedIds.value.filter((k: string) => k.startsWith('file:'))
+  if (!keys.length) return false
+  const id = Number(keys[0].slice('file:'.length))
+  if (!Number.isFinite(id)) return false
+  const item = desktopFileList.value.find((f: FileEntry) => f.id === id) || null
+  if (!item) return false
+  desktopQuickLookItem.value = item
+  desktopQuickLookVisible.value = true
+  return true
+}
+
 const appSwitcherRef = ref<{ move: (delta: number) => void; activateSelected: () => void } | null>(null)
 let overlayReturnFocus: HTMLElement | null = null
 const canWrite = computed(() => canBusinessWrite.value)
@@ -239,18 +304,25 @@ function handleHideApp(event: Event) {
 }
 
 onMounted(() => {
-  void nextTick(() => applyCurrentShellSkin(desktopContainerRef.value))
+  void nextTick(() => {
+    applyCurrentShellSkin(desktopContainerRef.value)
+    探测低内存()
+    同步缓存配额()
+    应用低内存样式到根(document.documentElement)
+  })
   updateMenuClock()
   menuClockTimer = window.setInterval(updateMenuClock, 30_000)
   window.addEventListener('keydown', handleGlobalShortcut, true)
   window.addEventListener('desktop:open-app-switcher', openAppSwitcher)
   window.addEventListener('desktop:close-app-switcher', closeAppSwitcher)
   window.addEventListener('desktop:hide-app', handleHideApp)
-  window.__HSWZ_DESKTOP_SHELL__ = {
+  ;(window as any).__HSWZ_DESKTOP_SHELL__ = {
     openAppSwitcher,
     closeAppSwitcher,
     openSpotlight,
     openLaunchpad,
+    openMissionControl,
+    togglePresentationMode,
     getShellSkin: () => desktopShellConfig.shellSkin,
     setShellSkin: (skin: DesktopShellSkinId) => setShellSkin(skin, desktopContainerRef.value),
     listShellSkins: () => listDesktopSkins(),
@@ -273,6 +345,7 @@ function openLaunchpad() {
   rememberOverlayFocus()
   showSpotlight.value = false
   showAppSwitcher.value = false
+  showMissionControl.value = false
   showLauncher.value = true
 }
 
@@ -280,11 +353,24 @@ function openSpotlight() {
   rememberOverlayFocus()
   showLauncher.value = false
   showAppSwitcher.value = false
+  showMissionControl.value = false
   showSpotlight.value = true
 }
 
+function openMissionControl() {
+  if (showMissionControl.value) {
+    closeMissionControl()
+    return
+  }
+  rememberOverlayFocus()
+  showLauncher.value = false
+  showSpotlight.value = false
+  showAppSwitcher.value = false
+  showMissionControl.value = true
+}
+
 function rememberOverlayFocus() {
-  if (showLauncher.value || showSpotlight.value) return
+  if (showLauncher.value || showSpotlight.value || showMissionControl.value) return
   const active = document.activeElement
   overlayReturnFocus = active instanceof HTMLElement && active !== document.body ? active : null
 }
@@ -307,10 +393,17 @@ function closeSpotlight() {
   restoreOverlayFocus()
 }
 
+function closeMissionControl() {
+  if (!showMissionControl.value) return
+  showMissionControl.value = false
+  restoreOverlayFocus()
+}
+
 function openAppSwitcher() {
   rememberOverlayFocus()
   showSpotlight.value = false
   showLauncher.value = false
+  showMissionControl.value = false
   showAppSwitcher.value = true
 }
 function closeAppSwitcher() {
@@ -320,11 +413,19 @@ function closeAppSwitcher() {
 }
 
 function closeSystemOverlays() {
-  const wasOpen = showLauncher.value || showSpotlight.value || showAppSwitcher.value
+  const wasOpen = showLauncher.value || showSpotlight.value || showAppSwitcher.value || showMissionControl.value
   showLauncher.value = false
   showSpotlight.value = false
   showAppSwitcher.value = false
+  showMissionControl.value = false
   if (wasOpen) restoreOverlayFocus()
+}
+
+function togglePresentationMode() {
+  presentationMode.value = !presentationMode.value
+  const shell = desktopContainerRef.value
+  if (shell) shell.classList.toggle('desktop-presentation-mode', presentationMode.value)
+  document.documentElement.classList.toggle('desktop-presentation-mode', presentationMode.value)
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -343,7 +444,17 @@ function isEditableTarget(target: EventTarget | null): boolean {
  */
 function handleGlobalShortcut(event: KeyboardEvent) {
   if (event.key === 'Escape') {
-    if (showLauncher.value || showSpotlight.value || showAppSwitcher.value) {
+    if (desktopQuickLookVisible.value) {
+      event.preventDefault()
+      closeDesktopQuickLook()
+      return
+    }
+    if (presentationMode.value) {
+      event.preventDefault()
+      togglePresentationMode()
+      return
+    }
+    if (showLauncher.value || showSpotlight.value || showAppSwitcher.value || showMissionControl.value) {
       event.preventDefault()
       closeSystemOverlays()
     }
@@ -367,12 +478,27 @@ function handleGlobalShortcut(event: KeyboardEvent) {
   if (!desktopShellConfig.enableDesktopHotkeys) return
   if (isEditableTarget(event.target)) return
 
+  // Space → 桌面选中项 Quick Look（无 meta/ctrl/alt）
+  if (event.code === 'Space' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+    if (desktopQuickLookVisible.value) {
+      event.preventDefault()
+      closeDesktopQuickLook()
+      return
+    }
+    // 有前台非最小化窗口时不抢 Space（交给应用）
+    if (!activeWindow.value && openDesktopQuickLookFromSelection()) {
+      event.preventDefault()
+      return
+    }
+  }
+
   const meta = event.metaKey || event.ctrlKey
 
   // Ctrl/⌘+Shift+Space → Spotlight (avoids OS/browser ⌘Space)
   if (meta && event.shiftKey && event.code === 'Space') {
     event.preventDefault()
     showAppSwitcher.value = false
+    showMissionControl.value = false
     showSpotlight.value ? closeSpotlight() : openSpotlight()
     return
   }
@@ -389,6 +515,20 @@ function handleGlobalShortcut(event: KeyboardEvent) {
   if (meta && event.shiftKey && event.key.toLowerCase() === 'l') {
     event.preventDefault()
     openLaunchpad()
+    return
+  }
+
+  // Ctrl/⌘+Shift+↑ / M → Mission Control lite
+  if (meta && event.shiftKey && (event.key === 'ArrowUp' || event.key.toLowerCase() === 'm')) {
+    event.preventDefault()
+    openMissionControl()
+    return
+  }
+
+  // Ctrl/⌘+Shift+F → 伪全屏沉浸（隐藏 chrome 间距）
+  if (meta && event.shiftKey && event.key.toLowerCase() === 'f') {
+    event.preventDefault()
+    togglePresentationMode()
     return
   }
 
@@ -533,6 +673,8 @@ function handleLauncherOpen(appKey: string) {
 }
 async function handleLauncherCommand(command: string) {
   if (command === 'refresh-desktop') refreshDesktop()
+  else if (command === 'mission-control') openMissionControl()
+  else if (command === 'presentation-mode') togglePresentationMode()
   else if (command === 'logout') { await userStore.logout(); window.location.href = '/' }
   else if (command === 'open-profile') handleOpenApp('user-profile')
   else if (command === 'new-folder' && canWrite.value) await fileOps.createFolder(null)

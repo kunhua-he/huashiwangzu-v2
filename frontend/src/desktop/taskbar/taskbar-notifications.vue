@@ -208,13 +208,17 @@ function handleOpenLoadSource(issue: NotificationLoadIssue) {
 }
 .taskbar-notifications-panel {
   position: fixed;
-  top: 30px;
-  right: 8px;
-  bottom: auto;
+  top: calc(var(--desktop-menu-bar-height, 28px) + 8px);
+  right: 12px;
   width: min(380px, calc(100vw - 24px));
-  max-height: min(560px, calc(100vh - 72px));
-  overflow-y: auto;
-  border-radius: 20px;
+  max-height: min(72vh, 640px);
+  overflow: auto;
+  transform: translateX(8px);
+  animation: nc-slide-in 180ms cubic-bezier(.32,.72,0,1) forwards;
   z-index: var(--z-system-popover);
+}
+@keyframes nc-slide-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 </style>

@@ -27,6 +27,8 @@ export type TaskbarPosition = 'bottom' | 'top'
 export type IconLayout = 'auto-arrange' | 'free'
 export type DesktopIconSort = 'name' | 'type' | 'date'
 export type LauncherStyle = 'center-panel' | 'left-panel'
+/** auto=按 deviceMemory 等探测；on/off 强制 */
+export type LowMemoryMode = 'auto' | 'on' | 'off'
 export type { DesktopShellSkinId }
 
 export interface DesktopConfig {
@@ -38,18 +40,24 @@ export interface DesktopConfig {
   iconGridGap: number
   showIconLabels: boolean
 
-  // 任务栏
+  // 任务栏 / Dock
   taskbarPosition: TaskbarPosition
   taskbarHeight: number
   taskbarShowClock: boolean
   taskbarShowDate: boolean
   taskbarGroupWindows: boolean
+  /** Dock 固定顺序（canonical appKey） */
+  dockOrder: string[]
+  /** Dock 固定钉住的 appKey；未钉住但运行中的仍会临时出现 */
+  dockPinned: string[]
 
   // 窗口
   windowAnimationDuration: number
   windowSnapThreshold: number
   windowMinWidth: number
   windowMinHeight: number
+  /** 最小化后多久卸载窗内容（毫秒）；低内存模式会再压缩 */
+  windowContentIdleTtlMs: number
 
   // 启动器
   launcherStyle: LauncherStyle
@@ -62,6 +70,8 @@ export interface DesktopConfig {
   // 反馈
   enableMicroAnimations: boolean
   enableOperationToast: boolean
+  /** 重毛玻璃；低内存自动关 */
+  enableHeavyGlass: boolean
 
   /**
    * Desktop hotkeys (Web-safe).
@@ -73,6 +83,9 @@ export interface DesktopConfig {
 
   /** Shell visual skin: macos | win11 (behavior runtime stays shared). */
   shellSkin: DesktopShellSkinId
+
+  /** 低内存策略：auto / on / off */
+  lowMemoryMode: LowMemoryMode
 }
 
 // ═══════════════════════════════════════════════════
@@ -101,11 +114,14 @@ const DEFAULT_CONFIG: DesktopConfig = {
   taskbarShowClock: false,
   taskbarShowDate: false,
   taskbarGroupWindows: true,
+  dockOrder: [],
+  dockPinned: [],
 
   windowAnimationDuration: 280,
   windowSnapThreshold: 28,
   windowMinWidth: 400,
   windowMinHeight: 260,
+  windowContentIdleTtlMs: 45_000,
 
   launcherStyle: 'center-panel',
   launcherWidth: 520,
@@ -116,11 +132,13 @@ const DEFAULT_CONFIG: DesktopConfig = {
 
   enableMicroAnimations: true,
   enableOperationToast: true,
+  enableHeavyGlass: true,
 
   // Web-safe desktop hotkeys on by default (never steal ⌘W/T/R/N)
   enableDesktopHotkeys: true,
 
   shellSkin: 'macos',
+  lowMemoryMode: 'auto',
 }
 
 // ═══════════════════════════════════════════════════
@@ -140,6 +158,15 @@ function loadConfigFromState(): void {
     })
   }
   if (!isDesktopShellSkinId(config.shellSkin)) config.shellSkin = readStoredDesktopSkin()
+  if (!Array.isArray(config.dockOrder)) config.dockOrder = []
+  if (!Array.isArray(config.dockPinned)) config.dockPinned = []
+  if (config.lowMemoryMode !== 'auto' && config.lowMemoryMode !== 'on' && config.lowMemoryMode !== 'off') {
+    config.lowMemoryMode = 'auto'
+  }
+  if (typeof config.windowContentIdleTtlMs !== 'number' || !Number.isFinite(config.windowContentIdleTtlMs)) {
+    config.windowContentIdleTtlMs = DEFAULT_CONFIG.windowContentIdleTtlMs
+  }
+  if (typeof config.enableHeavyGlass !== 'boolean') config.enableHeavyGlass = true
   // taskbar height always follows active skin metrics (not free-form stale values)
   config.taskbarHeight = getActiveDesktopSkinMetrics().dockHeight
 }

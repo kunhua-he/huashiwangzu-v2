@@ -89,6 +89,12 @@ import { computed, ref, defineAsyncComponent, onMounted, onUnmounted, watch } fr
 import { getApp } from '@/desktop/app-registry/app-registry'
 import { useWindowInteraction } from './use-window-interaction'
 import { desktopConfig } from '@/desktop/config/desktop-preferences'
+import {
+  标记应用活跃,
+  标记应用空闲,
+  窗内容空闲毫秒,
+  是否应冷启动内容,
+} from '@/desktop/runtime'
 import AppIcon from '@/desktop/components/app-icon.vue'
 import AsyncPaneState from '@/shared/components/async-pane-state.vue'
 
@@ -128,18 +134,58 @@ const closing = ref(false)
 const minimizing = ref(false)
 const restoring = ref(false)
 const openingFromOrigin = ref(false)
-const contentVisible = ref(!props.minimized)
-const hasMountedContent = ref(!props.minimized)
+/** 最小化后真正卸载内容；会话恢复的最小化窗默认冷壳 */
+const contentVisible = ref(是否应冷启动内容(props.minimized))
+const hasMountedContent = ref(是否应冷启动内容(props.minimized))
 let enterFrame = 0
 let closeTimer: ReturnType<typeof window.setTimeout> | null = null
 let minimizeTimer: ReturnType<typeof window.setTimeout> | null = null
 let restoreTimer: ReturnType<typeof window.setTimeout> | null = null
+let idleUnloadTimer: ReturnType<typeof window.setTimeout> | null = null
+let appActiveCounted = false
 
 const animDuration = computed(() => desktopConfig.windowAnimationDuration)
 
+function 清除空闲卸载定时器() {
+  if (idleUnloadTimer) {
+    window.clearTimeout(idleUnloadTimer)
+    idleUnloadTimer = null
+  }
+}
+
+function 调度空闲卸载内容() {
+  清除空闲卸载定时器()
+  const ttl = Math.max(5_000, 窗内容空闲毫秒())
+  idleUnloadTimer = window.setTimeout(() => {
+    idleUnloadTimer = null
+    if (!props.minimized || closing.value) return
+    // 真正卸载 Vue 子树，释放实例内存；窗口壳与会话状态保留
+    contentVisible.value = false
+    hasMountedContent.value = false
+  }, ttl)
+}
+
+function 确保内容已挂载() {
+  清除空闲卸载定时器()
+  contentVisible.value = true
+  hasMountedContent.value = true
+}
+
+function 计入应用活跃() {
+  if (appActiveCounted) return
+  标记应用活跃(props.appKey)
+  appActiveCounted = true
+}
+
+function 释放应用活跃() {
+  if (!appActiveCounted) return
+  标记应用空闲(props.appKey)
+  appActiveCounted = false
+}
+
 watch(() => props.appKey, () => { loadError.value = '' })
 
-// 最小化/还原动画逻辑
+// 最小化/还原动画 + 空闲卸载
 watch(() => props.minimized, (minimized, oldMinimized) => {
   if (minimizeTimer) window.clearTimeout(minimizeTimer)
   if (restoreTimer) window.clearTimeout(restoreTimer)
@@ -151,21 +197,27 @@ watch(() => props.minimized, (minimized, oldMinimized) => {
     minimizeTimer = window.setTimeout(() => {
       contentVisible.value = false
       minimizing.value = false
+      调度空闲卸载内容()
     }, animDuration.value)
   } else if (!minimized && oldMinimized) {
-    // 从最小化还原 → 播放还原动画
-    contentVisible.value = true
-    hasMountedContent.value = true
+    // 从最小化还原 → 重新挂载内容并播放还原动画
+    确保内容已挂载()
     restoring.value = true
     applyMinimizeTargetVars()
     restoreTimer = window.setTimeout(() => {
       restoring.value = false
     }, animDuration.value)
+  } else if (minimized) {
+    contentVisible.value = false
+    调度空闲卸载内容()
   } else {
-    contentVisible.value = !minimized
-    if (!minimized) hasMountedContent.value = true
+    确保内容已挂载()
   }
 }, { immediate: true })
+
+watch(() => props.isActive, (active) => {
+  if (active && !props.minimized) 确保内容已挂载()
+})
 
 function getTaskbarButtonRect(): { x: number; y: number } | null {
   const btn = document.querySelector(`[data-dock-app-key="${props.appKey}"]`) as HTMLElement | null
@@ -420,6 +472,7 @@ function requestClose() {
 }
 
 onMounted(() => {
+  计入应用活跃()
   if (props.animationOrigin) {
     // 从来源坐标展开的动画
     openingFromOrigin.value = true
@@ -436,6 +489,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  清除空闲卸载定时器()
+  释放应用活跃()
   if (enterFrame) window.cancelAnimationFrame(enterFrame)
   if (closeTimer) window.clearTimeout(closeTimer)
   if (minimizeTimer) window.clearTimeout(minimizeTimer)

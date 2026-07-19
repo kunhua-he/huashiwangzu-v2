@@ -41,7 +41,9 @@
   --z-dock: 11000;
   --z-launchpad: 14000;
   --z-spotlight: 15000;
+  --z-mission-control: 14500;
   --z-system-popover: 16000;
+  --z-quick-look: 15500;
 
   /* ===== 桌面背景系统 ===== */
   --desktop-bg-gradient-start: #0b1b2c;

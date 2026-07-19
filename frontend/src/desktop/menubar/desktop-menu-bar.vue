@@ -28,6 +28,9 @@
           <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>新建访达窗口</span></button>
           <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('new-folder')"><FolderPlus :size="14" /><span>新建文件夹</span></button>
           <div class="mac-menu-separator" />
+          <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('finder-go-documents')"><FileText :size="14" /><span>前往文稿</span></button>
+          <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('finder-go-downloads')"><Download :size="14" /><span>前往下载</span></button>
+          <div class="mac-menu-separator" />
           <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="closeActive"><X :size="14" /><span>关闭窗口</span></button>
         </template>
         <template v-else-if="activeAppKey">
@@ -42,12 +45,53 @@
         </template>
       </template>
       <template v-else-if="openMenu === 'file'">
-        <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('new-folder')"><FolderPlus :size="14" /><span>新建文件夹</span></button>
-        <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>新建访达窗口</span></button>
-        <div class="mac-menu-separator" />
-        <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="closeActive"><X :size="14" /><span>关闭窗口</span></button>
+        <template v-if="injectedFileItems.length">
+          <template v-for="item in injectedFileItems" :key="item.id">
+            <div v-if="item.separator" class="mac-menu-separator" />
+            <button
+              v-else
+              class="mac-menu-row"
+              type="button"
+              role="menuitem"
+              :disabled="item.disabled || (item.command === 'close-active' && !activeWindowId)"
+              @click="runInjected(item)"
+            >
+              <FolderPlus v-if="item.id.includes('folder')" :size="14" />
+              <FolderOpen v-else-if="item.id.includes('window')" :size="14" />
+              <X v-else-if="item.id.includes('close')" :size="14" />
+              <span v-else class="mac-menu-icon-space" />
+              <span>{{ item.label }}</span>
+              <kbd v-if="item.shortcut && hotkeysEnabled">{{ item.shortcut }}</kbd>
+            </button>
+          </template>
+        </template>
+        <template v-else>
+          <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('new-folder')"><FolderPlus :size="14" /><span>新建文件夹</span></button>
+          <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>新建访达窗口</span></button>
+          <div class="mac-menu-separator" />
+          <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="closeActive"><X :size="14" /><span>关闭窗口</span></button>
+        </template>
+      </template>
+      <template v-else-if="openMenu === 'go'">
+        <template v-for="item in injectedGoItems" :key="item.id">
+          <div v-if="item.separator" class="mac-menu-separator" />
+          <button v-else class="mac-menu-row" type="button" role="menuitem" @click="runInjected(item)">
+            <FolderOpen :size="14" /><span>{{ item.label }}</span>
+          </button>
+        </template>
       </template>
       <template v-else-if="openMenu === 'view'">
+        <template v-if="isFinderFront && injectedViewItems.length">
+          <button
+            v-for="item in injectedViewItems"
+            :key="item.id"
+            class="mac-menu-row"
+            type="button"
+            role="menuitem"
+            @click="runInjected(item)"
+          ><span class="mac-menu-icon-space" /><span>{{ item.label }}</span></button>
+          <div class="mac-menu-separator" />
+        </template>
         <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openSpotlight'); closeMenu()"><Search :size="14" /><span>Spotlight</span><kbd v-if="hotkeysEnabled">⌃⇧Space</kbd></button>
         <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openLaunchpad'); closeMenu()"><Grid3X3 :size="14" /><span>Launchpad</span><kbd v-if="hotkeysEnabled">⌃⇧L</kbd></button>
         <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('mission-control'); closeMenu()"><PanelsTopLeft :size="14" /><span>调度中心</span><kbd v-if="hotkeysEnabled">⌃⇧M</kbd></button>
@@ -77,13 +121,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import {
-  Check, CircleHelp, Command, FolderOpen, FolderPlus, Grid3X3, LogOut, Maximize2,
+  Check, CircleHelp, Command, Download, FileText, FolderOpen, FolderPlus, Grid3X3, LogOut, Maximize2,
   Minus, PanelsTopLeft, RefreshCw, Search, UserRound, X,
 } from 'lucide-vue-next'
 import TaskbarNotifications from '@/desktop/taskbar/taskbar-notifications.vue'
 import DesktopControlCenter from '@/desktop/menubar/desktop-control-center.vue'
 import type { WindowState } from '@/desktop/window-manager/window-types'
 import { desktopConfig } from '@/desktop/config/desktop-preferences'
+import { 读取应用菜单, type 菜单项 } from '@/desktop/menubar/应用菜单注册表'
 
 const props = defineProps<{
   activeTitle: string
@@ -97,6 +142,31 @@ const solid = computed(() => props.windows.some(windowItem => !windowItem.minimi
 const hotkeysEnabled = computed(() => Boolean(desktopConfig.enableDesktopHotkeys))
 const activeAppKey = computed(() => props.activeAppKey || '')
 const isFinderFront = computed(() => activeAppKey.value === 'desktop' || activeAppKey.value === 'files')
+const injectedMenus = computed(() => 读取应用菜单(activeAppKey.value, {
+  windowId: props.activeWindowId,
+  title: props.activeTitle,
+}))
+const injectedFileItems = computed(() => injectedMenus.value.find(s => s.key === 'file')?.items || [])
+const injectedGoItems = computed(() => injectedMenus.value.find(s => s.key === 'go')?.items || [])
+const injectedViewItems = computed(() => injectedMenus.value.find(s => s.key === 'view')?.items || [])
+
+function runInjected(item: 菜单项) {
+  if (item.disabled) return
+  if (item.openApp) {
+    emit('openApp', item.openApp, item.payload)
+    closeMenu()
+    return
+  }
+  if (item.command === 'close-active') {
+    closeActive()
+    return
+  }
+  if (item.command) {
+    runCommand(item.command)
+    return
+  }
+  closeMenu()
+}
 
 const emit = defineEmits<{
   openApp: [appKey: string, payload?: Record<string, unknown>]
@@ -110,12 +180,24 @@ const emit = defineEmits<{
   command: [command: string]
 }>()
 
-const menus = [
-  { key: 'file', label: '文件' },
-  { key: 'view', label: '查看' },
-  { key: 'window', label: '窗口' },
-  { key: 'help', label: '帮助' },
-]
+const menus = computed(() => {
+  const base = [
+    { key: 'file', label: '文件' },
+    { key: 'view', label: '查看' },
+    { key: 'window', label: '窗口' },
+    { key: 'help', label: '帮助' },
+  ]
+  if (isFinderFront.value) {
+    return [
+      { key: 'file', label: '文件' },
+      { key: 'go', label: '前往' },
+      { key: 'view', label: '查看' },
+      { key: 'window', label: '窗口' },
+      { key: 'help', label: '帮助' },
+    ]
+  }
+  return base
+})
 const openMenu = ref('')
 const menuBarRef = ref<HTMLElement | null>(null)
 const popoverRef = ref<HTMLElement | null>(null)

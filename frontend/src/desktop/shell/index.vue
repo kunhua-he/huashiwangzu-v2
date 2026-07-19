@@ -680,12 +680,33 @@ async function handleLauncherCommand(command: string) {
   else if (command === 'new-folder' && canWrite.value) await fileOps.createFolder(null)
   else if (command === 'minimize-all') windowManager.showDesktop()
   else if (command === 'restore-all') windowManager.restoreDesktop()
+  else if (command === 'close-active') {
+    const id = activeWindow.value?.id
+    if (id) windowManager.closeWindow(id)
+  }
   else if (command === 'finder-go-documents') {
     handleOpenApp('desktop', { folderName: '文稿' })
-    // payload folderId resolved by files app via locations on openNamedLocation if needed
   }
   else if (command === 'finder-go-downloads') {
     handleOpenApp('desktop', { folderName: '下载' })
+  }
+  else if (command.startsWith('finder-view-')) {
+    const modeMap: Record<string, string> = {
+      'finder-view-icons': 'grid',
+      'finder-view-list': 'list',
+      'finder-view-columns': 'column',
+      'finder-view-gallery': 'gallery',
+    }
+    const mode = modeMap[command]
+    if (mode) {
+      // 确保有前台访达；再广播视图切换
+      if (!activeWindow.value || (activeWindow.value.appKey !== 'desktop' && activeWindow.value.appKey !== 'files')) {
+        handleOpenApp('desktop')
+      }
+      window.dispatchEvent(new CustomEvent('desktop:finder-command', {
+        detail: { action: 'set-view-mode', viewMode: mode },
+      }))
+    }
   }
   closeSystemOverlays()
 }

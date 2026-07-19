@@ -163,7 +163,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { MacAppShell, useAppFeedback } from '@/desktop/app-kit'
 import { dragState } from '@/desktop/drag-drop/drag-state'
 import { useContextMenu } from '@/desktop/context-menu/use-context-menu'
@@ -498,6 +498,17 @@ function commonTagsOf(items: FileEntry[]): FinderTagColor[] {
 }
 
 watch(() => state.viewMode.value, () => persistPrefs())
+
+function handleFinderShellCommand(event: Event) {
+  const detail = (event as CustomEvent<{ action?: string; viewMode?: string }>).detail
+  if (!detail) return
+  if (detail.action === 'set-view-mode' && detail.viewMode) {
+    const mode = detail.viewMode
+    if (mode === 'grid' || mode === 'list' || mode === 'column' || mode === 'gallery') {
+      state.viewMode.value = mode
+    }
+  }
+}
 
 function handleToolbarAction(key: string) {
   if (key === 'upload-file') {
@@ -928,6 +939,7 @@ async function handleContextMenuSelect(key: string) {
 }
 
 onMounted(async () => {
+  window.addEventListener('desktop:finder-command', handleFinderShellCommand)
   state.uploadInput.value = uploadInputRef.value
   await Promise.all([
     state.ensureLocations(),
@@ -938,6 +950,10 @@ onMounted(async () => {
   const name = state.breadcrumb.value[state.breadcrumb.value.length - 1]?.name || '桌面'
   state.syncWindowTitle(name)
   rootRef.value?.focus({ preventScroll: true })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('desktop:finder-command', handleFinderShellCommand)
 })
 </script>
 

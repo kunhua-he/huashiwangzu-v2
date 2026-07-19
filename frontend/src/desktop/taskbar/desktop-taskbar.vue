@@ -6,16 +6,20 @@
     @pointerleave="onDockLeave"
     @pointermove="onDockMove"
   >
-    <div class="mac-dock-item-wrap" :style="itemStyle(0)">
+    <div
+      class="mac-dock-item-wrap"
+      :style="itemStyle(0)"
+      @pointerenter="setHoverLabel(0, 'Launchpad')"
+    >
       <button
         class="mac-dock-icon-button taskbar-start"
         type="button"
-        title="Launchpad"
         aria-label="打开 Launchpad"
         :aria-pressed="launcherOpen"
         :style="iconStyle(0)"
         @click="emit('openLauncher')"
       >
+        <span v-if="isLabelFor(0)" class="mac-dock-label" role="tooltip">Launchpad</span>
         <AppIcon icon="Grid" app-key="launchpad" :size="48" />
       </button>
     </div>
@@ -32,6 +36,7 @@
         class="mac-dock-item-wrap"
         :style="itemStyle(index + 1)"
         draggable="true"
+        @pointerenter="setHoverLabel(index + 1, app.appName)"
         @dragstart="onDragStart(app.appKey, $event)"
         @dragover.prevent
         @drop.prevent="onDrop(app.appKey)"
@@ -39,7 +44,6 @@
         <button
           class="mac-dock-icon-button mac-dock-app"
           type="button"
-          :title="app.appName"
           :aria-label="app.appName"
           :data-dock-app-key="app.appKey"
           :aria-pressed="app.isActive"
@@ -48,6 +52,7 @@
           @click="activateApp(app)"
           @contextmenu.prevent="openAppMenu(app.appKey)"
         >
+          <span v-if="isLabelFor(index + 1)" class="mac-dock-label" role="tooltip">{{ app.appName }}</span>
           <AppIcon :icon="app.icon" :app-key="app.appKey" :size="48" />
           <span v-if="app.isRunning" class="mac-dock-running-dot" />
           <span v-if="getProgress(app.appKey)" class="mac-dock-progress"><span :style="progressStyle(app.appKey)" /></span>
@@ -70,27 +75,35 @@
 
     <div class="mac-dock-separator" aria-hidden="true" />
 
-    <div class="mac-dock-item-wrap" :style="itemStyle(dockApps.length + 1)">
+    <div
+      class="mac-dock-item-wrap"
+      :style="itemStyle(dockApps.length + 1)"
+      @pointerenter="setHoverLabel(dockApps.length + 1, '调度中心')"
+    >
       <button
         class="mac-dock-icon-button"
         type="button"
-        title="调度中心"
         aria-label="打开调度中心"
         :style="iconStyle(dockApps.length + 1)"
         @click="emit('openMissionControl')"
       >
+        <span v-if="isLabelFor(dockApps.length + 1)" class="mac-dock-label" role="tooltip">调度中心</span>
         <AppIcon icon="Layers" app-key="mission-control" :size="48" />
       </button>
     </div>
-    <div class="mac-dock-item-wrap" :style="itemStyle(dockApps.length + 2)">
+    <div
+      class="mac-dock-item-wrap"
+      :style="itemStyle(dockApps.length + 2)"
+      @pointerenter="setHoverLabel(dockApps.length + 2, 'Spotlight')"
+    >
       <button
         class="mac-dock-icon-button"
         type="button"
-        title="Spotlight"
         aria-label="打开 Spotlight"
         :style="iconStyle(dockApps.length + 2)"
         @click="emit('openSpotlight')"
       >
+        <span v-if="isLabelFor(dockApps.length + 2)" class="mac-dock-label" role="tooltip">Spotlight</span>
         <AppIcon icon="Search" app-key="spotlight" :size="48" />
       </button>
     </div>
@@ -141,6 +154,9 @@ const scales = shallowRef<number[]>([])
 const contextAppKey = ref('')
 const bounceKey = ref('')
 const dragKey = ref('')
+/** Dock 悬停标签（系统式，不用原生 title） */
+const hoverLabel = ref({ visible: false, text: '', index: -1 })
+let hoverLabelTimer: ReturnType<typeof setTimeout> | null = null
 let bounceTimer: ReturnType<typeof setTimeout> | null = null
 let rafId = 0
 let reducedMotion = false
@@ -331,7 +347,41 @@ function onDockMove(event: PointerEvent) {
 }
 function onDockLeave() {
   targetClientX.value = null
+  clearHoverLabel(true)
   kickRaf()
+}
+
+function setHoverLabel(index: number, text: string) {
+  if (hoverLabelTimer) {
+    clearTimeout(hoverLabelTimer)
+    hoverLabelTimer = null
+  }
+  // 右键菜单打开时不盖标签
+  if (contextAppKey.value) {
+    hoverLabel.value = { visible: false, text: '', index: -1 }
+    return
+  }
+  hoverLabel.value = { visible: false, text, index }
+  // 略延迟，避免快速划过时标签乱闪
+  hoverLabelTimer = setTimeout(() => {
+    if (hoverLabel.value.index === index && hoverLabel.value.text === text && !contextAppKey.value) {
+      hoverLabel.value = { visible: true, text, index }
+    }
+  }, 90)
+}
+function clearHoverLabel(immediate = false) {
+  if (hoverLabelTimer) {
+    clearTimeout(hoverLabelTimer)
+    hoverLabelTimer = null
+  }
+  if (immediate) {
+    hoverLabel.value = { visible: false, text: '', index: -1 }
+    return
+  }
+  hoverLabel.value = { ...hoverLabel.value, visible: false, index: -1 }
+}
+function isLabelFor(index: number) {
+  return hoverLabel.value.visible && hoverLabel.value.index === index && !contextAppKey.value
 }
 
 watch(iconCount, (n) => {
@@ -354,7 +404,10 @@ function progressStyle(appKey: string) {
   if (!entry) return {}
   return { width: entry.progress === -1 ? '42%' : `${Math.min(100, entry.progress * 100)}%`, background: entry.color || '#0a84ff' }
 }
-function openAppMenu(appKey: string) { contextAppKey.value = appKey }
+function openAppMenu(appKey: string) {
+  clearHoverLabel(true)
+  contextAppKey.value = appKey
+}
 function closeAppMenu() { contextAppKey.value = '' }
 function hideAppWindows(app: (typeof dockApps.value)[number]) {
   window.dispatchEvent(new CustomEvent('desktop:hide-app', { detail: { appKey: app.appKey } }))
@@ -402,6 +455,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onPointerDown)
   if (bounceTimer) clearTimeout(bounceTimer)
+  if (hoverLabelTimer) clearTimeout(hoverLabelTimer)
   if (rafId) cancelAnimationFrame(rafId)
   rafId = 0
 })
@@ -434,6 +488,7 @@ onUnmounted(() => {
   place-items: end center;
   height: 48px;
   will-change: width;
+  overflow: visible;
 }
 
 .mac-dock-icon-button {
@@ -450,6 +505,7 @@ onUnmounted(() => {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.18));
   /* 尺寸动画交给 JS lerp，避免 70ms CSS 与每帧鼠标事件冲突 */
   transition: none;
+  overflow: visible;
 }
 .mac-dock-icon-button :deep(.app-icon) {
   width: 100% !important;
@@ -486,6 +542,47 @@ onUnmounted(() => {
   align-self: flex-end;
   background: rgba(255, 255, 255, 0.28);
   flex: 0 0 auto;
+}
+
+/* 系统 Dock 标签：挂在图标按钮上，放大时跟着走 */
+.mac-dock-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  transform: translateX(-50%);
+  max-width: 180px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(36, 36, 38, 0.92);
+  color: rgba(255, 255, 255, 0.96);
+  font: 500 12px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  filter: none;
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.28),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+  animation: mac-dock-label-in 100ms ease-out;
+}
+.mac-dock-label::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: rgba(36, 36, 38, 0.92);
+  transform: rotate(45deg);
+  border-radius: 1px;
+}
+@keyframes mac-dock-label-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(3px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 .mac-dock-running-dot {

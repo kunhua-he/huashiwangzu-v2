@@ -114,10 +114,28 @@ class CommandRegistry {
 
   search(keyword: string): SearchResultItem[] {
     const q = keyword.trim().toLowerCase()
-    if (!q) return []
-
     const results: SearchResultItem[] = []
     const seen = new Set<string>()
+
+    // empty query: return a stable catalog for Spotlight "recent/top" UI
+    if (!q) {
+      for (const [, entries] of this._commands) {
+        const entry = entries[0]
+        if (!entry || seen.has(entry.id)) continue
+        seen.add(entry.id)
+        results.push({
+          id: entry.id,
+          type: entry.resultType ?? getSearchResultType(entry.id),
+          title: entry.title,
+          description: entry.description,
+          icon: entry.icon,
+          category: entry.category,
+          matchField: 'title',
+          execute: () => entry.handler(),
+        })
+      }
+      return results
+    }
 
     for (const [, entries] of this._commands) {
       for (const entry of entries) {

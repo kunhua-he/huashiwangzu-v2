@@ -24,12 +24,26 @@
         <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('logout')"><LogOut :size="14" /><span>退出登录</span></button>
       </template>
       <template v-else-if="openMenu === 'app'">
-        <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>打开文件管理</span></button>
-        <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openLaunchpad'); closeMenu()"><Grid3X3 :size="14" /><span>打开 Launchpad</span></button>
+        <template v-if="isFinderFront">
+          <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>新建访达窗口</span></button>
+          <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('new-folder')"><FolderPlus :size="14" /><span>新建文件夹</span></button>
+          <div class="mac-menu-separator" />
+          <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="closeActive"><X :size="14" /><span>关闭窗口</span></button>
+        </template>
+        <template v-else-if="activeAppKey">
+          <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', activeAppKey); closeMenu()"><FolderOpen :size="14" /><span>关于 {{ activeTitle }}</span></button>
+          <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="minimizeActive"><Minus :size="14" /><span>隐藏 {{ activeTitle }}</span></button>
+          <div class="mac-menu-separator" />
+          <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="closeActive"><X :size="14" /><span>退出 {{ activeTitle }}</span></button>
+        </template>
+        <template v-else>
+          <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>打开访达</span></button>
+          <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openLaunchpad'); closeMenu()"><Grid3X3 :size="14" /><span>打开 Launchpad</span></button>
+        </template>
       </template>
       <template v-else-if="openMenu === 'file'">
         <button class="mac-menu-row" type="button" role="menuitem" @click="runCommand('new-folder')"><FolderPlus :size="14" /><span>新建文件夹</span></button>
-        <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>新建文件管理窗口</span></button>
+        <button class="mac-menu-row" type="button" role="menuitem" @click="emit('openApp', 'desktop'); closeMenu()"><FolderOpen :size="14" /><span>新建访达窗口</span></button>
         <div class="mac-menu-separator" />
         <button class="mac-menu-row" type="button" role="menuitem" :disabled="!activeWindowId" @click="closeActive"><X :size="14" /><span>关闭窗口</span></button>
       </template>
@@ -72,12 +86,15 @@ import { desktopConfig } from '@/desktop/config/desktop-preferences'
 const props = defineProps<{
   activeTitle: string
   activeWindowId?: string
+  activeAppKey?: string
   username: string
   clock: string
   windows: WindowState[]
 }>()
 const solid = computed(() => props.windows.some(windowItem => !windowItem.minimized && windowItem.y <= 28))
 const hotkeysEnabled = computed(() => Boolean(desktopConfig.enableDesktopHotkeys))
+const activeAppKey = computed(() => props.activeAppKey || '')
+const isFinderFront = computed(() => activeAppKey.value === 'desktop' || activeAppKey.value === 'files')
 
 const emit = defineEmits<{
   openApp: [appKey: string, payload?: Record<string, unknown>]

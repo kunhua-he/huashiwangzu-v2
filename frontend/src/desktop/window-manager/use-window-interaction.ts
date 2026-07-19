@@ -2,7 +2,7 @@ import { onUnmounted, ref, type Ref } from 'vue'
 import { getDesktopWorkArea } from '@/desktop/config/desktop-chrome-metrics'
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-type SnapKind = 'top'
+type SnapKind = 'top' | 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 type WindowGeometry = { x: number; y: number; width: number; height: number }
 export type SnapPreview = { kind: SnapKind; x: number; y: number; width: number; height: number }
 type InteractionConfig = {
@@ -47,10 +47,38 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
     }
   }
   function resolveSnapPreview(e: MouseEvent): SnapPreview | null {
-    const { containerTop, workArea } = getBounds()
+    const { containerLeft, containerTop, workArea } = getBounds()
+    const pointerX = e.clientX - containerLeft
     const pointerY = e.clientY - containerTop
-    if (pointerY <= workArea.y + SNAP_EDGE_SIZE) {
+    const nearLeft = pointerX <= workArea.x + SNAP_EDGE_SIZE
+    const nearRight = pointerX >= workArea.x + workArea.width - SNAP_EDGE_SIZE
+    const nearTop = pointerY <= workArea.y + SNAP_EDGE_SIZE
+    const nearBottom = pointerY >= workArea.y + workArea.height - SNAP_EDGE_SIZE
+    const halfW = Math.floor(workArea.width / 2)
+    const halfH = Math.floor(workArea.height / 2)
+
+    // corners first
+    if (nearTop && nearLeft) {
+      return { kind: 'top-left', x: workArea.x, y: workArea.y, width: halfW, height: halfH }
+    }
+    if (nearTop && nearRight) {
+      return { kind: 'top-right', x: workArea.x + halfW, y: workArea.y, width: workArea.width - halfW, height: halfH }
+    }
+    if (nearBottom && nearLeft) {
+      return { kind: 'bottom-left', x: workArea.x, y: workArea.y + halfH, width: halfW, height: workArea.height - halfH }
+    }
+    if (nearBottom && nearRight) {
+      return { kind: 'bottom-right', x: workArea.x + halfW, y: workArea.y + halfH, width: workArea.width - halfW, height: workArea.height - halfH }
+    }
+    // edges
+    if (nearTop) {
       return { kind: 'top', ...workArea }
+    }
+    if (nearLeft) {
+      return { kind: 'left', x: workArea.x, y: workArea.y, width: halfW, height: workArea.height }
+    }
+    if (nearRight) {
+      return { kind: 'right', x: workArea.x + halfW, y: workArea.y, width: workArea.width - halfW, height: workArea.height }
     }
     return null
   }
@@ -158,12 +186,18 @@ export function useWindowInteraction(readConfig: () => InteractionConfig) {
     const preview = dragging.value && e ? resolveSnapPreview(e) : snapPreview.value
     if (dragging.value && preview) {
       const cfg = readConfig()
-      cfg.maximize(cfg.id, {
-        x: dragStart.value.winX,
-        y: dragStart.value.winY,
-        width: dragStart.value.winWidth,
-        height: dragStart.value.winHeight,
-      })
+      if (preview.kind === 'top') {
+        // top edge = maximize (mac-like zoom fill)
+        cfg.maximize(cfg.id, {
+          x: dragStart.value.winX,
+          y: dragStart.value.winY,
+          width: dragStart.value.winWidth,
+          height: dragStart.value.winHeight,
+        })
+      } else {
+        // half/quarter snap without entering maximized mode
+        cfg.updateGeometry(cfg.id, preview.x, preview.y, preview.width, preview.height)
+      }
     }
     dragging.value = false; resizeInfo.value = null
     snapPreview.value = null

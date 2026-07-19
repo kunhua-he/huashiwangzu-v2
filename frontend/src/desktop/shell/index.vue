@@ -13,6 +13,7 @@
     <MacMenuBar
       :active-title="activeMenuTitle"
       :active-window-id="activeWindow?.id"
+      :active-app-key="activeWindow?.appKey || ''"
       :username="desktopUserName"
       :clock="menuClock"
       :windows="windowManager.windows"
@@ -222,6 +223,17 @@ function updateMenuClock() {
 watch(allAppList, apps => registerAllApps(apps), { immediate: true })
 watch(desktopFileList, files => registerAllFiles(files), { immediate: true })
 
+function handleHideApp(event: Event) {
+  const detail = (event as CustomEvent<{ appKey?: string }>).detail
+  const appKey = detail?.appKey
+  if (!appKey) return
+  for (const w of windowManager.windows) {
+    if (w.appKey === appKey || (w.appKey === 'files' && appKey === 'desktop') || (w.appKey === 'desktop' && appKey === 'files')) {
+      windowManager.minimizeWindow(w.id)
+    }
+  }
+}
+
 onMounted(() => {
   void nextTick(() => applyCurrentShellSkin(desktopContainerRef.value))
   updateMenuClock()
@@ -229,6 +241,7 @@ onMounted(() => {
   window.addEventListener('keydown', handleGlobalShortcut, true)
   window.addEventListener('desktop:open-app-switcher', openAppSwitcher)
   window.addEventListener('desktop:close-app-switcher', closeAppSwitcher)
+  window.addEventListener('desktop:hide-app', handleHideApp)
   window.__HSWZ_DESKTOP_SHELL__ = {
     openAppSwitcher,
     closeAppSwitcher,
@@ -245,6 +258,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalShortcut, true)
   window.removeEventListener('desktop:open-app-switcher', openAppSwitcher)
   window.removeEventListener('desktop:close-app-switcher', closeAppSwitcher)
+  window.removeEventListener('desktop:hide-app', handleHideApp)
 })
 
 function openLaunchpad() {

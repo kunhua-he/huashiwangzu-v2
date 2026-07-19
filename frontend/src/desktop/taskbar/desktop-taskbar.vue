@@ -18,7 +18,20 @@
           <strong>{{ app.appName }}</strong>
           <button v-for="windowItem in app.windows" :key="windowItem.id" type="button" role="menuitem" @click="emit('switchWindow', windowItem.id); closeAppMenu()"><Check v-if="windowItem.isActive" :size="13" /><span v-else class="mac-dock-menu-space" />{{ windowItem.title }}</button>
           <div v-if="app.windows.length" class="mac-dock-menu-separator" />
-          <button type="button" role="menuitem" @click="emit('openApp', app.appKey); closeAppMenu()"><Plus :size="13" />打开</button>
+          <button type="button" role="menuitem" @click="emit('openApp', app.appKey); closeAppMenu()"><Plus :size="13" />{{ app.windows.length ? '新建窗口' : '打开' }}</button>
+          <button
+            v-if="app.windows.length"
+            type="button"
+            role="menuitem"
+            @click="hideAppWindows(app); closeAppMenu()"
+          ><Minus :size="13" />隐藏</button>
+          <button
+            v-if="app.windows.length"
+            type="button"
+            role="menuitem"
+            class="is-danger"
+            @click="quitAppWindows(app); closeAppMenu()"
+          ><X :size="13" />退出</button>
         </div>
       </div>
     </template>
@@ -31,7 +44,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Check, Grid3X3, Plus, Search } from 'lucide-vue-next'
+import { Check, Grid3X3, Minus, Plus, Search, X } from 'lucide-vue-next'
 import type { AppRegistryEntry, TaskbarItem } from '@/desktop/window-manager/window-types'
 import AppIcon from '@/desktop/components/app-icon.vue'
 import { activeProgress } from '@/desktop/feedback/desktop-feedback'
@@ -89,6 +102,12 @@ function getProgress(appKey: string) { return activeProgress.value.get(appKey) |
 function progressStyle(appKey: string) { const entry = getProgress(appKey); if (!entry) return {}; return { width: entry.progress === -1 ? '42%' : `${Math.min(100, entry.progress * 100)}%`, background: entry.color || '#0a84ff' } }
 function openAppMenu(appKey: string) { contextAppKey.value = appKey }
 function closeAppMenu() { contextAppKey.value = '' }
+function hideAppWindows(app: (typeof dockApps.value)[number]) {
+  window.dispatchEvent(new CustomEvent('desktop:hide-app', { detail: { appKey: app.appKey } }))
+}
+function quitAppWindows(app: (typeof dockApps.value)[number]) {
+  for (const w of app.windows) emit('closeWindow', w.id)
+}
 function onPointerDown(event: PointerEvent) { if (!(event.target as HTMLElement | null)?.closest('.mac-dock-item-wrap')) closeAppMenu() }
 onMounted(() => document.addEventListener('pointerdown', onPointerDown))
 onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))

@@ -17,7 +17,7 @@
             </button>
           </div>
           <div v-else-if="searchText.trim()" class="spotlight-empty">没有找到结果</div>
-          <div v-else class="spotlight-empty">输入应用、文件或命令名称</div>
+          <div v-else class="spotlight-empty">输入应用、文件或命令 · 下方为最近使用</div>
         </section>
       </div>
     </Transition>
@@ -35,12 +35,42 @@ const emit = defineEmits<{ close: [] }>()
 const searchText = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 const selectedIndex = ref(0)
-const results = computed(() => commandRegistry.search(searchText.value.trim()).slice(0, 9))
+const RECENT_KEY = 'desktop.spotlight.recent.v1'
+const recentIds = ref<string[]>([])
+
+function loadRecent() {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY)
+    recentIds.value = raw ? JSON.parse(raw) as string[] : []
+  } catch {
+    recentIds.value = []
+  }
+}
+function pushRecent(id: string) {
+  recentIds.value = [id, ...recentIds.value.filter((x) => x !== id)].slice(0, 8)
+  localStorage.setItem(RECENT_KEY, JSON.stringify(recentIds.value))
+}
+
+const results = computed(() => {
+  const q = searchText.value.trim()
+  if (q) return commandRegistry.search(q).slice(0, 9)
+  // empty query: show recent + top system commands
+  const all = commandRegistry.search('')
+  const byId = new Map(all.map((item) => [item.id, item]))
+  const recent = recentIds.value.map((id) => byId.get(id)).filter(Boolean) as SearchResultItem[]
+  const fallback = all.filter((item) => item.type === 'command' || item.type === 'app').slice(0, 6)
+  const merged = [...recent]
+  for (const item of fallback) {
+    if (!merged.some((x) => x.id === item.id)) merged.push(item)
+  }
+  return merged.slice(0, 9)
+})
 
 watch(() => props.show, (show) => {
   if (!show) return
   searchText.value = ''
   selectedIndex.value = 0
+  loadRecent()
   nextTick(() => inputRef.value?.focus())
 })
 watch(results, () => { selectedIndex.value = 0 })
@@ -50,7 +80,11 @@ function moveSelection(delta: number) {
   selectedIndex.value = (selectedIndex.value + delta + results.value.length) % results.value.length
 }
 function executeSelected() { const item = results.value[selectedIndex.value]; if (item) execute(item) }
-function execute(item: SearchResultItem) { void item.execute(); emit('close') }
+function execute(item: SearchResultItem) {
+  pushRecent(item.id)
+  void item.execute()
+  emit('close')
+}
 function fallbackIcon(type: SearchResultItem['type']) { return type === 'file' ? 'Document' : type === 'app' ? 'Grid' : 'Search' }
 function resultAppKey(item: SearchResultItem) { return item.id.startsWith('app:') ? item.id.split(':')[1] : '' }
 const systemIcons = { Document: FileText, Folder, LogOut, Maximize2, Minimize2, RefreshCw }

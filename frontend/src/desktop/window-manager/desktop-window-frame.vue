@@ -651,6 +651,12 @@ onUnmounted(() => {
     opacity 0.08s ease;
 }
 .window-snap-preview-top { border-radius: 0 0 8px 8px; }
+.window-snap-preview-left { border-radius: 0 10px 10px 0; }
+.window-snap-preview-right { border-radius: 10px 0 0 10px; }
+.window-snap-preview-top-left,
+.window-snap-preview-top-right,
+.window-snap-preview-bottom-left,
+.window-snap-preview-bottom-right { border-radius: 10px; }
 
 /* ═══ 缩放手柄 ═══ */
 .resize-handle { position: absolute; z-index: 6; }

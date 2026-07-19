@@ -5,30 +5,30 @@
 :root {
   /* ===== macOS Shell Contract ===== */
   --desktop-menu-bar-height: 28px;
-  --desktop-dock-height: 66px;
-  --desktop-dock-padding: 9px;
-  --desktop-dock-bottom-gap: 12px;
-  --desktop-work-bottom-inset: 78px;
+  --desktop-dock-height: 64px;
+  --desktop-dock-padding: 8px;
+  --desktop-dock-bottom-gap: 10px;
+  --desktop-work-bottom-inset: 74px;
   --desktop-system-blue: #0a84ff;
   --desktop-selection: #0a84ff;
   --desktop-ink: rgba(20, 20, 22, 0.88);
   --desktop-ink-muted: rgba(60, 60, 67, 0.62);
   --desktop-wallpaper-ink: rgba(255, 255, 255, 0.96);
   --desktop-divider: rgba(60, 60, 67, 0.18);
-  --desktop-material-border: rgba(255, 255, 255, 0.42);
-  --desktop-material-menubar: rgba(246, 246, 250, 0.35);
-  --desktop-material-dock: rgba(255, 255, 255, 0.28);
-  --desktop-material-popover: rgba(250, 250, 252, 0.78);
-  --desktop-material-window: rgba(246, 246, 248, 0.92);
-  --desktop-shadow-dock: inset 1px 1px 0 rgba(255,255,255,.52), inset 0 0 0 .5px rgba(255,255,255,.22), 0 12px 32px rgba(0,0,0,.24);
-  --desktop-shadow-window: 0 24px 72px rgba(0,0,0,.34), 0 2px 12px rgba(0,0,0,.18), 0 0 0 .5px rgba(0,0,0,.22);
-  --desktop-shadow-window-inactive: 0 12px 36px rgba(0,0,0,.22), 0 0 0 .5px rgba(0,0,0,.16);
-  --desktop-shadow-popover: 0 18px 48px rgba(0,0,0,.28), 0 0 0 .5px rgba(0,0,0,.12);
+  --desktop-material-border: rgba(255, 255, 255, 0.28);
+  --desktop-material-menubar: rgba(255, 255, 255, 0.08);
+  --desktop-material-dock: rgba(255, 255, 255, 0.22);
+  --desktop-material-popover: rgba(246, 246, 248, 0.88);
+  --desktop-material-window: rgba(246, 246, 248, 0.97);
+  --desktop-shadow-dock: 0 18px 40px rgba(0,0,0,.32), 0 2px 8px rgba(0,0,0,.16), inset 0 0.5px 0 rgba(255,255,255,.5), inset 0 -0.5px 0 rgba(0,0,0,.08);
+  --desktop-shadow-window: 0 28px 80px rgba(0,0,0,.36), 0 8px 24px rgba(0,0,0,.18), 0 0 0 .5px rgba(0,0,0,.2);
+  --desktop-shadow-window-inactive: 0 10px 28px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.12);
+  --desktop-shadow-popover: 0 16px 40px rgba(0,0,0,.24), 0 0 0 .5px rgba(0,0,0,.08), inset 0 0.5px 0 rgba(255,255,255,.55);
   --desktop-radius-control: 6px;
   --desktop-radius-menu: 10px;
   --desktop-radius-popover: 12px;
-  --desktop-radius-window: 14px;
-  --desktop-dock-radius: 18px;
+  --desktop-radius-window: 12px;
+  --desktop-dock-radius: 20px;
   --desktop-font-menu: 600 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
   --desktop-font-body: 400 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
   --desktop-font-caption: 400 11px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
@@ -57,20 +57,20 @@
 
 
   /* ===== Skin recipe defaults (overridden by skins/macos|win11) ===== */
-  --desktop-lg-fill: rgba(248, 247, 252, 0.36);
-  --desktop-lg-fill-strong: rgba(249, 248, 252, 0.82);
-  --desktop-lg-edge: rgba(255, 255, 255, 0.58);
-  --desktop-lg-filter: blur(34px) saturate(182%) contrast(1.03);
-  --desktop-lg-filter-soft: blur(24px) saturate(160%);
-  --desktop-lg-shadow: 0 26px 68px rgba(22, 17, 42, 0.25), 0 6px 18px rgba(22, 17, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.52);
-  --desktop-lg-shadow-soft: 0 14px 36px rgba(22, 17, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --desktop-lg-fill: rgba(246, 246, 248, 0.42);
+  --desktop-lg-fill-strong: rgba(246, 246, 248, 0.86);
+  --desktop-lg-edge: rgba(255, 255, 255, 0.36);
+  --desktop-lg-filter: blur(40px) saturate(140%) contrast(1.02);
+  --desktop-lg-filter-soft: blur(28px) saturate(130%);
+  --desktop-lg-shadow: 0 22px 54px rgba(0, 0, 0, 0.28), 0 4px 14px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.55);
+  --desktop-lg-shadow-soft: 0 10px 28px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.1), inset 0 0.5px 0 rgba(255, 255, 255, 0.42);
 
   /* ===== Liquid Glass Primitive ===== */
-  --desktop-liquid-blur-strong: 30px;
-  --desktop-liquid-blur-medium: 24px;
+  --desktop-liquid-blur-strong: 40px;
+  --desktop-liquid-blur-medium: 28px;
   --desktop-liquid-blur-light: 16px;
   --desktop-liquid-blur-spotlight: 40px;
-  --desktop-liquid-saturate: 175%;
+  --desktop-liquid-saturate: 140%;
   --desktop-liquid-hairline: rgba(255, 255, 255, 0.28);
   --desktop-liquid-hairline-dark: rgba(15, 23, 42, 0.14);
   --desktop-liquid-specular: inset 1px 1px 0 rgba(255, 255, 255, 0.5);
@@ -88,28 +88,28 @@
   --desktop-refraction: url(#desktop-liquid-refraction);
 
   /* glass fill contracts */
-  --glass-dock-bg: rgba(255, 255, 255, 0.28);
-  --glass-menu-bg: rgba(250, 250, 252, 0.78);
-  --glass-panel-bg: rgba(246, 246, 250, 0.62);
-  --glass-spotlight-bg: rgba(245, 245, 248, 0.82);
-  --glass-window-bg: rgba(246, 246, 248, 0.94);
-  --glass-menubar-bg: rgba(246, 246, 250, 0.28);
-  --glass-banner-bg: rgba(248, 248, 250, 0.78);
+  --glass-dock-bg: rgba(255, 255, 255, 0.22);
+  --glass-menu-bg: rgba(246, 246, 248, 0.88);
+  --glass-panel-bg: rgba(242, 242, 247, 0.72);
+  --glass-spotlight-bg: rgba(246, 246, 248, 0.9);
+  --glass-window-bg: rgba(246, 246, 248, 0.97);
+  --glass-menubar-bg: rgba(255, 255, 255, 0.08);
+  --glass-banner-bg: rgba(246, 246, 248, 0.86);
 
   /* ===== 窗口系统 ===== */
   --window-bg: var(--glass-window-bg);
   --window-radius: var(--desktop-radius-window);
-  --window-border: rgba(255, 255, 255, 0.34);
+  --window-border: rgba(0, 0, 0, 0.12);
   --window-shadow: var(--desktop-shadow-window-inactive);
   --window-shadow-active: var(--desktop-shadow-window);
-  --window-titlebar-height: 44px;
-  --window-titlebar-bg: rgba(236, 236, 239, 0.72);
-  --window-titlebar-active-bg: rgba(244, 244, 246, 0.78);
-  --window-titlebar-border: rgba(60, 60, 67, 0.12);
-  --window-title-text: #374151;
-  --window-content-bg: linear-gradient(180deg, rgba(252,252,253,.98) 0%, rgba(255,255,255,.99) 100%);
+  --window-titlebar-height: 40px;
+  --window-titlebar-bg: rgba(236, 236, 239, 0.88);
+  --window-titlebar-active-bg: rgba(246, 246, 248, 0.94);
+  --window-titlebar-border: rgba(0, 0, 0, 0.06);
+  --window-title-text: #1d1d1f;
+  --window-content-bg: #ffffff;
   --window-z-index: 5000;
-  --window-maximized-radius: 14px;
+  --window-maximized-radius: 10px;
 
   /* ===== 交通灯按钮 ===== */
   --window-close-color: #ff5f57;

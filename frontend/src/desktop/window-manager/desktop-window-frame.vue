@@ -512,25 +512,29 @@ onUnmounted(() => {
     border-color 0.16s ease;
 }
 
-/* Finder / 访达：更接近系统标题栏（隐藏应用图标，仅保留居中标题） */
+/* Finder / 访达：系统标题栏（隐藏应用图标，仅保留居中标题） */
 .desktop-window-finder :deep(.window-title-info .app-icon) {
   display: none;
 }
 .desktop-window-finder :deep(.window-title) {
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   font-size: 13px;
+  color: #1d1d1f;
+}
+.desktop-window-finder:not(.desktop-window-active) :deep(.window-title) {
+  color: rgba(60, 60, 67, 0.55);
 }
 .desktop-window-finder :deep(.window-titlebar) {
   height: 38px;
   border-bottom: 0;
-  background: color-mix(in srgb, #ececef 78%, rgba(255, 255, 255, 0.55));
-  box-shadow: inset 0 -0.5px 0 rgba(60, 60, 67, 0.12);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  background: #e8e8ea;
+  box-shadow: inset 0 -0.5px 0 rgba(0, 0, 0, 0.08), inset 0 0.5px 0 rgba(255, 255, 255, 0.55);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .desktop-window-finder.desktop-window-active :deep(.window-titlebar) {
-  background: color-mix(in srgb, #f4f4f6 82%, rgba(255, 255, 255, 0.6));
+  background: #f0f0f2;
 }
 .window-tab-add {
   width: 22px;
@@ -546,12 +550,12 @@ onUnmounted(() => {
 .window-tab-add:hover { background: rgba(0, 0, 0, 0.06); }
 .window-finder-tabs {
   display: flex;
-  gap: 2px;
+  gap: 1px;
   align-items: flex-end;
   min-height: 28px;
   padding: 0 10px;
-  background: color-mix(in srgb, #ececef 70%, white);
-  box-shadow: inset 0 -0.5px 0 rgba(60, 60, 67, 0.12);
+  background: #e5e5e7;
+  box-shadow: inset 0 -0.5px 0 rgba(0, 0, 0, 0.08);
   overflow-x: auto;
 }
 .window-finder-tab {
@@ -562,16 +566,16 @@ onUnmounted(() => {
   height: 24px;
   padding: 0 10px;
   border: 0;
-  border-radius: 7px 7px 0 0;
+  border-radius: 6px 6px 0 0;
   background: transparent;
-  color: rgba(60, 60, 67, 0.78);
+  color: rgba(60, 60, 67, 0.72);
   font: 500 12px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
   cursor: pointer;
 }
 .window-finder-tab.active {
-  background: color-mix(in srgb, #fff 88%, #f2f2f4);
+  background: #ffffff;
   color: #1d1d1f;
-  box-shadow: 0 -0.5px 0 rgba(60, 60, 67, 0.12);
+  box-shadow: 0 -0.5px 0 rgba(0, 0, 0, 0.06);
 }
 .window-finder-tab-label {
   overflow: hidden;

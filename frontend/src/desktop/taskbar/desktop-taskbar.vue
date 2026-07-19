@@ -208,17 +208,35 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
 </script>
 
 <style scoped>
-.mac-dock{position:absolute;left:50%;bottom:var(--desktop-dock-bottom-gap);z-index:var(--z-dock);height:var(--desktop-dock-height);max-width:calc(100% - 24px);display:flex;align-items:flex-end;gap:4px;padding:var(--desktop-dock-padding);transform:translateX(-50%);user-select:none}
-.mac-dock-item-wrap{position:relative;width:48px;height:48px;display:grid;place-items:end center;flex:0 0 48px;transition:width var(--desktop-duration-fast) var(--desktop-ease-spring),margin var(--desktop-duration-fast) var(--desktop-ease-spring)}
-.mac-dock-item-wrap.is-hovered{width:62px}
-.mac-dock-item-wrap.is-neighbor{width:54px}
-.mac-dock-item-wrap.is-near{width:50px}
-.mac-dock-icon-button{position:relative;width:48px;height:48px;padding:0;border:0;border-radius:12px;background:transparent;color:rgba(255,255,255,.92);display:grid;place-items:center;transform-origin:50% 100%;transition:transform var(--desktop-duration-fast) var(--desktop-ease-spring),filter var(--desktop-duration-fast) var(--desktop-ease-spring)}
-.mac-dock-icon-button:hover{filter:brightness(1.06)}
-.mac-dock-icon-button:focus-visible{outline:2px solid rgba(255,255,255,.94);outline-offset:3px}
-.mac-dock-item-wrap.is-hovered .mac-dock-icon-button{transform:translateY(-14px) scale(1.32)}
-.mac-dock-item-wrap.is-neighbor .mac-dock-icon-button{transform:translateY(-8px) scale(1.16)}
-.mac-dock-item-wrap.is-near .mac-dock-icon-button{transform:translateY(-4px) scale(1.07)}
+.mac-dock{
+  position:absolute;left:50%;bottom:var(--desktop-dock-bottom-gap);z-index:var(--z-dock);
+  height:var(--desktop-dock-height);max-width:calc(100% - 24px);
+  display:flex;align-items:flex-end;gap:2px;
+  padding:var(--desktop-dock-padding) calc(var(--desktop-dock-padding) + 2px);
+  transform:translateX(-50%);user-select:none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.06) 40%, rgba(0,0,0,.06)),
+    var(--glass-dock-bg, rgba(255,255,255,.22));
+}
+.mac-dock-item-wrap{
+  position:relative;width:48px;height:48px;display:grid;place-items:end center;flex:0 0 48px;
+  transition:width 160ms cubic-bezier(.22,1.2,.36,1),margin 160ms cubic-bezier(.22,1.2,.36,1)
+}
+.mac-dock-item-wrap.is-hovered{width:64px}
+.mac-dock-item-wrap.is-neighbor{width:56px}
+.mac-dock-item-wrap.is-near{width:52px}
+.mac-dock-icon-button{
+  position:relative;width:48px;height:48px;padding:0;border:0;border-radius:11px;background:transparent;
+  color:rgba(255,255,255,.94);display:grid;place-items:center;
+  transform-origin:50% 100%;
+  filter:drop-shadow(0 2px 3px rgba(0,0,0,.28));
+  transition:transform 160ms cubic-bezier(.22,1.2,.36,1),filter 160ms ease
+}
+.mac-dock-icon-button:hover{filter:drop-shadow(0 4px 8px rgba(0,0,0,.32)) brightness(1.04)}
+.mac-dock-icon-button:focus-visible{outline:2px solid rgba(255,255,255,.9);outline-offset:3px}
+.mac-dock-item-wrap.is-hovered .mac-dock-icon-button{transform:translateY(-12px) scale(1.28)}
+.mac-dock-item-wrap.is-neighbor .mac-dock-icon-button{transform:translateY(-7px) scale(1.14)}
+.mac-dock-item-wrap.is-near .mac-dock-icon-button{transform:translateY(-3px) scale(1.06)}
 .mac-dock-icon-button.is-bouncing{animation:dock-bounce 700ms var(--desktop-ease-spring)}
 @keyframes dock-bounce{
   0%{transform:translateY(0) scale(1)}
@@ -229,17 +247,26 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
   86%{transform:translateY(-4px) scale(1.02)}
   100%{transform:translateY(0) scale(1)}
 }
-.taskbar-start{background:linear-gradient(145deg,rgba(37,99,235,.92),rgba(14,165,233,.92));box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 4px 12px rgba(0,0,0,.18)}
-.mac-dock-separator{width:1px;height:36px;margin:0 3px 5px;background:rgba(255,255,255,.28)}
-.mac-dock-running-dot{position:absolute;left:50%;bottom:-5px;width:4px;height:4px;border-radius:50%;transform:translateX(-50%);background:rgba(255,255,255,.9);box-shadow:0 1px 2px rgba(0,0,0,.5)}
-.mac-dock-progress{position:absolute;left:5px;right:5px;bottom:1px;height:3px;border-radius:4px;background:rgba(0,0,0,.24);overflow:hidden}
+.taskbar-start{background:linear-gradient(145deg,rgba(37,99,235,.92),rgba(14,165,233,.92));box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 4px 12px rgba(0,0,0,.18);border-radius:12px}
+.mac-dock-separator{
+  width:0.5px;height:34px;margin:0 4px 6px;
+  background:linear-gradient(180deg,transparent,rgba(255,255,255,.38),transparent);
+  opacity:.9
+}
+.mac-dock-running-dot{
+  position:absolute;left:50%;bottom:-6px;width:3px;height:3px;border-radius:50%;
+  transform:translateX(-50%);
+  background:rgba(255,255,255,.92);
+  box-shadow:0 0 0 0.5px rgba(0,0,0,.25)
+}
+.mac-dock-progress{position:absolute;left:6px;right:6px;bottom:1px;height:2px;border-radius:2px;background:rgba(0,0,0,.22);overflow:hidden}
 .mac-dock-progress span{display:block;height:100%;border-radius:inherit}
-.mac-dock-menu{position:absolute;left:50%;bottom:62px;width:230px;padding:5px;transform:translateX(-50%);color:var(--desktop-ink);z-index:var(--z-system-popover)}
-.mac-dock-menu strong{display:block;padding:7px 8px 5px;font:var(--desktop-font-caption);color:var(--desktop-ink-muted)}
-.mac-dock-menu button{width:100%;height:28px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:inherit;display:grid;grid-template-columns:14px 1fr;align-items:center;gap:7px;text-align:left;font:var(--desktop-font-menu)}
+.mac-dock-menu{position:absolute;left:50%;bottom:64px;width:220px;padding:6px;transform:translateX(-50%);color:var(--desktop-ink);z-index:var(--z-system-popover);border-radius:10px}
+.mac-dock-menu strong{display:block;padding:6px 8px 4px;font:var(--desktop-font-caption);color:var(--desktop-ink-muted)}
+.mac-dock-menu button{width:100%;height:26px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:inherit;display:grid;grid-template-columns:14px 1fr;align-items:center;gap:7px;text-align:left;font:400 13px/1 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
 .mac-dock-menu button:hover{background:var(--desktop-selection);color:white}
 .mac-dock-menu-space{width:13px}
-.mac-dock-menu-separator{height:1px;margin:4px 7px;background:var(--desktop-divider)}
+.mac-dock-menu-separator{height:0.5px;margin:5px 8px;background:rgba(60,60,67,.18)}
 html.desktop-micro-off .mac-dock-icon-button,html.desktop-micro-off .mac-dock-item-wrap{transition:none!important}
 @media(prefers-reduced-motion:reduce){.mac-dock-icon-button,.mac-dock-item-wrap{transition:none!important}.mac-dock-item-wrap.is-hovered .mac-dock-icon-button,.mac-dock-item-wrap.is-neighbor .mac-dock-icon-button,.mac-dock-item-wrap.is-near .mac-dock-icon-button{transform:none}.mac-dock-item-wrap.is-hovered,.mac-dock-item-wrap.is-neighbor,.mac-dock-item-wrap.is-near{width:48px}}
 @media(max-width:760px){.mac-dock{max-width:calc(100% - 12px);overflow-x:auto;overflow-y:hidden}.mac-dock-item-wrap.is-hovered .mac-dock-icon-button,.mac-dock-item-wrap.is-neighbor .mac-dock-icon-button,.mac-dock-item-wrap.is-near .mac-dock-icon-button{transform:none}.mac-dock-item-wrap.is-hovered,.mac-dock-item-wrap.is-neighbor,.mac-dock-item-wrap.is-near{width:48px}}

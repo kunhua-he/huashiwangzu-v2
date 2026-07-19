@@ -65,7 +65,23 @@ function handleKeydown(event: KeyboardEvent) {
 </script>
 
 <style scoped>
-.v40-ctx-menu,.v40-ctx-sub{position:fixed;z-index:var(--context-menu-z-index);min-width:var(--context-menu-min-width);padding:5px;color:var(--context-menu-text)}.v40-ctx-sub{z-index:calc(var(--context-menu-z-index) + 1)}
-.v40-ctx-item{width:100%;height:28px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:inherit;display:grid;grid-template-columns:14px minmax(0,1fr) 14px;align-items:center;gap:6px;text-align:left;font:var(--desktop-font-menu);cursor:default}.v40-ctx-item:hover:not(:disabled),.v40-ctx-item:focus-visible,.v40-ctx-item.is-open{background:var(--context-menu-hover-bg);color:white;outline:none}.v40-ctx-item.is-danger{color:var(--context-menu-danger-text)}.v40-ctx-item.is-danger:hover:not(:disabled),.v40-ctx-item.is-danger:focus-visible{background:#ff3b30;color:white}.v40-ctx-item:disabled{color:var(--context-menu-disabled-text)}.v40-ctx-sep{height:1px;margin:4px 7px;background:var(--context-menu-divider)}.v40-ctx-check{width:14px}.v40-ctx-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.v40-ctx-menu,.v40-ctx-sub{
+  position:fixed;z-index:var(--context-menu-z-index);min-width:var(--context-menu-min-width);
+  padding:6px;color:var(--context-menu-text);border-radius:10px;
+  font:400 13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif
+}
+.v40-ctx-sub{z-index:calc(var(--context-menu-z-index) + 1)}
+.v40-ctx-item{
+  width:100%;height:26px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:inherit;
+  display:grid;grid-template-columns:14px minmax(0,1fr) 14px;align-items:center;gap:6px;text-align:left;
+  font:inherit;cursor:default
+}
+.v40-ctx-item:hover:not(:disabled),.v40-ctx-item:focus-visible,.v40-ctx-item.is-open{background:var(--context-menu-hover-bg);color:white;outline:none}
+.v40-ctx-item.is-danger{color:var(--context-menu-danger-text)}
+.v40-ctx-item.is-danger:hover:not(:disabled),.v40-ctx-item.is-danger:focus-visible{background:#ff3b30;color:white}
+.v40-ctx-item:disabled{color:var(--context-menu-disabled-text)}
+.v40-ctx-sep{height:0.5px;margin:5px 8px;background:rgba(60,60,67,.18)}
+.v40-ctx-check{width:14px}
+.v40-ctx-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(prefers-reduced-transparency:reduce){.v40-ctx-menu,.v40-ctx-sub{background:#f4f4f6;backdrop-filter:none}}
 </style>

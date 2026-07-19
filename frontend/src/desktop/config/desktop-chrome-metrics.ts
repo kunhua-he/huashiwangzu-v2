@@ -15,9 +15,9 @@ export function getDesktopChromeMetrics(): DesktopSkinMetrics {
 /** Compatibility constants — values follow the active skin at call time via getters below. */
 export const DESKTOP_MENU_BAR_HEIGHT = 28
 export const DESKTOP_DOCK_ICON_SIZE = 48
-export const DESKTOP_DOCK_PADDING = 9
-export const DESKTOP_DOCK_HEIGHT = 66
-export const DESKTOP_DOCK_BOTTOM_GAP = 12
+export const DESKTOP_DOCK_PADDING = 8
+export const DESKTOP_DOCK_HEIGHT = 64
+export const DESKTOP_DOCK_BOTTOM_GAP = 10
 export const DESKTOP_WINDOW_EDGE_GAP = 8
 
 export interface DesktopWorkArea {

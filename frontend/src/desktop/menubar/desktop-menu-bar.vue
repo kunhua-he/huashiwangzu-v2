@@ -265,13 +265,61 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
 </script>
 
 <style scoped>
-.mac-menu-bar{position:absolute;inset:0 0 auto 0;height:var(--desktop-menu-bar-height);z-index:var(--z-menu-bar);display:flex;align-items:center;justify-content:space-between;padding:0 8px;color:var(--desktop-wallpaper-ink);font:var(--desktop-font-menu);text-shadow:0 1px 2px rgba(0,0,0,.32);user-select:none;transition:background var(--desktop-duration-standard) var(--desktop-ease-standard),backdrop-filter var(--desktop-duration-standard) var(--desktop-ease-standard)}
-.mac-menu-bar.is-solid{background:rgba(246,246,250,.72);-webkit-backdrop-filter:var(--desktop-lg-filter-soft,blur(24px) saturate(160%));backdrop-filter:var(--desktop-lg-filter-soft,blur(24px) saturate(160%));text-shadow:none;color:rgba(20,20,22,.88)}
-.mac-menu-bar-primary,.mac-menu-bar-status{display:flex;align-items:center;height:100%;min-width:0}.mac-menu-bar-status{gap:1px}
-.mac-menu-trigger,.mac-status-button,.mac-clock{height:22px;border:0;border-radius:5px;background:transparent;color:inherit;display:inline-flex;align-items:center;justify-content:center;padding:0 9px;font:inherit;white-space:nowrap;cursor:default}.mac-menu-trigger:hover,.mac-menu-trigger[aria-expanded=true],.mac-status-button:hover,.mac-status-button[aria-expanded=true]{background:rgba(255,255,255,.2)}
-.mac-menu-brand{width:34px;padding:0}.mac-menu-app-title{font-weight:700;max-width:190px;overflow:hidden;text-overflow:ellipsis}.mac-account-trigger{gap:5px}.mac-clock{font-weight:600}
-.mac-menu-popover{position:absolute;top:26px;left:8px;width:250px;padding:5px;color:var(--desktop-ink);text-shadow:none;z-index:var(--z-system-popover)}
-.mac-menu-popover-app{left:42px}.mac-menu-popover-file{left:150px}.mac-menu-popover-view{left:198px}.mac-menu-popover-window{left:250px}.mac-menu-popover-help{left:306px}.mac-menu-popover-account{left:auto;right:8px}
-.mac-menu-row{width:100%;height:28px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:inherit;display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:7px;text-align:left;font:var(--desktop-font-menu);cursor:default}.mac-menu-row:hover:not(:disabled),.mac-menu-row:focus-visible{background:var(--desktop-selection);color:white;outline:none}.mac-menu-row:disabled{opacity:.42}.mac-menu-row kbd{font:inherit;color:var(--desktop-ink-muted)}.mac-menu-row:hover kbd{color:rgba(255,255,255,.78)}.mac-menu-separator{height:1px;margin:4px 7px;background:var(--desktop-divider)}.mac-menu-icon-space{width:14px}
+.mac-menu-bar{
+  position:absolute;inset:0 0 auto 0;height:var(--desktop-menu-bar-height);z-index:var(--z-menu-bar);
+  display:flex;align-items:center;justify-content:space-between;padding:0 10px;
+  color:var(--desktop-wallpaper-ink);
+  font:600 13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;
+  letter-spacing:-0.01em;
+  text-shadow:0 1px 1.5px rgba(0,0,0,.45);
+  user-select:none;
+  transition:background .2s ease,color .2s ease,text-shadow .2s ease,backdrop-filter .2s ease,-webkit-backdrop-filter .2s ease;
+}
+/* 默认：几乎透明，贴在壁纸上（覆盖 glass-menubar 的半透明白底） */
+.mac-menu-bar:not(.is-solid){
+  background:linear-gradient(180deg,rgba(0,0,0,.16),rgba(0,0,0,.03));
+  border-bottom:0.5px solid rgba(255,255,255,.06);
+  -webkit-backdrop-filter:blur(12px) saturate(120%);
+  backdrop-filter:blur(12px) saturate(120%);
+}
+/* 窗口顶到菜单栏：变实，去掉阴影字 */
+.mac-menu-bar.is-solid{
+  background:rgba(246,246,248,.78);
+  -webkit-backdrop-filter:blur(24px) saturate(140%);
+  backdrop-filter:blur(24px) saturate(140%);
+  border-bottom:0.5px solid rgba(0,0,0,.08);
+  text-shadow:none;
+  color:rgba(29,29,31,.92);
+}
+.mac-menu-bar-primary,.mac-menu-bar-status{display:flex;align-items:center;height:100%;min-width:0}.mac-menu-bar-status{gap:2px}
+.mac-menu-trigger,.mac-status-button,.mac-clock{
+  height:22px;border:0;border-radius:4px;background:transparent;color:inherit;
+  display:inline-flex;align-items:center;justify-content:center;padding:0 8px;font:inherit;white-space:nowrap;cursor:default
+}
+.mac-menu-trigger:hover,.mac-menu-trigger[aria-expanded=true],.mac-status-button:hover,.mac-status-button[aria-expanded=true]{
+  background:rgba(255,255,255,.18)
+}
+.mac-menu-bar.is-solid .mac-menu-trigger:hover,
+.mac-menu-bar.is-solid .mac-menu-trigger[aria-expanded=true],
+.mac-menu-bar.is-solid .mac-status-button:hover,
+.mac-menu-bar.is-solid .mac-status-button[aria-expanded=true]{
+  background:rgba(0,0,0,.08)
+}
+.mac-menu-brand{width:32px;padding:0}.mac-menu-app-title{font-weight:700;max-width:190px;overflow:hidden;text-overflow:ellipsis}.mac-account-trigger{gap:5px}.mac-clock{font-weight:600;font-variant-numeric:tabular-nums}
+.mac-menu-popover{
+  position:absolute;top:calc(var(--desktop-menu-bar-height) - 2px);left:8px;width:236px;padding:6px;
+  color:var(--desktop-ink);text-shadow:none;z-index:var(--z-system-popover);
+  border-radius:10px;
+}
+.mac-menu-popover-app{left:40px}.mac-menu-popover-file{left:140px}.mac-menu-popover-view{left:188px}.mac-menu-popover-window{left:240px}.mac-menu-popover-help{left:296px}.mac-menu-popover-account{left:auto;right:8px}
+.mac-menu-row{
+  width:100%;height:26px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:inherit;
+  display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:7px;text-align:left;
+  font:400 13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;cursor:default
+}
+.mac-menu-row:hover:not(:disabled),.mac-menu-row:focus-visible{background:var(--desktop-selection);color:white;outline:none}
+.mac-menu-row:disabled{opacity:.38}.mac-menu-row kbd{font:inherit;color:var(--desktop-ink-muted);font-size:12px}
+.mac-menu-row:hover kbd{color:rgba(255,255,255,.78)}
+.mac-menu-separator{height:0.5px;margin:5px 8px;background:rgba(60,60,67,.18)}.mac-menu-icon-space{width:14px}
 @media(max-width:760px){.mac-menu-trigger:not(.mac-menu-brand):not(.mac-menu-app-title){display:none}.mac-account-trigger span{display:none}.mac-menu-app-title{max-width:120px}.mac-menu-popover{left:8px!important;right:auto!important}}
 </style>

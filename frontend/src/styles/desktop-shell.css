@@ -13,13 +13,10 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  /* 轻 vignette，去掉花哨彩色光斑与 screen 混合（假感主因） */
   background:
-    radial-gradient(circle at 18% 22%, rgba(253, 230, 138, .34), transparent 18%),
-    radial-gradient(circle at 78% 18%, rgba(125, 211, 252, .28), transparent 22%),
-    radial-gradient(circle at 62% 72%, rgba(167, 139, 250, .22), transparent 28%),
-    radial-gradient(circle at 28% 80%, rgba(20, 184, 166, .2), transparent 26%),
+    radial-gradient(ellipse 90% 70% at 50% 0%, rgba(255,255,255,.06), transparent 55%),
     var(--desktop-wallpaper-vignette);
-  mix-blend-mode: screen;
 }
 .desktop-shell-container::after {
   content: '';
@@ -28,8 +25,8 @@
   z-index: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(255,255,255,.06), rgba(15,23,42,.24)),
-    radial-gradient(circle at 50% 120%, rgba(15,23,42,.28), transparent 48%);
+    linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,.12) 100%),
+    radial-gradient(circle at 50% 120%, rgba(0,0,0,.18), transparent 52%);
 }
 .desktop-shell-wallpaper {
   position: absolute;
@@ -38,8 +35,8 @@
   background-position: center;
   background-repeat: no-repeat;
   z-index: 0;
-  transform: scale(1.02);
-  filter: saturate(1.08) contrast(1.04);
+  transform: scale(1.01);
+  filter: saturate(1.02) contrast(1.01);
   transition: background 280ms ease, filter 180ms ease;
 }
 .desktop-shell-wallpaper.wallpaper-color {
@@ -55,15 +52,12 @@
   content: '';
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg, rgba(15,23,42,0.02), rgba(15,23,42,0.2)),
-    rgba(0,0,0,0.04);
+  /* 极轻遮罩，避免壁纸被二次染色 */
+  background: linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.08));
   pointer-events: none;
 }
 html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
-  background:
-    linear-gradient(180deg, rgba(15,23,42,0.18), rgba(15,23,42,0.42)),
-    rgba(0,0,0,0.12);
+  background: linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.28));
 }
 .desktop-liquid-filter {
   position: absolute;
@@ -74,65 +68,66 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
 
 /* ===== Shell material primitives (skin-driven via CSS vars) ===== */
 .glass-surface {
-  border: 1px solid var(--desktop-lg-edge, var(--desktop-liquid-hairline));
+  border: 0.5px solid var(--desktop-lg-edge, var(--desktop-liquid-hairline));
   box-shadow: var(--desktop-lg-shadow-soft, var(--desktop-liquid-shadow-soft));
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
-  backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
+  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
 }
 .glass-dock {
-  border-radius: var(--desktop-dock-radius, 18px);
+  border-radius: var(--desktop-dock-radius, 20px);
   background: var(--glass-dock-bg);
-  border: 1px solid var(--desktop-lg-edge, var(--desktop-liquid-hairline));
+  border: 0.5px solid rgba(255, 255, 255, 0.32);
   box-shadow: var(--desktop-shadow-dock);
-  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
-  backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
+  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(28px) saturate(130%));
+  backdrop-filter: var(--desktop-lg-filter-soft, blur(28px) saturate(130%));
 }
 .glass-menubar {
   background: var(--glass-menubar-bg);
-  border-bottom: 1px solid rgba(255,255,255,.14);
-  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
-  backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+  backdrop-filter: blur(20px) saturate(120%);
 }
 .glass-menu,
 .glass-popover {
   border-radius: var(--desktop-radius-menu);
   background: var(--glass-menu-bg);
-  border: 1px solid var(--desktop-lg-edge, var(--desktop-liquid-hairline));
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
   box-shadow: var(--desktop-shadow-popover);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
-  backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
+  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
 }
 .glass-panel {
-  border-radius: 20px;
+  border-radius: 16px;
   background: var(--glass-panel-bg);
-  border: 1px solid var(--desktop-lg-edge, var(--desktop-liquid-hairline));
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
   box-shadow: var(--desktop-shadow-popover);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
-  backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
+  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
 }
 .glass-spotlight {
-  border-radius: 20px;
+  border-radius: 14px;
   background: var(--glass-spotlight-bg);
-  border: 1px solid var(--desktop-lg-edge, var(--desktop-liquid-hairline));
-  box-shadow: var(--desktop-shadow-window), inset 0 1px 0 rgba(255,255,255,.45);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
-  backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
+  border: 0.5px solid rgba(0, 0, 0, 0.1);
+  box-shadow: var(--desktop-shadow-window), inset 0 0.5px 0 rgba(255,255,255,.5);
+  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
 }
 .glass-window {
   background: var(--glass-window-bg);
-  border: 1px solid var(--window-border);
+  border: 0.5px solid var(--window-border);
   border-radius: var(--window-radius);
   box-shadow: var(--window-shadow);
-  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
-  backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
+  /* 窗口主体不透光毛玻璃化，避免“网页玻璃卡片”感 */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .glass-banner {
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--glass-banner-bg);
-  border: 1px solid var(--desktop-lg-edge, var(--desktop-liquid-hairline));
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
   box-shadow: var(--desktop-shadow-popover);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
-  backdrop-filter: var(--desktop-lg-filter, blur(34px) saturate(182%));
+  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
 }
 
 /* Skin host hooks */
@@ -291,19 +286,23 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   border-radius: var(--window-radius);
   box-shadow: var(--window-shadow);
   overflow: hidden;
-  border: 1px solid var(--window-border);
+  border: 0.5px solid var(--window-border);
   color: var(--desktop-ink);
-  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
-  backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   transition: border-color .18s var(--desktop-ease-out-strong), box-shadow .18s var(--desktop-ease-out-strong), transform .18s var(--desktop-ease-out-strong), opacity .18s var(--desktop-ease-out-strong);
 }
 .desktop-window-active {
-  border-color: rgba(255,255,255,.42);
+  border-color: rgba(0, 0, 0, 0.14);
   box-shadow: var(--window-shadow-active);
 }
 .desktop-window:not(.desktop-window-active) {
-  filter: saturate(.9);
-  opacity: .98;
+  /* 非活动：更浅阴影 + 标题略灰，不要整窗半透明 */
+  filter: none;
+  opacity: 1;
+}
+.desktop-window:not(.desktop-window-active) .window-title {
+  color: rgba(60, 60, 67, 0.55);
 }
 .desktop-window-drop-target {
   box-shadow: var(--window-shadow-active), 0 0 0 3px rgba(10,132,255,.72) !important;
@@ -318,14 +317,14 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   padding: 0 14px;
   height: var(--window-titlebar-height);
   background: var(--window-titlebar-bg);
-  border-bottom: 1px solid var(--window-titlebar-border);
+  border-bottom: 0.5px solid var(--window-titlebar-border);
   cursor: move;
   user-select: none;
   flex-shrink: 0;
   position: relative;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.55);
-  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
-  backdrop-filter: var(--desktop-lg-filter-soft, blur(24px) saturate(160%));
+  box-shadow: inset 0 0.5px 0 rgba(255,255,255,.65);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .desktop-window-active .window-titlebar {
   background: var(--window-titlebar-active-bg);
@@ -340,8 +339,9 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   padding: 0 112px;
 }
 .window-title {
-  font: var(--desktop-font-menu);
-  color: var(--desktop-ink);
+  font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  letter-spacing: -0.01em;
+  color: var(--window-title-text, var(--desktop-ink));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -351,7 +351,7 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   align-items: center;
   gap: 8px;
   position: absolute;
-  left: 12px;
+  left: 14px;
   top: 50%;
   transform: translateY(-50%);
   height: auto;
@@ -359,7 +359,7 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
 .window-action-btn {
   width: var(--window-button-size);
   height: var(--window-button-size);
-  border: 1px solid rgba(0,0,0,0.08);
+  border: 0.5px solid rgba(0,0,0,0.12);
   border-radius: 50%;
   background: var(--window-button-inactive);
   border-color: var(--window-button-inactive-border);
@@ -369,6 +369,7 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   align-items: center;
   justify-content: center;
   position: relative;
+  box-shadow: inset 0 0 0 0.5px rgba(255,255,255,.25);
   transition: filter .12s ease, transform .12s ease, background .12s ease;
 }
 .window-action-btn::before {
@@ -437,10 +438,13 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
 .window-content {
   flex: 1;
   overflow: auto;
-  background: var(--window-content-bg);
+  background: var(--window-content-bg, #fff);
+  /* 内容区实底，杜绝壁纸透过 */
+  isolation: isolate;
 }
 .window-content-padding {
   height: 100%;
+  background: inherit;
 }
 
 @media (max-width: 760px) {

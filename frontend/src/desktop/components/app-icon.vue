@@ -6,6 +6,8 @@
     :data-app-icon-key="profile.key"
     aria-hidden="true"
   >
+    <span class="app-icon-fill" />
+    <span class="app-icon-gloss" />
     <component
       :is="profile.glyph"
       class="app-icon-glyph"
@@ -23,9 +25,9 @@ import { getAppIconProfile } from './app-icon-catalog'
 const props = withDefaults(defineProps<{ icon: string; appKey?: string; size?: number }>(), { size: 20, appKey: '' })
 
 const profile = computed(() => getAppIconProfile(props.appKey, props.icon))
-/** 参考 Dock：glyph 约占方块 58% */
-const glyphSize = computed(() => Math.max(11, Math.round(props.size * (props.size >= 40 ? 0.58 : 0.52))))
-const glyphStroke = computed(() => (props.size >= 40 ? 1.8 : 1.9))
+/** macOS 彩色方块上 SF Symbol 大约 52–58% */
+const glyphSize = computed(() => Math.max(11, Math.round(props.size * (props.size >= 40 ? 0.56 : 0.52))))
+const glyphStroke = computed(() => (props.size >= 40 ? 1.85 : 1.95))
 const glyphColor = computed(() => profile.value.accent || '#ffffff')
 const styleObject = computed(() => ({
   width: `${props.size}px`,
@@ -37,7 +39,13 @@ const styleObject = computed(() => ({
 </script>
 
 <style scoped>
-/* 系统 Dock 图标：满格圆角渐变 + 居中线标，不要多层 sheen/rim 假玻璃 */
+/*
+  更接近 Apple 图标语言：
+  - squircle 圆角（~22.37%）
+  - 竖向渐变底色
+  - 顶部轻微 gloss（不是假玻璃多层）
+  - 居中白线标
+*/
 .app-icon {
   position: relative;
   display: inline-grid;
@@ -46,31 +54,58 @@ const styleObject = computed(() => ({
   overflow: hidden;
   border-radius: 22.37%;
   color: var(--app-icon-accent, #fff);
-  background: linear-gradient(180deg, var(--app-icon-from), var(--app-icon-to));
-  box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.35),
-    0 1px 2px rgba(0, 0, 0, 0.18);
+  isolation: isolate;
   transform: translateZ(0);
+  box-shadow:
+    0 0.5px 0.5px rgba(0, 0, 0, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.16);
+}
+.app-icon-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, var(--app-icon-from) 0%, var(--app-icon-to) 100%);
+  box-shadow:
+    inset 0 0.6px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 1.5px rgba(0, 0, 0, 0.14);
+}
+/* 顶部柔光：系统图标常见的轻微镜面，不是网页 sheen 条 */
+.app-icon-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(120% 70% at 50% -10%, rgba(255, 255, 255, 0.38), transparent 52%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 42%);
+  pointer-events: none;
+  mix-blend-mode: soft-light;
 }
 .app-icon-glyph {
-  width: 58%;
-  height: 58%;
+  position: relative;
+  z-index: 1;
+  width: 56%;
+  height: 56%;
   color: var(--app-icon-accent, #fff);
   stroke: currentColor;
-  filter: none;
+  filter: drop-shadow(0 0.5px 0.5px rgba(0, 0, 0, 0.18));
 }
 .app-icon-sm {
   border-radius: 6px;
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.3), 0 1px 1px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
 }
 .app-icon-sm .app-icon-glyph {
   width: 54%;
   height: 54%;
+  filter: none;
+}
+.app-icon-sm .app-icon-gloss {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent 50%);
+  mix-blend-mode: normal;
 }
 .app-icon-lg {
   box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.38),
-    0 1px 2px rgba(0, 0, 0, 0.2),
-    0 4px 10px rgba(0, 0, 0, 0.12);
+    0 0.5px 0.5px rgba(0, 0, 0, 0.1),
+    0 3px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.1);
 }
 </style>

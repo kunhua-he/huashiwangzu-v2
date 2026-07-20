@@ -5,7 +5,13 @@ import type { Component } from 'vue'
 
 export const componentKeyMap: Record<string, () => Promise<{ default: Component }>> = {
   'agent/index.vue': () => import('@modules/agent/frontend/index.vue'),
+  'code-generic-parser/index.vue': () => import('@modules/code-generic-parser/frontend/index.vue'),
+  'code-html-parser/index.vue': () => import('@modules/code-html-parser/frontend/index.vue'),
+  'code-js-parser/index.vue': () => import('@modules/code-js-parser/frontend/index.vue'),
+  'code-php-parser/index.vue': () => import('@modules/code-php-parser/frontend/index.vue'),
+  'code-py-parser/index.vue': () => import('@modules/code-py-parser/frontend/index.vue'),
   'desktop-tools/index.vue': () => import('@modules/desktop-tools/frontend/index.vue'),
+  'doc-parser/index.vue': () => import('@modules/doc-parser/frontend/index.vue'),
   'doc-viewer/index.vue': () => import('@modules/doc-viewer/frontend/index.vue'),
   'docs-open/index.vue': () => import('@modules/docs-open/frontend/index.vue'),
   'docx-parser/index.vue': () => import('@modules/docx-parser/frontend/index.vue'),

@@ -187,7 +187,7 @@ import TaskbarNotifications from '@/desktop/taskbar/taskbar-notifications.vue'
 import DesktopControlCenter from '@/desktop/menubar/desktop-control-center.vue'
 import type { WindowState } from '@/desktop/window-manager/window-types'
 import { desktopConfig } from '@/desktop/config/desktop-preferences'
-import { 读取应用菜单, type 菜单项 } from '@/desktop/menubar/应用菜单注册表'
+import { 读取应用菜单, type 菜单项 } from '@/desktop/menubar/app-menu-registry'
 
 const props = defineProps<{
   activeTitle: string
@@ -350,8 +350,8 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
 /* 窗口顶到菜单栏：轻微实色 + 细底边，字变深 */
 .mac-menu-bar.is-solid {
   background: rgba(246, 246, 248, 0.72);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: var(--desktop-filter-menubar-solid, blur(20px) saturate(140%));
+  backdrop-filter: var(--desktop-filter-menubar-solid, blur(20px) saturate(140%));
   border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
   color: rgba(29, 29, 31, 0.92);
   text-shadow: none;
@@ -360,8 +360,8 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
 /* 有菜单打开时也略实一点，避免下拉与壁纸糊在一起 */
 .mac-menu-bar.has-open-menu:not(.is-solid) {
   background: rgba(0, 0, 0, 0.08);
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: var(--desktop-filter-menubar-open, blur(10px) saturate(120%));
+  backdrop-filter: var(--desktop-filter-menubar-open, blur(10px) saturate(120%));
 }
 
 .mac-menu-bar-primary,
@@ -378,9 +378,9 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
 .mac-menu-trigger,
 .mac-status-button,
 .mac-clock {
-  height: 22px;
+  height: var(--desktop-control-height-status, 22px);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--desktop-radius-status-control, 4px);
   background: transparent;
   color: inherit;
   display: inline-flex;
@@ -397,14 +397,14 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
 }
 .mac-menu-trigger:hover,
 .mac-status-button:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--desktop-shell-hover-on-wallpaper, rgba(255, 255, 255, 0.14));
 }
 .mac-menu-trigger.is-open,
 .mac-menu-trigger[aria-expanded='true'],
 .mac-status-button.is-open,
 .mac-status-button[aria-expanded='true'] {
-  background: var(--desktop-selection, #0a84ff);
-  color: #fff;
+  background: var(--desktop-shell-active-bg, var(--desktop-selection, #0a84ff));
+  color: var(--desktop-shell-active-ink, #fff);
   text-shadow: none;
 }
 .mac-menu-bar.is-solid .mac-menu-trigger:hover,

@@ -5,7 +5,7 @@
 export {
   资源缓存,
   创建对象地址缓存,
-} from './资源缓存'
+} from './resource-cache'
 
 export {
   探测低内存,
@@ -16,7 +16,7 @@ export {
   低内存状态,
   type 低内存模式,
   type 低内存探测结果,
-} from './低内存'
+} from './low-memory'
 
 export {
   同步缓存配额,
@@ -32,4 +32,4 @@ export {
   窗内容空闲毫秒,
   是否应冷启动内容,
   桌面资源管理器,
-} from './桌面资源管理器'
+} from './desktop-resource-manager'

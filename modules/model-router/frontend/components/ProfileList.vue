@@ -68,10 +68,13 @@
 </template>
 
 <script setup lang="ts">
+
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAppFeedback } from '@/desktop/app-kit'
 import type { ModelProfileItem } from '../api'
 import * as api from '../api'
+
+const feedback = useAppFeedback()
 
 const grouped = ref<Record<string, ModelProfileItem[]>>({})
 const activeGroups = ref<string[]>([])
@@ -111,7 +114,7 @@ async function load() {
       activeGroups.value = [...allTypes.value]
     }
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '模型档案加载失败')
+    feedback.error((e as Error).message || '模型档案加载失败')
   } finally {
     loading.value = false
   }
@@ -137,22 +140,22 @@ function openEditDialog(row: ModelProfileItem) {
 
 async function handleSubmit() {
   if (!form.profile_key.trim()) {
-    ElMessage.warning('请输入档案 key')
+    feedback.warning('请输入档案 key')
     return
   }
   saving.value = true
   try {
     if (editingKey.value) {
       await api.profiles.update(editingKey.value, { ...form })
-      ElMessage.success('档案已更新')
+      feedback.success('档案已更新')
     } else {
       await api.profiles.create({ ...form })
-      ElMessage.success('档案已创建')
+      feedback.success('档案已创建')
     }
     dialogVisible.value = false
     await load()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    feedback.error((e as Error).message || '保存失败')
   } finally {
     saving.value = false
   }
@@ -160,9 +163,9 @@ async function handleSubmit() {
 
 async function handleDelete(key: string) {
   try {
-    await ElMessageBox.confirm(`确定删除档案 "${key}" 吗？`, '提示', { type: 'warning' })
+    if (!(await feedback.confirm(`确定删除档案 "${key}" 吗？`, '提示', { tone: 'warning' }))) return
     await api.profiles.delete(key)
-    ElMessage.success('已删除')
+    feedback.success('已删除')
     await load()
   } catch { /* 用户取消 */ }
 }

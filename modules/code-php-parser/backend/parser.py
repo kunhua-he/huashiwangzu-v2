@@ -22,13 +22,53 @@ class CodeParseError(ValueError):
     """代码文件解析失败。"""
 
 
-def 加载切块规则() -> dict:
+_RULES_CACHE: dict | None = None
+_RULES_MTIME: float | None = None
+
+
+def 加载切块规则(force: bool = False) -> dict:
+    """读切块规则；默认按 mtime 缓存，force=True 强制重载。"""
+    global _RULES_CACHE, _RULES_MTIME
     if not RULES_PATH.exists():
         raise CodeParseError(f"缺少切块规则: {RULES_PATH}")
-    data = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+    mtime = RULES_PATH.stat().st_mtime
+    if (
+        not force
+        and _RULES_CACHE is not None
+        and _RULES_MTIME is not None
+        and mtime == _RULES_MTIME
+    ):
+        return _RULES_CACHE
+    try:
+        data = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        # 坏文件不覆盖已有好缓存
+        if _RULES_CACHE is not None and not force:
+            return _RULES_CACHE
+        raise CodeParseError(f"切块规则 JSON 无效: {exc}") from exc
     if not isinstance(data, dict):
         raise CodeParseError("切块规则必须是 JSON 对象")
+    _RULES_CACHE = data
+    _RULES_MTIME = mtime
     return data
+
+
+def 重载切块规则() -> dict:
+    """显式热加载：强制读盘并返回规则摘要（供 reload_rules capability）。"""
+    rules = 加载切块规则(force=True)
+    unit_patterns = rules.get("unit_patterns") or []
+    return {
+        "ok": True,
+        "module": MODULE_KEY,
+        "rules_path": str(RULES_PATH),
+        "rules_name": RULES_PATH.name,
+        "mtime": _RULES_MTIME,
+        "language": rules.get("language"),
+        "split_mode": rules.get("split_mode"),
+        "extensions": rules.get("extensions") or sorted(SUPPORTED_EXTS),
+        "unit_patterns_count": len(unit_patterns) if isinstance(unit_patterns, list) else 0,
+        "max_bytes": int(rules.get("max_bytes", MAX_TEXT_BYTES_DEFAULT)),
+    }
 
 
 def 解码文本(raw: bytes) -> tuple[str, str]:
@@ -467,11 +507,17 @@ def 按规则切块(content: str, file_id: int, file_format: str, rules: dict) -
     return 切正则(content, file_id, file_format, rules)
 
 
-def parse_code_bytes(file_id: int, raw: bytes, ext: str, metadata: dict[str, object] | None = None) -> dict[str, object]:
+def parse_code_bytes(
+    file_id: int,
+    raw: bytes,
+    ext: str,
+    metadata: dict[str, object] | None = None,
+    rules: dict | None = None,
+) -> dict[str, object]:
     normalized = ext.lower().lstrip(".")
     if normalized not in SUPPORTED_EXTS:
         raise CodeParseError(f"Unsupported format '{normalized}'")
-    rules = 加载切块规则()
+    rules = rules if isinstance(rules, dict) else 加载切块规则()
     content, encoding = 解码文本(raw)
     content = content.replace("\r\n", "\n").replace("\r", "\n")
     blocks = 按规则切块(content, file_id, normalized, rules)
@@ -512,7 +558,7 @@ def parse_code_file(file_id: int, path: Path | str, ext: str) -> dict[str, objec
     max_bytes = int(rules.get("max_bytes", MAX_TEXT_BYTES_DEFAULT))
     full_path = Path(path)
     raw, meta = 读文件样本(full_path, max_bytes=max_bytes)
-    result = parse_code_bytes(file_id, raw, ext, metadata=meta)
+    result = parse_code_bytes(file_id, raw, ext, metadata=meta, rules=rules)
     result["title"] = full_path.name
     result["source"]["filename"] = full_path.name
     result["metadata"]["filename"] = full_path.name

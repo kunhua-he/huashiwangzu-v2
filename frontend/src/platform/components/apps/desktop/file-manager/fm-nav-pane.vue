@@ -80,7 +80,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { showPrompt } from '@/desktop/feedback/desktop-feedback'
 import { Download, FileText, HardDrive, Monitor, Trash2 } from 'lucide-vue-next'
 import {
   listTagsWithCustomNames,
@@ -123,33 +123,26 @@ const tags = computed<FinderTagDef[]>(() => {
 })
 
 async function editLabels() {
-  // one-by-one prompts are more reliable than textarea MessageBox
+  // one-by-one prompts are more reliable than a multi-line dialog
   const current = listTagsWithCustomNames()
   const next: Partial<Record<FinderTagColor, string>> = {}
-  try {
-    for (const tag of current) {
-      const { value } = await ElMessageBox.prompt(
-        `标签「${tag.key}」显示名（留空恢复默认「${tag.name}」）`,
-        '自定义标签名',
-        {
-          inputValue: tag.name,
-          confirmButtonText: '下一个',
-          cancelButtonText: '完成',
-          distinguishCancelAndClose: true,
-        },
-      )
-      const name = String(value || '').trim()
-      if (name) next[tag.key] = name.slice(0, 16)
-    }
+  for (const tag of current) {
+    const value = await showPrompt(
+      `标签「${tag.key}」显示名（留空恢复默认「${tag.name}」）`,
+      '自定义标签名',
+      {
+        defaultValue: tag.name,
+        confirmText: '下一个',
+        cancelText: '完成',
+      },
+    )
+    if (value === null) break
+    const name = String(value || '').trim()
+    if (name) next[tag.key] = name.slice(0, 16)
+  }
+  if (Object.keys(next).length) {
     saveCustomTagLabels(next)
     labelTick.value += 1
-  } catch (action) {
-    // cancel/close = save what we already collected
-    if (Object.keys(next).length) {
-      saveCustomTagLabels(next)
-      labelTick.value += 1
-    }
-    void action
   }
 }
 

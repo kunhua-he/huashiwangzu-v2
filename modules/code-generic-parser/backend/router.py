@@ -7,7 +7,7 @@ from app.services.uploaded_file_runner import run_uploaded_file_capability
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from .parser import SUPPORTED_EXTS, CodeParseError, parse_code_file
+from .parser import SUPPORTED_EXTS, CodeParseError, parse_code_file, 重载切块规则
 
 router = APIRouter(prefix="/api/code-generic-parser", tags=["code-generic-parser"])
 
@@ -48,3 +48,27 @@ register_capability(
     min_role="viewer",
     execution_contract={"side_effect_level": "none", "resource_class": "local_cpu", "timeout_seconds": 120, "parallel_safe": True},
 )
+
+async def _reload_rules(params: dict, caller: str) -> dict:
+    _ = (params, caller)
+    try:
+        return 重载切块规则()
+    except CodeParseError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
+@router.post("/reload-rules")
+async def call_reload_rules(user: User = Depends(require_permission("admin"))):
+    result = await _reload_rules({}, f"user:{user.id}")
+    return ApiResponse(data=result)
+
+
+register_capability(
+    "code-generic-parser", "reload_rules", _reload_rules,
+    description="Reload chunking rules JSON without restarting the backend",
+    brief="热加载切块规则",
+    parameters={},
+    min_role="admin",
+    execution_contract={"side_effect_level": "none", "resource_class": "local_cpu", "timeout_seconds": 30, "parallel_safe": True},
+)
+

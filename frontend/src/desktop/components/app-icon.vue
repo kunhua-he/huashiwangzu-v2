@@ -1,7 +1,21 @@
 <template>
+  <img
+    v-if="profile.imageUrl"
+    class="app-icon-native-image"
+    :src="profile.imageUrl"
+    :style="styleObject"
+    :data-app-icon-key="profile.key"
+    alt=""
+    draggable="false"
+    aria-hidden="true"
+  >
   <span
+    v-else
     class="app-icon"
-    :class="{ 'app-icon-sm': size <= 22, 'app-icon-lg': size >= 40 }"
+    :class="{
+      'app-icon-sm': size <= 22,
+      'app-icon-lg': size >= 40,
+    }"
     :style="styleObject"
     :data-app-icon-key="profile.key"
     aria-hidden="true"
@@ -79,6 +93,15 @@ const styleObject = computed(() => ({
     linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 42%);
   pointer-events: none;
   mix-blend-mode: soft-light;
+}
+.app-icon-native-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  background: transparent;
 }
 .app-icon-glyph {
   position: relative;

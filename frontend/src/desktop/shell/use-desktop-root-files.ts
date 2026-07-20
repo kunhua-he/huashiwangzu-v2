@@ -43,7 +43,7 @@ export function useDesktopRootFiles() {
       })
       return
     }
-    openFileByRecord({ fileId: file.id, fileName: displayName(file), format: file.format })
+    void openFileByRecord({ fileId: file.id, fileName: displayName(file), format: file.format })
   }
 
   async function openFileFromEvent(payload: FileOpenEventPayload) {
@@ -59,7 +59,7 @@ export function useDesktopRootFiles() {
         // Let openFileByRecord show the normal no-association warning below.
       }
     }
-    openFileByRecord({
+    await openFileByRecord({
       fileId: payload.fileId,
       fileName,
       format,

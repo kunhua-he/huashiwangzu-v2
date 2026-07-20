@@ -58,10 +58,13 @@
 </template>
 
 <script setup lang="ts">
+
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAppFeedback } from '@/desktop/app-kit'
 import type { ProviderItem, ProviderTestResult } from '../api'
 import * as api from '../api'
+
+const feedback = useAppFeedback()
 
 const items = ref<ProviderItem[]>([])
 const loading = ref(false)
@@ -87,7 +90,7 @@ async function load() {
     const r = await api.providers.list()
     items.value = r.providers
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '提供商列表加载失败')
+    feedback.error((e as Error).message || '提供商列表加载失败')
   } finally {
     loading.value = false
   }
@@ -111,22 +114,22 @@ function openEditDialog(row: ProviderItem) {
 
 async function handleSubmit() {
   if (!form.key.trim()) {
-    ElMessage.warning('请输入名称 key')
+    feedback.warning('请输入名称 key')
     return
   }
   saving.value = true
   try {
     if (editingKey.value) {
       await api.providers.update(editingKey.value, { ...form })
-      ElMessage.success('提供商已更新')
+      feedback.success('提供商已更新')
     } else {
       await api.providers.create({ ...form })
-      ElMessage.success('提供商已创建')
+      feedback.success('提供商已创建')
     }
     dialogVisible.value = false
     await load()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    feedback.error((e as Error).message || '保存失败')
   } finally {
     saving.value = false
   }
@@ -138,14 +141,14 @@ async function handleTest(key: string) {
     const result = await api.providers.test(key)
     testResults[key] = result
     if (result.success) {
-      ElMessage.success(`${key} 连接正常`)
+      feedback.success(`${key} 连接正常`)
     } else {
-      ElMessage.error(`${key} 连接失败：${result.error ?? '未知错误'}`)
+      feedback.error(`${key} 连接失败：${result.error ?? '未知错误'}`)
     }
   } catch (e: unknown) {
     const message = (e as Error).message || '测试失败'
     testResults[key] = { success: false, error: message }
-    ElMessage.error(message)
+    feedback.error(message)
   } finally {
     testingKey.value = ''
   }
@@ -153,9 +156,9 @@ async function handleTest(key: string) {
 
 async function handleDelete(key: string) {
   try {
-    await ElMessageBox.confirm(`确定删除提供商 "${key}" 吗？`, '提示', { type: 'warning' })
+    if (!(await feedback.confirm(`确定删除提供商 "${key}" 吗？`, '提示', { tone: 'warning' }))) return
     await api.providers.delete(key)
-    ElMessage.success('已删除')
+    feedback.success('已删除')
     await load()
   } catch { /* 用户取消 */ }
 }

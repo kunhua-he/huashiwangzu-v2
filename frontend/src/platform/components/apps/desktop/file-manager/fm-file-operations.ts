@@ -2,10 +2,10 @@ import { useFileOperations } from '@/shared/files/use-file-operations'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { copyItems, cutItems, hasContent, currentClipboardType, currentClipboardItems, clearClipboard } from '@/desktop/clipboard/clipboard-state'
 import { compressEntriesRequest, decompressZipRequest } from '@/shared/api/desktop'
+import { desktopMessage } from '@/desktop/feedback/desktop-feedback'
 import { pushUndo } from './finder-undo-stack'
 import type { FileEntry } from '@/shared/api/types'
 import type { ComputedRef, Ref } from 'vue'
-import { ElMessage } from 'element-plus'
 
 interface FileOperationsDeps {
   uploadInput: Ref<HTMLInputElement | null>
@@ -155,9 +155,9 @@ export function createFileOperations(deps: FileOperationsDeps) {
       a.click()
       a.remove()
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
-      ElMessage.success(files.length > 1 ? `已压缩 ${files.length} 项` : '已压缩')
+      desktopMessage.success(files.length > 1 ? `已压缩 ${files.length} 项` : '已压缩')
     } catch {
-      ElMessage.warning('压缩失败')
+      desktopMessage.warning('压缩失败')
     }
   }
 
@@ -227,14 +227,14 @@ export function createFileOperations(deps: FileOperationsDeps) {
       if (!targets.length) return
       const src = deps.currentFolderId.value || null
       cutItems(targets.map((t) => toClipboardItem(t, src)))
-      ElMessage.success(targets.length > 1 ? `已剪切 ${targets.length} 项` : '已剪切')
+      desktopMessage.success(targets.length > 1 ? `已剪切 ${targets.length} 项` : '已剪切')
       return
     }
     if (key === 'copy') {
       if (!targets.length) return
       const src = deps.currentFolderId.value || null
       copyItems(targets.map((t) => toClipboardItem(t, src)))
-      ElMessage.success(targets.length > 1 ? `已复制 ${targets.length} 项` : '已复制')
+      desktopMessage.success(targets.length > 1 ? `已复制 ${targets.length} 项` : '已复制')
       return
     }
     if (key === 'duplicate') {
@@ -257,15 +257,15 @@ export function createFileOperations(deps: FileOperationsDeps) {
       if (!target || target.is_folder) return
       const ext = String(target.format || '').toLowerCase()
       if (ext !== 'zip') {
-        ElMessage.warning('仅支持 .zip 解压')
+        desktopMessage.warning('仅支持 .zip 解压')
         return
       }
       try {
         const res = await decompressZipRequest(target.id, deps.currentFolderId.value || null)
-        ElMessage.success(`已解压到「${res.folder_name}」(${res.file_count} 个文件)`)
+        desktopMessage.success(`已解压到「${res.folder_name}」(${res.file_count} 个文件)`)
         await deps.loadFiles()
       } catch {
-        ElMessage.warning('解压失败')
+        desktopMessage.warning('解压失败')
       }
       return
     }

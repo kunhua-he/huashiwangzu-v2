@@ -45,10 +45,15 @@ export function useDesktopAppHandleV2() {
     return windowId
   }
 
-  async function openFile(fileId: number, format?: string, options?: CommandOptions): Promise<WindowHandle | null> {
+  async function openFile(fileId: number, format?: string, _options?: CommandOptions): Promise<WindowHandle | null> {
     // 正式路径：只走 Content Open Resolver
-    openFileByRecord({ fileId, fileName: '', format: format || '' })
-    return { windowId: '', appId: '' }
+    const windowId = await openFileByRecord({ fileId, fileName: '', format: format || '' })
+    if (!windowId) return null
+    const win = windowManager.windows.find((item) => item.id === windowId)
+    return {
+      windowId,
+      appId: win?.appKey || '',
+    }
   }
 
   async function sendCommand(

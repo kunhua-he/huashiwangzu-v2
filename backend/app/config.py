@@ -19,9 +19,10 @@ class Settings(BaseSettings):
     DB_NAME: str = "华世王镞_v2"
     DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: int = 60000
     DB_USE_NULL_POOL: bool = False
-    # App-side pool stays small; real pooling is in PgBouncer.
-    DB_POOL_SIZE: int = 10
-    DB_MAX_OVERFLOW: int = 5
+    # App-side pool: 200 并发 executor 可通过 PgBouncer 打到 PG。
+    # PgBouncer default_pool_size=250，PG max_connections=300，留余量。
+    DB_POOL_SIZE: int = 50
+    DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 120
     DB_POOL_RECYCLE_SECONDS: int = 1800
 
@@ -73,6 +74,8 @@ class Settings(BaseSettings):
     GPTSTORE_API_KEY: str = ""
     GPTSTORE_BASE_URL: str = "https://pool.gptstore.club/v1"
     GPTSTORE_PROXY: str = ""
+    # 本地号池 50936（gpt-5.5 responses，知识库 graph/entity 专用）
+    GPTSTORE_LOCAL_API_KEY: str = ""
 
     # grok-4.5 本地中转（openai chat 协议，端口 8317，一千号并发定类/确认用）
     GROK_API_KEY: str = ""

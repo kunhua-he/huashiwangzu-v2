@@ -20,7 +20,8 @@
       <input v-model="keyword" class="search-mini" placeholder="筛选文件…" />
 
       <div v-if="runningCount > 0" class="running-hint" @click="jumpToFirstRunning">
-        ⚙ {{ runningCount }} 个文件分析中…
+        <SlidersHorizontal :size="14" />
+        {{ runningCount }} 个文件分析中…
       </div>
 
       <div class="tree-wrap">
@@ -39,7 +40,7 @@
           @click="node.is_folder ? toggleFolder(node) : openDocByNode(node)"
         >
           <span class="tree-arrow" v-if="node.is_folder">{{ node._open ? '▼' : '▶' }}</span>
-          <span class="tree-icon">{{ node.is_folder ? (node._open ? '📂' : '📁') : fileIcon(node._ext) }}</span>
+          <SystemIcon :icon="node.is_folder ? (node._open ? '📂' : '📁') : fileIcon(node._ext)" class-name="tree-system-icon" />
           <span class="tree-name">{{ node.name }}</span>
           <span v-if="!node.is_folder && node.kb_status" class="tree-dot" :class="statusDotClass(node.kb_status)"></span>
           <span v-if="!node.is_folder && node._pct !== null" class="tree-pct">{{ node._pct }}%</span>
@@ -307,7 +308,8 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
 import { MacAppShell } from '@/desktop/app-kit'
-import { ChartNoAxesCombined, ChevronRight, CircleCheck, Files, FolderSearch, LayoutDashboard, LoaderCircle, TriangleAlert } from '@/shared/icons/lucide'
+import { ChartNoAxesCombined, ChevronRight, CircleCheck, Files, FolderSearch, LayoutDashboard, LoaderCircle, SlidersHorizontal, TriangleAlert } from '@/shared/icons/lucide'
+import SystemIcon from '@/shared/components/system-icon.vue'
 import { useKnowledgeWorkspace } from './composables/useKnowledgeWorkspace'
 import type { KnowledgeEntryProps } from './types'
 
@@ -447,6 +449,7 @@ const {
 .tree-node.active { background: var(--mac-app-selection); color: var(--mac-app-accent); font-weight: 600; }
 .tree-arrow { font-size: 8px; width: 10px; flex: none; color: #8aa0b5; }
 .tree-icon { font-size: 14px; flex: none; }
+.tree-system-icon { width: 15px; height: 15px; flex: none; color: #5c6878; }
 .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tree-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .tree-dot.ok { background: #2bb673; }

@@ -78,8 +78,8 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   background: var(--glass-dock-bg);
   border: 0.5px solid rgba(255, 255, 255, 0.32);
   box-shadow: var(--desktop-shadow-dock);
-  -webkit-backdrop-filter: var(--desktop-lg-filter-soft, blur(28px) saturate(130%));
-  backdrop-filter: var(--desktop-lg-filter-soft, blur(28px) saturate(130%));
+  -webkit-backdrop-filter: var(--desktop-filter-dock, var(--desktop-lg-filter-soft, blur(28px) saturate(130%)));
+  backdrop-filter: var(--desktop-filter-dock, var(--desktop-lg-filter-soft, blur(28px) saturate(130%)));
 }
 .glass-menubar {
   /* 菜单栏默认不套玻璃底；组件自己控制透明/顶窗变实 */
@@ -93,25 +93,25 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   border-radius: var(--desktop-radius-menu);
   background: var(--glass-menu-bg);
   border: 0.5px solid rgba(0, 0, 0, 0.08);
-  box-shadow: var(--desktop-shadow-popover);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
-  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  box-shadow: var(--desktop-shadow-menu, var(--desktop-shadow-popover));
+  -webkit-backdrop-filter: var(--desktop-filter-menu, var(--desktop-lg-filter, blur(40px) saturate(140%)));
+  backdrop-filter: var(--desktop-filter-menu, var(--desktop-lg-filter, blur(40px) saturate(140%)));
 }
 .glass-panel {
-  border-radius: 16px;
+  border-radius: var(--desktop-radius-panel);
   background: var(--glass-panel-bg);
   border: 0.5px solid rgba(0, 0, 0, 0.08);
-  box-shadow: var(--desktop-shadow-popover);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
-  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  box-shadow: var(--desktop-shadow-panel, var(--desktop-shadow-popover));
+  -webkit-backdrop-filter: var(--desktop-filter-panel, var(--desktop-lg-filter, blur(40px) saturate(140%)));
+  backdrop-filter: var(--desktop-filter-panel, var(--desktop-lg-filter, blur(40px) saturate(140%)));
 }
 .glass-spotlight {
-  border-radius: 14px;
+  border-radius: var(--desktop-radius-popover);
   background: var(--glass-spotlight-bg);
   border: 0.5px solid rgba(0, 0, 0, 0.1);
   box-shadow: var(--desktop-shadow-window), inset 0 0.5px 0 rgba(255,255,255,.5);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
-  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  -webkit-backdrop-filter: var(--desktop-filter-panel, var(--desktop-lg-filter, blur(40px) saturate(140%)));
+  backdrop-filter: var(--desktop-filter-panel, var(--desktop-lg-filter, blur(40px) saturate(140%)));
 }
 .glass-window {
   background: var(--glass-window-bg);
@@ -123,12 +123,12 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
   backdrop-filter: none;
 }
 .glass-banner {
-  border-radius: 12px;
+  border-radius: var(--desktop-radius-popover);
   background: var(--glass-banner-bg);
   border: 0.5px solid rgba(0, 0, 0, 0.08);
-  box-shadow: var(--desktop-shadow-popover);
-  -webkit-backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
-  backdrop-filter: var(--desktop-lg-filter, blur(40px) saturate(140%));
+  box-shadow: var(--desktop-shadow-panel, var(--desktop-shadow-popover));
+  -webkit-backdrop-filter: var(--desktop-filter-panel, var(--desktop-lg-filter, blur(40px) saturate(140%)));
+  backdrop-filter: var(--desktop-filter-panel, var(--desktop-lg-filter, blur(40px) saturate(140%)));
 }
 
 /* Skin host hooks */

@@ -37,6 +37,14 @@ const { success } = useAppFeedback()
 
 ## 门禁
 
-- 构建：`node frontend/scripts/scan-products.js`（缺 uiContract fail）
+- 构建：`node frontend/scripts/scan-products.js`（缺失或非法 `uiContract`、重复 Product/App/组件 key、入口文件不存在都会 fail）
 - 运行时 DEV：`app-loader.validateProductUiContract` 控制台告警
 - Catalog：`GET /api/desktop/products` 透传 `uiContract`
+
+## 文件所有权
+
+- `products/*/product.json` 是 Product 元数据、`uiContract`、`entryComponentKey` 和 legacy alias 的唯一声明源。
+- `frontend/src/product-runtime/*.generated.ts` 只允许由 `scan-products.js` 生成，禁止手工注册 Product 或修改生成内容。
+- `frontend/src/desktop/app-registry/component-key-map.generated.ts` 和 `frontend/src/shared/icons/module-icon-assets.generated.ts` 只允许由 `scan-modules.js` 生成。
+- `frontend/src/desktop/app-registry/component-key-map.ts` 只负责合并 platform、module、product 三类生成映射；业务代码不得在其中追加手写组件入口。
+- 同一个组件 key 或 app key 只能有一个 Product 所有者；legacy alias 只作为别名，不能创建第二个桌面应用。

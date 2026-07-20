@@ -57,8 +57,13 @@
           <button type="button" class="cc-swatch is-dusk" title="暮色" @click="setWallpaper('gradient', 'linear-gradient(145deg, #0f172a 0%, #7c3aed 48%, #f97316 100%)')" />
           <button type="button" class="cc-swatch is-ocean" title="海洋" @click="setWallpaper('gradient', 'linear-gradient(160deg, #0c4a6e 0%, #0284c7 42%, #67e8f9 100%)')" />
           <button type="button" class="cc-swatch is-dark" title="深空" @click="setWallpaper('color', '#0b1020')" />
+          <button type="button" class="cc-swatch is-upload" title="上传壁纸" :disabled="wallpaperProcessing" @click="openWallpaperPicker">
+            <ImageUp :size="14" :stroke-width="2" />
+          </button>
         </div>
       </div>
+      <input ref="wallpaperInputRef" class="cc-hidden-input" type="file" accept="image/*" @change="onWallpaperFileChange">
+      <div v-if="wallpaperStatus" class="cc-wallpaper-status">{{ wallpaperStatus }}</div>
 
       <div class="cc-footer">
         <button type="button" class="cc-link" @click="emit('openSpotlight'); close()">Spotlight</button>
@@ -71,15 +76,20 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Keyboard, LayoutGrid, Moon, SlidersHorizontal, Tags } from 'lucide-vue-next'
+import { Keyboard, LayoutGrid, Moon, ImageUp, SlidersHorizontal, Tags } from 'lucide-vue-next'
 import { desktopConfig } from '@/desktop/config/desktop-preferences'
+import { desktopMessage } from '@/desktop/feedback/desktop-feedback'
 import { 应用低内存样式到根, 同步缓存配额, 是否低内存生效 } from '@/desktop/runtime'
+import { processWallpaperFile } from './wallpaper-processor'
 
 const emit = defineEmits<{ openSpotlight: []; openLaunchpad: [] }>()
 const open = ref(false)
 const brightness = ref(100)
+const wallpaperProcessing = ref(false)
+const wallpaperStatus = ref('')
 const rootRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLButtonElement | null>(null)
+const wallpaperInputRef = ref<HTMLInputElement | null>(null)
 
 const hotkeys = computed(() => Boolean(desktopConfig.enableDesktopHotkeys))
 const labels = computed(() => Boolean(desktopConfig.showIconLabels))
@@ -116,7 +126,35 @@ function cycleLowMemory() {
 function setWallpaper(type: 'image' | 'gradient' | 'color', value: string) {
   desktopConfig.wallpaperType = type
   desktopConfig.wallpaperValue = value
+  wallpaperStatus.value = ''
 }
+
+function openWallpaperPicker() {
+  wallpaperInputRef.value?.click()
+}
+
+async function onWallpaperFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file) return
+  wallpaperProcessing.value = true
+  wallpaperStatus.value = '正在处理壁纸'
+  try {
+    const processed = await processWallpaperFile(file)
+    desktopConfig.wallpaperType = 'image'
+    desktopConfig.wallpaperValue = processed.dataUrl
+    wallpaperStatus.value = `已裁切为 ${processed.width}×${processed.height}`
+    desktopMessage.success('壁纸已更新')
+  } catch (err) {
+    wallpaperStatus.value = ''
+    const message = err instanceof Error ? err.message : String(err || '')
+    desktopMessage.error(message === 'WALLPAPER_FILE_NOT_IMAGE' ? '请选择图片文件' : '壁纸处理失败')
+  } finally {
+    wallpaperProcessing.value = false
+    if (input) input.value = ''
+  }
+}
+
 function applyBrightness() {
   const shell = document.querySelector('.desktop-shell-container') as HTMLElement | null
   if (!shell) return
@@ -133,10 +171,10 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
 .control-center-root { position: relative; display: flex; align-items: center; }
 .control-center-trigger {
   width: 28px;
-  height: 22px;
+  height: var(--desktop-control-height-status, 22px);
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--desktop-radius-status-control, 4px);
   background: transparent;
   color: inherit;
   display: inline-flex;
@@ -144,7 +182,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
   justify-content: center;
   cursor: default;
 }
-.control-center-trigger:hover { background: rgba(255, 255, 255, 0.14); }
+.control-center-trigger:hover { background: var(--desktop-shell-hover-on-wallpaper, rgba(255, 255, 255, 0.14)); }
 .control-center-trigger[aria-expanded='true'] {
   background: var(--desktop-selection, #0a84ff);
   color: #fff;
@@ -164,29 +202,29 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
   padding: 12px;
   color: var(--desktop-ink);
   z-index: var(--z-system-popover);
-  border-radius: 14px;
+  border-radius: var(--desktop-radius-control-panel, 14px);
   background: rgba(246, 246, 248, 0.9);
   border: 0.5px solid rgba(0, 0, 0, 0.1);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24), inset 0 0.5px 0 rgba(255, 255, 255, 0.55);
-  -webkit-backdrop-filter: blur(40px) saturate(150%);
-  backdrop-filter: blur(40px) saturate(150%);
+  box-shadow: var(--desktop-shadow-panel, 0 16px 40px rgba(0, 0, 0, 0.24), inset 0 0.5px 0 rgba(255, 255, 255, 0.55));
+  -webkit-backdrop-filter: var(--desktop-filter-panel, blur(40px) saturate(150%));
+  backdrop-filter: var(--desktop-filter-panel, blur(40px) saturate(150%));
 }
 .cc-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: var(--desktop-launchpad-chip-gap, 8px);
 }
 .cc-tile {
   min-height: 64px;
   padding: 10px;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--desktop-radius-control-panel, 14px);
   background: color-mix(in srgb, white 62%, transparent);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.42), 0 1px 2px rgba(15,23,42,.04);
   color: inherit;
   display: grid;
   grid-template-columns: 18px 1fr;
-  gap: 8px;
+  gap: var(--desktop-launchpad-chip-gap, 8px);
   align-items: center;
   text-align: left;
   cursor: default;
@@ -201,7 +239,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
   margin-top: 10px;
   display: grid;
   grid-template-columns: 42px 1fr 42px;
-  gap: 8px;
+  gap: var(--desktop-launchpad-chip-gap, 8px);
   align-items: center;
   font: var(--desktop-font-caption);
   color: var(--desktop-ink-muted);
@@ -212,16 +250,16 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--desktop-launchpad-chip-gap, 8px);
   margin-top: 10px;
   font: 600 12px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
 }
-.cc-wallpaper-swatches { display: flex; gap: 8px; }
+.cc-wallpaper-swatches { display: flex; gap: var(--desktop-launchpad-chip-gap, 8px); }
 .cc-swatch {
-  width: 28px;
-  height: 28px;
+  width: var(--desktop-launchpad-control-height, 28px);
+  height: var(--desktop-launchpad-control-height, 28px);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--desktop-radius-control-swatch, 8px);
   cursor: pointer;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.45), 0 1px 2px rgba(0,0,0,.12);
 }
@@ -229,11 +267,29 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
 .cc-swatch.is-dusk { background: linear-gradient(145deg, #0f172a, #7c3aed 50%, #f97316); }
 .cc-swatch.is-ocean { background: linear-gradient(160deg, #0c4a6e, #0284c7 50%, #67e8f9); }
 .cc-swatch.is-dark { background: #0b1020; }
+.cc-swatch.is-upload {
+  display: grid;
+  place-items: center;
+  color: var(--desktop-system-blue);
+  background: color-mix(in srgb, white 74%, transparent);
+}
+.cc-swatch:disabled {
+  opacity: 0.58;
+}
+.cc-hidden-input {
+  display: none;
+}
+.cc-wallpaper-status {
+  margin-top: 6px;
+  color: var(--desktop-ink-muted);
+  font: var(--desktop-font-caption);
+  text-align: right;
+}
 .cc-footer {
   margin-top: 12px;
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--desktop-launchpad-chip-gap, 8px);
 }
 .cc-link {
   border: 0;

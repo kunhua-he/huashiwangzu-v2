@@ -47,13 +47,16 @@
 </template>
 
 <script setup lang="ts">
+
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { useAppFeedback } from '@/desktop/app-kit'
 import NodeCard from './components/NodeCard.vue'
 import ProviderList from './components/ProviderList.vue'
 import ProfileList from './components/ProfileList.vue'
 import type { RouterNode } from './api'
 import * as api from './api'
+
+const feedback = useAppFeedback()
 
 const GROUP_DEFS: Array<{ key: string; label: string; match: string[] }> = [
   { key: 'agent', label: 'Agent', match: ['agent'] },
@@ -94,7 +97,7 @@ async function loadNodes() {
     const r = await api.nodes.list()
     nodes.value = r.nodes
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '节点列表加载失败')
+    feedback.error((e as Error).message || '节点列表加载失败')
   } finally {
     nodesLoading.value = false
   }
@@ -109,10 +112,10 @@ async function handleReload() {
   reloading.value = true
   try {
     const r = await api.reload.trigger()
-    ElMessage.success(`配置已重载（档案数：${r.profiles ?? '-'}）`)
+    feedback.success(`配置已重载（档案数：${r.profiles ?? '-'}）`)
     await loadNodes()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '重载失败')
+    feedback.error((e as Error).message || '重载失败')
   } finally {
     reloading.value = false
   }
@@ -125,13 +128,13 @@ async function handleTestAll() {
     const results = await Promise.allSettled(r.providers.map((p) => api.providers.test(p.key)))
     const failed = results.filter((res) => res.status === 'rejected' || (res.status === 'fulfilled' && !res.value.success))
     if (failed.length === 0) {
-      ElMessage.success('全部提供商测试通过')
+      feedback.success('全部提供商测试通过')
     } else {
-      ElMessage.warning(`${failed.length}/${results.length} 个提供商测试未通过`)
+      feedback.warning(`${failed.length}/${results.length} 个提供商测试未通过`)
     }
     providerListRef.value?.load()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '测试全部失败')
+    feedback.error((e as Error).message || '测试全部失败')
   } finally {
     testingAll.value = false
   }

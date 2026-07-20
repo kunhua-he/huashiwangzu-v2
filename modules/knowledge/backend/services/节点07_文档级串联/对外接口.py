@@ -59,11 +59,15 @@ async def 串联(
         "样例": [],
     }
 
-    # 1) 抽取
+    # 1) 抽取（文档级一次 LLM；输入/返回/解析已在抽取层逐步留痕）
     try:
         抽 = await 抽取文档融合页(db, int(document_id), int(owner_id))
         统计["processed_pages"] = 抽.get("processed_pages", 0)
         统计["page_durations_ms"] = 抽.get("page_durations_ms") or {}
+        统计["mode"] = 抽.get("mode") or "document_once"
+        统计["input_chars"] = 抽.get("input_chars")
+        统计["llm_duration_ms"] = 抽.get("llm_duration_ms")
+        统计["artifacts"] = dict(抽.get("artifacts") or {})
         if 抽.get("model_degraded"):
             统计["model_degraded"] = True
         统计["errors"].extend(抽.get("errors") or [])
@@ -83,7 +87,7 @@ async def 串联(
         统计["timing"] = {"stage_wall_ms": round((perf_counter() - t0) * 1000)}
         return 统计
 
-    # 2) 分类落库
+    # 2) 分类落库（立刻 commit + 留痕，避免后续崩掉白跑）
     try:
         落 = await 分类落库(
             db,
@@ -94,6 +98,7 @@ async def 串联(
             page_model_used=抽.get("page_model_used") or {},
             page_model_diagnostics=抽.get("page_model_diagnostics") or {},
         )
+        await db.commit()
         统计["entities_found"] = int(落.get("entities_found") or 0)
         统计["relationships_found"] = int(落.get("relationships_found") or 0)
         统计["typed"] = int(落.get("typed") or 0)
@@ -101,20 +106,89 @@ async def 串联(
         统计["样例"] = 落.get("样例") or []
         统计["cleanup_ms"] = 落.get("cleanup_ms")
         统计["errors"].extend(落.get("errors") or [])
+        try:
+            from ..analysis_artifact_service import record_analysis_artifact, stable_hash
+            from datetime import datetime, timezone
+
+            art_write = await record_analysis_artifact(
+                owner_id=int(owner_id),
+                document_id=int(document_id),
+                file_id=None,
+                stage="graph",
+                status="done",
+                unit_type="document_step",
+                unit_key="entity_write",
+                input_hash=stable_hash({
+                    "entities": len(entities),
+                    "relationships": len(relationships),
+                    "artifact_parsed": (统计.get("artifacts") or {}).get("entity_parsed"),
+                }),
+                output_hash=stable_hash({
+                    "entities_found": 统计["entities_found"],
+                    "relationships_found": 统计["relationships_found"],
+                    "typed": 统计["typed"],
+                }),
+                model_used=抽.get("model_used"),
+                reason="classify_write",
+                metrics={
+                    "entities_found": 统计["entities_found"],
+                    "relationships_found": 统计["relationships_found"],
+                    "typed": 统计["typed"],
+                    "pending_review": 统计["pending_review"],
+                    "cleanup_ms": 统计.get("cleanup_ms"),
+                },
+                completed_at=datetime.now(timezone.utc),
+            )
+            统计.setdefault("artifacts", {})["entity_write"] = art_write
+        except Exception as art_exc:  # noqa: BLE001
+            logger.warning("文档 %s 落库留痕失败(不拖垮): %s", document_id, art_exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("文档 %s 节点⑦落库失败: %s", document_id, exc)
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         统计["status"] = "degraded"
         统计["errors"].append(f"classify:{exc}"[:200])
         统计["reason"] = "entity_write_failed"
         统计["timing"] = {"stage_wall_ms": round((perf_counter() - t0) * 1000)}
+        # 抽取结果已在 entity_parsed 留痕，即使落库失败也不算纯浪费
         return 统计
 
-    # 3) 归并
+    # 3) 归并（单独留痕）
     try:
         并 = await 同文档归并(db, int(document_id), int(owner_id))
+        await db.commit()
         统计["merged"] = int(并.get("merged") or 0)
         统计["merge_checked"] = int(并.get("checked") or 0)
         统计["merge_details"] = (并.get("details") or [])[:20]
+        try:
+            from ..analysis_artifact_service import record_analysis_artifact, stable_hash
+            from datetime import datetime, timezone
+
+            art_merge = await record_analysis_artifact(
+                owner_id=int(owner_id),
+                document_id=int(document_id),
+                file_id=None,
+                stage="graph",
+                status="done",
+                unit_type="document_step",
+                unit_key="entity_merge",
+                input_hash=stable_hash({"entities_found": 统计.get("entities_found")}),
+                output_hash=stable_hash({
+                    "merged": 统计["merged"],
+                    "merge_checked": 统计["merge_checked"],
+                }),
+                reason="same_doc_merge",
+                metrics={
+                    "merged": 统计["merged"],
+                    "merge_checked": 统计["merge_checked"],
+                },
+                completed_at=datetime.now(timezone.utc),
+            )
+            统计.setdefault("artifacts", {})["entity_merge"] = art_merge
+        except Exception as art_exc:  # noqa: BLE001
+            logger.warning("文档 %s 归并留痕失败(不拖垮): %s", document_id, art_exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("文档 %s 节点⑦归并失败(不拖垮): %s", document_id, exc)
         统计["merge_error"] = str(exc)[:120]

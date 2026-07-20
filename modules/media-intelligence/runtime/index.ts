@@ -1,14 +1,13 @@
+import {
+  getApiErrorMessage,
+  isApiEnvelope,
+} from '../../../frontend/src/shared/api/contracts'
+
 export interface RuntimeConfig {
   mode: 'sandbox' | 'framework'
   api_base_url: string
   permissions: string[]
   module_settings: Record<string, unknown>
-}
-
-interface ApiEnvelope<T> {
-  success: boolean
-  data: T
-  error: string | null
 }
 
 declare global {
@@ -19,14 +18,6 @@ declare global {
 
 let runtimeConfig: RuntimeConfig | null = null
 const TOKEN_KEY = 'v2_auth_token'
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function isEnvelope<T>(value: unknown): value is ApiEnvelope<T> {
-  return isRecord(value) && typeof value.success === 'boolean' && 'data' in value && 'error' in value
-}
 
 export async function initRuntime(): Promise<RuntimeConfig> {
   if (runtimeConfig) return runtimeConfig
@@ -70,16 +61,11 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   })
   const payload: unknown = await response.json()
   if (!response.ok) {
-    const message = isEnvelope<unknown>(payload) && payload.error ? payload.error : `HTTP ${response.status}`
-    throw new Error(message)
+    throw new Error(getApiErrorMessage(payload, `HTTP ${response.status}`))
   }
-  if (!isEnvelope<T>(payload)) {
-    throw new Error('Unexpected API response shape')
-  }
-  if (!payload.success) {
-    throw new Error(payload.error || 'Request failed')
-  }
-  return payload.data
+  if (!isApiEnvelope<T>(payload)) return payload as T
+  if (!payload.success) throw new Error(getApiErrorMessage(payload))
+  return payload.data as T
 }
 
 export const platform = {

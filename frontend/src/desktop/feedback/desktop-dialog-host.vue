@@ -1,14 +1,40 @@
 <template>
   <Teleport to="body">
-    <div v-if="dialog" class="desktop-dialog-overlay" @mousedown.self="onCancel">
+    <div v-if="dialog" class="desktop-dialog-overlay" @mousedown.self="onDismiss">
       <section class="desktop-dialog glass-panel" role="dialog" :aria-labelledby="titleId" :aria-describedby="bodyId">
         <header class="desktop-dialog-header">
           <h2 :id="titleId" class="desktop-dialog-title">{{ dialog.title }}</h2>
         </header>
         <div :id="bodyId" class="desktop-dialog-body">{{ dialog.message }}</div>
+        <div v-if="dialog.mode === 'prompt'" class="desktop-dialog-field">
+          <input
+            ref="inputRef"
+            class="desktop-dialog-input"
+            type="text"
+            :value="dialog.inputValue"
+            :placeholder="dialog.placeholder"
+            @input="onInput"
+            @keydown.enter.prevent="onConfirm"
+            @keydown.esc.prevent="onCancel"
+          />
+        </div>
         <footer class="desktop-dialog-footer">
-          <button v-if="dialog.mode === 'confirm'" type="button" class="desktop-dialog-btn ghost" @click="onCancel">{{ dialog.cancelText }}</button>
-          <button type="button" class="desktop-dialog-btn primary" :class="{ danger: dialog.tone === 'warning' || dialog.tone === 'error' }" @click="onConfirm">{{ dialog.confirmText }}</button>
+          <button
+            v-if="dialog.mode === 'confirm' || dialog.mode === 'prompt'"
+            type="button"
+            class="desktop-dialog-btn ghost"
+            @click="onCancel"
+          >
+            {{ dialog.cancelText }}
+          </button>
+          <button
+            type="button"
+            class="desktop-dialog-btn primary"
+            :class="{ danger: dialog.tone === 'warning' || dialog.tone === 'error' }"
+            @click="onConfirm"
+          >
+            {{ dialog.confirmText }}
+          </button>
         </footer>
       </section>
     </div>
@@ -16,15 +42,39 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { activeDialog, resolveDialog } from '@/desktop/feedback/desktop-feedback'
+import { computed, nextTick, ref, watch } from 'vue'
+import { activeDialog, resolveDialog, updateDialogInput } from '@/desktop/feedback/desktop-feedback'
 
 const dialog = activeDialog
 const titleId = computed(() => 'desktop-dialog-title')
 const bodyId = computed(() => 'desktop-dialog-body')
+const inputRef = ref<HTMLInputElement | null>(null)
 
-function onConfirm() { resolveDialog(true) }
-function onCancel() { resolveDialog(false) }
+watch(
+  () => dialog.value?.id,
+  async (id) => {
+    if (!id || dialog.value?.mode !== 'prompt') return
+    await nextTick()
+    inputRef.value?.focus()
+    inputRef.value?.select()
+  },
+)
+
+function onInput(event: Event) {
+  updateDialogInput((event.target as HTMLInputElement).value)
+}
+
+function onConfirm() {
+  resolveDialog('confirm', dialog.value?.inputValue || '')
+}
+
+function onCancel() {
+  resolveDialog('cancel')
+}
+
+function onDismiss() {
+  resolveDialog('dismiss')
+}
 </script>
 
 <style scoped>
@@ -54,6 +104,25 @@ function onCancel() { resolveDialog(false) }
   font: var(--desktop-font-body);
   color: var(--desktop-ink-muted);
   line-height: 1.5;
+}
+.desktop-dialog-field {
+  margin-top: 12px;
+}
+.desktop-dialog-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(60, 60, 67, .18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .72);
+  color: var(--desktop-ink);
+  font: var(--desktop-font-body);
+  outline: none;
+  box-sizing: border-box;
+}
+.desktop-dialog-input:focus {
+  border-color: rgba(10, 132, 255, .55);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, .16);
 }
 .desktop-dialog-footer {
   margin-top: 18px;

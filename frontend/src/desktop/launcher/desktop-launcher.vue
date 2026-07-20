@@ -213,17 +213,17 @@ watch(categoryChips, (chips) => {
   place-items: center;
   padding: 28px 20px;
   background: rgba(18, 28, 48, 0.18);
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(var(--desktop-launchpad-overlay-blur, 10px)) saturate(var(--desktop-launchpad-overlay-saturate, 120%));
+  backdrop-filter: blur(var(--desktop-launchpad-overlay-blur, 10px)) saturate(var(--desktop-launchpad-overlay-saturate, 120%));
 }
 
 /* 圆角大玻璃卡片：对标新版「应用程序」浮层 */
 .apps-panel {
-  width: min(920px, calc(100vw - 40px));
-  height: min(640px, calc(100vh - 72px));
+  width: min(var(--desktop-launchpad-panel-max-width, 920px), calc(100vw - 40px));
+  height: min(var(--desktop-launchpad-panel-max-height, 640px), calc(100vh - 72px));
   display: flex;
   flex-direction: column;
-  border-radius: 22px;
+  border-radius: var(--desktop-radius-launchpad, 22px);
   overflow: hidden;
   color: rgba(20, 28, 42, 0.92);
   background:
@@ -233,28 +233,28 @@ watch(categoryChips, (chips) => {
     0 28px 80px rgba(15, 30, 60, 0.28),
     0 8px 24px rgba(15, 30, 60, 0.14),
     inset 0 0.5px 0 rgba(255, 255, 255, 0.75);
-  -webkit-backdrop-filter: blur(40px) saturate(160%);
-  backdrop-filter: blur(40px) saturate(160%);
+  -webkit-backdrop-filter: var(--desktop-launchpad-panel-blur, 40px) saturate(var(--desktop-launchpad-panel-saturate, 160%));
+  backdrop-filter: var(--desktop-launchpad-panel-blur, 40px) saturate(var(--desktop-launchpad-panel-saturate, 160%));
   outline: none;
 }
 
 .apps-panel-header {
   flex: 0 0 auto;
-  padding: 16px 18px 10px;
+  padding: var(--desktop-launchpad-header-padding, 16px 18px 10px);
   border-bottom: 0.5px solid rgba(60, 80, 120, 0.1);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.06));
 }
 
 .apps-panel-title-row {
   display: grid;
-  grid-template-columns: 28px 1fr 32px;
+  grid-template-columns: var(--desktop-launchpad-brand-size, 28px) 1fr var(--desktop-launchpad-more-size, 32px);
   align-items: center;
-  gap: 8px;
+  gap: var(--desktop-launchpad-title-row-gap, 8px);
   margin-bottom: 12px;
 }
 .apps-panel-brand {
-  width: 28px;
-  height: 28px;
+  width: var(--desktop-launchpad-brand-size, 28px);
+  height: var(--desktop-launchpad-brand-size, 28px);
   display: grid;
   place-items: center;
   color: rgba(40, 56, 88, 0.78);
@@ -266,10 +266,10 @@ watch(categoryChips, (chips) => {
   color: rgba(22, 30, 48, 0.92);
 }
 .apps-panel-more {
-  width: 32px;
-  height: 28px;
+  width: var(--desktop-launchpad-more-size, 32px);
+  height: var(--desktop-launchpad-control-height, 28px);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--desktop-launchpad-control-radius, 8px);
   background: transparent;
   color: rgba(40, 56, 88, 0.62);
   display: grid;
@@ -282,13 +282,13 @@ watch(categoryChips, (chips) => {
 }
 
 .apps-panel-search {
-  height: 32px;
+  height: var(--desktop-launchpad-search-height, 32px);
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 11px;
+  gap: var(--desktop-launchpad-search-gap, 7px);
+  padding: var(--desktop-launchpad-search-padding, 0 11px);
   margin-bottom: 12px;
-  border-radius: 10px;
+  border-radius: var(--desktop-radius-launchpad-search, 10px);
   background: rgba(255, 255, 255, 0.48);
   border: 0.5px solid rgba(255, 255, 255, 0.55);
   box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.7);
@@ -319,7 +319,7 @@ watch(categoryChips, (chips) => {
 .apps-panel-chips {
   display: flex;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: var(--desktop-launchpad-chip-gap, 8px);
   overflow-x: auto;
   padding-bottom: 2px;
   scrollbar-width: none;
@@ -327,10 +327,10 @@ watch(categoryChips, (chips) => {
 .apps-panel-chips::-webkit-scrollbar { display: none; }
 .apps-panel-chip {
   flex: 0 0 auto;
-  height: 28px;
-  padding: 0 12px;
+  height: var(--desktop-launchpad-chip-height, 28px);
+  padding: 0 var(--desktop-launchpad-chip-padding-x, 12px);
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--desktop-radius-launchpad-chip, 999px);
   background: rgba(255, 255, 255, 0.42);
   color: rgba(36, 48, 72, 0.78);
   font: 500 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
@@ -356,27 +356,27 @@ watch(categoryChips, (chips) => {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px 18px 20px;
+  padding: var(--desktop-launchpad-body-padding, 16px 18px 20px);
 }
 
 .apps-panel-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 18px 10px;
+  gap: var(--desktop-launchpad-grid-gap-y, 18px) var(--desktop-launchpad-grid-gap-x, 10px);
   align-content: start;
 }
 
 .apps-panel-item {
   min-width: 0;
   border: 0;
-  padding: 8px 4px 4px;
-  border-radius: 14px;
+  padding: var(--desktop-launchpad-item-padding, 8px 4px 4px);
+  border-radius: var(--desktop-launchpad-item-radius, 14px);
   background: transparent;
   color: inherit;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--desktop-launchpad-item-gap, 8px);
   cursor: default;
   transition: background 120ms ease, transform 140ms cubic-bezier(.22, 1, .36, 1);
 }

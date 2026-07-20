@@ -26,6 +26,8 @@ KB_TABLES = [
     "kb_term_occurrences", "kb_term_edges", "kb_fact_candidates",
     "kb_causal_candidates", "kb_query_contexts", "kb_retrieval_learning_events",
     "kb_query_routing_rules",
+    "kb_entity_subject_views", "kb_backfill_ledger",
+    "kb_subject_tokens", "kb_subject_occurrences", "kb_subject_combos", "kb_subject_exam_items",
 ]
 
 # 关键索引语句（幂等，CREATE INDEX IF NOT EXISTS）
@@ -136,8 +138,17 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_kb_retrieval_learning_context ON kb_retrieval_learning_events(query_context_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_retrieval_learning_owner_source ON kb_retrieval_learning_events(owner_id, source_hash)",
     "CREATE INDEX IF NOT EXISTS idx_kb_query_routing_owner_enabled ON kb_query_routing_rules(owner_id, enabled, priority)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_query_routing_owner_key ON kb_query_routing_rules(owner_id, rule_key)",
-]
+"CREATE UNIQUE INDEX IF NOT EXISTS ux_kb_query_routing_owner_key ON kb_query_routing_rules(owner_id, rule_key)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_tokens_owner_status ON kb_subject_tokens(owner_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_tokens_owner_role ON kb_subject_tokens(owner_id, semantic_role)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_tokens_owner_graph ON kb_subject_tokens(owner_id, graph_include)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_tokens_owner_hit ON kb_subject_tokens(owner_id, hit_count DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_occ_doc ON kb_subject_occurrences(document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_occ_token ON kb_subject_occurrences(token_id)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_combos_owner_hit ON kb_subject_combos(owner_id, hit_count DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_exam_owner_status ON kb_subject_exam_items(owner_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_kb_subject_exam_doc ON kb_subject_exam_items(document_id)",
+    ]
 
 # ALTER 列补齐语句（幂等，ADD COLUMN IF NOT EXISTS）。
 # 运行前仍先查 information_schema，避免列已存在时重复 ALTER 参与强锁竞争。
@@ -194,8 +205,10 @@ _MIGRATION_STATEMENTS = [
     ("kb_entity_dictionary", "type_id", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS type_id BIGINT"),
     ("kb_entity_dictionary", "canonical_id", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS canonical_id BIGINT"),
     ("kb_entity_dictionary", "semantic_meta", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS semantic_meta JSON"),
-    ("kb_entity_dictionary", "align_status", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS align_status VARCHAR(16) DEFAULT 'pending'"),
-]
+("kb_entity_dictionary", "align_status", "ALTER TABLE kb_entity_dictionary ADD COLUMN IF NOT EXISTS align_status VARCHAR(16) DEFAULT 'pending'"),
+    ("kb_subject_tokens", "semantic_role", "ALTER TABLE kb_subject_tokens ADD COLUMN IF NOT EXISTS semantic_role VARCHAR(64) DEFAULT '待定语义'"),
+    ("kb_subject_tokens", "graph_include", "ALTER TABLE kb_subject_tokens ADD COLUMN IF NOT EXISTS graph_include BOOLEAN DEFAULT TRUE"),
+    ]
 
 _DDL_MIGRATION_STATEMENTS = [
     (
@@ -412,6 +425,7 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
     from .models import (  # noqa: F401 注册到 Base.metadata
         KbAnalysisArtifact,
         KbArtifactLineage,
+        KbBackfillLedger,
         KbCatalog,
         KbCausalCandidate,
         KbChunk,
@@ -426,6 +440,7 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
         KbEntityAlias,
         KbEntityDictionary,
         KbEntityMergeLog,
+        KbEntitySubjectView,
         KbEvidence,
         KbFactCandidate,
         KbFileKnowledgeLink,
@@ -445,6 +460,10 @@ async def ensure_kb_tables(db: AsyncSession) -> None:
         KbQueryRoutingRule,
         KbRawData,
         KbRetrievalLearningEvent,
+        KbSubjectCombo,
+        KbSubjectExamItem,
+        KbSubjectOccurrence,
+        KbSubjectToken,
         KbTerm,
         KbTermEdge,
         KbTermOccurrence,

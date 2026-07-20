@@ -10,6 +10,11 @@
  *   const files = await platform.files.list({ page: 1, page_size: 50 })
  */
 
+import {
+  getApiErrorMessage,
+  isApiEnvelope,
+} from '../../../frontend/src/shared/api/contracts'
+
 // ── Type definitions ────────────────────────────────────────────────
 export interface RuntimeConfig {
   mode: 'sandbox' | 'framework'
@@ -285,9 +290,10 @@ export async function apiGet<T>(path: string): Promise<T> {
   const url = getApiUrl(path)
   const r = await fetch(url, { headers: authHeaders() })
   if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
-  if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
-  const body = await r.json()
-  if (!body.success) throw new Error(body.error ?? 'API error')
+  const body: unknown = await r.json().catch(() => null)
+  if (!r.ok) throw new Error(getApiErrorMessage(body, `API ${path} returned ${r.status}`))
+  if (!isApiEnvelope<T>(body)) return body as T
+  if (!body.success) throw new Error(getApiErrorMessage(body))
   return body.data as T
 }
 
@@ -301,9 +307,10 @@ export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
     body: payload ? JSON.stringify(payload) : undefined,
   })
   if (_handle401(r.status)) throw new Error('登录已失效，请重新登录')
-  if (!r.ok) throw new Error(`API ${path} returned ${r.status}`)
-  const body = await r.json()
-  if (!body.success) throw new Error(body.error ?? 'API error')
+  const body: unknown = await r.json().catch(() => null)
+  if (!r.ok) throw new Error(getApiErrorMessage(body, `API ${path} returned ${r.status}`))
+  if (!isApiEnvelope<T>(body)) return body as T
+  if (!body.success) throw new Error(getApiErrorMessage(body))
   return body.data as T
 }
 

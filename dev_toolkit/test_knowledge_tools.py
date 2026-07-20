@@ -10,6 +10,7 @@ def test_knowledge_tool_component_exports_pipeline_and_source_gap_tools() -> Non
         "knowledge_pipeline_snapshot",
         "knowledge_pipeline_submit",
         "knowledge_pipeline_node_status",
+        "knowledge_pipeline_control",
         "knowledge_source_gap_snapshot",
         "knowledge_source_manifest_audit",
         "knowledge_source_manifest_summary",
@@ -19,6 +20,7 @@ def test_knowledge_tool_component_exports_pipeline_and_source_gap_tools() -> Non
     assert knowledge_tools.handles_tool("knowledge_pipeline_snapshot") is True
     assert knowledge_tools.handles_tool("knowledge_pipeline_submit") is True
     assert knowledge_tools.handles_tool("knowledge_pipeline_node_status") is True
+    assert knowledge_tools.handles_tool("knowledge_pipeline_control") is True
     assert knowledge_tools.handles_tool("knowledge_source_gap_snapshot") is True
     assert knowledge_tools.handles_tool("knowledge_source_manifest_audit") is True
     assert knowledge_tools.handles_tool("knowledge_source_manifest_summary") is True

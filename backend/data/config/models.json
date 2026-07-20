@@ -26,17 +26,23 @@
       "api_protocol": "chat",
       "api_key_env": "GROK_API_KEY",
       "provider_name": "grok-local-gateway",
-      "timeout_seconds": 120,
-      "description": "本地 Grok 中转站（8317 端口，chat 协议），grok-4.5 批量语义定类专用"
+      "timeout_seconds": 300,
+      "description": "本地 Grok 8317 chat，文档级实体抽取",
+      "session_affinity": {
+        "header": "X-Session-ID",
+        "prefix": "knowledge-graph",
+        "scope": "request"
+      }
     },
     "gptstore-local": {
       "type": "openai_compat",
-      "api_url": "http://127.0.0.1:50936/v1/responses",
+      "api_url": "http://localhost:50936/v1/responses",
       "api_protocol": "responses",
       "api_key_env": "GPTSTORE_LOCAL_API_KEY",
       "provider_name": "gptstore-local",
-      "timeout_seconds": 120,
-      "description": "本地 Claude Code 内置 GPT-5.5 代理（50936 端口），知识库分析专用，零云费用"
+      "timeout_seconds": 180,
+      "description": "本地号池 50936 Responses 协议，gpt-5.5 知识库专用，禁止降级",
+      "base_url": "http://localhost:50936/v1/responses"
     },
     "gptstore-text": {
       "type": "openai_compat",
@@ -142,7 +148,7 @@
   "model_types": {
     "llm": {
       "primary": "gpt-5.5-knowledge",
-      "fallback_on_explicit_profile": true,
+      "fallback_on_explicit_profile": false,
       "fallback_chain": [
         "gpt-5.5-knowledge",
         "gemma-4"
@@ -167,7 +173,7 @@
           "provider": "grok-local-gateway",
           "model": "grok-4.5",
           "temperature": 0.2,
-          "max_tokens": 8192,
+          "max_tokens": 16000,
           "system_prompt": "You are a precise enterprise knowledge analysis model.",
           "response_adapter": "openai_compat",
           "structured_output_mode": "json_object",
@@ -176,7 +182,8 @@
           "retry_delay_seconds": 5,
           "retry_strategy": "fixed",
           "price_input": 0,
-          "price_output": 0
+          "price_output": 0,
+          "fallback_chain": []
         },
         "deepseek-v4-flash": {
           "provider": "opencode",
@@ -234,6 +241,19 @@
           "context_budget": 32000,
           "price_input": 0,
           "price_output": 0
+        },
+        "gpt-5.5-local": {
+          "provider": "gptstore-local",
+          "model": "gpt-5.5",
+          "temperature": 0.2,
+          "max_tokens": 16000,
+          "response_adapter": "openai_compat",
+          "context_budget": 1050000,
+          "description": "本地号池50936 gpt-5.5（responses），实体/图谱专用；无降级；失败3次×10秒后整队列暂停",
+          "retry_max_attempts": 3,
+          "retry_delay_seconds": 10,
+          "retry_strategy": "fixed",
+          "fallback_chain": []
         }
       }
     },
@@ -323,9 +343,10 @@
       }
     },
     "vision": {
-      "primary": "gpt-5.5-vision",
+      "primary": "grok-4.5-vision",
       "fallback_on_explicit_profile": true,
       "fallback_chain": [
+        "gpt-5.5-vision",
         "qwen3-vl"
       ],
       "image_preprocess": {
@@ -335,6 +356,15 @@
         "jpeg_quality_floor": 72
       },
       "profiles": {
+        "grok-4.5-vision": {
+          "provider": "grok-local-gateway",
+          "model": "grok-4.5",
+          "temperature": 0.2,
+          "max_tokens": 8192,
+          "response_adapter": "openai_compat",
+          "fallback_profile": "gpt-5.5-vision",
+          "description": "grok-4.5 多模态 VLM，base64 图片，最长边1600/1MB，走本地8317中转"
+        },
         "gpt-5.5-vision": {
           "provider": "gptstore-text",
           "model": "gpt-5.5",
@@ -365,37 +395,37 @@
       "planning_profile": "deepseek-v4-flash"
     },
     "knowledge": {
-      "default_profile": "deepseek-v4-flash",
+      "default_profile": "gpt-5.5-local",
       "agent_search_profile": "deepseek-v4-flash",
-      "default_vision_profile": "gpt-5.5-vision",
-      "fallback_profile": "deepseek-v4-flash",
-      "pause_after_fallback": false,
+      "default_vision_profile": "grok-4.5-vision",
+      "fallback_profile": "gpt-5.5-local",
+      "pause_after_fallback": true,
       "rate_limit_auto_pause": {
         "enabled": true,
-        "threshold": 30,
+        "threshold": 1,
         "window_seconds": 300,
-        "resume_ttl_seconds": 900
+        "resume_ttl_seconds": 86400
       },
       "pipeline_concurrency": {
         "raw_collect": 16,
         "raw_text": 64,
         "page_render": 32,
         "page_render_pages": 2,
-        "raw_ocr": 80,
-        "raw_vision": 80,
-        "page_fusion": 100,
-        "fusion": 120,
-        "profile": 80,
-        "graph": 6,
+        "raw_ocr": 0,
+        "raw_vision": 0,
+        "page_fusion": 0,
+        "fusion": 0,
+        "profile": 0,
+        "graph": 1,
         "relations": 2,
         "cognitive_index": 1,
         "cognitive_terms_per_document": 200,
-        "entity_extract": 32,
+        "entity_extract": 1,
         "relation_vector_candidates": 2000,
         "relation_entity_candidates": 1000,
         "relation_write_batch": 100,
         "graph_write_batch": 10,
-        "model_call_global": 30
+        "model_call_global": 1
       },
       "image_preprocess": {
         "raw_ocr_max_side": 1600,
@@ -417,12 +447,12 @@
         "relations": 8
       },
       "stages": {
-        "raw_ocr": "gpt-5.5-vision",
-        "raw_vision": "gpt-5.5-vision",
-        "fusion": "deepseek-v4-flash",
-        "profile": "deepseek-v4-flash",
-        "entity": "deepseek-v4-flash",
-        "legacy_page_fusion": "deepseek-v4-flash"
+        "raw_ocr": "grok-4.5-vision",
+        "raw_vision": "grok-4.5-vision",
+        "fusion": "gpt-5.5-local",
+        "profile": "gpt-5.5-local",
+        "entity": "grok-4.5",
+        "legacy_page_fusion": "gpt-5.5-local"
       },
       "query_planning_profile": "qwen-local-planner"
     }

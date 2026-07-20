@@ -926,6 +926,26 @@ async function handleContextMenuSelect(key: string) {
     if (mode === 'none' || mode === 'kind' || mode === 'date') setGroupBy(mode)
     return
   }
+  if (key === 'view-icons' || key === 'view-list' || key === 'view-columns' || key === 'view-gallery') {
+    const nextMode = key === 'view-icons' ? 'grid'
+      : key === 'view-list' ? 'list'
+        : key === 'view-columns' ? 'column'
+          : 'gallery'
+    state.viewMode.value = nextMode
+    feedback.success(
+      key === 'view-icons' ? '已切换为图标视图'
+        : key === 'view-list' ? '已切换为列表视图'
+          : key === 'view-columns' ? '已切换为分栏视图'
+            : '已切换为画廊视图',
+    )
+    return
+  }
+  if (key === 'sort-name' || key === 'sort-type' || key === 'sort-date') {
+    const column = key === 'sort-name' ? 'name' : key === 'sort-type' ? 'type' : 'date'
+    state.setSort(column, 'asc')
+    feedback.success(key === 'sort-name' ? '已按名称排序' : key === 'sort-type' ? '已按类型排序' : '已按日期排序')
+    return
+  }
   const multiTargets = (ctxType === 'multi-select' || state.selectedItems.value.length > 1)
     ? state.selectedItems.value
     : null

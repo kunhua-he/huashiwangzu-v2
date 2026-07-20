@@ -289,7 +289,11 @@ def _maybe_clear_expired_model_auto_pause(config_path: Path, raw: dict[str, Any]
     cannot stay frozen forever after a 429 window.
     """
     auto_pause = raw.get("model_auto_pause")
-    if not isinstance(auto_pause, dict) or not auto_pause.get("enabled"):
+    if not isinstance(auto_pause, dict):
+        return raw
+    if auto_pause.get("manual_hold"):
+        return raw
+    if not auto_pause.get("enabled"):
         return raw
 
     expires_raw = str(auto_pause.get("expires_at") or "").strip()

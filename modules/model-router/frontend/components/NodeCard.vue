@@ -79,10 +79,13 @@
 </template>
 
 <script setup lang="ts">
+
 import { reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { useAppFeedback } from '@/desktop/app-kit'
 import type { RouterNode, NodeUpdatePayload } from '../api'
 import * as api from '../api'
+
+const feedback = useAppFeedback()
 
 const props = defineProps<{ node: RouterNode }>()
 const emit = defineEmits<{ (e: 'updated', node: RouterNode): void }>()
@@ -147,10 +150,10 @@ async function handleSave() {
       fallback_chain: form.fallback_chain,
     }
     const updated = await api.nodes.update(props.node.id, payload)
-    ElMessage.success(`${props.node.name} 保存成功`)
+    feedback.success(`${props.node.name} 保存成功`)
     emit('updated', updated)
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    feedback.error((e as Error).message || '保存失败')
   } finally {
     saving.value = false
   }

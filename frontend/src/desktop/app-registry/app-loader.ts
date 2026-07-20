@@ -5,9 +5,11 @@ import type { DesktopProductItem } from '@/shared/api/products'
 import { componentKeyMap } from '@/desktop/app-registry/component-key-map'
 import { setAppRegistry } from '@/desktop/app-registry/desktop-app-state'
 import ComponentRegistrationError from '@/desktop/components/component-registration-error.vue'
-import { MAC_APP_KIT_ID, type MacAppUiContract } from '@/desktop/app-kit'
-
-const VALID_LAYOUTS = new Set(['finder', 'document', 'chat', 'settings', 'dashboard', 'utility'])
+import {
+  isMacAppLayout,
+  MAC_APP_KIT_ID,
+  type MacAppUiContract,
+} from '@/desktop/app-kit'
 
 function missingComponentLoader(
   appKey: string,
@@ -74,7 +76,7 @@ export function validateProductUiContract(
   if (raw.kit !== MAC_APP_KIT_ID) {
     warnings.push(`[uiContract] product "${pid}" kit="${String(raw.kit)}" expected "${MAC_APP_KIT_ID}"`)
   }
-  if (!VALID_LAYOUTS.has(String(raw.layout || ''))) {
+  if (!isMacAppLayout(raw.layout)) {
     warnings.push(`[uiContract] product "${pid}" invalid layout="${String(raw.layout)}"`)
   }
   if (raw.feedback && raw.feedback !== 'desktop-kit') {

@@ -145,7 +145,7 @@
 
 <script setup lang="ts">
 import { defineAsyncComponent, ref, computed, nextTick, unref, watch, onMounted, onUnmounted } from 'vue'
-import { desktopMessage, showAlert, showConfirm } from '@/desktop/feedback/desktop-feedback'
+import { desktopMessage, showAlert, showConfirm, showConfirmDetailed } from '@/desktop/feedback/desktop-feedback'
 import DesktopToastHost from '@/desktop/feedback/desktop-toast-host.vue'
 import DesktopDialogHost from '@/desktop/feedback/desktop-dialog-host.vue'
 import { useDesktopConfig } from '@/desktop/config/desktop-preferences'
@@ -182,7 +182,6 @@ import {
   moveEntryRequest, copyEntryRequest, emptyRecycleBinRequest,
   resolveNameConflictRequest,
 } from '@/shared/api/desktop'
-import { ElMessageBox } from 'element-plus'
 import { useCreatableFormats } from '@/shared/composables/use-creatable-formats'
 import { useFileOperations } from '@/shared/files/use-file-operations'
 import LoadStateBanner from '@/shared/components/load-state-banner.vue'
@@ -595,17 +594,16 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId, copy }) => {
   if (!items.length) return
 
   async function resolveConflict(item: MoveItem, mode: 'move' | 'copy'): Promise<boolean> {
-    try {
-      await ElMessageBox.confirm(
-        '目标已有同名项目。选择「替换」将把已有项目移入回收站；「保留两者」会自动重命名。',
-        mode === 'move' ? '移动冲突' : '复制冲突',
-        {
-          distinguishCancelAndClose: true,
-          confirmButtonText: '替换',
-          cancelButtonText: '保留两者',
-          type: 'warning',
-        },
-      )
+    const choice = await showConfirmDetailed(
+      '目标已有同名项目。选择「替换」将把已有项目移入回收站；「保留两者」会自动重命名。',
+      mode === 'move' ? '移动冲突' : '复制冲突',
+      {
+        confirmText: '替换',
+        cancelText: '保留两者',
+        tone: 'warning',
+      },
+    )
+    if (choice === 'confirm') {
       await resolveNameConflictRequest({
         action: 'replace',
         mode,
@@ -614,19 +612,18 @@ on('desktop:move-to-folder', async ({ ids, targetFolderId, copy }) => {
         target_folder_id: targetId,
       })
       return true
-    } catch (action) {
-      if (action === 'cancel') {
-        await resolveNameConflictRequest({
-          action: 'keep_both',
-          mode,
-          item_type: item.item_type,
-          item_id: item.id,
-          target_folder_id: targetId,
-        })
-        return true
-      }
-      return false
     }
+    if (choice === 'cancel') {
+      await resolveNameConflictRequest({
+        action: 'keep_both',
+        mode,
+        item_type: item.item_type,
+        item_id: item.id,
+        target_folder_id: targetId,
+      })
+      return true
+    }
+    return false
   }
 
   let doneCount = 0
@@ -809,6 +806,29 @@ async function handleContextMenuSelect(menuKey: string) {
   if (menuKey === 'open-app' && appKey) { handleOpenApp(appKey); return }
 
   // Desktop blank: view / sort (must not be silent no-ops)
+  if (menuKey === 'view-list') {
+    desktopShellConfig.iconLayout = 'free'
+    desktopMessage.success('已切换为列表视图')
+    refreshDesktop()
+    return
+  }
+  if (menuKey === 'view-icons') {
+    desktopShellConfig.iconLayout = 'auto-arrange'
+    desktopMessage.success('已切换为图标视图')
+    refreshDesktop()
+    return
+  }
+  if (menuKey === 'sort-name' || menuKey === 'sort-type' || menuKey === 'sort-date') {
+    desktopShellConfig.iconLayout = 'auto-arrange'
+    desktopShellConfig.iconSort = menuKey === 'sort-name' ? 'name' : menuKey === 'sort-type' ? 'type' : 'date'
+    desktopMessage.success(
+      menuKey === 'sort-name' ? '已按名称排列'
+        : menuKey === 'sort-type' ? '已按类型排列'
+          : '已按修改日期排列',
+    )
+    refreshDesktop()
+    return
+  }
   if (menuKey === 'view-auto-arrange') {
     desktopShellConfig.iconLayout = 'auto-arrange'
     desktopMessage.success('已开启自动排列')
@@ -823,17 +843,6 @@ async function handleContextMenuSelect(menuKey: string) {
   if (menuKey === 'view-align-grid') {
     desktopShellConfig.iconLayout = 'auto-arrange'
     desktopMessage.success('已对齐到网格')
-    refreshDesktop()
-    return
-  }
-  if (menuKey === 'sort-name' || menuKey === 'sort-type' || menuKey === 'sort-date') {
-    desktopShellConfig.iconLayout = 'auto-arrange'
-    desktopShellConfig.iconSort = menuKey === 'sort-name' ? 'name' : menuKey === 'sort-type' ? 'type' : 'date'
-    desktopMessage.success(
-      menuKey === 'sort-name' ? '已按名称排列'
-        : menuKey === 'sort-type' ? '已按类型排列'
-          : '已按修改日期排列',
-    )
     refreshDesktop()
     return
   }
@@ -874,6 +883,7 @@ async function handleContextMenuSelect(menuKey: string) {
     const isCut = currentClipboardType.value === 'cut'
     await fileOps.pasteToFolder(null, currentClipboardItems.value, isCut)
     if (isCut) clearClipboard()
+    desktopMessage.success(isCut ? '已移动到桌面' : '已粘贴到桌面')
     return
   }
 
@@ -914,6 +924,7 @@ async function handleContextMenuSelect(menuKey: string) {
       const isCut = currentClipboardType.value === 'cut'
       await fileOps.pasteToFolder(file.id, currentClipboardItems.value, isCut)
       if (isCut) clearClipboard()
+      desktopMessage.success(isCut ? '已移动到此文件夹' : '已粘贴到此文件夹')
       return
     }
   }
@@ -932,7 +943,14 @@ async function handleContextMenuSelect(menuKey: string) {
   if (menuKey === 'empty-recycle-bin' && canWrite.value) {
     const ok = await showConfirm('确定清空回收站？', '确认', { tone: 'warning' })
     if (!ok) return
-    await emptyRecycleBinRequest(); desktopMessage.success('回收站已清空'); emit('refresh:file-list', { folderId: 0 }); return
+    try {
+      await emptyRecycleBinRequest()
+      desktopMessage.success('回收站已清空')
+      emit('refresh:file-list', { folderId: 0 })
+    } catch {
+      desktopMessage.warning('清空回收站失败')
+    }
+    return
   }
 }
 

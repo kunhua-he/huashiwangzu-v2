@@ -302,6 +302,64 @@ class KbEntityMergeLog(Base, TimestampMixin):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class KbEntitySubjectView(Base, TimestampMixin):
+    """跨文档主体权威视图（节点⑨二次融合落盘）。
+
+    粒度=主体实体，不是文档中心主体(kb_doc_subjects)。
+    纯 DB 聚合 attributes + 跨文档冲突标记，不烧 LLM。
+    """
+    __tablename__ = "kb_entity_subject_views"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "entity_id", name="uq_kb_entity_subject_views_owner_entity"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    entity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    entity_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    type_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attributes_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    conflicts_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    evidence_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_document_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    page_count: Mapped[int] = mapped_column(Integer, default=0)
+    document_count: Mapped[int] = mapped_column(Integer, default=0)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    view_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbBackfillLedger(Base, TimestampMixin):
+    """增量回填防循环账本（节点⑩）。
+
+    同一 (owner, src_doc, tgt_doc, claim_hash) 只应用一次；
+    禁止立刻反向同 claim 再写。
+    """
+    __tablename__ = "kb_backfill_ledger"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_id",
+            "src_document_id",
+            "tgt_document_id",
+            "claim_hash",
+            name="uq_kb_backfill_ledger_edge_claim",
+        ),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    src_document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    tgt_document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    entity_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    claim_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), default="forward")
+    depth: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="applied")  # applied/skipped
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
 class KbDocRelation(Base, TimestampMixin):
     """跨文档因果/层级关系(第五层,方向性)。独立于 kb_file_relations(那个只做对称相似)。
 
@@ -949,3 +1007,99 @@ class KbPipelineStale(Base, TimestampMixin):
         UniqueConstraint("document_id", "stage", name="uq_kb_pipeline_stale_doc_stage"),
         KB_TABLE_ARGS_EXTEND,
     )
+
+
+class KbSubjectToken(Base, TimestampMixin):
+    """主体枚举词库存（节点07A）。分词穷举结果，可复用，不烧 LLM。
+
+    原则：每个词组都要有语义角色 semantic_role；
+    graph_include 只表示是否进入主知识图谱/主召回，不是“无语义/可丢弃”。
+    """
+    __tablename__ = "kb_subject_tokens"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "normalized", name="uq_kb_subject_tokens_owner_norm"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    token: Mapped[str] = mapped_column(String(256), nullable=False)
+    normalized: Mapped[str] = mapped_column(String(256), nullable=False)
+    token_kind: Mapped[str] = mapped_column(String(32), default="word")  # word/phrase
+    # 业务类型候选（品牌/产品/组织…），可多值
+    candidate_types_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # 语义角色：主体/修饰/计量/模板/功能词/待定… 每个词都必须有
+    semantic_role: Mapped[str] = mapped_column(String(64), default="待定语义")
+    # 是否进入主图谱（false=仍保留语义与共现，只是主图谱/主召回默认不取）
+    graph_include: Mapped[bool] = mapped_column(Boolean, default=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    doc_count: Mapped[int] = mapped_column(Integer, default=0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    # candidate/confirmed；不再用 noise 表示“丢掉”
+    status: Mapped[str] = mapped_column(String(32), default="candidate")
+    source: Mapped[str] = mapped_column(String(64), default="enumerate_07a")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbSubjectOccurrence(Base, TimestampMixin):
+    """主体词出现位置（节点07A）。"""
+    __tablename__ = "kb_subject_occurrences"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_hash", name="uq_kb_subject_occurrences_owner_source"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    token_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sentence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    left_token: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    right_token: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+
+
+class KbSubjectCombo(Base, TimestampMixin):
+    """主体词邻接组合（节点07A）。如 美容师+站姿。"""
+    __tablename__ = "kb_subject_combos"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_id",
+            "left_normalized",
+            "right_normalized",
+            name="uq_kb_subject_combos_owner_pair",
+        ),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    left_token_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    right_token_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    left_normalized: Mapped[str] = mapped_column(String(256), nullable=False)
+    right_normalized: Mapped[str] = mapped_column(String(256), nullable=False)
+    combo_text: Mapped[str] = mapped_column(String(512), nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    doc_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="candidate")
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KbSubjectExamItem(Base, TimestampMixin):
+    """待批量语义定类的试卷题（节点07A 产出，后续少量 LLM 批改）。"""
+    __tablename__ = "kb_subject_exam_items"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_hash", name="uq_kb_subject_exam_items_owner_source"),
+        KB_TABLE_ARGS_EXTEND,
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sentence: Mapped[str] = mapped_column(Text, nullable=False)
+    tokens_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str] = mapped_column(String(128), default="low_confidence")
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/asked/done/skipped
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    answer_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    diagnostics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)

@@ -358,10 +358,13 @@
 </template>
 
 <script setup lang="ts">
+
 import { ref, onMounted } from 'vue'
 import { initRuntime } from '../runtime'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAppFeedback } from '@/desktop/app-kit'
 import * as api from './api'
+
+const feedback = useAppFeedback()
 
 onMounted(() => initRuntime('douyin-delivery'))
 
@@ -380,7 +383,7 @@ function errorMessage(e: unknown, fallback: string): string {
 function showLoadError(target: { value: string }, fallback: string, e: unknown) {
   const message = errorMessage(e, fallback)
   target.value = message
-  ElMessage.error(message)
+  feedback.error(message)
 }
 
 // ── Script tab ─────────────────────────────────
@@ -398,7 +401,7 @@ const previewingScript = ref<api.Script | null>(null)
 
 async function generateScript() {
   if (!scriptInput.value.trim()) {
-    ElMessage.warning('请输入产品/卖点')
+    feedback.warning('请输入产品/卖点')
     return
   }
   scriptLoading.value = true
@@ -406,7 +409,7 @@ async function generateScript() {
     const r = await api.scripts.generate(scriptInput.value.trim(), scriptGenChannel.value)
     scriptResult.value = r
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '生成失败')
+    feedback.error((e as Error).message || '生成失败')
   } finally {
     scriptLoading.value = false
   }
@@ -425,10 +428,10 @@ async function saveCurrentScript() {
       full_script: scriptResult.value.script,
       status: 'draft',
     })
-    ElMessage.success('脚本已保存')
+    feedback.success('脚本已保存')
     await loadScripts()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    feedback.error((e as Error).message || '保存失败')
   }
 }
 
@@ -450,9 +453,9 @@ function previewScript(row: api.Script) {
 
 async function deleteScript(id: number) {
   try {
-    await ElMessageBox.confirm('确定删除这条脚本吗？')
+    if (!(await feedback.confirm('确定删除这条脚本吗？'))) return
     await api.scripts.delete(id)
-    ElMessage.success('已删除')
+    feedback.success('已删除')
     await loadScripts()
   } catch { /* cancelled */ }
 }
@@ -472,7 +475,7 @@ const previewingAdCopy = ref<api.AdCopy | null>(null)
 
 async function generateAdCopy() {
   if (!adCopyInput.value.trim()) {
-    ElMessage.warning('请输入产品/卖点')
+    feedback.warning('请输入产品/卖点')
     return
   }
   adCopyLoading.value = true
@@ -480,7 +483,7 @@ async function generateAdCopy() {
     const r = await api.adCopies.generate(adCopyInput.value.trim(), adCopyChannel.value, adCopyType.value)
     adCopyResult.value = r
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '生成失败')
+    feedback.error((e as Error).message || '生成失败')
   } finally {
     adCopyLoading.value = false
   }
@@ -497,10 +500,10 @@ async function saveCurrentAdCopy() {
       description: adCopyResult.value.ad_copy,
       status: 'draft',
     })
-    ElMessage.success('文案已保存')
+    feedback.success('文案已保存')
     await loadAdCopies()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    feedback.error((e as Error).message || '保存失败')
   }
 }
 
@@ -522,9 +525,9 @@ function previewAdCopy(row: api.AdCopy) {
 
 async function deleteAdCopy(id: number) {
   try {
-    await ElMessageBox.confirm('确定删除这条文案吗？')
+    if (!(await feedback.confirm('确定删除这条文案吗？'))) return
     await api.adCopies.delete(id)
-    ElMessage.success('已删除')
+    feedback.success('已删除')
     await loadAdCopies()
   } catch { /* cancelled */ }
 }
@@ -558,7 +561,7 @@ async function loadCampaigns() {
 
 async function submitCampaign() {
   if (!campaignForm.value.name.trim()) {
-    ElMessage.warning('请输入计划名称')
+    feedback.warning('请输入计划名称')
     return
   }
   try {
@@ -568,12 +571,12 @@ async function submitCampaign() {
       data.end_date = campaignDateRange.value[1]
     }
     await api.campaigns.create(data)
-    ElMessage.success('计划已创建')
+    feedback.success('计划已创建')
     showCampaignForm.value = false
     resetCampaignForm()
     await loadCampaigns()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '创建失败')
+    feedback.error((e as Error).message || '创建失败')
   }
 }
 
@@ -587,7 +590,7 @@ async function analyzeCampaign(row: api.Campaign) {
     const r = await api.campaigns.analyze(row.id)
     campaignAnalysis.value = r
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '分析失败')
+    feedback.error((e as Error).message || '分析失败')
   }
 }
 
@@ -605,9 +608,9 @@ function editCampaign(row: api.Campaign) {
 
 async function deleteCampaign(id: number) {
   try {
-    await ElMessageBox.confirm('确定删除这个投放计划吗？')
+    if (!(await feedback.confirm('确定删除这个投放计划吗？'))) return
     await api.campaigns.delete(id)
-    ElMessage.success('已删除')
+    feedback.success('已删除')
     await loadCampaigns()
   } catch { /* cancelled */ }
 }
@@ -646,7 +649,7 @@ function resetProductForm() {
 
 async function submitProduct() {
   if (!productForm.value.name.trim()) {
-    ElMessage.warning('请输入产品名称')
+    feedback.warning('请输入产品名称')
     return
   }
   try {
@@ -661,17 +664,17 @@ async function submitProduct() {
     }
     if (editingProduct.value) {
       await api.products.update(editingProduct.value.id, data)
-      ElMessage.success('产品已更新')
+      feedback.success('产品已更新')
     } else {
       await api.products.create(data)
-      ElMessage.success('产品已添加')
+      feedback.success('产品已添加')
     }
     showProductForm.value = false
     editingProduct.value = null
     resetProductForm()
     await loadProducts()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    feedback.error((e as Error).message || '保存失败')
   }
 }
 
@@ -691,9 +694,9 @@ function editProduct(row: api.Product) {
 
 async function deleteProduct(id: number) {
   try {
-    await ElMessageBox.confirm('确定删除这个产品吗？')
+    if (!(await feedback.confirm('确定删除这个产品吗？'))) return
     await api.products.delete(id)
-    ElMessage.success('已删除')
+    feedback.success('已删除')
     await loadProducts()
   } catch { /* cancelled */ }
 }
@@ -706,14 +709,14 @@ const validateResult = ref<api.ValidationResult | null>(null)
 
 async function doValidate() {
   if (!validateInput.value.trim()) {
-    ElMessage.warning('请输入需要校验的内容')
+    feedback.warning('请输入需要校验的内容')
     return
   }
   validateLoading.value = true
   try {
     validateResult.value = await api.validation.validate(validateInput.value.trim())
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '校验失败')
+    feedback.error((e as Error).message || '校验失败')
   } finally {
     validateLoading.value = false
   }
@@ -752,18 +755,18 @@ function resetPromptForm() {
 
 async function submitPrompt() {
   if (!promptForm.value.key.trim() || !promptForm.value.content.trim()) {
-    ElMessage.warning('Key 和内容不能为空')
+    feedback.warning('Key 和内容不能为空')
     return
   }
   try {
     await api.prompts.save({ ...promptForm.value })
-    ElMessage.success('提示词已保存')
+    feedback.success('提示词已保存')
     showPromptForm.value = false
     editingPrompt.value = null
     resetPromptForm()
     await loadPrompts()
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    feedback.error((e as Error).message || '保存失败')
   }
 }
 
@@ -782,9 +785,9 @@ function editPrompt(row: api.Prompt) {
 
 async function deletePrompt(id: number) {
   try {
-    await ElMessageBox.confirm('确定删除这个提示词吗？')
+    if (!(await feedback.confirm('确定删除这个提示词吗？'))) return
     await api.prompts.delete(id)
-    ElMessage.success('已删除')
+    feedback.success('已删除')
     await loadPrompts()
   } catch { /* cancelled */ }
 }

@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { ElMessage } from 'element-plus'
+import { desktopMessage } from '@/desktop/feedback/desktop-feedback'
 import type { ApiResponse } from './types'
 import { getErrorInfo, toApiErrorInfo } from './response-transform'
 
@@ -101,7 +101,8 @@ api.interceptors.response.use(
         config: response.config,
         response: { status: response.status, data: responseData },
       })
-      ElMessage.error(errInfo.userMessage)
+      // Keep one desktop toast channel (not Element Plus) for uncaught API failures.
+      desktopMessage.error(errInfo.userMessage)
       logErrorWithThrottle(response.config?.url || '未知', response.status, errInfo.backendMessage || errInfo.userMessage)
       return Promise.reject(errInfo)
     }
@@ -152,8 +153,11 @@ api.interceptors.response.use(
         window.setTimeout(() => { redirectingToLogin = false }, 1000)
       }
     }
-    if (statusCode === 403) ElMessage.error('你没有权限操作这个内容')
     const errorInfo = getErrorInfo(error)
+    // 401 redirect path already handles session expiry; still surface other failures.
+    if (statusCode !== 401) {
+      desktopMessage.error(errorInfo.userMessage)
+    }
     logErrorWithThrottle(requestUrl || '未知', statusCode, errorInfo.error || '未知错误')
     return Promise.reject(errorInfo)
   }

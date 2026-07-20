@@ -134,11 +134,12 @@ const props = withDefaults(defineProps<{
   breadcrumb: DesktopFileManagerBreadcrumbItem[]
   searchKeyword: string
   searchScope?: 'folder' | 'all'
-  viewMode: FinderViewMode
+  viewMode?: FinderViewMode
   showPathBar?: boolean
   showPreview?: boolean
 }>(), {
   searchScope: 'folder',
+  viewMode: 'grid',
   showPathBar: true,
   showPreview: true,
 })

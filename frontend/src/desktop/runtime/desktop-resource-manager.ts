@@ -4,8 +4,8 @@
  * - 调度空闲释放回调
  * - 暴露预览对象 URL 缓存
  */
-import { 创建对象地址缓存, 资源缓存 } from './资源缓存'
-import { 低内存策略, 探测低内存 } from './低内存'
+import { 创建对象地址缓存, 资源缓存 } from './resource-cache'
+import { 低内存策略, 探测低内存 } from './low-memory'
 
 type 释放回调 = () => void
 

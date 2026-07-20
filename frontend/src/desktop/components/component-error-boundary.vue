@@ -1,9 +1,9 @@
 <template>
   <div class="component-error-boundary" v-if="hasError">
-    <div class="component-error-icon">⚠️</div>
+    <div class="component-error-icon"><TriangleAlert :size="30" :stroke-width="1.8" /></div>
     <h3 class="component-error-title">Component Error</h3>
     <p class="component-error-message">{{ errorMessage }}</p>
-    <button class="component-error-retry" @click="retry">Retry</button>
+    <button class="component-error-retry" @click="retry"><RotateCcw :size="14" /> Retry</button>
   </div>
   <template v-else>
     <slot />
@@ -12,6 +12,7 @@
 
 <script setup lang="ts">
 import { ref, onErrorCaptured } from 'vue'
+import { RotateCcw, TriangleAlert } from 'lucide-vue-next'
 
 const hasError = ref(false)
 const errorMessage = ref('')
@@ -40,7 +41,7 @@ function retry() {
   text-align: center;
 }
 .component-error-icon {
-  font-size: 32px;
+  color: #ff3b30;
   margin-bottom: 12px;
 }
 .component-error-title {
@@ -62,6 +63,9 @@ function retry() {
   background: #fff;
   cursor: pointer;
   font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .component-error-retry:hover {
   background: #f1f5f9;

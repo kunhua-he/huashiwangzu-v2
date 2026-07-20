@@ -2,7 +2,14 @@
  * mac-app-v1 App UI Kit public entry.
  * Business modules/products should import from here — not invent shell chrome.
  */
-export { MAC_APP_KIT_ID, toWindowFrameLayout } from './types'
+export {
+  MAC_APP_DENSITIES,
+  MAC_APP_KIT_ID,
+  MAC_APP_LAYOUTS,
+  MAC_APP_SLOT_MODES,
+  isMacAppLayout,
+  toWindowFrameLayout,
+} from './types'
 export type {
   MacAppDensity,
   MacAppFeedbackChannel,

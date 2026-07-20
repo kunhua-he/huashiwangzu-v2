@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-"""实体抽取：按新提示词一次出 name+type_name+confidence+关系。
+"""实体抽取：文档级一次出 name+type_name+confidence+关系。
 
-干什么：从页融合正文调 LLM，解析 JSON，规范成内部结构。
-入参：文本 str；出参：{"entities":[...], "relationships":[...], ...}
+干什么：把该文档全部融合页拼成整篇正文，一次调 LLM，解析 JSON。
+入参：db/document_id/owner_id；出参：{"entities":[...], "relationships":[...], ...}
 依赖：gateway_router / timed_llm_chat / load_prompt_detached(TENTITY)
-复用：entity_service 的并行页抽取模式；提示词走 framework_prompt_templates id=2。
+提示词走 framework_prompt_templates id=2。
+留痕：输入组装 / 模型返回 / 解析结果 写入 kb_analysis_artifacts。
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
 
@@ -19,15 +20,15 @@ from app.gateway.router import gateway_router
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..analysis_artifact_service import record_analysis_artifact, stable_hash
 from ..llm_diagnostics import timed_llm_chat
-from ..model_routing import resolve_knowledge_concurrency, resolve_knowledge_profile
+from ..model_routing import resolve_knowledge_profile
 from ..prompt_utils import TENTITY, load_prompt_detached
 
 logger = logging.getLogger("v2.knowledge.node07.extract")
 
-页并发默认 = 6
 最短文本 = 20
-最大截断 = 6000
+页分隔线 = "——————————"
 
 # 18 类白名单（与 kb_semantic_types 对齐，噪音含别名 noise）
 十八类 = {
@@ -161,8 +162,66 @@ def 规范关系列表(items: Any) -> list[dict]:
     return out
 
 
+def 组装文档正文(fusions: list[Any]) -> tuple[str, list[dict[str, Any]]]:
+    """把多页 fused_text 拼成整篇正文，页间用分隔线。"""
+    parts: list[str] = []
+    page_meta: list[dict[str, Any]] = []
+    for pf in fusions:
+        page = int(getattr(pf, "page", 0) or 0)
+        text = (getattr(pf, "fused_text", None) or "").strip()
+        if len(text) < 最短文本:
+            page_meta.append({"page": page, "chars": len(text), "skipped": True})
+            continue
+        page_meta.append({"page": page, "chars": len(text), "skipped": False})
+        parts.append(f"第{page}页\n{text}")
+    body = f"\n{页分隔线}\n".join(parts)
+    return body, page_meta
+
+
+async def _留痕(
+    *,
+    owner_id: int,
+    document_id: int,
+    unit_key: str,
+    status: str,
+    reason: str = "",
+    input_payload: dict | None = None,
+    output_payload: dict | None = None,
+    model_profile: str | None = None,
+    model_used: str | None = None,
+    diagnostics: dict | None = None,
+    metrics: dict | None = None,
+    duration_ms: int | None = None,
+    started_at: datetime | None = None,
+) -> int | None:
+    """每步操作立刻落 kb_analysis_artifacts，失败不拖垮主流程。"""
+    try:
+        return await record_analysis_artifact(
+            owner_id=owner_id,
+            document_id=document_id,
+            file_id=None,
+            stage="graph",
+            status=status,
+            unit_type="document_step",
+            unit_key=unit_key,
+            input_hash=stable_hash(input_payload or {}),
+            output_hash=stable_hash(output_payload or {}),
+            model_profile=model_profile,
+            model_used=model_used,
+            reason=reason,
+            diagnostics=diagnostics or {},
+            metrics=metrics or {},
+            duration_ms=duration_ms,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("实体抽取留痕失败 doc=%s step=%s: %s", document_id, unit_key, exc)
+        return None
+
+
 async def 抽取单段文本(text: str, profile_key: str | None = None) -> dict:
-    """对一段融合正文做实体/关系抽取。"""
+    """兼容入口：对任意一段正文做实体/关系抽取（文档级也会复用）。"""
     if not (text or "").strip():
         return {"entities": [], "relationships": []}
 
@@ -173,7 +232,11 @@ async def 抽取单段文本(text: str, profile_key: str | None = None) -> dict:
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": f"请提取以下内容的实体和关系：\n\n{text[:最大截断]}",
+                "content": (
+                    "请从以下整篇文档（已按页分隔）中抽取实体和关系。"
+                    "请综合全文抽取主体，同一主体不要因出现在多页而重复输出。\n\n"
+                    f"{text}"
+                ),
             },
         ]
         resp = await timed_llm_chat(
@@ -182,7 +245,7 @@ async def 抽取单段文本(text: str, profile_key: str | None = None) -> dict:
             profile_key=resolved,
             messages=messages,
             chat_func=gateway_router.chat,
-            extra={"text_chars": len(text)},
+            extra={"text_chars": len(text), "mode": "document"},
         )
         content = resp.get("content", "") or ""
         parsed = _抽json(content)
@@ -192,6 +255,9 @@ async def 抽取单段文本(text: str, profile_key: str | None = None) -> dict:
             "model_degraded": bool(resp.get("model_degraded")),
             "model_diagnostics": resp.get("model_diagnostics") or {},
             "model_used": resp.get("model_used") or resp.get("selected_profile"),
+            "raw_content": content,
+            "usage": resp.get("usage") or {},
+            "profile_key": resolved,
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("实体抽取失败: %s", exc)
@@ -203,26 +269,30 @@ async def 抽取文档融合页(
     document_id: int,
     owner_id: int,
 ) -> dict[str, Any]:
-    """从 kb_page_fusions 并行抽各页实体。
+    """文档级一次抽取：全部融合页拼成整篇，只打 1 次 LLM。
 
     返回：
     {
-      entities: [{... , page}],
-      relationships: [...],
-      processed_pages, page_durations_ms, errors, model_degraded, ...
+      entities, relationships, processed_pages, page_meta,
+      mode=document_once, artifacts, errors, model_degraded, ...
     }
     """
     from ...models import KbPageFusion
 
+    started = datetime.now(timezone.utc)
+    t0 = perf_counter()
     stats: dict[str, Any] = {
         "entities": [],
         "relationships": [],
         "processed_pages": 0,
         "page_durations_ms": {},
+        "page_meta": [],
         "errors": [],
         "model_degraded": False,
         "page_model_used": {},
         "page_model_diagnostics": {},
+        "mode": "document_once",
+        "artifacts": {},
     }
 
     r = await db.execute(
@@ -237,49 +307,129 @@ async def 抽取文档融合页(
     fusions = r.scalars().all()
     if not fusions:
         stats["errors"].append("No fused pages found")
+        await _留痕(
+            owner_id=owner_id,
+            document_id=document_id,
+            unit_key="entity_input",
+            status="failed",
+            reason="no_fused_pages",
+            metrics={"processed_pages": 0},
+            started_at=started,
+            duration_ms=round((perf_counter() - t0) * 1000),
+        )
         return stats
 
-    page_concurrency = resolve_knowledge_concurrency("entity_extract", 页并发默认)
-    sem = asyncio.Semaphore(page_concurrency)
+    body, page_meta = 组装文档正文(fusions)
+    stats["page_meta"] = page_meta
+    stats["processed_pages"] = sum(1 for p in page_meta if not p.get("skipped"))
+    stats["input_chars"] = len(body)
+    stats["total_pages"] = len(page_meta)
 
-    async def _一页(pf) -> dict:
-        text = pf.fused_text or ""
-        page = int(pf.page)
-        if len(text) < 最短文本:
-            return {"page": page, "skipped": True}
-        async with sem:
-            t0 = perf_counter()
-            result = await 抽取单段文本(text)
-            return {
-                "page": page,
-                "duration_ms": round((perf_counter() - t0) * 1000),
-                "result": result,
-            }
-
-    page_results = await asyncio.gather(
-        *(_一页(pf) for pf in fusions),
-        return_exceptions=True,
+    # 步骤1：输入组装立刻留痕
+    art_input = await _留痕(
+        owner_id=owner_id,
+        document_id=document_id,
+        unit_key="entity_input",
+        status="done",
+        reason="document_concat",
+        input_payload={"document_id": document_id, "page_meta": page_meta},
+        output_payload={"input_chars": len(body), "preview": body[:500]},
+        metrics={
+            "processed_pages": stats["processed_pages"],
+            "total_pages": stats["total_pages"],
+            "input_chars": len(body),
+            "mode": "document_once",
+        },
+        started_at=started,
+        duration_ms=round((perf_counter() - t0) * 1000),
     )
-    for item in page_results:
-        if isinstance(item, Exception):
-            stats["errors"].append(str(item))
-            continue
-        if item.get("skipped"):
-            continue
-        page = int(item["page"])
-        result = item["result"]
-        stats["page_durations_ms"][page] = int(item.get("duration_ms") or 0)
-        ents = result.get("entities") or []
-        for ent in ents:
-            ent = dict(ent)
-            ent["page"] = page
-            stats["entities"].append(ent)
-        stats["relationships"].extend(result.get("relationships") or [])
-        stats["errors"].extend(result.get("errors") or [])
-        stats["page_model_diagnostics"][page] = result.get("model_diagnostics")
-        stats["page_model_used"][page] = result.get("model_used")
-        if result.get("model_degraded"):
-            stats["model_degraded"] = True
-        stats["processed_pages"] += 1
+    stats["artifacts"]["entity_input"] = art_input
 
+    if not body.strip():
+        stats["errors"].append("All fused pages skipped as too short")
+        await _留痕(
+            owner_id=owner_id,
+            document_id=document_id,
+            unit_key="entity_llm",
+            status="failed",
+            reason="empty_document_body",
+            metrics={"input_chars": 0},
+            started_at=started,
+            duration_ms=round((perf_counter() - t0) * 1000),
+        )
+        return stats
+
+    # 步骤2：整篇一次 LLM
+    llm_started = datetime.now(timezone.utc)
+    llm_t0 = perf_counter()
+    result = await 抽取单段文本(body)
+    llm_ms = round((perf_counter() - llm_t0) * 1000)
+    stats["page_durations_ms"]["document"] = llm_ms
+    stats["llm_duration_ms"] = llm_ms
+
+    raw_content = result.get("raw_content") or ""
+    llm_status = "failed" if result.get("errors") else "done"
+    art_llm = await _留痕(
+        owner_id=owner_id,
+        document_id=document_id,
+        unit_key="entity_llm",
+        status=llm_status,
+        reason="document_once_llm",
+        input_payload={"input_chars": len(body), "mode": "document_once"},
+        output_payload={
+            "output_chars": len(raw_content),
+            "preview": raw_content[:800],
+            "usage": result.get("usage") or {},
+        },
+        model_profile=result.get("profile_key"),
+        model_used=result.get("model_used"),
+        diagnostics=result.get("model_diagnostics") or {},
+        metrics={
+            "input_chars": len(body),
+            "output_chars": len(raw_content),
+            "duration_ms": llm_ms,
+            "errors": result.get("errors") or [],
+        },
+        started_at=llm_started,
+        duration_ms=llm_ms,
+    )
+    stats["artifacts"]["entity_llm"] = art_llm
+
+    entities = result.get("entities") or []
+    relationships = result.get("relationships") or []
+    stats["entities"] = entities
+    stats["relationships"] = relationships
+    stats["errors"].extend(result.get("errors") or [])
+    stats["model_degraded"] = bool(result.get("model_degraded"))
+    stats["page_model_used"]["document"] = result.get("model_used")
+    stats["page_model_diagnostics"]["document"] = result.get("model_diagnostics")
+    stats["model_used"] = result.get("model_used")
+
+    # 步骤3：解析结果立刻留痕（即使后续落库失败也不丢）
+    art_parsed = await _留痕(
+        owner_id=owner_id,
+        document_id=document_id,
+        unit_key="entity_parsed",
+        status="done" if entities or relationships else ("failed" if stats["errors"] else "done"),
+        reason="parsed_entities",
+        input_payload={"artifact_llm": art_llm},
+        output_payload={
+            "entities_count": len(entities),
+            "relationships_count": len(relationships),
+            "entities_sample": entities[:12],
+            "relationships_sample": relationships[:12],
+        },
+        model_profile=result.get("profile_key"),
+        model_used=result.get("model_used"),
+        metrics={
+            "entities_count": len(entities),
+            "relationships_count": len(relationships),
+            "processed_pages": stats["processed_pages"],
+            "llm_duration_ms": llm_ms,
+        },
+        started_at=llm_started,
+        duration_ms=round((perf_counter() - t0) * 1000),
+    )
+    stats["artifacts"]["entity_parsed"] = art_parsed
+    stats["duration_ms"] = round((perf_counter() - t0) * 1000)
     return stats

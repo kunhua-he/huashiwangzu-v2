@@ -117,41 +117,39 @@ export const desktopMessage = {
   error(message: string) { showToast(message, { type: 'error' }) },
 }
 
+export type DesktopDialogMode = 'alert' | 'confirm' | 'prompt'
+export type DesktopDialogChoice = 'confirm' | 'cancel' | 'dismiss'
+
 export interface DesktopDialogRequest {
   title: string
   message: string
-  mode?: 'alert' | 'confirm'
+  mode?: DesktopDialogMode
   confirmText?: string
   cancelText?: string
   tone?: OperationToast['type']
+  defaultValue?: string
+  placeholder?: string
 }
 
-export interface DesktopDialogState extends Required<Pick<DesktopDialogRequest, 'title' | 'message' | 'mode' | 'confirmText' | 'cancelText' | 'tone'>> {
+export interface DesktopDialogState {
   id: number
-  resolve: (ok: boolean) => void
+  title: string
+  message: string
+  mode: DesktopDialogMode
+  confirmText: string
+  cancelText: string
+  tone: OperationToast['type']
+  inputValue: string
+  placeholder: string
+  resolve: (choice: DesktopDialogChoice, value?: string) => void
 }
 
 const dialogCounter = { value: 0 }
 export const activeDialog = ref<DesktopDialogState | null>(null)
 
-export function showAlert(message: string, title = '提示'): Promise<void> {
-  return openDialog({ title, message, mode: 'alert', confirmText: '好' }).then(() => undefined)
-}
-
-export function showConfirm(message: string, title = '确认', options: { confirmText?: string; cancelText?: string; tone?: OperationToast['type'] } = {}): Promise<boolean> {
-  return openDialog({
-    title,
-    message,
-    mode: 'confirm',
-    confirmText: options.confirmText || '确定',
-    cancelText: options.cancelText || '取消',
-    tone: options.tone || 'warning',
-  })
-}
-
-function openDialog(request: DesktopDialogRequest): Promise<boolean> {
-  if (activeDialog.value) activeDialog.value.resolve(false)
-  return new Promise(resolve => {
+function openDialog(request: DesktopDialogRequest): Promise<{ choice: DesktopDialogChoice; value: string }> {
+  if (activeDialog.value) activeDialog.value.resolve('dismiss')
+  return new Promise((resolve) => {
     activeDialog.value = {
       id: ++dialogCounter.value,
       title: request.title,
@@ -160,16 +158,89 @@ function openDialog(request: DesktopDialogRequest): Promise<boolean> {
       confirmText: request.confirmText || '好',
       cancelText: request.cancelText || '取消',
       tone: request.tone || 'info',
-      resolve,
+      inputValue: request.defaultValue || '',
+      placeholder: request.placeholder || '',
+      resolve(choice, value = '') {
+        resolve({ choice, value })
+      },
     }
   })
 }
 
-export function resolveDialog(ok: boolean): void {
+export function showAlert(message: string, title = '提示'): Promise<void> {
+  return openDialog({ title, message, mode: 'alert', confirmText: '好' }).then(() => undefined)
+}
+
+/** true = 确定；false = 取消或关闭 */
+export function showConfirm(
+  message: string,
+  title = '确认',
+  options: { confirmText?: string; cancelText?: string; tone?: OperationToast['type'] } = {},
+): Promise<boolean> {
+  return openDialog({
+    title,
+    message,
+    mode: 'confirm',
+    confirmText: options.confirmText || '确定',
+    cancelText: options.cancelText || '取消',
+    tone: options.tone || 'warning',
+  }).then(({ choice }) => choice === 'confirm')
+}
+
+/**
+ * 三路确认：confirm / cancel(点取消按钮) / dismiss(点遮罩或关闭语义)
+ * 用于「替换 vs 保留两者 vs 放弃」这类冲突对话框。
+ */
+export function showConfirmDetailed(
+  message: string,
+  title = '确认',
+  options: { confirmText?: string; cancelText?: string; tone?: OperationToast['type'] } = {},
+): Promise<DesktopDialogChoice> {
+  return openDialog({
+    title,
+    message,
+    mode: 'confirm',
+    confirmText: options.confirmText || '确定',
+    cancelText: options.cancelText || '取消',
+    tone: options.tone || 'warning',
+  }).then(({ choice }) => choice)
+}
+
+/** 输入框对话框；确定返回字符串，取消/关闭返回 null */
+export function showPrompt(
+  message: string,
+  title = '输入',
+  options: {
+    defaultValue?: string
+    confirmText?: string
+    cancelText?: string
+    placeholder?: string
+    tone?: OperationToast['type']
+  } = {},
+): Promise<string | null> {
+  return openDialog({
+    title,
+    message,
+    mode: 'prompt',
+    confirmText: options.confirmText || '确定',
+    cancelText: options.cancelText || '取消',
+    tone: options.tone || 'info',
+    defaultValue: options.defaultValue || '',
+    placeholder: options.placeholder || '',
+  }).then(({ choice, value }) => (choice === 'confirm' ? value : null))
+}
+
+export function resolveDialog(choice: DesktopDialogChoice, value?: string): void {
   const current = activeDialog.value
   if (!current) return
+  const input = value !== undefined ? value : current.inputValue
   activeDialog.value = null
-  current.resolve(ok)
+  current.resolve(choice, input)
+}
+
+export function updateDialogInput(value: string): void {
+  if (!activeDialog.value) return
+  activeDialog.value.inputValue = value
 }
 
 function getDefaultIcon(type: OperationToast['type']): string {

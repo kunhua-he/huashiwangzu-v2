@@ -22,6 +22,7 @@ TOOL_NAMES = {
     "knowledge_pipeline_snapshot",
     "knowledge_pipeline_submit",
     "knowledge_pipeline_node_status",
+    "knowledge_pipeline_control",
     "knowledge_source_gap_snapshot",
     "knowledge_source_manifest_audit",
     "knowledge_source_manifest_summary",
@@ -204,6 +205,52 @@ def tool_definitions() -> list[Any]:
             },
         ),
         Tool(
+            name="knowledge_pipeline_control",
+            description=(
+                "知识库管线暂停/启动开关（MCP）。"
+                "action=status 查看暂停阶段、并发、graph队列；"
+                "action=pause 强制暂停模型烧额度阶段（默认 raw_ocr/raw_vision/fusion/profile/graph），"
+                "并可选把对应 concurrency 置 0；"
+                "action=resume 需 confirm=CONFIRM_RESUME 才启动，可指定 stages 与 concurrency。"
+                "用于额度等待期间人工闸门，不自动跑模型。"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "status / pause / resume",
+                        "enum": ["status", "pause", "resume"],
+                        "default": "status",
+                    },
+                    "stages": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "阶段列表；默认 pause=烧额度组，resume=当前已暂停的模型阶段",
+                    },
+                    "confirm": {
+                        "type": "string",
+                        "description": "resume 必须传 CONFIRM_RESUME；pause 可选 CONFIRM_PAUSE",
+                        "default": "",
+                    },
+                    "set_concurrency_zero": {
+                        "type": "boolean",
+                        "description": "pause 时是否把相关 pipeline_concurrency 置 0，默认 true",
+                        "default": True,
+                    },
+                    "concurrency": {
+                        "type": "object",
+                        "description": "resume 时写入 models.json pipeline_concurrency，如 {\"graph\":50,\"entity_extract\":50}",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "操作原因，写入 task_worker.json",
+                        "default": "",
+                    },
+                },
+            },
+        ),
+        Tool(
             name="knowledge_pipeline_node_status",
             description=(
                 "查看指定文档在管线各阶段的处理状态。"
@@ -239,6 +286,11 @@ def handles_tool(name: str) -> bool:
 async def handle_tool(repo_root: Path, name: str, arguments: dict[str, Any]) -> str:
     if name == "knowledge_pipeline_submit":
         result = await _pipeline_submit(repo_root, arguments)
+        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+    if name == "knowledge_pipeline_control":
+        from dev_toolkit.knowledge_pipeline_control import pipeline_control
+
+        result = await pipeline_control(repo_root, arguments)
         return json.dumps(result, ensure_ascii=False, indent=2, default=str)
     if name == "knowledge_pipeline_node_status":
         result = await _pipeline_node_status(repo_root, arguments)

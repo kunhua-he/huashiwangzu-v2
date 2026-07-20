@@ -49,12 +49,13 @@ withDefaults(defineProps<{
   searchLoading?: boolean
   filteredCount: number
   displayName: (file: FileEntry) => string
-  iconSize: number
+  iconSize?: number
 }>(), {
   selectedCount: 0,
   selectedBreakdown: '',
   searchScope: 'folder',
   searchLoading: false,
+  iconSize: 48,
 })
 
 defineEmits<{

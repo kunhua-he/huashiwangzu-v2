@@ -1,4 +1,9 @@
-import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  desktopMessage,
+  showConfirm,
+  showConfirmDetailed,
+  showPrompt,
+} from '@/desktop/feedback/desktop-feedback'
 import api from '@/shared/api'
 import {
   createFileRequest, uploadFileRequest, renameEntryRequest,
@@ -39,23 +44,18 @@ async function askNameConflict(
   opts?: { multi?: boolean },
 ): Promise<ConflictAction | 'replace_all' | 'keep_both_all'> {
   const multiHint = opts?.multi ? '\n（多选冲突：确定=全部替换，取消=全部保留两者）' : ''
-  try {
-    await ElMessageBox.confirm(
-      `目标已有同名项目「${name}」。\n选择「替换」将把已有项目移入回收站；「保留两者」会自动重命名。${multiHint}`,
-      mode === 'move' ? '移动冲突' : '复制冲突',
-      {
-        distinguishCancelAndClose: true,
-        confirmButtonText: opts?.multi ? '全部替换' : '替换',
-        cancelButtonText: opts?.multi ? '全部保留两者' : '保留两者',
-        type: 'warning',
-        showClose: true,
-      },
-    )
-    return opts?.multi ? 'replace_all' : 'replace'
-  } catch (action) {
-    if (action === 'cancel') return opts?.multi ? 'keep_both_all' : 'keep_both'
-    return 'cancel'
-  }
+  const choice = await showConfirmDetailed(
+    `目标已有同名项目「${name}」。\n选择「替换」将把已有项目移入回收站；「保留两者」会自动重命名。${multiHint}`,
+    mode === 'move' ? '移动冲突' : '复制冲突',
+    {
+      confirmText: opts?.multi ? '全部替换' : '替换',
+      cancelText: opts?.multi ? '全部保留两者' : '保留两者',
+      tone: 'warning',
+    },
+  )
+  if (choice === 'confirm') return opts?.multi ? 'replace_all' : 'replace'
+  if (choice === 'cancel') return opts?.multi ? 'keep_both_all' : 'keep_both'
+  return 'cancel'
 }
 
 function isConflictError(error: unknown): boolean {
@@ -90,7 +90,7 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message
   if (!isRecord(error)) return '操作失败'
 
-  const direct = stringField(error, 'error') || stringField(error, 'message')
+  const direct = stringField(error, 'error') || stringField(error, 'message') || stringField(error, 'userMessage')
   if (direct) return direct
 
   const data = error.data
@@ -118,7 +118,7 @@ function showBatchOperationResult(actionLabel: string, successText: string, resu
   if (totalCount === 0) return
 
   if (result.failCount === 0) {
-    ElMessage.success(totalCount > 1 ? `全部成功：完成 ${totalCount} 个` : `全部成功：${successText}`)
+    desktopMessage.success(totalCount > 1 ? `全部成功：完成 ${totalCount} 个` : `全部成功：${successText}`)
     return
   }
 
@@ -127,19 +127,11 @@ function showBatchOperationResult(actionLabel: string, successText: string, resu
   console.warn(`[FileOperations] ${actionLabel} failed items`, result.errors)
 
   if (result.successCount > 0) {
-    ElMessage.warning({
-      message: `部分成功：完成 ${result.successCount} 个，失败 ${result.failCount} 个${suffix}`,
-      duration: 6000,
-      showClose: true,
-    })
+    desktopMessage.warning(`部分成功：完成 ${result.successCount} 个，失败 ${result.failCount} 个${suffix}`)
     return
   }
 
-  ElMessage.error({
-    message: `全部失败：${result.failCount} 个项目未完成${suffix}`,
-    duration: 6000,
-    showClose: true,
-  })
+  desktopMessage.error(`全部失败：${result.failCount} 个项目未完成${suffix}`)
 }
 
 export interface FileOperationsOptions {
@@ -153,34 +145,36 @@ export function useFileOperations(options: FileOperationsOptions) {
   async function uploadFile(file: File, folderId: number | null): Promise<boolean> {
     try {
       await uploadFileRequest(file, folderId ?? undefined)
-      ElMessage.success('上传成功')
+      desktopMessage.success('上传成功')
       await refresh()
       return true
     } catch {
-      ElMessage.warning('上传失败')
+      desktopMessage.warning('上传失败')
       return false
     }
   }
 
   async function createFolder(parentId: number | null): Promise<void> {
+    const value = await showPrompt('文件夹名称', '新建文件夹')
+    if (value === null) return
+    const name = value.trim()
+    if (!name) return
     try {
-      const { value } = await ElMessageBox.prompt('文件夹名称', '新建文件夹', {
-        confirmButtonText: '确定', cancelButtonText: '取消',
-      })
-      if (!value) return
-      await api.post('/files/folder', { name: value, parent_id: parentId })
-      ElMessage.success('已创建')
+      await api.post('/files/folder', { name, parent_id: parentId })
+      desktopMessage.success('已创建')
       await refresh()
-    } catch { /* cancelled */ }
+    } catch (error: unknown) {
+      desktopMessage.warning(errorMessage(error) || '创建失败')
+    }
   }
 
   async function createFile(ext: string, folderId: number | null, label: string): Promise<void> {
     try {
       await createFileRequest(label, ext, folderId)
-      ElMessage.success(`已创建 ${label}`)
+      desktopMessage.success(`已创建 ${label}`)
       await refresh()
     } catch {
-      ElMessage.warning('创建失败')
+      desktopMessage.warning('创建失败')
     }
   }
 
@@ -188,31 +182,31 @@ export function useFileOperations(options: FileOperationsOptions) {
     try {
       await downloadFileRequest(file.id, fullFileName(file))
     } catch {
-      ElMessage.warning('下载失败')
+      desktopMessage.warning('下载失败')
     }
   }
 
   async function copyPath(file: FileEntry): Promise<void> {
     try {
       await navigator.clipboard.writeText(fullFileName(file))
-      ElMessage.success('已复制路径')
+      desktopMessage.success('已复制路径')
     } catch {
-      ElMessage.warning('复制失败')
+      desktopMessage.warning('复制失败')
     }
   }
 
   async function renameEntry(file: FileEntry): Promise<BatchOperationResult | null> {
     const result = createBatchOperationResult()
+    const valueRaw = await showPrompt('输入新名称', '重命名', { defaultValue: file.file_name })
+    if (valueRaw === null) return null
+    const value = valueRaw.trim()
+    if (!value || value === file.file_name) return null
     try {
-      const { value } = await ElMessageBox.prompt('输入新名称', '重命名', {
-        inputValue: file.file_name, confirmButtonText: '确定', cancelButtonText: '取消',
-      })
-      if (!value || value === file.file_name) return null
       try {
         await renameEntryRequest(file.is_folder ? 'folder' : 'file', file.id, value)
       } catch (error: unknown) {
         if (isConflictError(error)) {
-          ElMessage.warning('该名称已存在')
+          desktopMessage.warning('该名称已存在')
           result.failCount = 1
           return result
         }
@@ -225,20 +219,18 @@ export function useFileOperations(options: FileOperationsOptions) {
         prevName: file.file_name,
         nextName: value,
       }
-      ElMessage.success('重命名成功')
+      desktopMessage.success('重命名成功')
       await refresh()
       return result
-    } catch {
+    } catch (error: unknown) {
+      desktopMessage.warning(errorMessage(error) || '重命名失败')
       return null
     }
   }
 
   async function deleteEntry(file: FileEntry): Promise<BatchOperationResult | null> {
-    try {
-      await ElMessageBox.confirm(`确定删除 "${file.file_name}"？`, '确认删除', { type: 'warning' })
-    } catch {
-      return null
-    }
+    const ok = await showConfirm(`确定删除 "${file.file_name}"？`, '确认删除', { tone: 'warning' })
+    if (!ok) return null
     const result = createBatchOperationResult()
     try {
       await moveToRecycleBinRequest(file.is_folder ? 'folder' : 'file', file.id)
@@ -324,11 +316,8 @@ export function useFileOperations(options: FileOperationsOptions) {
     const label = files.length === 1
       ? `确定删除 “${files[0].file_name}”？`
       : `确定删除选中的 ${files.length} 个项目？`
-    try {
-      await ElMessageBox.confirm(label, '确认删除', { type: 'warning' })
-    } catch {
-      return null
-    }
+    const ok = await showConfirm(label, '确认删除', { tone: 'warning' })
+    if (!ok) return null
     const result = createBatchOperationResult()
     try {
       const resp = await batchDeleteRequest(

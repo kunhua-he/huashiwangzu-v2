@@ -35,10 +35,11 @@ _头部噪音.sort(key=len, reverse=True)  # 长的先剥
 # 保留型(只定类,不剥):成分/产品/报告/标准——"沙棘果提取物"是规范全称,剥成"沙棘果"会撞词、丢信息
 _通名类目 = {
     # 机构(剥主体)
-    "有限公司": ("机构", True), "股份有限公司": ("机构", True), "检测中心": ("机构", True),
-    "检验检测中心": ("机构", True), "研究所": ("机构", True), "研究院": ("机构", True),
+    "有限公司": ("机构", True), "股份有限公司": ("机构", True), "有限责任公司": ("机构", True),
+    "检测中心": ("机构", True), "检验检测中心": ("机构", True), "研究所": ("机构", True), "研究院": ("机构", True),
     "检测服务有限公司": ("机构", True), "检验检测有限公司": ("机构", True),
-    "科技有限公司": ("机构", True), "生物科技有限公司": ("机构", True), "门店": ("机构", True), "分公司": ("机构", True),
+    "科技有限公司": ("机构", True), "生物科技有限公司": ("机构", True),
+    "集团": ("机构", True), "门店": ("机构", True), "分公司": ("机构", True),
     # 人名/岗位(剥主体)
     "老师": ("人名", True), "经理": ("部门岗位", True), "总监": ("部门岗位", True), "主管": ("部门岗位", True),
     "专家": ("部门岗位", True), "顾问": ("部门岗位", True), "总经理": ("部门岗位", True),
@@ -46,7 +47,10 @@ _通名类目 = {
     "精华液": ("产品", False), "面霜": ("产品", False), "面膜": ("产品", False), "洁面乳": ("产品", False),
     "喷雾": ("产品", False), "套盒": ("产品", False), "套装": ("产品", False), "礼盒": ("产品", False),
     "冻干粉": ("产品", False), "身体乳": ("产品", False), "乳液": ("产品", False), "爽肤水": ("产品", False),
-    "精华水": ("产品", False), "眼霜": ("产品", False),
+    "精华水": ("产品", False), "眼霜": ("产品", False), "洗衣液": ("产品", False), "沐浴露": ("产品", False),
+    "洗发水": ("产品", False), "护发素": ("产品", False),
+    "霜": ("产品", False), "液": ("产品", False), "乳": ("产品", False), "膏": ("产品", False),
+    "露": ("产品", False), "油": ("产品", False), "精华": ("产品", False),
     # 成分(保留全称,只定类)
     "提取物": ("成分", False), "发酵提取物": ("成分", False), "果提取物": ("成分", False),
     "根提取物": ("成分", False), "叶提取物": ("成分", False),
@@ -59,6 +63,63 @@ _通名类目 = {
     "服务规范": ("标准法规", False), "操作规范": ("标准法规", False), "行为规范": ("标准法规", False),
 }
 _通名列表 = sorted(_通名类目.keys(), key=len, reverse=True)
+
+# 供 07A 等复用：不要再各写一套后缀硬编码
+_机构类目 = {"机构", "组织"}
+_产品类目 = {"产品"}
+
+
+def 通名类目表() -> dict[str, tuple[str, bool]]:
+    """返回 {后缀: (类目, 是否剥主体)}。唯一业务通名源。"""
+    return dict(_通名类目)
+
+
+def 通名后缀列表() -> list[str]:
+    return list(_通名列表)
+
+
+def 机构通名后缀() -> list[str]:
+    return [s for s, (cat, _) in _通名类目.items() if cat in _机构类目]
+
+
+def 产品通名后缀() -> list[str]:
+    # 单字产品后缀过短易误伤，默认只暴露长度>=2 的；单字留给调用方显式取
+    return [s for s, (cat, _) in _通名类目.items() if cat in _产品类目 and len(s) >= 2]
+
+
+def 匹配通名尾缀(token: str) -> tuple[str, str, bool] | None:
+    """若 token 以通名结尾，返回 (通名, 类目, 是否剥主体)。"""
+    w = re.sub(r"\s+", "", str(token or "").strip())
+    if not w:
+        return None
+    for suf in _通名列表:
+        if w.endswith(suf) and len(w) > len(suf):
+            cat, peel = _通名类目[suf]
+            return suf, cat, peel
+        if w == suf:
+            cat, peel = _通名类目[suf]
+            return suf, cat, peel
+    return None
+
+
+def 像机构名(token: str) -> bool:
+    hit = 匹配通名尾缀(token)
+    if not hit:
+        return False
+    _, cat, _ = hit
+    return cat in _机构类目 and len(re.sub(r"\s+", "", str(token or "").strip())) >= 4
+
+
+def 像产品名(token: str) -> bool:
+    hit = 匹配通名尾缀(token)
+    if not hit:
+        return False
+    suf, cat, _ = hit
+    if cat not in _产品类目:
+        return False
+    w = re.sub(r"\s+", "", str(token or "").strip())
+    # 通名本身（面霜/喷雾）或更长产品全称
+    return w == suf or len(w) >= 3
 
 # ── 谓语/虚词(剥完还含 = 句子碎片,踢) ──
 _谓语词 = re.compile(

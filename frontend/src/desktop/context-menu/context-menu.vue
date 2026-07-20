@@ -4,7 +4,7 @@
       <template v-for="(item, index) in visibleMenuItems" :key="item.key">
         <div v-if="item.separator" class="v40-ctx-sep" role="separator" />
         <button v-else class="v40-ctx-item" :class="{ 'is-disabled': item.disabled, 'is-danger': item.danger, 'has-children': item.children, 'is-open': activeSubmenu?.parentKey === item.key }" type="button" role="menuitem" :disabled="item.disabled" :tabindex="index === firstActionIndex ? 0 : -1" @click.stop="item.children ? openSubmenu($event, item.key, item.children) : handleSelect(item)" @mouseenter="item.children ? openSubmenu($event, item.key, item.children) : closeSubmenu()">
-          <span class="v40-ctx-check" aria-hidden="true" />
+          <SystemIcon :icon="item.icon" class-name="v40-ctx-icon" />
           <span class="v40-ctx-label">{{ item.label }}</span>
           <ChevronRight v-if="item.children" :size="14" />
         </button>
@@ -14,7 +14,7 @@
       <template v-for="child in activeSubmenu.items" :key="child.key">
         <div v-if="child.separator" class="v40-ctx-sep" role="separator" />
         <button v-else class="v40-ctx-item" :class="{ 'is-disabled': child.disabled, 'is-danger': child.danger }" type="button" role="menuitem" :disabled="child.disabled" tabindex="-1" @click.stop="handleSelect(child)">
-          <span class="v40-ctx-check" aria-hidden="true" />
+          <SystemIcon :icon="child.icon" class-name="v40-ctx-icon" />
           <span class="v40-ctx-label">{{ child.label }}</span>
         </button>
       </template>
@@ -26,6 +26,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
 import type { MenuItemConfig } from './use-context-menu'
+import SystemIcon from '@/shared/components/system-icon.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -73,7 +74,7 @@ function handleKeydown(event: KeyboardEvent) {
 .v40-ctx-sub{z-index:calc(var(--context-menu-z-index) + 1)}
 .v40-ctx-item{
   width:100%;height:26px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:inherit;
-  display:grid;grid-template-columns:14px minmax(0,1fr) 14px;align-items:center;gap:6px;text-align:left;
+  display:grid;grid-template-columns:16px minmax(0,1fr) 14px;align-items:center;gap:6px;text-align:left;
   font:inherit;cursor:default
 }
 .v40-ctx-item:hover:not(:disabled),.v40-ctx-item:focus-visible,.v40-ctx-item.is-open{background:var(--context-menu-hover-bg);color:white;outline:none}
@@ -81,7 +82,8 @@ function handleKeydown(event: KeyboardEvent) {
 .v40-ctx-item.is-danger:hover:not(:disabled),.v40-ctx-item.is-danger:focus-visible{background:#ff3b30;color:white}
 .v40-ctx-item:disabled{color:var(--context-menu-disabled-text)}
 .v40-ctx-sep{height:0.5px;margin:5px 8px;background:rgba(60,60,67,.18)}
-.v40-ctx-check{width:14px}
+.v40-ctx-icon{width:16px;height:16px;display:block;opacity:.82}
+.v40-ctx-item:hover:not(:disabled) .v40-ctx-icon,.v40-ctx-item:focus-visible .v40-ctx-icon,.v40-ctx-item.is-open .v40-ctx-icon{opacity:1}
 .v40-ctx-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(prefers-reduced-transparency:reduce){.v40-ctx-menu,.v40-ctx-sub{background:#f4f4f6;backdrop-filter:none}}
 </style>

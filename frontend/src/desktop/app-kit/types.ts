@@ -16,6 +16,19 @@ export type MacAppDensity = 'comfortable' | 'compact'
 
 export type MacAppFeedbackChannel = 'desktop-kit'
 
+export const MAC_APP_LAYOUTS = [
+  'finder',
+  'document',
+  'chat',
+  'settings',
+  'dashboard',
+  'utility',
+] as const
+
+export const MAC_APP_SLOT_MODES = ['required', 'optional', 'none'] as const
+
+export const MAC_APP_DENSITIES = ['comfortable', 'compact'] as const
+
 /** Mirrors product.json uiContract (forward-compatible). */
 export interface MacAppUiContract {
   kit: 'mac-app-v1'
@@ -31,6 +44,10 @@ export interface MacAppUiContract {
 }
 
 export const MAC_APP_KIT_ID = 'mac-app-v1' as const
+
+export function isMacAppLayout(value: unknown): value is MacAppLayout {
+  return typeof value === 'string' && (MAC_APP_LAYOUTS as readonly string[]).includes(value)
+}
 
 /** Maps kit layout → existing AppWindowFrame layout prop. */
 export function toWindowFrameLayout(

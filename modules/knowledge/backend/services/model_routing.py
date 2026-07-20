@@ -231,6 +231,12 @@ def is_rate_limit_error(error_message: object) -> bool:
             "gateway attempt failed",
             "gateway returned no successful attempts",
             "quota",
+            "insufficient_quota",
+            "billing",
+            "payment required",
+            "额度",
+            "没有额度",
+            "余额不足",
             "too many requests",
             "too_many_requests",
         )
@@ -409,7 +415,16 @@ def maybe_clear_expired_model_auto_pause(*, now: float | None = None) -> dict[st
     now_ts = time() if now is None else float(now)
     config_path, raw = _read_task_worker_config()
     auto_pause = raw.get("model_auto_pause")
-    if not isinstance(auto_pause, dict) or not auto_pause.get("enabled"):
+    if not isinstance(auto_pause, dict):
+        return {"cleared": False, "reason": "no_active_auto_pause"}
+    # 人工额度闸门：manual_hold=True 时禁止 TTL 自愈清掉 paused_stages
+    if auto_pause.get("manual_hold"):
+        return {
+            "cleared": False,
+            "reason": "manual_hold",
+            "paused_stages": auto_pause.get("paused_stages") or [],
+        }
+    if not auto_pause.get("enabled"):
         return {"cleared": False, "reason": "no_active_auto_pause"}
 
     expires_at = _parse_iso_timestamp(auto_pause.get("expires_at"))
@@ -533,8 +548,10 @@ def pause_model_stage_queue(stage: str, *, reason: str, error_message: str = "")
     resume_ttl = int(_rate_limit_auto_pause_config()["resume_ttl_seconds"])
     now_dt = datetime.now(timezone.utc)
     expires_at = datetime.fromtimestamp(now_dt.timestamp() + resume_ttl, tz=timezone.utc)
+    # 额度/供给失败后进入人工闸门：禁止 TTL 自动恢复，只能 MCP resume
     raw["model_auto_pause"] = {
-        "enabled": True,
+        "enabled": False,
+        "manual_hold": True,
         "stage": stage,
         "group": group,
         "paused_stages": sorted(target_stages),
@@ -543,6 +560,7 @@ def pause_model_stage_queue(stage: str, *, reason: str, error_message: str = "")
         "updated_at": now_dt.isoformat(),
         "resume_ttl_seconds": resume_ttl,
         "expires_at": expires_at.isoformat(),
+        "note": "auto-pause converted to manual_hold; resume via knowledge_pipeline_control",
     }
 
     try:

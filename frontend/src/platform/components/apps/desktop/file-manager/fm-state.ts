@@ -422,11 +422,12 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     historyIndex.value++
   }
 
-  function syncWindowTitle(folderName: string) {
+  function syncWindowTitle(folderName: string, folderId = currentFolderId.value) {
     const windowId = options.windowId?.()
     if (!windowId) return
-    // 只回写标题用 folderName，避免 folderId 回灌 props 触发 watch 截断路径栈
+    // folderId 与 folderName 必须一起回写，Finder 标签页才能独立保存当前位置。
     windowManager.updateWindowPayload(windowId, {
+      folderId,
       folderName,
     })
   }
@@ -653,7 +654,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
       void resetColumnStack(item.id, item.file_name)
       return
     }
-    openFileByRecord({ fileId: item.id, fileName: displayName(item), format: item.format || '' })
+    void openFileByRecord({ fileId: item.id, fileName: displayName(item), format: item.format || '' })
   }
 
   function openRecycle() {
@@ -664,7 +665,7 @@ export function createFileManagerState(options: CreateFileManagerStateOptions) {
     searchKeyword.value = ''
     columnStack.value = []
     void loadFiles()
-    syncWindowTitle('回收站')
+    syncWindowTitle('回收站', 0)
   }
 
   watch(viewMode, (mode) => {

@@ -31,9 +31,10 @@ if settings.DB_USE_NULL_POOL or "pytest" in sys.modules:
     _engine_kwargs["poolclass"] = NullPool
 elif _IS_EXECUTOR:
     # 一次性 executor:极小池,单任务够用,防止多并发 executor 累加爆连接。
+    # PgBouncer default_pool_size=250 允许 ~250 路并发，200 executor × 1 + 余量。
     _engine_kwargs.update({
-        "pool_size": 2,
-        "max_overflow": 2,
+        "pool_size": 1,
+        "max_overflow": 1,
         "pool_timeout": max(1, settings.DB_POOL_TIMEOUT),
         "pool_recycle": max(60, settings.DB_POOL_RECYCLE_SECONDS),
         "pool_pre_ping": True,

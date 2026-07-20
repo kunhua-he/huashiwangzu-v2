@@ -1,9 +1,5 @@
-export interface ApiResponse<T = unknown> {
-  success: boolean
-  data?: T | null
-  error?: string | null
-  errors?: Record<string, string> | { field: string; message: string }[] | null
-}
+export type { ApiEnvelope, ApiErrorContract, ApiErrorPayload } from './contracts'
+export type ApiResponse<T = unknown> = import('./contracts').ApiEnvelope<T>
 
 export type { ApiErrorInfo } from './response-transform'
 

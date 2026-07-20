@@ -1,0 +1,10 @@
+{
+  "opened_at": 1784404472.747766,
+  "stages_entity": "grok-4.5",
+  "pc": {
+    "graph": 5,
+    "entity_extract": 1,
+    "model_call_global": 5
+  },
+  "lane": 5
+}

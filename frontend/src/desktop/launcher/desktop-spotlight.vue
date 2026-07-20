@@ -158,7 +158,7 @@ async function runRemoteFileSearch(q: string) {
           if (file.is_folder || !file.format) {
             openAppById('desktop', { folderId: file.id, folderName: title })
           } else {
-            openFileByRecord({
+            void openFileByRecord({
               fileId: file.id,
               fileName: title,
               format: file.format || '',

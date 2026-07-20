@@ -31,7 +31,7 @@ import {
   Video,
   WandSparkles,
   Wrench,
-} from 'lucide-vue-next'
+} from '@/shared/icons/lucide'
 
 export type AppIconMaterial = 'glass' | 'metal' | 'paper' | 'plastic'
 
@@ -41,6 +41,7 @@ export interface AppIconProfile {
   from: string
   to: string
   accent: string
+  imageUrl?: string
   material?: AppIconMaterial
   depth?: string
 }
@@ -56,22 +57,22 @@ const FALLBACK_PROFILE: AppIconProfile = {
 
 const APP_PROFILES: Record<string, AppIconProfile> = {
   /* accent 用白/浅色线标，对齐系统 Dock 渐变方块 */
-  desktop: { key: 'finder', glyph: FolderOpen, from: '#5ec9f8', to: '#1463e8', accent: '#ffffff', material: 'glass' },
-  files: { key: 'files', glyph: FolderOpen, from: '#5ec9f8', to: '#1463e8', accent: '#ffffff', material: 'glass' },
-  recycle: { key: 'trash', glyph: Trash2, from: '#f0f0f5', to: '#d2d2dc', accent: '#636366', material: 'metal' },
+  desktop: { key: 'finder', glyph: FolderOpen, from: '#5ec9f8', to: '#1463e8', accent: '#ffffff', imageUrl: '/icons/macos-native/finder.png', material: 'glass' },
+  files: { key: 'files', glyph: FolderOpen, from: '#5ec9f8', to: '#1463e8', accent: '#ffffff', imageUrl: '/icons/macos-native/finder.png', material: 'glass' },
+  recycle: { key: 'trash', glyph: Trash2, from: '#f0f0f5', to: '#d2d2dc', accent: '#636366', imageUrl: '/icons/macos-native/trash.png', material: 'metal' },
   agent: { key: 'ai-assistant', glyph: Bot, from: '#8b6cff', to: '#3b2bb5', accent: '#ffffff', material: 'glass' },
   ai: { key: 'ai-product', glyph: Bot, from: '#8b6cff', to: '#3b2bb5', accent: '#ffffff', material: 'glass' },
-  knowledge: { key: 'knowledge', glyph: BookOpen, from: '#34d3aa', to: '#0b8f7d', accent: '#ffffff', material: 'paper' },
+  knowledge: { key: 'knowledge', glyph: BookOpen, from: '#34d3aa', to: '#0b8f7d', accent: '#ffffff', imageUrl: '/icons/macos-native/notes.png', material: 'paper' },
   memory: { key: 'memory', glyph: Brain, from: '#f472b6', to: '#9d174d', accent: '#ffffff', material: 'glass' },
-  office: { key: 'office', glyph: FileText, from: '#60a5fa', to: '#1d4ed8', accent: '#ffffff', material: 'paper' },
-  text: { key: 'text', glyph: FilePenLine, from: '#ffe57a', to: '#ffc600', accent: '#ffffff', material: 'paper' },
-  media: { key: 'media', glyph: Video, from: '#7bf87b', to: '#0fd130', accent: '#ffffff', material: 'glass' },
-  messages: { key: 'messages-product', glyph: MessageCircle, from: '#7bf87b', to: '#0fd130', accent: '#ffffff', material: 'glass' },
-  settings: { key: 'settings-product', glyph: Settings, from: '#8e8e93', to: '#48484a', accent: '#ffffff', material: 'metal' },
-  'content-studio': { key: 'content-studio-product', glyph: Layers3, from: '#38bdf8', to: '#4338ca', accent: '#ffffff', material: 'glass' },
+  office: { key: 'office', glyph: FileText, from: '#60a5fa', to: '#1d4ed8', accent: '#ffffff', imageUrl: '/icons/macos-native/textedit.png', material: 'paper' },
+  text: { key: 'text', glyph: FilePenLine, from: '#ffe57a', to: '#ffc600', accent: '#ffffff', imageUrl: '/icons/macos-native/textedit.png', material: 'paper' },
+  media: { key: 'media', glyph: Video, from: '#7bf87b', to: '#0fd130', accent: '#ffffff', imageUrl: '/icons/macos-native/facetime.png', material: 'glass' },
+  messages: { key: 'messages-product', glyph: MessageCircle, from: '#7bf87b', to: '#0fd130', accent: '#ffffff', imageUrl: '/icons/macos-native/messages.png', material: 'glass' },
+  settings: { key: 'settings-product', glyph: Settings, from: '#8e8e93', to: '#48484a', accent: '#ffffff', imageUrl: '/icons/macos-native/system-settings.png', material: 'metal' },
+  'content-studio': { key: 'content-studio-product', glyph: Layers3, from: '#38bdf8', to: '#4338ca', accent: '#ffffff', imageUrl: '/icons/macos-native/shortcuts.png', material: 'glass' },
   launchpad: { key: 'launchpad', glyph: LayoutGrid, from: '#8e8e93', to: '#48484a', accent: '#ffffff', material: 'metal' },
-  spotlight: { key: 'spotlight', glyph: Search, from: '#8e8e93', to: '#48484a', accent: '#ffffff', material: 'metal' },
-  'mission-control': { key: 'mission-control', glyph: Layers3, from: '#5ec9f8', to: '#1463e8', accent: '#ffffff', material: 'glass' },
+  spotlight: { key: 'spotlight', glyph: Search, from: '#8e8e93', to: '#48484a', accent: '#ffffff', imageUrl: '/icons/macos-native/spotlight.png', material: 'metal' },
+  'mission-control': { key: 'mission-control', glyph: Layers3, from: '#5ec9f8', to: '#1463e8', accent: '#ffffff', imageUrl: '/icons/macos-native/mission-control.png', material: 'glass' },
   'model-router': { key: 'model-router', glyph: Route, from: '#27364b', to: '#111827', accent: '#ffffff', material: 'metal' },
   'douyin-delivery': { key: 'content-studio', glyph: Video, from: '#ff416c', to: '#161a2c', accent: '#ffffff', material: 'glass' },
   'image-viewer': { key: 'image-viewer', glyph: Image, from: '#38bdf8', to: '#2563eb', accent: '#ffffff', material: 'glass' },
@@ -82,7 +83,7 @@ const APP_PROFILES: Record<string, AppIconProfile> = {
   'text-editor': { key: 'text-editor', glyph: FilePenLine, from: '#94a3b8', to: '#334155', accent: '#ffffff', material: 'paper' },
   'excel-engine': { key: 'spreadsheet', glyph: Table2, from: '#34d399', to: '#047857', accent: '#ffffff', material: 'paper' },
   'ppt-viewer': { key: 'presentation', glyph: Presentation, from: '#fb923c', to: '#c2410c', accent: '#ffffff', material: 'paper' },
-  im: { key: 'messages', glyph: MessageCircle, from: '#4ade80', to: '#15803d', accent: '#ffffff', material: 'glass' },
+  im: { key: 'messages', glyph: MessageCircle, from: '#4ade80', to: '#15803d', accent: '#ffffff', imageUrl: '/icons/macos-native/messages.png', material: 'glass' },
   'docs-open': { key: 'docs-open', glyph: Braces, from: '#22d3ee', to: '#155e75', accent: '#ffffff', material: 'metal' },
   'wechat-writer': { key: 'wechat-writer', glyph: PenLine, from: '#4ade80', to: '#047857', accent: '#ffffff', material: 'paper' },
   'media-intelligence': { key: 'media-intelligence', glyph: Headphones, from: '#a78bfa', to: '#4338ca', accent: '#ffffff', material: 'glass' },

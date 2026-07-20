@@ -40,6 +40,12 @@
         }
       },
       "min_role": "viewer"
+    },
+    {
+      "action": "reload_rules",
+      "description": "Reload chunking rules JSON without restarting the backend",
+      "parameters": {},
+      "min_role": "admin"
     }
   ],
   "permission_declaration": {

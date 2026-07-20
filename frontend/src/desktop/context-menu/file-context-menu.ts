@@ -6,7 +6,12 @@ import {
 } from '@/platform/components/apps/desktop/file-manager/finder-tags'
 
 function viewSubItems(_separatorItems: () => MenuItemConfig[]) {
-  return [{ key: 'view-list', label: '列表', icon: '≣' }, { key: 'view-icons', label: '图标', icon: '▦' }]
+  return [
+    { key: 'view-icons', label: '图标', icon: '▦' },
+    { key: 'view-list', label: '列表', icon: '≣' },
+    { key: 'view-columns', label: '分栏', icon: '▥' },
+    { key: 'view-gallery', label: '画廊', icon: '▤' },
+  ]
 }
 
 function buildTagMenuChildren(activeTags: FinderTagColor[] = []): MenuItemConfig[] {

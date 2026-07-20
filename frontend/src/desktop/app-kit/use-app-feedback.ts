@@ -2,6 +2,8 @@ import {
   desktopMessage,
   showAlert,
   showConfirm,
+  showConfirmDetailed,
+  showPrompt,
   showToast,
   type OperationToast,
 } from '@/desktop/feedback/desktop-feedback'
@@ -16,6 +18,8 @@ export function useAppFeedback() {
     toast: showToast,
     alert: showAlert,
     confirm: showConfirm,
+    confirmDetailed: showConfirmDetailed,
+    prompt: showPrompt,
     success: (message: string) => desktopMessage.success(message),
     info: (message: string) => desktopMessage.info(message),
     warning: (message: string) => desktopMessage.warning(message),

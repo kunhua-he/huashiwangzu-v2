@@ -1,0 +1,486 @@
+.fm-file-list {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  background: #fff;
+  color: var(--mac-app-text, #1d1d1f);
+}
+
+.fm-view-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.fm-list-header,
+.fm-content-list .fm-entry {
+  display: grid;
+  /* widths injected via listGridStyle */
+  grid-template-columns: 24px minmax(220px, 1fr) 6px 132px 6px 88px 6px 72px 6px;
+  align-items: center;
+  gap: 0 2px;
+  padding: 0 12px;
+}
+
+.fm-list-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 24px;
+  border-bottom: 0.5px solid rgba(60, 60, 67, 0.14);
+  background: color-mix(in srgb, #f3f3f5 94%, white);
+}
+
+.fm-list-header button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: rgba(60, 60, 67, 0.62);
+  font: 500 11px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fm-list-header button:hover { color: #1d1d1f; }
+.fm-col-icon { pointer-events: none; }
+.fm-col-resizer {
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  position: relative;
+}
+.fm-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 2px;
+  width: 1px;
+  background: rgba(60, 60, 67, 0.18);
+}
+.fm-col-resizer:hover::after {
+  background: rgba(10, 132, 255, 0.55);
+}
+.fm-entry-spacer {
+  width: 6px;
+  pointer-events: none;
+}
+.fm-sort-mark {
+  font-size: 8px;
+  opacity: 0.75;
+}
+.fm-entry-name,
+.fm-entry-date,
+.fm-entry-kind,
+.fm-entry-size {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-inline-rename {
+  width: 100%;
+  min-width: 80px;
+  height: 20px;
+  margin: 0;
+  padding: 0 4px;
+  border: 1px solid var(--mac-app-accent, #0a84ff);
+  border-radius: 4px;
+  outline: none;
+  background: #fff;
+  color: #1d1d1f;
+  font: 400 12px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mac-app-accent, #0a84ff) 25%, transparent);
+}
+
+.fm-content-grid {
+  display: grid;
+  align-content: start;
+  padding: 12px;
+  /* gap/columns set inline to track icon size slider */
+}
+
+.fm-content-column {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: #fff;
+}
+
+.fm-column-pane {
+  flex: 0 0 var(--fm-miller-col-width, 240px);
+  width: var(--fm-miller-col-width, 240px);
+  min-width: 160px;
+  max-width: 420px;
+  overflow: auto;
+  resize: horizontal;
+  border-right: 0.5px solid rgba(60, 60, 67, 0.14);
+  background: #fff;
+  padding: 4px 0;
+}
+
+.fm-column-empty {
+  padding: 16px 12px;
+  color: rgba(60, 60, 67, 0.45);
+  font-size: 12px;
+}
+
+.fm-column-row {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: default;
+  color: #1d1d1f;
+  font-size: 13px;
+}
+
+.fm-column-row:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.fm-column-row.fm-entry-selected {
+  background: rgba(10, 132, 255, 0.18);
+}
+
+.fm-column-chevron {
+  color: rgba(60, 60, 67, 0.45);
+  font-size: 14px;
+}
+
+.fm-column-preview {
+  flex: 1 1 220px;
+  min-width: 200px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  background: #fbfbfd;
+  color: #1d1d1f;
+}
+.fm-column-preview-media {
+  max-width: min(280px, 90%);
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+.fm-column-preview-pdf {
+  width: min(300px, 92%);
+  height: 220px;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+.fm-column-preview-text {
+  width: min(300px, 92%);
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+  color: #1d1d1f;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+
+.fm-column-preview-name {
+  max-width: 240px;
+  text-align: center;
+  font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  word-break: break-word;
+}
+
+.fm-column-preview-meta,
+.fm-column-preview-empty {
+  color: rgba(60, 60, 67, 0.58);
+  font-size: 12px;
+}
+
+.fm-content-list {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  padding: 2px 0 8px;
+}
+
+.fm-content-list .fm-entry {
+  min-height: 26px;
+  padding-block: 2px;
+  border-radius: 0;
+}
+
+.fm-entry {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mac-app-text, #1d1d1f);
+  cursor: default;
+  user-select: none;
+  text-align: left;
+}
+
+.fm-content-grid .fm-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 4px 2px;
+  border-radius: 0;
+  opacity: 1;
+}
+
+.fm-entry-icon-wrap {
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: transparent;
+  transition: background 100ms ease;
+}
+
+.fm-content-grid .fm-entry:hover .fm-entry-icon-wrap {
+  background: rgba(0, 0, 0, 0.045);
+}
+
+.fm-content-grid .fm-entry-selected .fm-entry-icon-wrap {
+  background: color-mix(in srgb, var(--mac-app-accent, #0a84ff) 15%, transparent);
+}
+
+.fm-content-list .fm-entry:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.fm-content-list .fm-entry-selected {
+  background: rgba(10, 132, 255, 0.18);
+}
+
+.fm-content-list .fm-entry-selected .fm-entry-date,
+.fm-content-list .fm-entry-selected .fm-entry-kind,
+.fm-content-list .fm-entry-selected .fm-entry-size {
+  color: rgba(29, 29, 31, 0.72);
+}
+
+.fm-entry-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+}
+
+.fm-content-grid .fm-entry-name {
+  margin-top: 3px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-align: center;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--mac-app-text, #1d1d1f);
+  background: transparent;
+}
+
+.fm-content-grid .fm-entry-selected .fm-entry-name {
+  background: var(--mac-app-accent, #0a84ff);
+  color: #fff;
+}
+
+.fm-content-list .fm-entry-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.fm-entry-date,
+.fm-entry-kind,
+.fm-entry-size {
+  color: rgba(60, 60, 67, 0.58);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-entry-kind,
+.fm-entry-size { text-align: right; }
+
+.fm-content-list .fm-entry-name {
+  font-size: 13px;
+}
+
+.fm-state {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 40px;
+  color: var(--mac-app-text-secondary, #6e6e73);
+  font-size: 13px;
+}
+
+.fm-empty {
+  min-height: 100%;
+}
+
+.fm-state-error { align-content: center; }
+.fm-load-banner { margin: 10px; }
+
+.fm-content-gallery {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 118px;
+  background: #fff;
+}
+.fm-gallery-stage {
+  min-height: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,0.9), transparent 55%),
+    #f7f7f9;
+}
+.fm-gallery-media {
+  max-width: min(720px, 90%);
+  max-height: min(420px, 62vh);
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+  background: #fff;
+}
+.fm-gallery-pdf {
+  width: min(760px, 92%);
+  height: min(420px, 62vh);
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+}
+.fm-gallery-text {
+  width: min(720px, 92%);
+  max-height: min(420px, 62vh);
+  overflow: auto;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+  color: #1d1d1f;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+.fm-gallery-state {
+  color: rgba(60, 60, 67, 0.55);
+  font-size: 13px;
+}
+.fm-gallery-name {
+  max-width: 420px;
+  text-align: center;
+  font: 600 14px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  color: #1d1d1f;
+  word-break: break-word;
+}
+.fm-gallery-meta,
+.fm-gallery-empty {
+  color: rgba(60, 60, 67, 0.55);
+  font-size: 12px;
+}
+.fm-gallery-strip {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-top: 0.5px solid rgba(60, 60, 67, 0.14);
+  background: color-mix(in srgb, #f4f4f6 90%, white);
+}
+.fm-gallery-thumb {
+  flex: 0 0 88px;
+  width: 88px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 8px 6px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  cursor: default;
+  color: #1d1d1f;
+}
+.fm-gallery-strip-img {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: inset 0 0 0 0.5px rgba(60, 60, 67, 0.16);
+}
+.fm-gallery-thumb:hover {
+  background: rgba(0,0,0,0.05);
+}
+.fm-gallery-thumb.fm-entry-selected {
+  background: rgba(10, 132, 255, 0.16);
+}
+.fm-gallery-thumb-name {
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.fm-entry-tags {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  min-height: 8px;
+}
+.fm-entry-tags.inline {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.fm-entry-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+  box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.2);
+}
+
+.fm-entry.fm-entry-drop,
+.fm-column-row.fm-entry-drop,
+.fm-gallery-thumb.fm-entry-drop {
+  box-shadow: inset 0 0 0 2px rgba(0, 122, 255, 0.55);
+  background: color-mix(in srgb, rgba(0, 122, 255, 0.12) 70%, rgba(255, 255, 255, 0.5));
+}

@@ -18,8 +18,9 @@
     >
       <div class="window-title-info">
         <AppIcon :icon="icon" :app-key="appKey" :size="16" />
-        <span class="window-title">{{ title }}</span>
+        <span class="window-title">{{ windowTitleText }}</span>
       </div>
+
       <div class="window-action-buttons">
         <button
           v-if="isFinderWindow"
@@ -382,6 +383,11 @@ function closeFinderTab(tabId: string) {
 }
 
 const activeFinderTab = computed(() => finderTabs.value.find((t) => t.id === activeFinderTabId.value) || null)
+const windowTitleText = computed(() => {
+  if (!isFinderWindow.value) return props.title
+  const tab = activeFinderTab.value
+  return tab?.title || tab?.folderName || props.title
+})
 
 function syncActiveTabFromPayload() {
   const tab = activeFinderTab.value
@@ -417,7 +423,7 @@ const finderComponentBind = computed(() => {
 
 // only sync the *active* tab from payload updates produced by that tab's navigation
 watch(
-  () => [isFinderWindow.value, activeFinderTabId.value, props.payload?.folderId, props.payload?.folderName, props.title] as const,
+  () => [isFinderWindow.value, props.payload?.folderId, props.payload?.folderName, props.title] as const,
   () => {
     if (!isFinderWindow.value) return
     if (!finderTabs.value.length) {

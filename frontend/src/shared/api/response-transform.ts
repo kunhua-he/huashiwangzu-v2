@@ -1,17 +1,8 @@
 import { friendlyErrorMessage } from '@/shared/composables/use-friendly-error'
-import { ElMessage } from 'element-plus'
+import { desktopMessage } from '@/desktop/feedback/desktop-feedback'
+import type { ApiErrorContract } from './contracts'
 
-export interface ApiErrorInfo {
-  success: false
-  data: null
-  error: string
-  http_status?: number
-  httpStatus?: number
-  code?: string
-  backendMessage?: string
-  userMessage: string
-  raw?: unknown
-}
+export interface ApiErrorInfo extends ApiErrorContract {}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -170,7 +161,7 @@ export function toApiErrorInfo(error: unknown, fallbackMessage = '请求失败�
 
 export function displayApiError(error: unknown, fallbackMessage = '请求失败，请稍后重试'): ApiErrorInfo {
   const info = toApiErrorInfo(error, fallbackMessage)
-  ElMessage.error(info.userMessage)
+  desktopMessage.error(info.userMessage)
   return info
 }
 

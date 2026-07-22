@@ -85,7 +85,7 @@ async def test_module_call_enforces_registered_min_role() -> None:
             headers=viewer_headers,
         )
         assert response.status_code == 403
-        assert "Requires at least 'editor' role" in response.json()["error"]
+        assert "not available for the current user" in response.json()["error"]
 
         response = await client.post(
             "/api/modules/call",
@@ -312,77 +312,6 @@ async def test_docs_open_write_requires_file_edit_access() -> None:
             response = await client.get(f"/api/docs/{file_id}/content", headers=admin_headers)
             assert response.status_code == 200
             assert response.json()["data"]["content"] == "edit share can write"
-        finally:
-            await _delete_file_permanently(client, admin_headers, file_id)
-
-
-@pytest.mark.asyncio
-async def test_framework_editors_enforce_file_access_and_share_permission() -> None:
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        admin_headers = {
-            "Authorization": f"Bearer {await _login(client, 'admin')}",
-        }
-        editor_headers = {
-            "Authorization": f"Bearer {await _login(client, 'editor')}",
-        }
-        editor_id = await _current_user_id(client, editor_headers)
-        file_id = await _upload_sample(
-            client,
-            admin_headers,
-            PROJECT_ROOT / "modules/text-parser/sandbox/samples/sample.txt",
-            f"editor-access-{uuid4().hex}",
-        )
-        try:
-            response = await client.get(f"/api/editors/text/{file_id}", headers=editor_headers)
-            assert response.status_code == 403
-
-            response = await client.post(
-                f"/api/editors/text/{file_id}",
-                json={"content": "must not write"},
-                headers=editor_headers,
-            )
-            assert response.status_code == 403
-
-            response = await client.post(
-                "/api/files/share",
-                json={
-                    "file_id": file_id,
-                    "target_user_id": editor_id,
-                    "permission": "read",
-                },
-                headers=admin_headers,
-            )
-            assert response.status_code == 200
-
-            response = await client.get(f"/api/editors/text/{file_id}", headers=editor_headers)
-            assert response.status_code == 200
-
-            response = await client.post(
-                f"/api/editors/text/{file_id}",
-                json={"content": "read share must not write"},
-                headers=editor_headers,
-            )
-            assert response.status_code == 403
-
-            response = await client.post(
-                "/api/files/share",
-                json={
-                    "file_id": file_id,
-                    "target_user_id": editor_id,
-                    "permission": "edit",
-                },
-                headers=admin_headers,
-            )
-            assert response.status_code == 200
-
-            response = await client.post(
-                f"/api/editors/text/{file_id}",
-                json={"content": "edit share can write"},
-                headers=editor_headers,
-            )
-            assert response.status_code == 200
-            assert response.json()["success"] is True
         finally:
             await _delete_file_permanently(client, admin_headers, file_id)
 

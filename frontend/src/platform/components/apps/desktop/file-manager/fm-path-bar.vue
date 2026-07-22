@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { ChevronRight, Folder, Monitor } from 'lucide-vue-next'
+import { ChevronRight, Folder, Monitor } from '@/shared/icons/lucide'
 import type { DesktopFileManagerBreadcrumbItem } from './types'
 
 defineProps<{

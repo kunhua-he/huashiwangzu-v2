@@ -34,6 +34,11 @@ export interface FileOpenPayload {
   fileId: number
   fileName: string
   format: string
+  mode?: 'view' | 'edit'
+  packageId?: number
+  versionId?: number
+  adapterId?: string
+  readonlyReason?: string
   page?: number
 }
 

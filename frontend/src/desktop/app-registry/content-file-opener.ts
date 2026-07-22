@@ -6,6 +6,29 @@ import type { FileOpenPayload } from '@/desktop/window-manager/window-types'
 
 export type { FileOpenPayload }
 
+const ADAPTER_APP_KEYS: Record<string, string> = {
+  'media.image': 'image-viewer',
+  'office.document': 'doc-viewer',
+  'office.pdf': 'pdf-viewer',
+  'office.presentation': 'ppt-viewer',
+  'office.spreadsheet': 'excel-engine',
+  'text.editor': 'text-editor',
+}
+
+const EDITABLE_EXTENSIONS = new Set([
+  'txt', 'md', 'json', 'yaml', 'yml', 'log', 'csv',
+  'docx', 'xlsx', 'pptx',
+])
+
+function resolveAppKey(productId: string, adapterId?: string | null): string {
+  return (adapterId && ADAPTER_APP_KEYS[adapterId]) || productId
+}
+
+function requestedModeFor(format?: string): 'view' | 'edit' {
+  const ext = (format || '').toLowerCase().replace(/^\./, '')
+  return EDITABLE_EXTENSIONS.has(ext) ? 'edit' : 'view'
+}
+
 /**
  * 正式打开文件入口：只走 Content Open Resolver。
  * 返回 windowId；失败返回 null（并 toast）。
@@ -22,7 +45,7 @@ export async function openFileByRecord(fileRecord: FileOpenPayload): Promise<str
       resolverVersion: 'v1',
       requestId: `open_${fileId}_${Date.now()}`,
       source: { fileId },
-      requestedMode: 'view',
+      requestedMode: fileRecord.mode || requestedModeFor(format),
     })
 
     if (resolution.outcome !== 'resolved' || !resolution.productId) {
@@ -34,18 +57,20 @@ export async function openFileByRecord(fileRecord: FileOpenPayload): Promise<str
     }
 
     const productId = resolution.productId
-    if (!getApp(productId)) {
-      desktopMessage.warning(`产品「${productId}」未注册到桌面`)
+    const appKey = resolveAppKey(productId, resolution.adapterId)
+    if (!getApp(appKey)) {
+      desktopMessage.warning(`产品「${appKey}」未注册到桌面`)
       return null
     }
 
     const pkg = (resolution.package || {}) as Record<string, unknown>
     const ver = (resolution.version || {}) as Record<string, unknown>
     const session = (resolution.session || {}) as Record<string, unknown>
+    const resolvedFile = (resolution.file || {}) as Record<string, unknown>
     const payload: Record<string, unknown> = {
       fileId,
-      fileName: fileName || resolution.title || '',
-      format: format || resolution.format || '',
+      fileName: fileName || resolution.title || String(resolvedFile.name || ''),
+      format: format || resolution.format || String(resolvedFile.extension || ''),
       mode: resolution.grantedMode || 'view',
       packageId: pkg.packageId ?? session.packageId,
       versionId: ver.version_id ?? ver.versionId ?? session.versionId,
@@ -53,12 +78,14 @@ export async function openFileByRecord(fileRecord: FileOpenPayload): Promise<str
       adapterId: resolution.adapterId,
       readonlyReason: resolution.readonlyReason,
       productId,
+      resolverProductId: productId,
+      resolvedAppKey: appKey,
     }
     if (page !== undefined) payload.page = page
 
-    const windowId = windowManager.openWindow(productId, payload)
+    const windowId = windowManager.openWindow(appKey, payload)
     if (!windowId) {
-      desktopMessage.warning(`无法打开产品「${productId}」`)
+      desktopMessage.warning(`无法打开产品「${appKey}」`)
       return null
     }
     return windowId

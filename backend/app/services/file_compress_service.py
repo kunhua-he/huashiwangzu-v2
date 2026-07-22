@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import get_settings
 from app.core.exceptions import AppException, NotFound
 from app.models.file import File, Folder
 
@@ -16,7 +16,7 @@ from app.models.file import File, Folder
 def _resolve_disk_path(storage_path: str | None) -> Path | None:
     if not storage_path:
         return None
-    upload_dir = Path(settings.UPLOAD_DIR).resolve()
+    upload_dir = Path(get_settings().UPLOAD_DIR).resolve()
     full = (upload_dir / storage_path).resolve()
     try:
         if upload_dir not in full.parents and full != upload_dir:
@@ -149,7 +149,7 @@ async def extract_zip_file(
     db.add(container)
     await db.flush()
 
-    upload_dir = Path(settings.UPLOAD_DIR).resolve()
+    upload_dir = Path(get_settings().UPLOAD_DIR).resolve()
     extract_root = (upload_dir / "extracted" / str(owner_id) / f"{container.id}").resolve()
     extract_root.mkdir(parents=True, exist_ok=True)
 

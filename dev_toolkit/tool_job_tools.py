@@ -31,7 +31,14 @@ except ModuleNotFoundError:
 
 
 TOOL_NAMES = {"tool_job_submit", "tool_job_status", "tool_job_notifications"}
-SUPPORTED_TOOLS = {"release_gate", "run_test", "smoke_all", "module_sandbox_matrix", "lint"}
+SUPPORTED_TOOLS = {
+    "release_gate",
+    "run_test",
+    "run_tests_parallel",
+    "smoke_all",
+    "module_sandbox_matrix",
+    "lint",
+}
 _LOCK = threading.RLock()
 _OUTPUT_TAIL_LIMIT = 20000
 _STALE_AFTER_SECONDS = 900
@@ -211,9 +218,36 @@ def _build_command(repo_root: Path, tool_name: str, arguments: dict[str, Any]) -
             env["PYTHONPATH"] = pythonpath
         return cmd, cwd, env, timeout_seconds or int(arguments.get("pytest_timeout") or 120)
 
+    if tool_name == "run_tests_parallel":
+        targets = arguments.get("targets")
+        if isinstance(targets, list):
+            targets_text = json.dumps(targets, ensure_ascii=False)
+        else:
+            targets_text = str(targets or "").strip()
+        if not targets_text:
+            raise ValueError("run_tests_parallel requires targets")
+        cmd = [
+            _project_python(repo_root),
+            str(repo_root / "dev_toolkit" / "run_tests_parallel_cli.py"),
+            "--targets",
+            targets_text,
+            "--max-workers",
+            str(max(1, min(int(arguments.get("max_workers") or 4), 8))),
+            "--timeout-per-target",
+            str(int(arguments.get("timeout_per_target") or arguments.get("pytest_timeout") or 120)),
+            "--mode",
+            str(arguments.get("mode") or "auto"),
+        ]
+        pythonpath = str(repo_root)
+        if env.get("PYTHONPATH"):
+            pythonpath = f"{pythonpath}:{env['PYTHONPATH']}"
+        env["PYTHONPATH"] = pythonpath
+        # wall-clock budget: timeout_per * ceil(n/workers) roughly; default generous
+        return cmd, repo_root, env, timeout_seconds or 600
+
     if tool_name == "lint":
-        path = str(arguments.get("path") or "")
-        paths = split_path_list(path)
+        # Accept string | list | None via split_path_list; do not str(list).
+        paths = split_path_list(arguments.get("path"))
         if not paths:
             raise ValueError("lint requires path")
         cmd = [_ruff_cli(repo_root), "check"]
@@ -222,7 +256,9 @@ def _build_command(repo_root: Path, tool_name: str, arguments: dict[str, Any]) -
         for item in paths:
             resolved = resolve_repo_path(repo_root, item)
             if not resolved.exists():
-                raise ValueError(f"file does not exist: {item}")
+                raise ValueError(f"path does not exist: {item}")
+            if not resolved.is_file() and not resolved.is_dir():
+                raise ValueError(f"not a file or directory: {item}")
             cmd.append(str(resolved))
         return cmd, repo_root, env, timeout_seconds or 120
 
@@ -278,6 +314,22 @@ def _parse_result(tool_name: str, returncode: int, output: str) -> dict[str, Any
             "data": data,
             "entries": entries,
         }
+    if tool_name == "run_tests_parallel":
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            return {
+                "success": bool(data.get("success")) and returncode == 0,
+                "passed": data.get("passed"),
+                "failed": data.get("failed"),
+                "total": data.get("total"),
+                "failed_targets": data.get("failed_targets"),
+                "duration_seconds": data.get("duration_seconds"),
+                "summary": data,
+            }
+        return {"success": returncode == 0}
     return {"success": returncode == 0}
 
 
@@ -541,7 +593,7 @@ def tool_definitions() -> list[Any]:
     return [
         Tool(
             name="tool_job_submit",
-            description="把长时间 MCP 工具提交为后台 job 并立即返回. 支持 release_gate/run_test/smoke_all/module_sandbox_matrix/lint.",
+            description="把长时间 MCP 工具提交为后台 job 并立即返回. 支持 release_gate/run_test/run_tests_parallel/smoke_all/module_sandbox_matrix/lint.",
             inputSchema={
                 "type": "object",
                 "properties": {

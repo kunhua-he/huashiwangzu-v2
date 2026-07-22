@@ -258,16 +258,7 @@ function onHotkeysChange(enabled: boolean) {
   line-height: 1.4;
 }
 
-.mac-select {
-  min-width: 150px;
-  height: 30px;
-  border: 1px solid var(--mac-app-border-strong);
-  border-radius: var(--mac-app-radius-control);
-  background: #fff;
-  color: var(--mac-app-text);
-  padding: 0 8px;
-  font-size: 12px;
-}
+/* 下拉样式见 @/desktop/app-kit/tokens-app.css .mac-select */
 
 .mac-switch {
   display: inline-flex;

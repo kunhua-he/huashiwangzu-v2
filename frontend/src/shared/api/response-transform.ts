@@ -2,7 +2,17 @@ import { friendlyErrorMessage } from '@/shared/composables/use-friendly-error'
 import { desktopMessage } from '@/desktop/feedback/desktop-feedback'
 import type { ApiErrorContract } from './contracts'
 
-export interface ApiErrorInfo extends ApiErrorContract {}
+export interface ApiErrorInfo extends ApiErrorContract {
+  __notified?: boolean
+}
+
+export function markApiErrorNotified(error: unknown): void {
+  if (isRecord(error)) error.__notified = true
+}
+
+export function wasApiErrorNotified(error: unknown): boolean {
+  return isRecord(error) && error.__notified === true
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -88,6 +98,7 @@ function existingApiError(error: unknown): ApiErrorInfo | null {
     code: stringField(error, 'code'),
     backendMessage: stringField(error, 'backendMessage'),
     raw: error.raw ?? error,
+    __notified: error.__notified === true,
   }
 }
 
@@ -161,7 +172,10 @@ export function toApiErrorInfo(error: unknown, fallbackMessage = '请求失败�
 
 export function displayApiError(error: unknown, fallbackMessage = '请求失败，请稍后重试'): ApiErrorInfo {
   const info = toApiErrorInfo(error, fallbackMessage)
-  desktopMessage.error(info.userMessage)
+  if (!wasApiErrorNotified(info)) {
+    desktopMessage.error(info.userMessage)
+    markApiErrorNotified(info)
+  }
   return info
 }
 

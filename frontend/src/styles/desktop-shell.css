@@ -92,10 +92,12 @@ html[data-desktop-focus-mode='1'] .desktop-shell-wallpaper::after {
 .glass-popover {
   border-radius: var(--desktop-radius-menu);
   background: var(--glass-menu-bg);
-  border: 0.5px solid rgba(0, 0, 0, 0.08);
-  box-shadow: var(--desktop-shadow-menu, var(--desktop-shadow-popover));
-  -webkit-backdrop-filter: var(--desktop-filter-menu, var(--desktop-lg-filter, blur(40px) saturate(140%)));
-  backdrop-filter: var(--desktop-filter-menu, var(--desktop-lg-filter, blur(40px) saturate(140%)));
+  border: 0.5px solid rgba(0, 0, 0, 0.1);
+  box-shadow:
+    var(--desktop-shadow-menu, var(--desktop-shadow-popover)),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: var(--desktop-filter-menu, var(--desktop-lg-filter, blur(44px) saturate(150%)));
+  backdrop-filter: var(--desktop-filter-menu, var(--desktop-lg-filter, blur(44px) saturate(150%)));
 }
 .glass-panel {
   border-radius: var(--desktop-radius-panel);

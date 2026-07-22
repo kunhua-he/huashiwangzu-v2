@@ -66,24 +66,106 @@ function handleKeydown(event: KeyboardEvent) {
 </script>
 
 <style scoped>
-.v40-ctx-menu,.v40-ctx-sub{
-  position:fixed;z-index:var(--context-menu-z-index);min-width:var(--context-menu-min-width);
-  padding:6px;color:var(--context-menu-text);border-radius:10px;
-  font:400 13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif
+.v40-ctx-menu,
+.v40-ctx-sub {
+  position: fixed;
+  z-index: var(--context-menu-z-index);
+  min-width: var(--context-menu-min-width);
+  padding: 6px;
+  color: var(--context-menu-text);
+  border-radius: var(--context-menu-radius, 10px);
+  border: 0.5px solid var(--context-menu-border, rgba(0, 0, 0, 0.1));
+  background: var(--context-menu-bg, var(--glass-menu-bg));
+  box-shadow: var(--context-menu-shadow, var(--desktop-shadow-popover));
+  font: 400 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  letter-spacing: -0.01em;
+  -webkit-backdrop-filter: blur(var(--context-menu-blur, 28px)) saturate(150%);
+  backdrop-filter: blur(var(--context-menu-blur, 28px)) saturate(150%);
+  animation: v40-ctx-in 110ms var(--desktop-ease-ios, cubic-bezier(0.32, 0.72, 0, 1));
+  transform-origin: top left;
 }
-.v40-ctx-sub{z-index:calc(var(--context-menu-z-index) + 1)}
-.v40-ctx-item{
-  width:100%;height:26px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:inherit;
-  display:grid;grid-template-columns:16px minmax(0,1fr) 14px;align-items:center;gap:6px;text-align:left;
-  font:inherit;cursor:default
+.v40-ctx-sub {
+  z-index: calc(var(--context-menu-z-index) + 1);
+  transform-origin: top left;
 }
-.v40-ctx-item:hover:not(:disabled),.v40-ctx-item:focus-visible,.v40-ctx-item.is-open{background:var(--context-menu-hover-bg);color:white;outline:none}
-.v40-ctx-item.is-danger{color:var(--context-menu-danger-text)}
-.v40-ctx-item.is-danger:hover:not(:disabled),.v40-ctx-item.is-danger:focus-visible{background:#ff3b30;color:white}
-.v40-ctx-item:disabled{color:var(--context-menu-disabled-text)}
-.v40-ctx-sep{height:0.5px;margin:5px 8px;background:rgba(60,60,67,.18)}
-.v40-ctx-icon{width:16px;height:16px;display:block;opacity:.82}
-.v40-ctx-item:hover:not(:disabled) .v40-ctx-icon,.v40-ctx-item:focus-visible .v40-ctx-icon,.v40-ctx-item.is-open .v40-ctx-icon{opacity:1}
-.v40-ctx-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media(prefers-reduced-transparency:reduce){.v40-ctx-menu,.v40-ctx-sub{background:#f4f4f6;backdrop-filter:none}}
+@keyframes v40-ctx-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.v40-ctx-item {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+  cursor: default;
+  transition: background 80ms ease, color 80ms ease;
+}
+.v40-ctx-item:hover:not(:disabled),
+.v40-ctx-item:focus-visible,
+.v40-ctx-item.is-open {
+  background: var(--context-menu-hover-bg);
+  color: white;
+  outline: none;
+}
+.v40-ctx-item.is-danger {
+  color: var(--context-menu-danger-text);
+}
+.v40-ctx-item.is-danger:hover:not(:disabled),
+.v40-ctx-item.is-danger:focus-visible {
+  background: #ff3b30;
+  color: white;
+}
+.v40-ctx-item:disabled {
+  color: var(--context-menu-disabled-text);
+}
+.v40-ctx-sep {
+  height: 0.5px;
+  margin: 5px 10px;
+  background: var(--context-menu-divider, rgba(60, 60, 67, 0.16));
+}
+.v40-ctx-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  opacity: 0.82;
+}
+.v40-ctx-item:hover:not(:disabled) .v40-ctx-icon,
+.v40-ctx-item:focus-visible .v40-ctx-icon,
+.v40-ctx-item.is-open .v40-ctx-icon {
+  opacity: 1;
+}
+.v40-ctx-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .v40-ctx-menu,
+  .v40-ctx-sub {
+    animation: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .v40-ctx-menu,
+  .v40-ctx-sub {
+    background: #f4f4f6;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
 </style>

@@ -8,7 +8,7 @@ from typing import Any
 
 SERVER_NAME = "project_toolkit"
 SERVER_DISPLAY_NAME = "项目工具台"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 DEFAULT_COMMAND = "python3.14"
 SERVER_SCRIPT = Path("dev_toolkit") / "server.py"
 

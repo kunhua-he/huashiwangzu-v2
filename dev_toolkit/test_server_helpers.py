@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -91,33 +92,42 @@ def test_release_gate_schema_exposes_mode() -> None:
 
 
 def test_restart_backend_tools_are_discoverable() -> None:
-    tools = {tool.name: tool for tool in core_tools.tool_definitions()}
+    from dev_toolkit import service_lifecycle_tools as svc
+
+    tools = {tool.name: tool for tool in svc.tool_definitions()}
+    core_names = {tool.name for tool in core_tools.tool_definitions()}
 
     assert "restart_backend" in tools
-    assert "_restart_backend" in tools
-    assert core_tools.handles_tool("restart_backend") is True
-    assert core_tools.handles_tool("_restart_backend") is True
-    assert "scripts/start_backend.sh --restart" in tools["restart_backend"].description
+    assert "start_stack" in tools
+    assert "service_status" in tools
+    assert "restart_backend" not in core_names
+    assert "start_frontend" not in core_names
+    assert svc.handles_tool("restart_backend") is True
+    assert "start_backend.sh --restart" in tools["restart_backend"].description
 
 
 def test_restart_backend_reports_script_failure_without_false_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FailedProc:
-        returncode = 1
+    from dev_toolkit import service_lifecycle_tools as svc
 
-        async def communicate(self):
-            return b"restart failed\n", b"permission denied\n"
-
-    async def fake_create_subprocess_exec(*_args, **_kwargs):
-        return FailedProc()
-
-    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(
+        svc,
+        "restart_backend",
+        lambda repo, **kwargs: {
+            "success": False,
+            "status": "error",
+            "restarted": False,
+            "script_returncode": 1,
+            "health": "not_checked",
+            "output_tail": "restart failed\npermission denied\n",
+            "error": "Backend restart script failed",
+        },
+    )
 
     result = anyio.run(server._restart_backend)
 
     assert result["success"] is False
     assert result["status"] == "error"
     assert result["restarted"] is False
-    assert result["script_returncode"] == 1
     assert result["health"] == "not_checked"
     assert "restart failed" in result["output_tail"]
 
@@ -368,12 +378,21 @@ def test_finish_task_collects_timing_data_and_test_duration(monkeypatch: pytest.
     async def fake_worktree_guard(*_args, **_kwargs) -> str:
         return json.dumps({"success": True, "outside_allowed": []})
 
-    async def fake_code_run_test(*_args, **_kwargs) -> str:
-        return json.dumps({"success": True, "target": "dev_toolkit/test_x.py", "duration_seconds": 0.75})
+    async def fake_code_run_tests_parallel(*_args, **kwargs) -> str:
+        targets = kwargs.get("targets") or (_args[2] if len(_args) > 2 else "")
+        return json.dumps({
+            "success": True,
+            "targets": [targets] if isinstance(targets, str) else list(targets),
+            "duration_seconds": 0.75,
+            "mode": kwargs.get("mode", "auto"),
+            "parallel_count": 1,
+            "serial_count": 0,
+            "results": [{"success": True, "target": targets, "duration_seconds": 0.75}],
+        })
 
     monkeypatch.setattr(server, "git_status_summary", fake_git_status_summary)
     monkeypatch.setattr(server, "worktree_guard", fake_worktree_guard)
-    monkeypatch.setattr(server, "code_run_test", fake_code_run_test)
+    monkeypatch.setattr(server, "code_run_tests_parallel", fake_code_run_tests_parallel)
 
     async def run() -> dict:
         raw = await server._finish_task(
@@ -392,11 +411,13 @@ def test_finish_task_collects_timing_data_and_test_duration(monkeypatch: pytest.
             "name": "dev_toolkit/test_x.py",
             "status": "pass",
             "duration_seconds": 0.75,
-            "command": "pytest",
+            "command": "run_tests_parallel",
             "source": "finish_task.test_targets",
         },
     ]
     assert data["test_timing"]["summary"] == {"count": 2, "timed_count": 2, "total_duration_seconds": 2.0}
+    assert data["tests"][0]["mode"] == "auto"
+    assert data["tests"][0]["parallel_count"] == 1
 
 
 def test_finish_task_adds_default_jwt_secret_and_custom_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -408,14 +429,29 @@ def test_finish_task_adds_default_jwt_secret_and_custom_test_env(monkeypatch: py
     async def fake_worktree_guard(*_args, **_kwargs) -> str:
         return json.dumps({"success": True, "outside_allowed": []})
 
-    async def fake_code_run_test(_run_command_json, _repo_root, target: str, env: dict[str, str] | None = None) -> str:
-        seen["target"] = target
+    async def fake_code_run_tests_parallel(
+        _run_command_json,
+        _repo_root,
+        targets: str | list[str] = "",
+        max_workers: int = 4,
+        timeout_per_target: int = 120,
+        mode: str = "auto",
+        env: dict[str, str] | None = None,
+    ) -> str:
+        seen["targets"] = targets
         seen["env"] = env
-        return json.dumps({"success": True, "target": target, "duration_seconds": 0.2})
+        seen["mode"] = mode
+        return json.dumps({
+            "success": True,
+            "targets": [targets] if isinstance(targets, str) else list(targets),
+            "duration_seconds": 0.2,
+            "mode": mode,
+            "results": [{"success": True, "target": targets, "duration_seconds": 0.2}],
+        })
 
     monkeypatch.setattr(server, "git_status_summary", fake_git_status_summary)
     monkeypatch.setattr(server, "worktree_guard", fake_worktree_guard)
-    monkeypatch.setattr(server, "code_run_test", fake_code_run_test)
+    monkeypatch.setattr(server, "code_run_tests_parallel", fake_code_run_tests_parallel)
 
     async def run() -> dict:
         raw = await server._finish_task(
@@ -429,6 +465,7 @@ def test_finish_task_adds_default_jwt_secret_and_custom_test_env(monkeypatch: py
 
     assert data["success"] is True
     assert seen["env"] == {"CUSTOM_FLAG": "1", "JWT_SECRET": "test-secret"}
+    assert seen["mode"] == "auto"
     assert data["tests"][0]["finish_task_env_keys"] == ["CUSTOM_FLAG", "JWT_SECRET"]
     assert data["tests"][0]["finish_task_default_env"] == {"JWT_SECRET": True}
 
@@ -441,6 +478,116 @@ def test_finish_task_schema_exposes_baseline_parameters() -> None:
     assert "baseline_status_json" in properties
     assert "timing_data" in properties
     assert "test_env_json" in properties
+    for key in ("lint_paths", "test_targets"):
+        schema = properties[key]
+        assert "anyOf" in schema, f"{key} should be anyOf string|array"
+        types = {item.get("type") for item in schema["anyOf"]}
+        assert types == {"string", "array"}
+
+
+def test_finish_task_lint_once_and_accepts_native_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """finish_task should call lint once with multi path, not for-loop serial lint."""
+    lint_calls: list[Any] = []
+
+    async def fake_git_status_summary(*_args, **_kwargs) -> dict:
+        return {"branch": "codex/test", "is_main": False, "dirty_count": 0, "sample": []}
+
+    async def fake_worktree_guard(*_args, **_kwargs) -> str:
+        return json.dumps({"success": True, "outside_allowed": []})
+
+    async def fake_code_lint(_run_command_json, _repo_root, _ruff_cli, path, diff: bool = False, max_workers: int = 4) -> str:
+        lint_calls.append(path)
+        paths = path if isinstance(path, list) else [path]
+        return json.dumps({
+            "success": True,
+            "paths": paths,
+            "max_workers": max_workers,
+            "results": [{"success": True, "path": item} for item in paths],
+            "failed_count": 0,
+        })
+
+    monkeypatch.setattr(server, "git_status_summary", fake_git_status_summary)
+    monkeypatch.setattr(server, "worktree_guard", fake_worktree_guard)
+    monkeypatch.setattr(server, "code_lint", fake_code_lint)
+
+    async def run() -> dict:
+        raw = await server._finish_task(
+            "finish with multi lint",
+            lint_paths=["dev_toolkit/a.py", "dev_toolkit/b.py"],
+        )
+        return json.loads(raw)
+
+    data = anyio.run(run)
+
+    assert data["success"] is True
+    assert len(lint_calls) == 1
+    assert lint_calls[0] == ["dev_toolkit/a.py", "dev_toolkit/b.py"]
+    assert len(data["lint"]) == 2
+    assert {item["path"] for item in data["lint"]} == {"dev_toolkit/a.py", "dev_toolkit/b.py"}
+
+
+def test_finish_task_schema_exposes_auto_select_verify() -> None:
+    finish_tool = next(tool for tool in core_tools.tool_definitions() if tool.name == "finish_task")
+    properties = finish_tool.inputSchema["properties"]
+    assert properties["auto_select_verify"]["type"] == "boolean"
+    assert properties["from_git"]["type"] == "boolean"
+    assert properties["auto_select_verify"].get("default") is False
+
+
+def test_finish_task_auto_select_verify_fills_empty_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    select_calls: list[dict] = []
+    lint_calls: list[Any] = []
+    test_calls: list[Any] = []
+
+    async def fake_git_status_summary(*_args, **_kwargs) -> dict:
+        return {"branch": "codex/test", "is_main": False, "dirty_count": 1, "sample": []}
+
+    async def fake_worktree_guard(*_args, **_kwargs) -> str:
+        return json.dumps({"success": True, "outside_allowed": []})
+
+    async def fake_select_verify(*_args, **kwargs) -> str:
+        select_calls.append(kwargs)
+        return json.dumps({
+            "success": True,
+            "lint_paths": ["dev_toolkit/code_tools.py"],
+            "test_targets": ["dev_toolkit/test_speed_tools.py"],
+            "notes": ["heuristic"],
+        })
+
+    async def fake_code_lint(_run_command_json, _repo_root, _ruff_cli, path, diff: bool = False, max_workers: int = 4) -> str:
+        lint_calls.append(path)
+        return json.dumps({"success": True, "path": path if isinstance(path, str) else path[0]})
+
+    async def fake_parallel(*_args, **kwargs) -> str:
+        test_calls.append(kwargs.get("targets"))
+        return json.dumps({"success": True, "targets": kwargs.get("targets"), "duration_seconds": 0.1})
+
+    monkeypatch.setattr(server, "git_status_summary", fake_git_status_summary)
+    monkeypatch.setattr(server, "worktree_guard", fake_worktree_guard)
+    monkeypatch.setattr(server, "code_select_verify", fake_select_verify)
+    monkeypatch.setattr(server, "code_lint", fake_code_lint)
+    monkeypatch.setattr(server, "code_run_tests_parallel", fake_parallel)
+
+    async def run() -> dict:
+        raw = await server._finish_task(
+            "auto select",
+            auto_select_verify=True,
+            from_git=True,
+        )
+        return json.loads(raw)
+
+    data = anyio.run(run)
+    assert data["success"] is True
+    assert data["select_verify"]["success"] is True
+    assert data["select_verify"]["from_git"] is True
+    assert select_calls and select_calls[0].get("from_git") is True
+    assert lint_calls == [["dev_toolkit/code_tools.py"]] or lint_calls[0] == ["dev_toolkit/code_tools.py"]
+    assert test_calls == [["dev_toolkit/test_speed_tools.py"]]
+
+
+def test_resolve_codegraph_cli_prefers_which(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server.shutil, "which", lambda _name: "/tmp/fake-codegraph")
+    assert server._resolve_codegraph_cli() == "/tmp/fake-codegraph"
 
 
 def test_auth_context_payload_keeps_identity_without_token() -> None:

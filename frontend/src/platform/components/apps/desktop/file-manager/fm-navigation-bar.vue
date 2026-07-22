@@ -122,7 +122,7 @@ import {
   Search,
   Settings2,
   Sidebar,
-} from 'lucide-vue-next'
+} from '@/shared/icons/lucide'
 import type { DesktopFileManagerBreadcrumbItem } from './types'
 
 export type FinderViewMode = 'grid' | 'list' | 'column' | 'gallery'

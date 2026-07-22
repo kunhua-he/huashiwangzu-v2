@@ -755,9 +755,9 @@ function handleItemOpen(item: FileEntry) {
     feedback.info('请先还原再打开文件')
     return
   }
-  // search hit on a file: open enclosing folder first (Finder "show in enclosing folder" lite)
+  // Search hits should open files directly; "show enclosing folder" is a separate command.
   const searching = Boolean(state.searchKeyword.value.trim() && state.searchResults.value)
-  if (searching && !item.is_folder) {
+  if (searching && item.is_folder) {
     void revealInEnclosingFolder(item)
     return
   }

@@ -20,7 +20,6 @@ TOOL_NAMES = {
     "clear_log",
     "sql",
     "web_read",
-    "start_frontend",
     "sanity_check",
     "smoke_all",
     "release_gate",
@@ -34,8 +33,6 @@ TOOL_NAMES = {
     "knowledge_cleanup_noise",
     "workspace_audit",
     "workspace_reset",
-    "restart_backend",
-    "_restart_backend",
     "_verify_tool_args",
     "_snap_diff",
 }
@@ -56,7 +53,6 @@ class CoreToolContext:
     clear_log: Callable[[str, bool, bool], dict[str, Any]]
     sql: Callable[[str], Awaitable[str]]
     web_read: Callable[[str], Awaitable[str]]
-    start_frontend: Callable[[], Awaitable[str]]
     sanity_check: Callable[[], Awaitable[str]]
     smoke_all: Callable[[bool], Awaitable[str]]
     release_gate: Callable[[bool, str, int | None, int | None], Awaitable[str]]
@@ -65,12 +61,11 @@ class CoreToolContext:
     capabilities: Callable[[str], Awaitable[str]]
     db_schema: Callable[[str], Awaitable[str]]
     plan_task: Callable[[str, str, str], Awaitable[str]]
-    finish_task: Callable[[str, str, str, str, str, str, str, str, str, str, str, str], Awaitable[str]]
+    finish_task: Callable[..., Awaitable[str]]
     knowledge_noise_report: Callable[[], dict[str, Any]]
     knowledge_cleanup_noise: Callable[[], dict[str, Any]]
     workspace_audit: Callable[[], Awaitable[dict[str, Any]]]
     workspace_reset: Callable[[str, str], Awaitable[dict[str, Any]]]
-    restart_backend: Callable[[], Awaitable[dict[str, Any]]]
     verify_tool_args: Callable[[], Awaitable[dict[str, Any]]]
     snap_diff: Callable[[], Awaitable[dict[str, Any]]]
 
@@ -172,11 +167,6 @@ def tool_definitions() -> list[Any]:
                 "properties": {"url": {"type": "string", "description": "网页 URL"}},
                 "required": ["url"],
             },
-        ),
-        Tool(
-            name="start_frontend",
-            description="启动前端开发服务器，等价 cd frontend && npm run dev。",
-            inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
             name="sanity_check",
@@ -282,8 +272,28 @@ def tool_definitions() -> list[Any]:
                 "properties": {
                     "summary": {"type": "string", "description": "本次任务一句话摘要"},
                     "agent": {"type": "string", "description": "执行 agent 标识", "default": ""},
-                    "lint_paths": {"type": "string", "description": "Python 文件路径，支持空格、逗号、换行或 JSON list", "default": ""},
-                    "test_targets": {"type": "string", "description": "pytest 目标，支持多个空格分隔", "default": ""},
+                    "lint_paths": {
+                        "description": (
+                            "Python 文件路径：字符串(空格/逗号/换行/JSON list)或 string 数组；"
+                            "finish_task 一次并行 lint（与 lint 工具契约一致）"
+                        ),
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "default": "",
+                    },
+                    "test_targets": {
+                        "description": (
+                            "pytest 目标：字符串(空格/逗号/换行/JSON list)或 string 数组；"
+                            "finish_task 走 run_tests_parallel(mode=auto)"
+                        ),
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "default": "",
+                    },
                     "test_env_json": {
                         "type": "string",
                         "description": "可选测试环境变量 JSON object；finish_task 跑 pytest 时默认会补 JWT_SECRET=test-secret",
@@ -312,6 +322,22 @@ def tool_definitions() -> list[Any]:
                     },
                     "verification_summary": {"type": "string", "description": "验证结果摘要", "default": ""},
                     "risk_note": {"type": "string", "description": "残留风险评估", "default": ""},
+                    "auto_select_verify": {
+                        "type": "boolean",
+                        "description": (
+                            "为 true 且 lint_paths/test_targets 为空时，调用 select_verify 自动补目标；"
+                            "默认 false，避免收工意外长跑"
+                        ),
+                        "default": False,
+                    },
+                    "from_git": {
+                        "type": "boolean",
+                        "description": (
+                            "配合 auto_select_verify：从 git dirty 推断改动路径；"
+                            "若未传 paths 且 auto_select_verify=true，默认等同 true"
+                        ),
+                        "default": False,
+                    },
                 },
                 "required": ["summary"],
             },
@@ -342,16 +368,6 @@ def tool_definitions() -> list[Any]:
                 },
                 "required": ["confirm"],
             },
-        ),
-        Tool(
-            name="restart_backend",
-            description="重启后端服务 (zsh scripts/start_backend.sh --restart)，返回脚本输出、耗时、健康检查和端口。",
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        Tool(
-            name="_restart_backend",
-            description="兼容旧名：重启后端服务，建议改用 restart_backend。",
-            inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
             name="_verify_tool_args",
@@ -417,8 +433,6 @@ async def handle_tool(context: CoreToolContext, name: str, arguments: dict[str, 
         return await context.sql(arguments["query"])
     if name == "web_read":
         return await context.web_read(arguments["url"])
-    if name == "start_frontend":
-        return await context.start_frontend()
     if name == "sanity_check":
         return await context.sanity_check()
     if name == "smoke_all":
@@ -458,6 +472,8 @@ async def handle_tool(context: CoreToolContext, name: str, arguments: dict[str, 
             arguments.get("timing_data", ""),
             arguments.get("verification_summary", ""),
             arguments.get("risk_note", ""),
+            bool(arguments.get("auto_select_verify", False)),
+            bool(arguments.get("from_git", False)),
         )
     if name == "knowledge_noise_report":
         return json.dumps(context.knowledge_noise_report(), ensure_ascii=False, indent=2)
@@ -471,8 +487,6 @@ async def handle_tool(context: CoreToolContext, name: str, arguments: dict[str, 
             ensure_ascii=False,
             indent=2,
         )
-    if name in {"restart_backend", "_restart_backend"}:
-        return json.dumps(await context.restart_backend(), ensure_ascii=False, indent=2)
     if name == "_verify_tool_args":
         return json.dumps(await context.verify_tool_args(), ensure_ascii=False, indent=2)
     if name == "_snap_diff":

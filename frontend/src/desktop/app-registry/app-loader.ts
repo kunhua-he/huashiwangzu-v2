@@ -35,6 +35,15 @@ function resolveComponentLoader(
   return componentKeyMap[entryKey] || missingComponentLoader(appKey, appName, entryKey)
 }
 
+const LEGACY_APP_COMPONENT_KEYS: Record<string, string> = {
+  'doc-viewer': 'doc-viewer/index.vue',
+  'excel-engine': 'excel-engine/index.vue',
+  'image-viewer': 'image-viewer/index.vue',
+  'pdf-viewer': 'pdf-viewer/index.vue',
+  'ppt-viewer': 'ppt-viewer/index.vue',
+  'text-editor': 'text-editor/index.vue',
+}
+
 function extensionsFromAssociations(product: DesktopProductItem): {
   supported: string[]
   editable: string[]
@@ -85,8 +94,12 @@ export function validateProductUiContract(
   return { ok: warnings.length === 0, warnings, contract: raw }
 }
 
-function transformProductToEntry(product: DesktopProductItem, aliasOf?: string): AppRegistryEntry {
-  const entryKey = product.entryComponentKey || ''
+function transformProductToEntry(
+  product: DesktopProductItem,
+  aliasOf?: string,
+  entryComponentKeyOverride?: string,
+): AppRegistryEntry {
+  const entryKey = entryComponentKeyOverride || product.entryComponentKey || ''
   const windowPolicy = product.windowPolicy || {}
   const visibility = product.visibility || {}
   const appKey = aliasOf || product.productId
@@ -168,7 +181,7 @@ export async function loadAppRegistry(_role: string): Promise<AppRegistryEntry[]
       const key = String(legacy || '')
       if (!key || claimed.has(key)) continue
       // 别名：旧调用 openApp('agent') 仍能开到 ai 产品，但不显示第二图标
-      entries.push(transformProductToEntry(product, key))
+      entries.push(transformProductToEntry(product, key, LEGACY_APP_COMPONENT_KEYS[key]))
       claimed.add(key)
     }
   }

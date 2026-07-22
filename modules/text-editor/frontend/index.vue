@@ -46,16 +46,43 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { MacAppShell } from '@/desktop/app-kit'
 import viewerShell from '@/shared/components/viewer-shell.vue'
-import { apiPost, downloadText } from './api'
+import { hydrateTextPackage, saveTextPackage, type ContentNode } from './api'
 import type { FileOpenPayload } from '../runtime'
 
-const props = defineProps<{ fileId?: number; fileName?: string; format?: string; mode?: string }>()
+const props = defineProps<{
+  fileId?: number
+  fileName?: string
+  format?: string
+  mode?: string
+  packageId?: number
+  versionId?: number
+  readonlyReason?: string
+}>()
 
-function getPayload(): { fileId: number; fileName: string } | null {
+type TextOpenPayload = FileOpenPayload & {
+  format?: string
+  packageId?: number
+  versionId?: number
+  readonlyReason?: string
+}
+
+function getPayload(): TextOpenPayload | null {
   // 框架通过 <component v-bind="payload"> 把 fileId 作为 prop 传进来
-  if (props.fileId) return { fileId: Number(props.fileId), fileName: props.fileName || '' }
-  const p = (window as unknown as { __MODULE_OPEN_FILE_PAYLOAD__?: FileOpenPayload }).__MODULE_OPEN_FILE_PAYLOAD__
-  if (p?.fileId) return { fileId: p.fileId, fileName: p.fileName || '' }
+  if (props.fileId) {
+    return {
+      fileId: Number(props.fileId),
+      fileName: props.fileName || '',
+      format: props.format || '',
+      mode: props.mode === 'edit' ? 'edit' : 'view',
+      packageId: props.packageId ? Number(props.packageId) : undefined,
+      versionId: props.versionId ? Number(props.versionId) : undefined,
+      readonlyReason: props.readonlyReason,
+      extension: props.format || null,
+      mimeType: null,
+    }
+  }
+  const p = (window as unknown as { __MODULE_OPEN_FILE_PAYLOAD__?: TextOpenPayload }).__MODULE_OPEN_FILE_PAYLOAD__
+  if (p?.fileId) return p
   return null
 }
 
@@ -68,6 +95,8 @@ const previewMode = ref(false)
 const loadError = ref('')
 const saveError = ref('')
 const fileId = ref(0)
+const packageId = ref(0)
+const versionId = ref<number | null>(null)
 const format = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -101,10 +130,40 @@ const statusText = computed(() => {
   return `${lines} 行, ${len} 字符${changed ? ' (已修改)' : ''}`
 })
 
+function textFromNodes(nodes: ContentNode[] = []): string {
+  return [...nodes]
+    .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
+    .map((node) => String(node.text ?? ''))
+    .filter((text, idx, arr) => text || idx < arr.length - 1)
+    .join('\n')
+}
+
+function contentPayloadFromText(text: string, ext: string): Record<string, unknown> {
+  return {
+    manifest: {
+      title: fileName.value || 'untitled',
+      extension: ext || 'txt',
+      package_type: 'document',
+      created_by_parser: 'text-editor',
+    },
+    blocks: [
+      {
+        type: 'paragraph',
+        text,
+        children: [],
+      },
+    ],
+    parse_status: 'edited',
+  }
+}
+
 async function loadText(fid: number) {
   try {
     loadError.value = ''
-    const text = await downloadText(fid)
+    if (!packageId.value) {
+      throw new Error(`文件 #${fid} 没有可编辑内容包，无法按内容契约打开`)
+    }
+    const text = textFromNodes((await hydrateTextPackage(packageId.value, versionId.value)).nodes)
     content.value = text
     originalContent.value = text
   } catch (e: unknown) {
@@ -121,8 +180,17 @@ async function handleSave() {
   if (!fileId.value) return
   saveError.value = ''
   try {
-    interface SaveResponse { success?: boolean }
-    const result = await apiPost<SaveResponse>(`/editors/text/${fileId.value}`, { content: content.value })
+    if (!packageId.value) {
+      throw new Error(`文件 #${fileId.value} 没有可编辑内容包，拒绝写入物理文件`)
+    }
+    const saved = await saveTextPackage(packageId.value, {
+      expectedVersionId: versionId.value,
+      content: contentPayloadFromText(content.value, format.value),
+      summary: `text-editor:${fileName.value || fileId.value}`,
+      autosave: false,
+    })
+    const nextVersionId = Number(saved.versionId ?? saved.expectedVersionId)
+    if (Number.isFinite(nextVersionId) && nextVersionId > 0) versionId.value = nextVersionId
     originalContent.value = content.value
   } catch (e: unknown) {
     saveError.value = e instanceof Error ? e.message : '保存失败'
@@ -143,11 +211,13 @@ onMounted(() => {
   const payload = getPayload()
   if (payload && payload.fileId) {
     fileId.value = payload.fileId
+    packageId.value = Number(payload.packageId || 0)
+    versionId.value = payload.versionId ? Number(payload.versionId) : null
     fileName.value = payload.fileName || 'untitled'
-    const ext = (payload.fileName || '').split('.').pop()?.toLowerCase() || ''
+    const ext = (payload.format || payload.extension || (payload.fileName || '').split('.').pop() || '').toLowerCase()
     format.value = ext
     isMarkdown.value = ext === 'md'
-    isEditable.value = ['txt', 'md', 'log', 'json', 'yaml', 'yml', 'xml', 'ini', 'cfg'].includes(ext)
+    isEditable.value = payload.mode !== 'view' && ['txt', 'md', 'log', 'json', 'yaml', 'yml', 'xml', 'ini', 'cfg'].includes(ext)
     loadText(payload.fileId)
   }
 })

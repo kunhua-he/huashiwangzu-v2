@@ -1,6 +1,6 @@
 <template>
   <img
-    v-if="profile.imageUrl"
+    v-if="profile.imageUrl && !nativeImageFailed"
     class="app-icon-native-image"
     :src="profile.imageUrl"
     :style="styleObject"
@@ -8,6 +8,7 @@
     alt=""
     draggable="false"
     aria-hidden="true"
+    @error="nativeImageFailed = true"
   >
   <span
     v-else
@@ -33,12 +34,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getAppIconProfile } from './app-icon-catalog'
 
 const props = withDefaults(defineProps<{ icon: string; appKey?: string; size?: number }>(), { size: 20, appKey: '' })
 
 const profile = computed(() => getAppIconProfile(props.appKey, props.icon))
+const nativeImageFailed = ref(false)
 /** macOS 彩色方块上 SF Symbol 大约 52–58% */
 const glyphSize = computed(() => Math.max(11, Math.round(props.size * (props.size >= 40 ? 0.56 : 0.52))))
 const glyphStroke = computed(() => (props.size >= 40 ? 1.85 : 1.95))
@@ -50,6 +52,10 @@ const styleObject = computed(() => ({
   '--app-icon-to': profile.value.to,
   '--app-icon-accent': profile.value.accent,
 }))
+
+watch(() => profile.value.imageUrl, () => {
+  nativeImageFailed.value = false
+})
 </script>
 
 <style scoped>

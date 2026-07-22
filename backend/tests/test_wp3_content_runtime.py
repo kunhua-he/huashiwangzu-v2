@@ -10,8 +10,7 @@
 4. resource_ref 锚定：block.resource_ref(int) → IRResourceRef anchor 到节点。
 5. Content Runtime：无 canonical_json 的历史 version 现场归一兜底；
    有 canonical_json 直接读；hydrate 分页 truncated 正确。
-6. Gate3 旁路记账：扫描仍直读物理/重解析原件的旁路，断言"清单未扩大"
-   （本轮不翻转线上读者，只记账，防新增旁路，不误报为已完成）。
+6. Gate3 旁路记账：扫描仍直读物理/重解析原件的旁路，断言"清单未扩大"。
 
 纯新增测试，不改生产代码。db 用例（5）造的数据在 finally 清理。
 """
@@ -196,14 +195,11 @@ async def test_content_runtime_read_hydrate():
 
 # ── 5. Gate3 旁路记账（防新增，不误报已完成）──────────────────────────────────
 
-# 本轮已知、待 WP7 翻转的旁路白名单（子代理实测清单）。测试断言"没有新增旁路"，
-# 而非"旁路已清零"——诚实反映 WP3 只建 canonical 读能力、不翻转线上读者。
+# 已知、待翻转的旁路白名单。测试断言"没有新增旁路"，已废弃的物理编辑器不得回潮。
 KNOWN_BYPASSES_WP7 = {
     "modules/doc-viewer",          # 打开重解析物理 docx
     "modules/ppt-viewer",          # 打开重解析物理 pptx
     "modules/docs-open",           # _read_content 直读/重解析
-    "backend/app/services/office/text_editor_service.py",  # 直读直写物理
-    "backend/app/services/office/csv_editor_service.py",   # 直读直写物理
     "modules/excel-engine",        # 独立事实源
     "modules/knowledge",           # 重解析回退 + 独立监听（华哥定本轮保留）
 }
@@ -219,5 +215,5 @@ def test_gate3_bypass_ledger_documented():
     assert hasattr(rt, "read")
     assert hasattr(rt, "hydrate")
     assert hasattr(rt, "describe")
-    # 已知旁路清单非空 = 本轮明确知道还有 7 处待 WP7 翻转（不假装已完成）
-    assert len(KNOWN_BYPASSES_WP7) == 7
+    # 已知旁路清单非空 = 明确知道仍有待翻转处，不假装已完成。
+    assert len(KNOWN_BYPASSES_WP7) == 5

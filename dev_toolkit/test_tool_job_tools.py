@@ -343,3 +343,30 @@ def test_completed_job_is_not_stale_even_when_old(tmp_path: Path) -> None:
     assert status["stale"] is False
     assert status["orphaned"] is False
     assert status["job_success"] is True
+
+
+def test_build_command_lint_accepts_native_path_list() -> None:
+    """lint job path may be string | list; native list must not go through str(list)."""
+    repo_root = Path(__file__).resolve().parent.parent
+    sample = "dev_toolkit/code_tools.py"
+    cmd, cwd, _env, timeout = tool_job_tools._build_command(
+        repo_root,
+        "lint",
+        {"path": [sample]},
+    )
+    assert cmd[0].endswith("ruff") or "ruff" in cmd[0]
+    assert "check" in cmd
+    assert any(sample in part or part.endswith("code_tools.py") for part in cmd)
+    assert cwd == repo_root
+    assert timeout == 120
+
+
+def test_build_command_lint_requires_path() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    try:
+        tool_job_tools._build_command(repo_root, "lint", {})
+        raised = False
+    except ValueError as exc:
+        raised = True
+        assert "lint requires path" in str(exc)
+    assert raised

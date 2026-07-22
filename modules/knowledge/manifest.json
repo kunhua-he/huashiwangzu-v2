@@ -112,6 +112,29 @@
       "min_role": "viewer"
     },
     {
+      "action": "align_entity_batch",
+      "description": "批量实体语义打齐(逐字位纠错+护栏8证据驱动裁定),回填脚本专用",
+      "parameters": {
+        "batch": {
+          "type": "integer",
+          "description": "本次处理条数,默认100"
+        },
+        "gate": {
+          "type": "boolean",
+          "description": "是否开启护栏8(LLM裁定),默认true"
+        },
+        "shard": {
+          "type": "integer",
+          "description": "分片号(并行用)"
+        },
+        "shards": {
+          "type": "integer",
+          "description": "总分片数"
+        }
+      },
+      "min_role": "admin"
+    },
+    {
       "action": "get_graph_context",
       "description": "查询图谱上下文",
       "parameters": {

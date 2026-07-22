@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -41,7 +42,7 @@ try:
     from dev_toolkit.code_tools import lint as code_lint
     from dev_toolkit.code_tools import normalize_pytest_targets as _normalize_pytest_targets_raw
     from dev_toolkit.code_tools import resolve_repo_path as _resolve_repo_path_raw
-    from dev_toolkit.code_tools import run_test as code_run_test
+    from dev_toolkit.code_tools import run_tests_parallel as code_run_tests_parallel
     from dev_toolkit.code_tools import split_path_list as _split_path_list_raw
     from dev_toolkit.code_tools import tool_definitions as code_tool_definitions
     from dev_toolkit.config_loader import load_config
@@ -100,6 +101,12 @@ try:
     from dev_toolkit.release_response import build_release_gate_response as build_release_gate_payload
     from dev_toolkit.response_shaping import ResponseShapeOptions, dumps_response
     from dev_toolkit.sql_guard import check_sql_readonly, readonly_psql_env
+    from dev_toolkit.search_tools import handle_tool as search_handle_tool
+    from dev_toolkit.search_tools import handles_tool as search_handles_tool
+    from dev_toolkit.search_tools import tool_definitions as search_tool_definitions
+    from dev_toolkit.service_lifecycle_tools import handle_tool as service_lifecycle_handle_tool
+    from dev_toolkit.service_lifecycle_tools import handles_tool as service_lifecycle_handles_tool
+    from dev_toolkit.service_lifecycle_tools import tool_definitions as service_lifecycle_tool_definitions
     from dev_toolkit.system_tools import handle_tool as system_handle_tool
     from dev_toolkit.system_tools import handles_tool as system_handles_tool
     from dev_toolkit.system_tools import tool_definitions as system_tool_definitions
@@ -114,6 +121,10 @@ try:
     from dev_toolkit.user_profile_tools import handle_tool as user_profile_handle_tool
     from dev_toolkit.user_profile_tools import handles_tool as user_profile_handles_tool
     from dev_toolkit.user_profile_tools import tool_definitions as user_profile_tool_definitions
+    from dev_toolkit.verify_tools import handle_tool as verify_handle_tool
+    from dev_toolkit.verify_tools import handles_tool as verify_handles_tool
+    from dev_toolkit.verify_tools import select_verify as code_select_verify
+    from dev_toolkit.verify_tools import tool_definitions as verify_tool_definitions
     from dev_toolkit.worktree_tools import git_status_summary, worktree_guard
     from dev_toolkit.worktree_tools import handle_tool as worktree_handle_tool
     from dev_toolkit.worktree_tools import handles_tool as worktree_handles_tool
@@ -134,7 +145,7 @@ except ModuleNotFoundError:
     from code_tools import lint as code_lint
     from code_tools import normalize_pytest_targets as _normalize_pytest_targets_raw
     from code_tools import resolve_repo_path as _resolve_repo_path_raw
-    from code_tools import run_test as code_run_test
+    from code_tools import run_tests_parallel as code_run_tests_parallel
     from code_tools import split_path_list as _split_path_list_raw
     from code_tools import tool_definitions as code_tool_definitions
     from config_loader import load_config
@@ -187,6 +198,12 @@ except ModuleNotFoundError:
     from release_response import build_release_gate_response as build_release_gate_payload
     from response_shaping import ResponseShapeOptions, dumps_response
     from sql_guard import check_sql_readonly, readonly_psql_env
+    from search_tools import handle_tool as search_handle_tool
+    from search_tools import handles_tool as search_handles_tool
+    from search_tools import tool_definitions as search_tool_definitions
+    from service_lifecycle_tools import handle_tool as service_lifecycle_handle_tool
+    from service_lifecycle_tools import handles_tool as service_lifecycle_handles_tool
+    from service_lifecycle_tools import tool_definitions as service_lifecycle_tool_definitions
     from system_tools import handle_tool as system_handle_tool
     from system_tools import handles_tool as system_handles_tool
     from system_tools import tool_definitions as system_tool_definitions
@@ -201,6 +218,10 @@ except ModuleNotFoundError:
     from user_profile_tools import handle_tool as user_profile_handle_tool
     from user_profile_tools import handles_tool as user_profile_handles_tool
     from user_profile_tools import tool_definitions as user_profile_tool_definitions
+    from verify_tools import handle_tool as verify_handle_tool
+    from verify_tools import handles_tool as verify_handles_tool
+    from verify_tools import select_verify as code_select_verify
+    from verify_tools import tool_definitions as verify_tool_definitions
     from worktree_tools import git_status_summary, worktree_guard
     from worktree_tools import handle_tool as worktree_handle_tool
     from worktree_tools import handles_tool as worktree_handles_tool
@@ -235,8 +256,17 @@ def _resolve_repo_path(path: str) -> Path:
     return _resolve_repo_path_raw(REPO_ROOT, path)
 
 
-def _split_path_list(raw: str) -> list[str]:
+def _split_path_list(raw: str | list[str] | tuple[str, ...] | None) -> list[str]:
     return _split_path_list_raw(raw)
+
+
+def _has_path_or_target_input(raw: str | list[str] | tuple[str, ...] | None) -> bool:
+    """True when finish_task received a non-empty string or native list of paths/targets."""
+    if raw is None:
+        return False
+    if isinstance(raw, (list, tuple)):
+        return any(str(item).strip() for item in raw)
+    return bool(str(raw).strip())
 
 
 def _visible_env_keys(env: dict[str, str] | None) -> list[str]:
@@ -767,68 +797,10 @@ async def _workspace_reset(confirm: str, scope: str = "all") -> dict[str, Any]:
 
 
 async def _restart_backend() -> dict[str, Any]:
-    """重启后端服务并验证健康检查。"""
-    started_at = time.monotonic()
-    start_script = REPO_ROOT / "scripts" / "start_backend.sh"
-    result = {
-        "success": False,
-        "status": "error",
-        "restarted": False,
-        "port": 0,
-        "health": "",
-        "duration_seconds": 0.0,
-    }
-    if not start_script.exists():
-        result["error"] = f"start_backend.sh not found at {start_script}"
-        return result
+    """兼容旧实现：转发到 service_lifecycle_tools.restart_backend。"""
+    from dev_toolkit import service_lifecycle_tools as _svc
 
-    proc = await asyncio.create_subprocess_exec(
-        "zsh", str(start_script), "--restart",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        cwd=str(REPO_ROOT),
-    )
-    stdout, stderr = await proc.communicate()
-    output = (stdout + stderr).decode("utf-8", errors="replace")
-    result["script_returncode"] = proc.returncode
-
-    port = 33000
-    port_file = REPO_ROOT / "backend" / "logs" / ".backend.port"
-    if port_file.exists():
-        try:
-            port = int(port_file.read_text().strip())
-        except (ValueError, OSError):
-            port = 33000
-
-    result["port"] = port
-    result["output_tail"] = output[-2000:]
-    if proc.returncode != 0:
-        result["health"] = "not_checked"
-        result["duration_seconds"] = round(time.monotonic() - started_at, 3)
-        result["error"] = "Backend restart script failed"
-        return result
-
-    health = "unknown"
-    health_ok = False
-    for _ in range(15):
-        try:
-            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=5, trust_env=False) as c:
-                r = await c.get("/api/health")
-                health = r.text[:300]
-                if r.status_code == 200:
-                    health_ok = True
-                    break
-        except Exception:
-            pass
-        await asyncio.sleep(1.0)
-
-    result["restarted"] = True
-    result["success"] = health_ok
-    result["status"] = "ok" if health_ok else "error"
-    result["health"] = health
-    result["duration_seconds"] = round(time.monotonic() - started_at, 3)
-    if not health_ok:
-        result["error"] = "Backend restart completed but health check did not pass"
-    return result
+    return await asyncio.to_thread(_svc.restart_backend, REPO_ROOT)
 
 
 # ──────────────────── 工具: _verify_tool_args ──────────────────────
@@ -900,9 +872,29 @@ async def _snap_diff() -> dict[str, Any]:
     except Exception as e:
         return {"files": [], "count": 0, "error": str(e)}
 
-_CODEGRAPH_CLI = str(Path.home() / ".npm-global" / "bin" / "codegraph")
 _RUFF_CLI = str(REPO_ROOT / "backend" / ".venv" / "bin" / "ruff")
 _BACKEND_PYTHON = REPO_ROOT / "backend" / ".venv" / "bin" / "python"
+
+
+def _resolve_codegraph_cli() -> str:
+    """Locate codegraph CLI: PATH first, then common npm-global install paths."""
+    found = shutil.which("codegraph")
+    if found:
+        return found
+    candidates = [
+        Path.home() / ".npm-global" / "bin" / "codegraph",
+        Path.home() / ".local" / "bin" / "codegraph",
+        Path("/usr/local/bin/codegraph"),
+        Path("/opt/homebrew/bin/codegraph"),
+    ]
+    for path in candidates:
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    # Last resort: keep historical default so error messages stay familiar
+    return str(Path.home() / ".npm-global" / "bin" / "codegraph")
+
+
+_CODEGRAPH_CLI = _resolve_codegraph_cli()
 
 
 def _project_python() -> str:
@@ -1234,34 +1226,11 @@ async def _db_schema(table: str = "") -> str:
         return json.dumps(columns, ensure_ascii=False, indent=2)
 
 async def _start_frontend() -> str:
-    """Start the frontend dev server from the frontend directory."""
-    frontend_dir = REPO_ROOT / "frontend"
-    proc = await asyncio.create_subprocess_exec(
-        "npm", "run", "dev",
-        cwd=str(frontend_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    await asyncio.sleep(1)
-    stdout = ""
-    stderr = ""
-    if proc.stdout is not None:
-        try:
-            stdout = (await asyncio.wait_for(proc.stdout.read(), timeout=0.5)).decode(errors="replace")
-        except Exception:
-            stdout = ""
-    if proc.stderr is not None:
-        try:
-            stderr = (await asyncio.wait_for(proc.stderr.read(), timeout=0.5)).decode(errors="replace")
-        except Exception:
-            stderr = ""
-    return json.dumps({
-        "success": proc.returncode is None,
-        "pid": proc.pid,
-        "command": "cd frontend && npm run dev",
-        "stdout": stdout,
-        "stderr": stderr,
-    }, ensure_ascii=False, indent=2)
+    """兼容旧实现：转发到 service_lifecycle_tools.start_frontend。"""
+    from dev_toolkit import service_lifecycle_tools as _svc
+
+    result = await asyncio.to_thread(_svc.start_frontend, REPO_ROOT)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 async def _sanity_check() -> str:
     """Run a focused repo sanity check for common regression signals."""
@@ -1316,8 +1285,8 @@ async def _sanity_check() -> str:
 async def _finish_task(
     summary: str,
     agent: str = "",
-    lint_paths: str = "",
-    test_targets: str = "",
+    lint_paths: str | list[str] | None = "",
+    test_targets: str | list[str] | None = "",
     test_env_json: str = "",
     module_key: str = "",
     allowed_prefixes: str = "",
@@ -1326,6 +1295,8 @@ async def _finish_task(
     timing_data: str = "",
     verification_summary: str = "",
     risk_note: str = "",
+    auto_select_verify: bool = False,
+    from_git: bool = False,
 ) -> str:
     """收工检查: 汇总工作区 + 边界检查 + 可选 lint/test + 风险评估 + 留痕模板。"""
     report: dict[str, Any] = {
@@ -1334,6 +1305,7 @@ async def _finish_task(
         "agent": agent,
         "git": await git_status_summary(_run_command_json, REPO_ROOT),
         "boundary_check": {},
+        "select_verify": None,
         "lint": [],
         "tests": [],
         "test_timing": parse_timing_data(timing_data),
@@ -1392,33 +1364,86 @@ async def _finish_task(
             + f" | [边界违规] outside_allowed={report['boundary_check'].get('outside_allowed', [])[:10]}"
         )
 
-    for item in _split_path_list(lint_paths):
+    # 可选: 空 lint/test 时用 select_verify 推断（默认关闭，避免收工意外长跑）
+    need_lint = not _has_path_or_target_input(lint_paths)
+    need_tests = not _has_path_or_target_input(test_targets)
+    if auto_select_verify and (need_lint or need_tests):
+        paths_for_select: str | list[str] | None = (
+            lint_paths if _has_path_or_target_input(lint_paths) else ""
+        )
+        use_from_git = bool(from_git) or not _has_path_or_target_input(paths_for_select)
         try:
-            lint_result = json.loads(await code_lint(_run_command_json, REPO_ROOT, _RUFF_CLI, item))
+            select_raw = await code_select_verify(
+                _run_command_json,
+                REPO_ROOT,
+                codegraph_cli=_CODEGRAPH_CLI,
+                paths=paths_for_select,
+                from_git=use_from_git,
+                include_codegraph_affected=True,
+            )
+            select_data = json.loads(select_raw)
+            report["select_verify"] = {
+                "success": bool(select_data.get("success", True)),
+                "notes": select_data.get("notes") or [],
+                "lint_paths": select_data.get("lint_paths") or [],
+                "test_targets": select_data.get("test_targets") or [],
+                "from_git": use_from_git,
+            }
+            if need_lint and select_data.get("lint_paths"):
+                lint_paths = select_data["lint_paths"]
+            if need_tests and select_data.get("test_targets"):
+                test_targets = select_data["test_targets"]
+        except Exception as exc:  # noqa: BLE001 — 推断失败不阻断收工边界报告
+            report["select_verify"] = {"success": False, "error": str(exc)}
+
+    # SOP 对齐: 一次 lint 多路径并行（code_tools.lint 内部有限并行）
+    lint_path_items = _split_path_list(lint_paths)
+    if lint_path_items:
+        try:
+            lint_result = json.loads(
+                await code_lint(_run_command_json, REPO_ROOT, _RUFF_CLI, lint_path_items)
+            )
         except json.JSONDecodeError as exc:
-            lint_result = {"success": False, "path": item, "error": str(exc)}
-        report["lint"].append(lint_result)
+            lint_result = {"success": False, "paths": lint_path_items, "error": str(exc)}
+        # 单 path 返回扁平 dict；多 path 返回 {results:[...]}。report["lint"] 统一为 per-path 列表。
+        if isinstance(lint_result.get("results"), list):
+            report["lint"].extend(lint_result["results"])
+        else:
+            report["lint"].append(lint_result)
         if not lint_result.get("success"):
             report["success"] = False
-    if test_targets.strip():
+
+    # SOP 对齐: run_tests_parallel(mode=auto)，保留 JWT_SECRET 默认与 test_env_json
+    if _has_path_or_target_input(test_targets):
         try:
             test_env = _parse_test_env(test_env_json)
             test_env.setdefault("JWT_SECRET", "test-secret")
-            test_result = json.loads(await code_run_test(_run_command_json, REPO_ROOT, test_targets, env=test_env))
+            test_result = json.loads(
+                await code_run_tests_parallel(
+                    _run_command_json,
+                    REPO_ROOT,
+                    targets=test_targets,
+                    mode="auto",
+                    env=test_env,
+                )
+            )
             test_result["finish_task_env_keys"] = sorted(test_env)
             test_result["finish_task_default_env"] = {
                 "JWT_SECRET": test_env.get("JWT_SECRET") == "test-secret",
             }
         except ValueError as exc:
-            test_result = {"success": False, "target": test_targets, "error": str(exc)}
+            test_result = {"success": False, "targets": test_targets, "error": str(exc)}
         except json.JSONDecodeError as exc:
-            test_result = {"success": False, "target": test_targets, "error": str(exc)}
+            test_result = {"success": False, "targets": test_targets, "error": str(exc)}
         report["tests"].append(test_result)
+        timing_name: Any = test_result.get("targets") or test_targets
+        if isinstance(timing_name, list):
+            timing_name = " ".join(str(item) for item in timing_name)
         append_timing_item(report["test_timing"], {
-            "name": test_targets,
+            "name": timing_name,
             "status": "pass" if test_result.get("success") else "fail",
             "duration_seconds": test_result.get("duration_seconds"),
-            "command": "pytest",
+            "command": "run_tests_parallel",
             "source": "finish_task.test_targets",
         })
         if not test_result.get("success"):
@@ -1432,19 +1457,47 @@ async def _finish_task(
 def _build_evidence_checklist(task_type: str, module_key: str) -> list[dict]:
     checklist = []
     if task_type == "code_change":
-        checklist.append({"tool": "code_explore", "reason": "探索相关代码：符号/调用链/影响面", "required": True})
-        checklist.append({"tool": "code_node", "reason": "读取关键符号/文件定义", "required": True})
-        checklist.append({"tool": "code_impact", "reason": "查看改动影响面", "required": True})
+        checklist.append({
+            "tool": "context_load",
+            "params": {"module": module_key or "", "task": "当前任务简述"},
+            "reason": "一次装弹：目录/能力/路由/schema/codegraph/git，优先于串行分散调用",
+            "required": True,
+        })
+        checklist.append({
+            "tool": "rg_search",
+            "reason": "路径/glob 限定的内容搜索，定位字符串与错误信息",
+            "required": False,
+        })
+        checklist.append({"tool": "code_explore", "reason": "符号/调用链/影响面（可用 path 限定）", "required": False})
+        checklist.append({"tool": "code_node", "reason": "读取关键符号/文件定义", "required": False})
+        checklist.append({"tool": "code_impact", "reason": "查看改动影响面", "required": False})
         if module_key:
-            checklist.append({"tool": "routes", "params": {"filter": module_key}, "reason": "查模块相关后端端点", "required": True})
-            checklist.append({"tool": "capabilities", "params": {"module": module_key}, "reason": "查模块注册能力", "required": True})
-            checklist.append({"tool": "db_schema", "reason": "查模块表结构", "required": True})
+            checklist.append({"tool": "routes", "params": {"filter": module_key}, "reason": "查模块相关后端端点", "required": False})
+            checklist.append({"tool": "capabilities", "params": {"module": module_key}, "reason": "查模块注册能力", "required": False})
+            checklist.append({"tool": "db_schema", "reason": "查模块表结构（context_load 已含时可跳过）", "required": False})
     elif task_type == "investigation":
-        checklist.append({"tool": "code_explore", "reason": "探索问题相关代码", "required": True})
-        checklist.append({"tool": "tail_log", "reason": "查看日志排查问题", "required": True})
+        checklist.append({
+            "tool": "context_load",
+            "params": {"module": module_key or "", "task": "问题简述"},
+            "reason": "一次装弹优先",
+            "required": True,
+        })
+        checklist.append({"tool": "rg_search", "reason": "搜索错误串/关键字", "required": False})
+        checklist.append({"tool": "bug_logs", "reason": "汇总最近错误与 Traceback", "required": True})
+        checklist.append({"tool": "tail_log", "reason": "查看模块原始日志尾部", "required": False})
         checklist.append({"tool": "probe", "reason": "接口验证", "required": False})
     elif task_type == "test":
-        checklist.append({"tool": "run_test", "reason": "跑测试看结果", "required": True})
+        checklist.append({
+            "tool": "select_verify",
+            "params": {"from_git": True},
+            "reason": "从改动推断 lint/test 目标",
+            "required": True,
+        })
+        checklist.append({
+            "tool": "run_tests_parallel",
+            "reason": "并行跑多组 pytest（替代逐个 run_test）",
+            "required": True,
+        })
         checklist.append({"tool": "probe", "reason": "接口验证", "required": False})
     return checklist
 
@@ -1472,38 +1525,60 @@ def _build_boundary(module_key: str) -> dict:
 def _build_verification_plan(task_type: str, module_key: str) -> dict:
     steps = []
     if task_type == "code_change":
-        steps.append({"step": "lint", "tool": "lint", "target": "改动过的 Python 文件", "reason": "ruff 静态检查"})
-        if module_key:
-            test_path = "backend/tests/" if module_key == "framework" else f"modules/{module_key}/sandbox/"
-            steps.append({"step": "test", "tool": "run_test", "target": test_path, "reason": "模块测试", "auto": False})
+        steps.append({
+            "step": "select",
+            "tool": "select_verify",
+            "target": "paths=改动文件 或 from_git=true",
+            "reason": "推断 lint_paths + test_targets（parallel/serial 分桶）",
+        })
+        steps.append({"step": "lint", "tool": "lint", "target": "select_verify.lint_paths", "reason": "ruff 静态检查（支持目录/多路径并行）"})
+        steps.append({
+            "step": "test",
+            "tool": "run_tests_parallel",
+            "target": "select_verify.test_targets / run_tests_parallel_targets",
+            "reason": "多目标并行 pytest；e2e/live 自动串行",
+            "auto": False,
+        })
+        if module_key and module_key != "framework":
+            steps.append({
+                "step": "module_fallback",
+                "tool": "run_tests_parallel",
+                "target": f"modules/{module_key}/sandbox/",
+                "reason": "select_verify 为空时的模块兜底",
+                "auto": False,
+            })
         steps.append({"step": "api_check", "tool": "probe", "target": "/api/health", "reason": "后端健康检查", "auto": True})
         steps.append({"step": "log_check", "tool": "tail_log", "target": "backend", "reason": "确认无新增错误日志", "auto": True})
-    return {"steps": steps, "note": "后端改动默认跑测试和 lint；接口类问题优先 probe/call_capability；日志问题先 tail_log"}
+    return {
+        "steps": steps,
+        "note": "优先 select_verify → lint → run_tests_parallel；不要逐个串行 run_test。接口类问题再 probe/call_capability。",
+    }
 
 
 def _build_workflow(task_type: str, module_key: str) -> list[dict]:
     steps = []
     if task_type == "code_change":
         steps = [
-            {"step": 1, "phase": "全景理解", "action": "调 brief() 了解项目全貌（如未调过）"},
-            {"step": 2, "phase": "证据收集", "action": "按 required_evidence checklist 逐一调工具收集证据"},
+            {"step": 1, "phase": "全景理解", "action": "优先 context_load(module, task)；必要时 brief()"},
+            {"step": 2, "phase": "证据收集", "action": "rg_search / code_* 补缺口；不要为凑清单串行空转"},
             {"step": 3, "phase": "方案制定", "action": "基于证据确定具体改哪个文件、怎么改"},
             {"step": 4, "phase": "执行修改", "action": "用 quick_fix_preview 预览 → quick_fix_patch 落盘（或 Read + Edit）"},
             {"step": 5, "phase": "边界检查", "action": f"git diff --name-only 确认改动只在 modules/{module_key}/ 内" if module_key else "git diff 确认改动范围"},
-            {"step": 6, "phase": "验证", "action": "按 verification_plan 跑 lint + run_test + probe + tail_log"},
+            {"step": 6, "phase": "验证", "action": "select_verify → lint → run_tests_parallel（并行），再 probe/tail_log"},
             {"step": 7, "phase": "收尾留痕", "action": "finish_task(汇总+边界检查+风险评估) → memory_write(留痕)"},
         ]
     elif task_type == "investigation":
         steps = [
-            {"step": 1, "phase": "问题确认", "action": "调 brief + tail_log 确认问题现象"},
-            {"step": 2, "phase": "排查", "action": "code_explore + probe + db_schema 排查根因"},
+            {"step": 1, "phase": "问题确认", "action": "context_load + bug_logs 确认问题现象"},
+            {"step": 2, "phase": "排查", "action": "rg_search / code_explore + probe + db_schema 排查根因"},
             {"step": 3, "phase": "结论记录", "action": "memory_write(type='gotcha', ...) 记录排查结论"},
         ]
     elif task_type == "test":
         steps = [
-            {"step": 1, "phase": "测试执行", "action": "run_test 跑测试"},
-            {"step": 2, "phase": "结果分析", "action": "分析失败原因，确认是否需改代码"},
-            {"step": 3, "phase": "结论记录", "action": "memory_write 记录测试结果"},
+            {"step": 1, "phase": "选目标", "action": "select_verify(from_git=true 或 paths=...)"},
+            {"step": 2, "phase": "并行测试", "action": "run_tests_parallel(targets=...)"},
+            {"step": 3, "phase": "结果分析", "action": "只看 failed_targets / stdout_tail，确认是否需改代码"},
+            {"step": 4, "phase": "结论记录", "action": "memory_write 记录测试结果"},
         ]
     return steps
 
@@ -1896,7 +1971,6 @@ CORE_TOOL_CONTEXT = CoreToolContext(
     clear_log=_clear_log,
     sql=_sql,
     web_read=_web_read,
-    start_frontend=_start_frontend,
     sanity_check=_sanity_check,
     smoke_all=_smoke_all,
     release_gate=_release_gate,
@@ -1910,7 +1984,6 @@ CORE_TOOL_CONTEXT = CoreToolContext(
     knowledge_cleanup_noise=_cleanup_knowledge_noise,
     workspace_audit=_workspace_audit,
     workspace_reset=_workspace_reset,
-    restart_backend=_restart_backend,
     verify_tool_args=_verify_tool_args,
     snap_diff=_snap_diff,
 )
@@ -1949,7 +2022,7 @@ _STRATEGY_EXCLUDE = {
     "edit_recipe_apply", "edit_recipe_preview", "edit_recipe_catalog",
     "quick_fix_preview", "quick_fix_patch",
     # 内部调试工具
-    "_restart_backend", "_verify_tool_args", "_snap_diff",
+    "_verify_tool_args", "_snap_diff",
     # OpenCode PTY（策划层用dispatch，不用PTY交互）
     "opencode_pty_start", "opencode_pty_stop", "opencode_pty_read", "opencode_pty_write",
     # OpenCode 网关管理（自动化即可）
@@ -1961,7 +2034,6 @@ _STRATEGY_EXCLUDE = {
     "mcp_self_check", "dev_toolkit_architecture_audit",
     "workspace_reset", "knowledge_cleanup_noise",
     "test_data_pollution_cleanup", "test_data_pollution_audit",
-    "start_frontend",
     # 知识库源管理（专项任务时才用，日常不暴露）
     "knowledge_source_manifest_scan", "knowledge_source_manifest_summary",
     "knowledge_source_manifest_audit", "knowledge_source_manifest_enqueue",
@@ -2004,6 +2076,8 @@ async def list_tools() -> list[Tool]:
         *contract_tool_definitions(),
         *docs_sync_tool_definitions(),
         *code_tool_definitions(),
+        *search_tool_definitions(),
+        *verify_tool_definitions(),
         *edit_tool_definitions(),
         *git_workflow_tool_definitions(),
         *db_reverse_tool_definitions(),
@@ -2013,6 +2087,7 @@ async def list_tools() -> list[Tool]:
         *knowledge_tool_definitions(),
         *log_tool_definitions(),
         *system_tool_definitions(),
+        *service_lifecycle_tool_definitions(),
         *worktree_tool_definitions(),
         *tool_usage_tool_definitions(),
         *user_profile_tool_definitions(),
@@ -2060,6 +2135,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif code_handles_tool(name):
             category = "code"
             result = await code_handle_tool(_run_command_json, REPO_ROOT, _CODEGRAPH_CLI, _RUFF_CLI, name, arguments)
+        elif search_handles_tool(name):
+            category = "search"
+            result = await search_handle_tool(REPO_ROOT, name, arguments)
+        elif verify_handles_tool(name):
+            category = "verify"
+            result = await verify_handle_tool(_run_command_json, REPO_ROOT, _CODEGRAPH_CLI, name, arguments)
         elif edit_handles_tool(name):
             category = "edit"
             result = await edit_handle_tool(_run_command_json, REPO_ROOT, _RUFF_CLI, name, arguments)
@@ -2087,6 +2168,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif system_handles_tool(name):
             category = "system"
             result = await system_handle_tool(REPO_ROOT, name, arguments)
+        elif service_lifecycle_handles_tool(name):
+            category = "service"
+            result = await service_lifecycle_handle_tool(REPO_ROOT, name, arguments)
         elif worktree_handles_tool(name):
             category = "worktree"
             result = await worktree_handle_tool(_run_command_json, REPO_ROOT, name, arguments)

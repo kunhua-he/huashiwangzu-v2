@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { desktopMessage } from '@/desktop/feedback/desktop-feedback'
 import type { ApiResponse } from './types'
-import { getErrorInfo, toApiErrorInfo } from './response-transform'
+import { getErrorInfo, markApiErrorNotified, toApiErrorInfo } from './response-transform'
 
 const TOKEN_KEY = 'v2_auth_token'
 
@@ -30,7 +30,7 @@ api.interceptors.request.use((config) => {
 })
 
 let redirectingToLogin = false
-const retriedRequests = new Set<string>()
+const retryingRequests = new Set<string>()
 const errorThrottle = new Map<string, number>()
 const throttleInterval = 30000
 
@@ -103,6 +103,7 @@ api.interceptors.response.use(
       })
       // Keep one desktop toast channel (not Element Plus) for uncaught API failures.
       desktopMessage.error(errInfo.userMessage)
+      markApiErrorNotified(errInfo)
       logErrorWithThrottle(response.config?.url || '未知', response.status, errInfo.backendMessage || errInfo.userMessage)
       return Promise.reject(errInfo)
     }
@@ -131,20 +132,22 @@ api.interceptors.response.use(
       }
       localStorage.removeItem(TOKEN_KEY)
       delete api.defaults.headers.common['Authorization']
-      if (!retriedRequests.has(requestUrl)) {
-        retriedRequests.add(requestUrl)
+      const retryKey = `${error.config?.method || 'get'}:${requestUrl || ''}`
+      if (!retryingRequests.has(retryKey)) {
+        retryingRequests.add(retryKey)
         await new Promise(r => setTimeout(r, 500))
         try {
           const res = await api.request(error.config)
           return res
         } catch {
-          retriedRequests.delete(requestUrl)
           if (!redirectingToLogin) {
             redirectingToLogin = true
             window.location.replace('/')
             window.setTimeout(() => { redirectingToLogin = false }, 1000)
           }
           return Promise.reject(getErrorInfo(error))
+        } finally {
+          retryingRequests.delete(retryKey)
         }
       }
       if (!redirectingToLogin) {
@@ -157,6 +160,7 @@ api.interceptors.response.use(
     // 401 redirect path already handles session expiry; still surface other failures.
     if (statusCode !== 401) {
       desktopMessage.error(errorInfo.userMessage)
+      markApiErrorNotified(errorInfo)
     }
     logErrorWithThrottle(requestUrl || '未知', statusCode, errorInfo.error || '未知错误')
     return Promise.reject(errorInfo)

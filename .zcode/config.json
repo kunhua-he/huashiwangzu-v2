@@ -1,5 +1,18 @@
 {
   "mcp": {
-    "servers": {}
+    "servers": {
+      "project_toolkit": {
+        "type": "stdio",
+        "command": "python3.14",
+        "args": [
+          "/Users/hekunhua/Documents/Agent/PHP/华世王镞_v2/dev_toolkit/server.py"
+        ],
+        "cwd": "/Users/hekunhua/Documents/Agent/PHP/华世王镞_v2",
+        "env": {
+          "PYTHONPATH": "/Users/hekunhua/Documents/Agent/PHP/华世王镞_v2"
+        },
+        "timeoutMs": 130000
+      }
+    }
   }
 }

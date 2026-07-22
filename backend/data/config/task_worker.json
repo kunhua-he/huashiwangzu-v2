@@ -42,20 +42,30 @@
     }
   },
   "paused_task_types": [],
-  "paused_stages": {},
+  "paused_stages": {
+    "kb_pipeline_stage": [
+      "fusion",
+      "graph",
+      "profile"
+    ]
+  },
   "paused_lanes": {},
   "config_note": "唯一控制器是 app.task_worker_main 启动的 Dispatcher。它每 1 秒（有执行器）或 8 秒（空闲）检查持久任务表，以 lease 领取任务并派生一次性 executor 进程。paused_task_types、paused_stages 和 paused_lanes 会阻止新领取；正在运行的可中断任务会在下一次心跳被释放回 pending 并标记 paused_by_config。lane_limits 是本地和云端资源池的硬上限，provider_limits 是云模型供应商的全局并发上限。云端额度支持 200 路，但 Knowledge Fusion 在 200 文档扩量时触发 PostgreSQL too many clients，因而按实测稳定门槛把 LLM lane/provider 限为 24 路；VLM 保持 40 路。256 个总 executor 同时保留本地预处理、派生索引、关系、通用和向量槽位；CPU、内存或 GPU 触及阈值时不会继续扩张。GPU 读取未知时 Dispatcher 采用配置上限，不把未知数据伪装成准确监控。",
   "model_auto_pause": {
     "enabled": false,
-    "cleared_at": "2026-07-20T08:28:52.146291+00:00",
-    "cleared_reason": "auto_resume_ttl_elapsed",
-    "cleared_stages": [
+    "manual_hold": true,
+    "stage": "graph",
+    "group": "llm",
+    "paused_stages": [
       "fusion",
       "graph",
       "profile"
     ],
-    "expired_at": "2026-07-18T10:52:58.212467+00:00",
-    "original_reason": "model_fallback_exhausted",
-    "group": "llm"
+    "reason": "model_rate_limit_threshold",
+    "error_message": "model supply failure count 2 reached threshold 1 within 300s; last_error=Server error '503 Service Unavailable' for url 'http://127.0.0.1:8317/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503\n响应体: {\"error\":{\"message\":\"auth_unavailable: no auth available (providers=xai, model=grok-4.5)\",\"type\":\"server_error\",\"code\":\"internal_server_error\"}}",
+    "updated_at": "2026-07-20T08:33:59.400849+00:00",
+    "resume_ttl_seconds": 86400,
+    "expires_at": "2026-07-21T08:33:59.400849+00:00",
+    "note": "auto-pause converted to manual_hold; resume via knowledge_pipeline_control"
   }
 }

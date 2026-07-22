@@ -71,7 +71,11 @@
       v-if="openMenu"
       ref="popoverRef"
       class="mac-menu-popover"
-      :class="`mac-menu-popover-${openMenu}`"
+      :class="[
+        `mac-menu-popover-${openMenu}`,
+        { 'is-right-aligned': popoverAlignRight },
+      ]"
+      :style="popoverStyle"
       role="menu"
       @keydown="handlePopoverKeydown"
     >
@@ -260,14 +264,56 @@ const menus = computed(() => {
 const openMenu = ref('')
 const menuBarRef = ref<HTMLElement | null>(null)
 const popoverRef = ref<HTMLElement | null>(null)
+const popoverStyle = ref<Record<string, string>>({})
+const popoverAlignRight = ref(false)
 let returnFocus: HTMLButtonElement | null = null
 
 function focusFirstMenuItem() {
   nextTick(() => popoverRef.value?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus())
 }
+function positionPopover(trigger: HTMLButtonElement | null, key: string) {
+  const bar = menuBarRef.value
+  if (!bar || !trigger) {
+    popoverStyle.value = {}
+    popoverAlignRight.value = key === 'account'
+    return
+  }
+  const barRect = bar.getBoundingClientRect()
+  const triggerRect = trigger.getBoundingClientRect()
+  const edge = 8
+  const alignRight = key === 'account'
+  popoverAlignRight.value = alignRight
+
+  if (alignRight) {
+    const right = Math.max(edge, barRect.right - triggerRect.right)
+    popoverStyle.value = {
+      left: 'auto',
+      right: `${right}px`,
+    }
+    return
+  }
+
+  // 左对齐触发器；超出右边界时回退，避免菜单被裁切
+  let left = Math.max(edge, triggerRect.left - barRect.left)
+  nextTick(() => {
+    const pop = popoverRef.value
+    if (!pop) return
+    const maxLeft = Math.max(edge, barRect.width - pop.offsetWidth - edge)
+    if (left > maxLeft) left = maxLeft
+    popoverStyle.value = {
+      left: `${left}px`,
+      right: 'auto',
+    }
+  })
+  popoverStyle.value = {
+    left: `${left}px`,
+    right: 'auto',
+  }
+}
 function openFromTrigger(key: string, event: Event, focusItem = true) {
   returnFocus = event.currentTarget as HTMLButtonElement
   openMenu.value = key
+  positionPopover(returnFocus, key)
   if (focusItem) focusFirstMenuItem()
 }
 function toggleMenu(key: string, event: Event) {
@@ -280,6 +326,8 @@ function switchOpenMenu(key: string, event: Event) {
 function closeMenu(restoreFocus = true) {
   const target = returnFocus
   openMenu.value = ''
+  popoverStyle.value = {}
+  popoverAlignRight.value = false
   returnFocus = null
   if (restoreFocus && target?.isConnected) nextTick(() => target.focus())
 }
@@ -469,40 +517,50 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
   left: 8px;
   min-width: 212px;
   max-width: min(320px, calc(100vw - 16px));
-  padding: 5px;
-  color: rgba(29, 29, 31, 0.92);
+  padding: var(--desktop-shell-popover-padding, 5px);
+  color: var(--desktop-ink, rgba(29, 29, 31, 0.92));
   text-shadow: none;
   z-index: var(--z-system-popover);
-  border-radius: 8px;
-  background: rgba(246, 246, 248, 0.92);
-  border: 0.5px solid rgba(0, 0, 0, 0.12);
-  box-shadow:
-    0 10px 28px rgba(0, 0, 0, 0.22),
-    0 2px 6px rgba(0, 0, 0, 0.08),
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.65);
-  -webkit-backdrop-filter: blur(40px) saturate(150%);
-  backdrop-filter: blur(40px) saturate(150%);
-  animation: mac-menu-in 90ms ease-out;
+  border-radius: var(--desktop-radius-menu, 10px);
+  background: var(--desktop-material-popover, var(--glass-menu-bg, rgba(246, 246, 248, 0.92)));
+  border: 0.5px solid rgba(0, 0, 0, 0.1);
+  box-shadow: var(
+    --desktop-shadow-menu,
+    var(
+      --desktop-shadow-popover,
+      0 14px 36px rgba(0, 0, 0, 0.2),
+      0 2px 6px rgba(0, 0, 0, 0.06),
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.7)
+    )
+  );
+  -webkit-backdrop-filter: var(--desktop-filter-menu, blur(44px) saturate(160%));
+  backdrop-filter: var(--desktop-filter-menu, blur(44px) saturate(160%));
+  animation: mac-menu-in 120ms var(--desktop-ease-ios, cubic-bezier(0.32, 0.72, 0, 1));
+  transform-origin: top center;
+  will-change: opacity, transform;
 }
 @keyframes mac-menu-in {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
-.mac-menu-popover-app { left: 38px; }
-.mac-menu-popover-file { left: 118px; }
-.mac-menu-popover-go { left: 164px; }
-.mac-menu-popover-view { left: 210px; }
-.mac-menu-popover-window { left: 258px; }
-.mac-menu-popover-help { left: 306px; }
-.mac-menu-popover-account { left: auto; right: 8px; }
+.mac-menu-popover.is-right-aligned {
+  left: auto;
+  right: 8px;
+}
 
 .mac-menu-row {
   width: 100%;
-  min-height: 22px;
-  height: 22px;
+  min-height: 24px;
+  height: 24px;
   padding: 0 10px 0 12px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: inherit;
   display: grid;
@@ -513,6 +571,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
   font: 400 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
   letter-spacing: -0.01em;
   cursor: default;
+  transition: background 80ms ease, color 80ms ease;
 }
 .mac-menu-row > span:first-child {
   overflow: hidden;
@@ -568,7 +627,6 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
   .mac-menu-trigger:not(.mac-menu-brand):not(.mac-menu-app-title) { display: none; }
   .mac-account-name { display: none; }
   .mac-menu-app-title { max-width: 120px; }
-  .mac-menu-popover { left: 8px !important; right: auto !important; }
 }
 @media (prefers-reduced-motion: reduce) {
   .mac-menu-popover { animation: none; }

@@ -16,22 +16,40 @@ const TEMPLATE_PATH = path.join(MODULES_DIR, '_template', 'runtime', 'index.ts')
 
 const KNOWN_VARIANTS = new Set([
   'agent',
+  'code-generic-parser',
+  'code-html-parser',
+  'code-js-parser',
+  'code-php-parser',
+  'code-py-parser',
+  'codemap',
+  'desktop-tools',
+  'doc-parser',
   'doc-viewer',
   'docs-open',
+  'docx-parser',
   'douyin-delivery', // exports apiPut/apiDelete for CRUD panels
+  'excel-engine',
+  'im',
+  'image-gen',
   'image-viewer',
+  'image-vision',
   'knowledge',
+  'media-asr',
   'media-intelligence', // minimal sandbox-compatible modules.call runtime
   'memory',
   'model-router',   // minimal runtime, only exposes apiGet/apiPost/apiPut/apiDelete + platform.modules.call
   'office-gen',     // has content namespace + apiPut (content pipeline helpers beyond template)
+  'pdf-parser',
   'pdf-viewer',
   'ppt-viewer',
+  'pptx-parser',
   'scheduler',
   'terminal-tools',
+  'text-parser',
   'text-editor',
   'web-tools',
   'wechat-writer',  // exports apiDelete for draft/prompt management
+  'xlsx-parser',
 ])
 
 const MINIMAL_VARIANTS = new Set([

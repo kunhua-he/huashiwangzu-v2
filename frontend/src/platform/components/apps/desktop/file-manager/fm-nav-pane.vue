@@ -81,7 +81,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { showPrompt } from '@/desktop/feedback/desktop-feedback'
-import { Download, FileText, HardDrive, Monitor, Trash2 } from 'lucide-vue-next'
+import { Download, FileText, HardDrive, Monitor, Trash2 } from '@/shared/icons/lucide'
 import {
   listTagsWithCustomNames,
   loadCustomTagLabels,
